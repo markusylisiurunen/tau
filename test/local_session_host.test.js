@@ -9,6 +9,7 @@ import { LocalHistoryStore } from "../dist/core/history/local_history_store.js";
 import { createLocalToolExecutionBackend } from "../dist/core/index.js";
 import { resolveModel } from "../dist/core/models/catalog.js";
 import { personas } from "../dist/core/personas.js";
+import { ToolCatalog } from "../dist/core/tools/catalog.js";
 import {
   buildToolRunPresentation,
   TOOL_UI_FACET_VERSION,
@@ -4391,6 +4392,42 @@ describe("LocalSessionHost", () => {
     expect(executionEnvironment.resolveRuntimeConfig.mock.calls[1][1]).toEqual({
       remoteCatalog: refreshedCatalog,
     });
+  });
+
+  it("preserves startup credentials through reload, persona changes, and ephemeral contexts", async () => {
+    const apiKeys = { openai: "host-model-key", exa: "host-tool-key" };
+    const alternatePersona = { ...personas[0], id: "alternate" };
+    const executionEnvironment = createTestExecutionEnvironment();
+    const resolveRuntimeConfig = executionEnvironment.resolveRuntimeConfig;
+    executionEnvironment.resolveRuntimeConfig = async () => ({
+      ...(await resolveRuntimeConfig()),
+      config: { apiKeys: { openai: "target-model-key", exa: "target-tool-key" } },
+      personas: [personas[0], alternatePersona],
+    });
+    const host = createHostForEnvironment(new MemorySessionStore(), executionEnvironment, {
+      config: { apiKeys },
+    });
+    const session = await host.createSession(localCreateInput);
+    const registry = vi.spyOn(ToolCatalog, "createSubagentRegistry");
+    try {
+      await session.reload();
+      expect(session.runtime.config.apiKeys).toEqual(apiKeys);
+      await session.setPersona(alternatePersona.id);
+      expect(session.runtime.persona.id).toBe(alternatePersona.id);
+      expect(session.runtime.config.apiKeys).toEqual(apiKeys);
+
+      const { contextId } = await session.createEphemeralContext({
+        instructions: "review instructions",
+        tools: ["bash"],
+      });
+      const context = session.ephemeralAgentSessions.get(contextId);
+      expect(context.options.config.apiKeys).toEqual(apiKeys);
+      await context.createThread("thread-1");
+      expect(registry.mock.calls.at(-1)[3].apiKeys).toEqual(apiKeys);
+    } finally {
+      registry.mockRestore();
+      await session.dispose();
+    }
   });
 
   it("keeps execution-environment context in hosted ephemeral system prompts", async () => {

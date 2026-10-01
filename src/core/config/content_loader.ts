@@ -1,6 +1,6 @@
 import { basename, join } from "node:path";
 import { z } from "zod";
-import type { LoadedModelResolver, ModelResolver } from "../models/catalog.js";
+import type { ModelResolver } from "../models/catalog.js";
 import type { PromptTemplate } from "../prompts.js";
 import {
   TOOL_NAME_BASH,
@@ -24,9 +24,9 @@ import type { ConfigDeps } from "./deps.js";
 import { parseMarkdownFrontMatter } from "./markdown_frontmatter.js";
 import type { ConfigLevel } from "./paths.js";
 import type { Config } from "./schema.js";
-import { loadSkillsContent as loadCanonicalSkillsContent } from "./skills_loader.js";
+import { loadSkillsContent } from "./skills_loader.js";
 import type { ThemeDefinition } from "./theme_variants.js";
-import { buildVirtualBundle } from "./virtual_bundle.js";
+import type { VirtualBundle } from "./virtual_bundle.js";
 
 interface MarkdownEntry {
   path: string;
@@ -86,25 +86,6 @@ function parsePersonaTools(toolsRaw: unknown): { tools?: ToolName[]; error?: str
   }
 
   return { tools: selected };
-}
-
-function resolvePersonaModels(
-  persona: Persona,
-  modelResolver: ModelResolver,
-): { persona?: Persona; error?: string } {
-  const resolvedPersonaModel = modelResolver(persona.model.provider, persona.model.id);
-  if (!resolvedPersonaModel) {
-    return {
-      error: `failed to resolve model "${persona.model.provider}:${persona.model.id}"`,
-    };
-  }
-
-  return {
-    persona: {
-      ...persona,
-      model: resolvedPersonaModel,
-    },
-  };
 }
 
 function mergeById<T extends { id: string }>(base: T[], overlay: T[], overlay2?: T[]): T[] {
@@ -167,16 +148,6 @@ function loadMarkdownEntries(
   }
 
   return { entries, errors };
-}
-
-function resolveContentContext(options: { deps: ConfigDeps; levels: ConfigLevel[] }): {
-  deps: ConfigDeps;
-  levels: ConfigLevel[];
-} {
-  return {
-    deps: options.deps,
-    levels: options.levels,
-  };
 }
 
 const personaFrontMatterSchema = z
@@ -337,10 +308,7 @@ export async function loadUserPersonas(args: {
   personas: Persona[];
   errors: string[];
 }> {
-  const { deps, levels } = resolveContentContext({
-    deps: args.deps,
-    levels: args.levels,
-  });
+  const { deps, levels } = args;
   const globalLevel = levels.find((level) => level.scope === "global");
   if (!globalLevel) {
     return { personas: [], errors: [] };
@@ -370,10 +338,7 @@ export async function loadProjectPersonas(args: {
   personas: Persona[];
   errors: string[];
 }> {
-  const { deps, levels } = resolveContentContext({
-    deps: args.deps,
-    levels: args.levels,
-  });
+  const { deps, levels } = args;
 
   const projectLevels = levels.filter((level) => level.scope === "project");
   if (projectLevels.length === 0) {
@@ -405,10 +370,7 @@ export async function loadUserPrompts(args: { deps: ConfigDeps; levels: ConfigLe
   prompts: PromptTemplate[];
   errors: string[];
 }> {
-  const { deps, levels } = resolveContentContext({
-    deps: args.deps,
-    levels: args.levels,
-  });
+  const { deps, levels } = args;
   const globalLevel = levels.find((level) => level.scope === "global");
   if (!globalLevel) {
     return { prompts: [], errors: [] };
@@ -437,10 +399,7 @@ export async function loadProjectPrompts(args: {
   prompts: PromptTemplate[];
   errors: string[];
 }> {
-  const { deps, levels } = resolveContentContext({
-    deps: args.deps,
-    levels: args.levels,
-  });
+  const { deps, levels } = args;
 
   const projectLevels = levels.filter((level) => level.scope === "project");
   if (projectLevels.length === 0) {
@@ -468,19 +427,13 @@ export async function loadProjectPrompts(args: {
   return { prompts, errors };
 }
 
-export async function loadSkillsContent(
-  config: Config | undefined,
-  options: { deps: ConfigDeps; levels: ConfigLevel[] },
-): Promise<{ skills: Skill[]; errors: string[] }> {
-  return loadCanonicalSkillsContent(config, options);
-}
-
 export async function loadAllContent(
   config: Config | undefined,
   options: {
     deps: ConfigDeps;
     levels: ConfigLevel[];
-    modelResolver: LoadedModelResolver;
+    modelResolver: ModelResolver;
+    virtualBundle: VirtualBundle;
   },
 ): Promise<{
   personas: Persona[];
@@ -489,42 +442,24 @@ export async function loadAllContent(
   themes: ThemeDefinition[];
   errors: string[];
 }> {
-  const { deps, levels } = resolveContentContext({
-    deps: options.deps,
-    levels: options.levels,
-  });
-
-  const virtualBundle = buildVirtualBundle(options.modelResolver.resolveConfiguredModel);
+  const { deps, levels, virtualBundle } = options;
 
   try {
-    const builtinPersonaErrors: string[] = [];
-    const resolvedBuiltinPersonas: Persona[] = [];
-
-    for (const persona of virtualBundle.personas) {
-      const resolved = resolvePersonaModels(persona, options.modelResolver.resolveModel);
-      if (resolved.persona) {
-        resolvedBuiltinPersonas.push(resolved.persona);
-      } else if (resolved.error) {
-        builtinPersonaErrors.push(`builtin persona '${persona.id}': ${resolved.error}`);
-      }
-    }
-
     const userPersonasResult = await loadUserPersonas({
-      modelResolver: options.modelResolver.resolveModel,
+      modelResolver: options.modelResolver,
       deps,
       levels,
     });
     const projectPersonasResult = await loadProjectPersonas({
-      modelResolver: options.modelResolver.resolveModel,
+      modelResolver: options.modelResolver,
       deps,
       levels,
     });
     const userPromptsResult = await loadUserPrompts({ deps, levels });
     const projectPromptsResult = await loadProjectPrompts({ deps, levels });
-    const skillsResult = await loadSkillsContent(config, { deps, levels });
+    const skillsResult = await loadSkillsContent({ deps, levels });
 
     const allErrors = [
-      ...builtinPersonaErrors,
       ...userPersonasResult.errors,
       ...projectPersonasResult.errors,
       ...userPromptsResult.errors,
@@ -537,7 +472,7 @@ export async function loadAllContent(
     // Precedence: virtual bundle < global < nearest .tau levels.
     const launchModels = config?.subagents?.launchModels;
     const personas = mergeById(
-      resolvedBuiltinPersonas,
+      virtualBundle.personas,
       userPersonasResult.personas,
       projectPersonasResult.personas,
     ).map((persona) => withSubagentLaunchModels(persona, launchModels));

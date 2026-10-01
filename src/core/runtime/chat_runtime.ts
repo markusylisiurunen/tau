@@ -73,6 +73,7 @@ export class ChatRuntime {
   readonly supervisor: AgentSupervisor;
   private currentPersona: Persona;
   private currentConfig: Config;
+  private readonly hostApiKeys: Config["apiKeys"];
   private currentModelResolver: ModelResolver;
   private promptContext: ChatRuntimePromptContext;
   private readonly sessionIdValue: string;
@@ -107,13 +108,14 @@ export class ChatRuntime {
   private constructor(options: CreateChatRuntimeOptions, composition: SessionPromptComposition) {
     this.currentPersona = structuredClone(options.persona);
     this.currentConfig = options.config;
+    this.hostApiKeys = structuredClone(options.config.apiKeys);
     this.currentModelResolver = options.modelResolver;
     this.promptContext = { ...options.promptContext };
     this.sessionIdValue = options.sessionId;
     this.createdAt = options.createdAt;
     this.backend = options.backend;
     this.deps = options.deps ?? createDefaultCoreDeps();
-    this.resolvedModel = resolveAgentModel(this.currentPersona, this.currentConfig, {
+    this.resolvedModel = resolveAgentModel(this.currentPersona, this.config, {
       includeModelNotice: true,
       deps: this.deps,
     });
@@ -163,6 +165,10 @@ export class ChatRuntime {
 
   get promptComposition(): SessionPromptComposition {
     return this.latestPromptComposition;
+  }
+
+  get config(): Config {
+    return structuredClone({ ...this.currentConfig, apiKeys: this.hostApiKeys });
   }
 
   get persona(): Persona {
@@ -281,7 +287,7 @@ export class ChatRuntime {
   setRuntimeConfig(config: Config, modelResolver: ModelResolver): void {
     this.currentConfig = config;
     this.currentModelResolver = modelResolver;
-    this.resolvedModel = resolveAgentModel(this.currentPersona, this.currentConfig, {
+    this.resolvedModel = resolveAgentModel(this.currentPersona, this.config, {
       includeModelNotice: true,
       deps: this.deps,
     });
@@ -293,20 +299,20 @@ export class ChatRuntime {
       ...this.currentPersona,
       settings: { ...this.currentPersona.settings, reasoning },
     };
-    this.resolvedModel = resolveAgentModel(this.currentPersona, this.currentConfig, {
+    this.resolvedModel = resolveAgentModel(this.currentPersona, this.config, {
       includeModelNotice: true,
       deps: this.deps,
     });
     this.refreshSpec();
   }
 
-  setPersona(persona: Persona, options?: { skillsBlock?: string }): void {
+  setPersona(persona: Persona): void {
     this.currentPersona = structuredClone(persona);
-    this.resolvedModel = resolveAgentModel(this.currentPersona, this.currentConfig, {
+    this.resolvedModel = resolveAgentModel(this.currentPersona, this.config, {
       includeModelNotice: true,
       deps: this.deps,
     });
-    this.rebuildSystemPrompts(options);
+    this.rebuildSystemPrompts();
   }
 
   updatePromptContext(context: Partial<ChatRuntimePromptContext>): void {
@@ -314,9 +320,8 @@ export class ChatRuntime {
     this.rebuildSystemPrompts();
   }
 
-  rebuildSystemPrompts(options?: { skillsBlock?: string }): void {
-    if (options?.skillsBlock !== undefined) this.promptContext.skillsBlock = options.skillsBlock;
-    this.latestPromptComposition = this.composePromptSet(options?.skillsBlock);
+  private rebuildSystemPrompts(): void {
+    this.latestPromptComposition = this.composePromptSet();
     this.refreshSpec();
   }
 
@@ -334,7 +339,7 @@ export class ChatRuntime {
     const registry = ToolCatalog.createSessionRegistry({
       backend: this.backend,
       cwd: this.promptContext.cwd,
-      config: this.currentConfig,
+      config: this.config,
       persona: this.currentPersona,
       subagentSystemPrompt: composition.subagentSystemPrompt,
       modelResolver: this.currentModelResolver,
@@ -351,7 +356,7 @@ export class ChatRuntime {
       : new ToolRegistry([...registry.getEnabledTools(), ...clientTools]);
   }
 
-  private composePromptSet(skillsBlock?: string): SessionPromptComposition {
+  private composePromptSet(): SessionPromptComposition {
     return composeSessionPrompts({
       persona: this.currentPersona,
       sessionId: this.sessionIdValue,
@@ -360,7 +365,7 @@ export class ChatRuntime {
       repository: this.promptContext.repository,
       sessionStartedAt: new Date(this.createdAt).toISOString(),
       platform: this.promptContext.platform,
-      skillsBlock: skillsBlock ?? this.promptContext.skillsBlock,
+      skillsBlock: this.promptContext.skillsBlock,
       projectContextBlock: this.promptContext.projectContextBlock,
     });
   }

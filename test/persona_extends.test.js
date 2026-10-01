@@ -13,6 +13,7 @@ import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parsePrompt } from "../dist/core/config/content_loader.js";
 import { loadAllContent, resolveConfigLevels } from "../dist/core/config/index.js";
+import { buildVirtualBundle } from "../dist/core/config/virtual_bundle.js";
 import { loadModelResolver, resolveModel } from "../dist/core/models/catalog.js";
 
 function setupFixture() {
@@ -32,14 +33,13 @@ function setupFixture() {
 async function loadAllContentWithModelResolver(config, options) {
   const levels = resolveConfigLevels(options.deps, { cwd: options.cwd });
   const modelResolverResult = loadModelResolver({
-    deps: options.deps,
-    levels,
     remoteCatalog: options.remoteCatalog,
   });
   return await loadAllContent(config, {
     deps: options.deps,
     levels,
-    modelResolver: modelResolverResult,
+    modelResolver: modelResolverResult.resolveModel,
+    virtualBundle: buildVirtualBundle(modelResolverResult.resolveConfiguredModel),
   });
 }
 
@@ -173,11 +173,8 @@ describe("custom personas", () => {
         {
           deps,
           levels,
-          modelResolver: {
-            resolveModel: resolveAvailableModel,
-            resolveConfiguredModel: resolveAvailableModel,
-            errors: [],
-          },
+          virtualBundle: buildVirtualBundle(resolveAvailableModel),
+          modelResolver: resolveAvailableModel,
         },
       );
       expect(errors).toEqual([]);

@@ -1,8 +1,14 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import { AgentRuntime, ChatRuntime, createLocalToolExecutionBackend } from "../dist/core/index.js";
 import { resolveModel } from "../dist/core/models/catalog.js";
 import { personas } from "../dist/core/personas.js";
+import { createDefaultCoreDeps } from "../dist/core/runtime/deps.js";
+import { ToolCatalog } from "../dist/core/tools/catalog.js";
+import { ModelRuntime } from "../dist/core/utils/model_stream.js";
 
 function createPersona(overrides = {}) {
   return {
@@ -58,6 +64,63 @@ function createRuntime(overrides = {}) {
 }
 
 describe("ChatRuntime", () => {
+  it("keeps startup credentials independent of reloaded config", () => {
+    const apiKeys = { openai: "host-key", exa: "host-tool-key" };
+    const runtime = createRuntime({ config: { apiKeys } });
+    apiKeys.openai = "mutated-key";
+    runtime.setRuntimeConfig(
+      { apiKeys: { openai: "target-key" }, defaultPersona: "next" },
+      resolveModel,
+    );
+    runtime.setPersona(createPersona());
+    expect(runtime.config).toMatchObject({
+      apiKeys: { openai: "host-key", exa: "host-tool-key" },
+      defaultPersona: "next",
+    });
+    runtime.config.apiKeys.openai = "consumer-mutation";
+    expect(runtime.config.apiKeys.openai).toBe("host-key");
+
+    const withoutCredentials = createRuntime();
+    withoutCredentials.setRuntimeConfig({ apiKeys: { openai: "target-key" } }, resolveModel);
+    expect(withoutCredentials.config.apiKeys).toBeUndefined();
+  });
+
+  it.each([{}, { OPENAI_API_KEY: "environment-key" }])(
+    "uses host credentials for model and tool consumers after reload with env %j",
+    async (env) => {
+      const home = mkdtempSync(join(tmpdir(), "tau-runtime-credentials-"));
+      const deps = createDefaultCoreDeps();
+      deps.env = { ...deps.env, home: () => home, env: () => env };
+      const registry = vi.spyOn(ToolCatalog, "createSessionRegistry");
+      let auth;
+      const stream = vi
+        .spyOn(ModelRuntime.prototype, "streamModel")
+        .mockImplementation(function (model) {
+          auth = this.getAuth(model);
+        });
+      try {
+        const persona = createPersona({ model: resolveModel("openai", "gpt-5.4") });
+        const runtime = createRuntime({
+          persona,
+          deps,
+          config: { apiKeys: { openai: "host-key", exa: "host-tool-key" } },
+        });
+        runtime.setRuntimeConfig(
+          { apiKeys: { openai: "target-key", exa: "target-tool-key" } },
+          resolveModel,
+        );
+        runtime.setPersona(persona);
+        runtime.agent.spec.model.stream({ messages: [] }, {});
+        expect((await auth).auth.apiKey).toBe(env.OPENAI_API_KEY ?? "host-key");
+        expect(registry.mock.calls.at(-1)[0].config.apiKeys.exa).toBe("host-tool-key");
+      } finally {
+        stream.mockRestore();
+        registry.mockRestore();
+        rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("binds main runtime tools and prompts", () => {
     const runtime = createRuntime();
 
@@ -335,11 +398,17 @@ Ship &lt;all&gt; requirements
       }),
     });
 
-    runtime.rebuildSystemPrompts({ skillsBlock: "### Skills\n\n- skill-b" });
+    runtime.updatePromptContext({ skillsBlock: "### Skills\n\n- skill-b" });
 
     const composition = runtime.promptComposition;
     expect(composition.baseSystemPrompt).toContain("skill-b");
     expect(composition.subagentSystemPrompt).toContain("main system prompt");
     expect(runtime.agent.spec.systemPrompt).toBe(composition.baseSystemPrompt);
+
+    runtime.updatePromptContext({ skillsBlock: undefined });
+    runtime.setPersona(createPersona());
+    expect(runtime.promptComposition.baseSystemPrompt).not.toContain("skill-b");
+    expect(runtime.promptComposition.subagentSystemPrompt).not.toContain("skill-b");
+    expect(runtime.agent.spec.systemPrompt).toBe(runtime.promptComposition.baseSystemPrompt);
   });
 });

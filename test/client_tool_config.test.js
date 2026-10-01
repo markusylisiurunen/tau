@@ -47,7 +47,7 @@ function setupFixture() {
 function loadFixtureConfig(fixture, cwd = fixture.repo) {
   const deps = createConfigDeps({ cwd, home: fixture.home });
   const levels = resolveConfigLevels(deps, { cwd });
-  const modelResolver = loadModelResolver({ deps, levels });
+  const modelResolver = loadModelResolver();
   return loadConfigWithDiagnostics(deps, { levels, modelResolver });
 }
 

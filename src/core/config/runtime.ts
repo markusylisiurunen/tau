@@ -207,7 +207,8 @@ export async function loadRuntimeConfig(
   const content = await loadAllContent(bootstrap.config, {
     deps,
     levels: bootstrap.levels,
-    modelResolver: bootstrap.modelResolver,
+    modelResolver: bootstrap.modelResolver.resolveModel,
+    virtualBundle: bootstrap.virtualBundle,
   });
   const warnings = [...bootstrap.warnings, ...content.errors];
   if (bootstrap.config.defaultPersona) {

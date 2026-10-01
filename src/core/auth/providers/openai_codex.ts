@@ -36,10 +36,10 @@ class UnexpectedUsageWindowError extends Error {
 
 type CodexAccount = StoredOAuthAccount;
 type UnknownRecord = Record<string, unknown>;
-type RefreshStatus = "not-requested" | "succeeded" | "failed";
+type RefreshStatus = "succeeded" | "failed";
 type AccountRefreshResult = {
   account: CodexAccount;
-  refreshStatus: Exclude<RefreshStatus, "not-requested">;
+  refreshStatus: RefreshStatus;
 };
 type UsageSnapshotResult = {
   usage?: AuthAccountUsage;
@@ -125,9 +125,7 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
         if (!accountRefresh) {
           return undefined;
         }
-        const usageSnapshot = await this.getUsageSnapshot(authStorage, accountRefresh.account, {
-          forceRefresh: true,
-        });
+        const usageSnapshot = await this.getUsageSnapshot(authStorage, accountRefresh.account);
         const currentAccount = getAccounts(authStorage).find(
           (entry) => entry.accountId === account.accountId,
         );
@@ -148,7 +146,7 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
           credentialExpired: Date.now() >= currentAccount.expires,
           credentialRefreshStatus,
           usage: usageSnapshot.usage,
-          usageRefreshStatus: usageSnapshot.refreshStatus === "succeeded" ? "succeeded" : "failed",
+          usageRefreshStatus: usageSnapshot.refreshStatus,
         } satisfies AuthAccountInfo;
       }),
     );
@@ -158,42 +156,30 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
   private async getApiKeyForAccount(
     authStorage: AuthStorage,
     accountId: string,
-    options?: { signal?: AbortSignal },
   ): Promise<string | undefined> {
-    return await authStorage.withAccountLock(
-      PROVIDER_ID,
-      accountId,
-      async () => {
-        options?.signal?.throwIfAborted();
-        authStorage.reload();
-        const account = getAccounts(authStorage).find((entry) => entry.accountId === accountId);
-        if (!account) return undefined;
+    return await authStorage.withAccountLock(PROVIDER_ID, accountId, async () => {
+      authStorage.reload();
+      const account = getAccounts(authStorage).find((entry) => entry.accountId === accountId);
+      if (!account) return undefined;
 
-        let credential = toOAuthCredential(account);
-        if (Date.now() >= credential.expires) {
-          credential = await openaiCodexOAuth.refresh(
-            credential,
-            options?.signal ?? new AbortController().signal,
-          );
-          options?.signal?.throwIfAborted();
-        }
+      let credential = toOAuthCredential(account);
+      if (Date.now() >= credential.expires) {
+        credential = await openaiCodexOAuth.refresh(credential, new AbortController().signal);
+      }
 
-        const updateResult = updateStoredOAuthAccount(authStorage, account, (current) =>
-          shouldUpdateAccount(current, credential)
-            ? mergeUpdatedCredentials(current, credential)
-            : current,
-        );
-        if (updateResult.status !== "updated") {
-          return undefined;
-        }
+      const updateResult = updateStoredOAuthAccount(authStorage, account, (current) =>
+        shouldUpdateAccount(current, credential)
+          ? mergeUpdatedCredentials(current, credential)
+          : current,
+      );
+      if (updateResult.status !== "updated") {
+        return undefined;
+      }
 
-        const apiKey = (await openaiCodexOAuth.toAuth(toOAuthCredential(updateResult.account)))
-          .apiKey;
-        options?.signal?.throwIfAborted();
-        return apiKey;
-      },
-      options?.signal,
-    );
+      const apiKey = (await openaiCodexOAuth.toAuth(toOAuthCredential(updateResult.account)))
+        .apiKey;
+      return apiKey;
+    });
   }
 
   private async refreshAccountIdentity(
@@ -239,33 +225,16 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
   private async getUsageSnapshot(
     authStorage: AuthStorage,
     account: CodexAccount,
-    options?: {
-      apiKey?: string;
-      forceRefresh?: boolean;
-      signal?: AbortSignal;
-    },
   ): Promise<UsageSnapshotResult> {
-    options?.signal?.throwIfAborted();
     const usage = account.usage;
-    const shouldRefresh = Boolean(options?.forceRefresh);
-    if (!shouldRefresh) return { usage, refreshStatus: "not-requested" };
 
     try {
-      const apiKey =
-        options?.apiKey ??
-        (await this.getApiKeyForAccount(authStorage, account.accountId, {
-          signal: options?.signal,
-        }));
+      const apiKey = await this.getApiKeyForAccount(authStorage, account.accountId);
       if (!apiKey) return { usage, refreshStatus: "failed" };
 
       const refreshedAccount =
         getAccounts(authStorage).find((entry) => entry.accountId === account.accountId) ?? account;
-      const refreshedUsage = await fetchUsage(
-        apiKey,
-        refreshedAccount.providerAccountId,
-        options?.signal,
-      );
-      options?.signal?.throwIfAborted();
+      const refreshedUsage = await fetchUsage(apiKey, refreshedAccount.providerAccountId);
       if (!refreshedUsage) return { usage, refreshStatus: "failed" };
 
       const updateResult = updateStoredOAuthAccount(authStorage, refreshedAccount, (current) => ({
@@ -280,7 +249,6 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
         refreshStatus: updateResult.status === "changed" ? "failed" : "succeeded",
       };
     } catch (error) {
-      options?.signal?.throwIfAborted();
       if (error instanceof UnexpectedUsageWindowError) {
         throw error;
       }
@@ -393,7 +361,6 @@ function matchesIdentifier(account: CodexAccount, identifier: string): boolean {
 async function fetchUsage(
   apiKey: string,
   providerAccountId?: string,
-  signal?: AbortSignal,
 ): Promise<AuthAccountUsage | undefined> {
   const headers: Record<string, string> = {
     Authorization: `Bearer ${apiKey}`,
@@ -403,7 +370,7 @@ async function fetchUsage(
     headers["ChatGPT-Account-Id"] = providerAccountId;
   }
 
-  const response = await fetch(USAGE_ENDPOINT, { method: "GET", headers, signal });
+  const response = await fetch(USAGE_ENDPOINT, { method: "GET", headers });
   if (!response.ok) return undefined;
 
   const root = asRecord((await response.json()) as unknown);

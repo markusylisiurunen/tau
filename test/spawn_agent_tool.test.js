@@ -1,6 +1,4 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
-import { resolveConfigLevels } from "../dist/core/config/index.js";
 import { loadModelResolver, resolveModel } from "../dist/core/models/catalog.js";
 import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
 import { createInterruptAgentToolDefinition } from "../dist/core/tools/interrupt_agent.js";
@@ -48,23 +46,6 @@ function createSubagentState(overrides = {}) {
   };
 }
 
-function createModelResolver(cwd = "/repo/current", home = "/repo") {
-  const deps = {
-    fs: {
-      readFile: (path) => readFileSync(path, "utf-8"),
-      exists: (path) => existsSync(path),
-      listDir: (path) => readdirSync(path),
-      stat: (path) => statSync(path),
-    },
-    env: {
-      getEnv: () => ({}),
-      cwd: () => cwd,
-      home: () => home,
-    },
-  };
-  return loadModelResolver({ deps, levels: resolveConfigLevels(deps, { cwd }) }).resolveModel;
-}
-
 function createFixture(overrides = {}) {
   const anthropic = resolveModel("anthropic", "claude-opus-5");
   expect(anthropic).toBeTruthy();
@@ -93,7 +74,7 @@ function createFixture(overrides = {}) {
     source: "project",
     subagentLaunchModels: ["openai/gpt-5.6-sol:high"],
   };
-  const modelResolver = createModelResolver();
+  const modelResolver = loadModelResolver().resolveModel;
   const options = {
     backend: createLocalToolExecutionBackend(),
     supervisor,

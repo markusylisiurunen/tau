@@ -342,7 +342,6 @@ export class LocalSessionHost implements TauSessionHost {
       resolveSubagentPrompt: createExecutionEnvironmentSubagentPromptResolver({
         sessionId,
         executionEnvironment,
-        getRemoteModelCatalog: () => hostedSession.getRemoteModelCatalog(),
         includeAgentContext: this.sessionOptions.includeAgentContext,
         sessionStartedAt: createdAt,
       }),
@@ -819,10 +818,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     this.committedSnapshot = committedSnapshot
       ? cloneSessionProtocolSnapshot(committedSnapshot)
       : { ...this.buildSnapshotDraft(), revision: 1 };
-  }
-
-  getRemoteModelCatalog(): RemoteModelCatalogSnapshot {
-    return this.remoteCatalog;
   }
 
   get isTurnRunning(): boolean {
@@ -1362,9 +1357,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       this.executionEnvironment.snapshot().cwd,
       { remoteCatalog: this.remoteCatalog },
     );
-    const personas = runtimeConfig.personas.map((persona) =>
-      this.normalizeReloadedPersona(persona),
-    );
+    const personas = runtimeConfig.personas.map(clonePersona);
     const persona = personas.find(
       (persona) => persona.id.toLowerCase() === personaId.toLowerCase(),
     );
@@ -1380,20 +1373,18 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     });
     return await this.enqueueConfigurationMutation(async () => {
       this.runtime.setRuntimeConfig(
-        { ...runtimeConfig.config, apiKeys: this.bootstrap.config?.apiKeys },
+        runtimeConfig.config,
         runtimeConfig.bootstrap.modelResolver.resolveModel,
       );
       this.runtime.updatePromptContext(runtimeContext.promptBootstrap.promptContext);
-      this.runtime.setPersona(selectedPersona, {
-        skillsBlock: runtimeContext.promptBootstrap.promptContext.skillsBlock,
-      });
+      this.runtime.setPersona(selectedPersona);
       this.bootstrap = {
         persona: clonePersona(selectedPersona),
         discoveredSkills: structuredClone(runtimeConfig.skills),
         personas: personas.map(clonePersona),
         prompts: structuredClone(runtimeConfig.prompts),
         modelResolver: runtimeConfig.bootstrap.modelResolver.resolveModel,
-        config: { ...runtimeConfig.config, apiKeys: this.bootstrap.config?.apiKeys },
+        config: runtimeConfig.config,
       };
       this.catalog = createContentCatalogSnapshot(this.bootstrap, this.catalog.mcpServers);
       const snapshot = await this.commitSnapshot();
@@ -1413,9 +1404,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       throw new Error("reload failed: no personas available");
     }
 
-    const personas = runtimeConfig.personas.map((persona) =>
-      this.normalizeReloadedPersona(persona),
-    );
+    const personas = runtimeConfig.personas.map(clonePersona);
     const currentPersonaId = this.runtime.persona.id.toLowerCase();
     const nextPersona =
       personas.find((persona) => persona.id.toLowerCase() === currentPersonaId) ?? personas[0]!;
@@ -1428,13 +1417,11 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
     return await this.enqueueConfigurationMutation(async () => {
       this.runtime.setRuntimeConfig(
-        { ...runtimeConfig.config, apiKeys: this.bootstrap.config?.apiKeys },
+        runtimeConfig.config,
         runtimeConfig.bootstrap.modelResolver.resolveModel,
       );
       this.runtime.updatePromptContext(runtimeContext.promptBootstrap.promptContext);
-      this.runtime.setPersona(nextPersona, {
-        skillsBlock: runtimeContext.promptBootstrap.promptContext.skillsBlock,
-      });
+      this.runtime.setPersona(nextPersona);
       this.remoteCatalog = remoteCatalog;
       this.bootstrap = {
         persona: clonePersona(nextPersona),
@@ -1442,7 +1429,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         personas: personas.map(clonePersona),
         prompts: structuredClone(runtimeConfig.prompts),
         modelResolver: runtimeConfig.bootstrap.modelResolver.resolveModel,
-        config: { ...runtimeConfig.config, apiKeys: this.bootstrap.config?.apiKeys },
+        config: runtimeConfig.config,
       };
 
       this.catalog = createContentCatalogSnapshot(this.bootstrap, this.catalog.mcpServers);
@@ -1459,10 +1446,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         },
       };
     });
-  }
-
-  private normalizeReloadedPersona(persona: Persona): Persona {
-    return clonePersona(persona);
   }
 
   async resolvePrompt(
@@ -1621,7 +1604,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       sessionId: this.sessionId,
       sessionStartedAt: this.createdAt,
       persona: this.runtime.persona,
-      config: this.bootstrap.config ?? {},
+      config: this.runtime.config,
       discoveredSkills: this.bootstrap.discoveredSkills,
       includeAgentContext: this.includeAgentContext,
       executionEnvironment: this.executionEnvironment,

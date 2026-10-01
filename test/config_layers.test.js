@@ -250,7 +250,7 @@ describe("config paths", () => {
       });
 
       const levels = resolveConfigLevels(deps, { cwd: fx.repo });
-      const modelResolver = loadModelResolver({ deps, levels });
+      const modelResolver = loadModelResolver();
       const result = loadConfigWithDiagnostics(deps, { levels, modelResolver });
       expect(result.config).toMatchObject({
         defaultPersona: "sonnet-5.5-coder",
@@ -276,7 +276,7 @@ describe("config paths", () => {
       writeFileSync(join(fx.repo, ".tau", "config.json"), JSON.stringify({ speech }));
       const deps = createConfigDeps({ cwd: fx.repo, home: fx.home, env: {} });
       const levels = resolveConfigLevels(deps, { cwd: fx.repo });
-      const modelResolver = loadModelResolver({ deps, levels });
+      const modelResolver = loadModelResolver();
       const result = loadConfigWithDiagnostics(deps, { levels, modelResolver });
       expect(result.config.speech).toBeUndefined();
       expect(result.errors.length).toBeGreaterThan(0);
@@ -305,7 +305,7 @@ describe("config paths", () => {
       });
 
       const levels = resolveConfigLevels(deps, { cwd: fx.repo });
-      const modelResolver = loadModelResolver({ deps, levels });
+      const modelResolver = loadModelResolver();
       const result = loadConfigWithDiagnostics(deps, { levels, modelResolver });
       expect(result.config.speech).toBeUndefined();
       expect(result.config.defaultTheme).toBe("midnight");
@@ -335,7 +335,7 @@ describe("config paths", () => {
 
       const deps = createConfigDeps({ cwd: repo, home: fx.home, env: {} });
       const levels = resolveConfigLevels(deps, { cwd: repo });
-      const modelResolver = loadModelResolver({ deps, levels });
+      const modelResolver = loadModelResolver();
       const result = loadConfigWithDiagnostics(deps, { levels, modelResolver });
 
       expect(result.config.history).toBeUndefined();
@@ -446,7 +446,7 @@ describe("config paths", () => {
       });
 
       const levels = resolveConfigLevels(deps, { cwd: fx.repo });
-      const modelResolver = loadModelResolver({ deps, levels });
+      const modelResolver = loadModelResolver();
       const result = loadConfigWithDiagnostics(deps, { levels, modelResolver });
 
       expect(result.config.modelSystemNotices).toBeUndefined();
@@ -476,7 +476,7 @@ describe("config paths", () => {
       });
 
       const levels = resolveConfigLevels(deps, { cwd: fx.repo });
-      const modelResolver = loadModelResolver({ deps, levels });
+      const modelResolver = loadModelResolver();
       const result = loadConfigWithDiagnostics(deps, { levels, modelResolver });
 
       expect(result.config).not.toHaveProperty("async");
@@ -509,7 +509,7 @@ describe("config paths", () => {
       });
 
       const levels = resolveConfigLevels(deps, { cwd: fx.repo });
-      const modelResolver = loadModelResolver({ deps, levels });
+      const modelResolver = loadModelResolver();
       const result = loadConfigWithDiagnostics(deps, { levels, modelResolver });
 
       expect(result.config).not.toHaveProperty("disableBuiltinPersonas");
@@ -565,7 +565,7 @@ describe("MCP host configuration", () => {
       const levels = resolveConfigLevels(deps, { cwd: repo });
       const result = loadConfigWithDiagnostics(deps, {
         levels,
-        modelResolver: loadModelResolver({ deps, levels }),
+        modelResolver: loadModelResolver(),
       });
       expect(result.config.mcpServers).toEqual({
         local: {

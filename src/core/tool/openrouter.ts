@@ -68,8 +68,11 @@ function modelHelp(operation: Operation): string[] {
   );
 }
 
-function printHelp(operation: Operation | undefined, log: (line: string) => void): void {
-  log(
+async function printHelp(
+  operation: Operation | undefined,
+  log: (line: string) => void | Promise<void>,
+): Promise<void> {
+  await log(
     [
       `usage: tau tool openrouter ${operation ?? "<decisions|chat>"} [flags]`,
       "",
@@ -272,22 +275,30 @@ export async function runOpenRouterCommand(
   },
 ): Promise<void> {
   const [operation, ...flags] = argv;
-  const log = options.stdout ?? console.log;
+  const log =
+    options.stdout ??
+    ((line: string) =>
+      new Promise<void>((resolve, reject) => {
+        process.stdout.write(`${line}\n`, (error) => {
+          if (error) reject(error);
+          else resolve();
+        });
+      }));
   if ((operation === "--help" || operation === "-h") && !flags.length) {
-    printHelp(undefined, log);
+    await printHelp(undefined, log);
     return;
   }
   if (operation !== "decisions" && operation !== "chat")
     throw new ToolCliError("use tau tool openrouter <decisions|chat> --help");
   const { values, attachments } = parseOptions(flags, operation);
   if (values.help) {
-    printHelp(operation, log);
+    await printHelp(operation, log);
     return;
   }
   if (values["list-models"]) {
     if (Object.keys(values).length !== 1)
       throw new ToolCliError("--list-models cannot be combined with request flags");
-    log(JSON.stringify({ models: models[operation] }));
+    await log(JSON.stringify({ models: models[operation] }));
     return;
   }
   const requestedModel = requiredArg(values.model, "model");
@@ -310,7 +321,7 @@ export async function runOpenRouterCommand(
     if (!result.success)
       throw new ToolCliError("OpenRouter returned an invalid decisions response");
     validateDecisionAnswers(input, result.data);
-    log(JSON.stringify({ requested_model: requestedModel, ...result.data }));
+    await log(JSON.stringify({ requested_model: requestedModel, ...result.data }));
     return;
   }
   if (
@@ -355,7 +366,7 @@ export async function runOpenRouterCommand(
   const { message, finish_reason, native_finish_reason } = choices[0];
   if (finish_reason === "stop" && !message.content?.trim() && !message.refusal)
     throw new ToolCliError("OpenRouter returned no answer or refusal");
-  log(
+  await log(
     JSON.stringify({
       requested_model: requestedModel,
       ...metadata,

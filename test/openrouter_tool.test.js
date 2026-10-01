@@ -1,7 +1,9 @@
+import { execFile } from "node:child_process";
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Readable } from "node:stream";
+import { promisify } from "node:util";
 import sharp from "sharp";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runToolCommand } from "../dist/core/tool/cli.js";
@@ -95,6 +97,43 @@ function wav() {
 }
 
 describe("OpenRouter standalone commands", () => {
+  it.each(["chat", "decisions"])(
+    "flushes a large %s result through piped stdout before successful exit",
+    async (operation) => {
+      const root = await fixture();
+      const text = "A long answer. ".repeat(100_000);
+      const reply = operation === "chat" ? chatReply() : decisionReply();
+      if (operation === "chat") reply.choices[0].message.content = text;
+      else reply.answers.urgency.legend[1] = text;
+      const responsePath = join(root, "response.json");
+      const inputPath = join(root, "input.json");
+      await writeFile(responsePath, JSON.stringify(reply));
+      await writeFile(inputPath, JSON.stringify(decisionInput));
+      const args = operation === "chat" ? chat : [...decisions.slice(0, -1), inputPath];
+      const cliUrl = new URL("../dist/core/tool/cli.js", import.meta.url).href;
+      const script = `
+        import { readFile } from "node:fs/promises";
+        import { runToolCommand } from ${JSON.stringify(cliUrl)};
+        const response = await readFile(${JSON.stringify(responsePath)}, "utf8");
+        await runToolCommand(${JSON.stringify(["openrouter", ...args])}, {
+          config: { apiKeys: { openrouter: "test-key" } },
+          env: {},
+          fetchImpl: async () => new Response(response),
+        });
+        process.exit(0);
+      `;
+      const { stdout, stderr } = await promisify(execFile)(
+        process.execPath,
+        ["--input-type=module", "--eval", script],
+        { maxBuffer: 8_000_000, timeout: 30_000 },
+      );
+      expect(stderr).toBe("");
+      const result = JSON.parse(stdout);
+      expect(result.requested_model).toBe(args[2]);
+      expect(operation === "chat" ? result.answer : result.answers.urgency.legend[1]).toBe(text);
+    },
+  );
+
   it("dispatches offline help and fixed catalogs without touching stdin, credentials, or network", async () => {
     for (const operation of ["decisions", "chat"]) {
       const options = {

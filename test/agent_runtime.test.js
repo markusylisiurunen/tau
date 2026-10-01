@@ -97,7 +97,6 @@ function createRuntime(options = {}) {
       stream: () => {
         throw new Error("model stream was not configured");
       },
-      noteProviderError: async () => {},
       cleanupSession: () => {},
     },
     attribution: {
@@ -137,7 +136,6 @@ function setStreams(runtime, streams) {
     return stream;
   });
   runtime.spec.model.stream = streamModel;
-  runtime.spec.model.noteProviderError = vi.fn(async () => {});
   return streamModel;
 }
 
@@ -1212,10 +1210,6 @@ describe("AgentRuntime", () => {
     expect(events.filter((event) => event.type === "turn_finished").at(-1)).toMatchObject({
       outcome: "failed",
       historyEntryId: association.historyEntryId,
-    });
-    expect(runtime.spec.model.noteProviderError).toHaveBeenCalledWith({
-      sessionId: runtime.agentIdValue,
-      error: expect.objectContaining({ message: "OpenAI rate limit exceeded" }),
     });
     expect(events).toContainEqual({ type: "model_retry_scheduled", attempt: 1, delayMs: 0 });
 

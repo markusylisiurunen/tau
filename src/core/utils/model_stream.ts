@@ -1,4 +1,3 @@
-import { AsyncLocalStorage } from "node:async_hooks";
 import type {
   Api,
   ApiStreamOptions,
@@ -14,9 +13,11 @@ import type {
   ThinkingLevel,
 } from "@earendil-works/pi-ai";
 import {
+  createModels,
   defaultProviderAuthContext,
   getSupportedThinkingLevels,
   lazyStream,
+  normalizeContext,
 } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { formatCodexAuthError } from "../auth/auth_messages.js";
@@ -62,13 +63,13 @@ function formatModelCodexAuthError(authPath: string | undefined, detail?: string
     return formatCodexAuthError(authPath, detail);
   }
 
-  const base = "OpenAI Codex credentials are missing or expired.";
+  const base =
+    'no active OpenAI Codex credentials; run "tau auth login codex" or "tau auth use codex --account <email-or-id>".';
   return detail ? `${base} ${detail}` : base;
 }
 
 export class ModelRuntime {
   readonly models: MutableModels;
-  private readonly sessionContext = new AsyncLocalStorage<string | undefined>();
   private readonly authPath?: string;
   private readonly credentialStore?: TauCredentialStore;
 
@@ -80,7 +81,6 @@ export class ModelRuntime {
             authStorage: options.authStorage,
             getConfig: options.getConfig,
             env: options.env,
-            getSessionId: () => this.sessionContext.getStore(),
           })
         : undefined;
     this.models = builtinModels({
@@ -97,15 +97,9 @@ export class ModelRuntime {
     return this.models.getModel(provider, modelId);
   }
 
-  getAuth(model: Model<Api>): Promise<AuthResult | undefined> {
-    return this.models.getAuth(model);
-  }
-
-  noteProviderError(
-    provider: string,
-    options?: { sessionId?: string; error?: unknown },
-  ): Promise<void> {
-    return this.credentialStore?.noteProviderError(provider, options) ?? Promise.resolve();
+  async getAuth(model: Model<Api>, signal?: AbortSignal): Promise<AuthResult | undefined> {
+    const models = isOpenAICodexModel(model) ? this.createCodexRequestModels() : this.models;
+    return await models.getAuth(model, { signal });
   }
 
   streamModel<TApi extends Api>(
@@ -113,33 +107,52 @@ export class ModelRuntime {
     context: Context,
     options: TauStreamOptions,
   ): AssistantMessageEventStream {
-    return this.sessionContext.run(options.sessionId, () => {
-      if (isOpenAICodexModel(model)) {
-        return lazyStream(model, async () => {
-          await this.requireCodexAuth(model);
-          return this.streamModelWithSession(model, context, options);
-        });
-      }
-
-      return this.streamModelWithSession(model, context, options);
-    });
+    if (isOpenAICodexModel(model)) {
+      return lazyStream(model, async () => {
+        let auth: AuthResult | undefined;
+        try {
+          auth = await this.getAuth(model, options.signal);
+        } catch (error) {
+          options.signal?.throwIfAborted();
+          const detail = error instanceof Error ? error.message : String(error);
+          throw new Error(formatModelCodexAuthError(this.authPath, detail));
+        }
+        options.signal?.throwIfAborted();
+        if (!auth) throw new Error(formatModelCodexAuthError(this.authPath));
+        const provider = this.models.getProvider(model.provider);
+        if (!provider) throw new Error(`missing model provider '${model.provider}'`);
+        const requestModel = auth.auth.baseUrl ? { ...model, baseUrl: auth.auth.baseUrl } : model;
+        const headers = { ...auth.auth.headers };
+        for (const [name, value] of Object.entries(options.headers ?? {})) {
+          for (const existingName of Object.keys(headers)) {
+            if (existingName.toLowerCase() === name.toLowerCase()) delete headers[existingName];
+          }
+          headers[name] = value;
+        }
+        return provider.stream<"openai-codex-responses">(
+          requestModel as Model<"openai-codex-responses">,
+          normalizeContext(context),
+          {
+            ...resolveOpenAIResponsesOptions(model, options),
+            apiKey: auth.auth.apiKey,
+            headers,
+            ...(auth.env ? { env: { ...auth.env, ...options.env } } : {}),
+          } as ApiStreamOptions<"openai-codex-responses">,
+        );
+      });
+    }
+    return this.streamModelWithOptions(model, context, options);
   }
 
-  private async requireCodexAuth(model: Model<"openai-codex-responses">): Promise<void> {
-    let auth: AuthResult | undefined;
-    try {
-      auth = await this.models.getAuth(model);
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      throw new Error(formatModelCodexAuthError(this.authPath, detail));
-    }
-
-    if (!auth) {
-      throw new Error(formatModelCodexAuthError(this.authPath));
-    }
+  private createCodexRequestModels(): MutableModels {
+    const provider = this.models.getProvider("openai-codex");
+    if (!provider) throw new Error("missing Codex provider");
+    const models = createModels({ credentials: this.credentialStore?.bindCodexAccount() });
+    models.setProvider(provider);
+    return models;
   }
 
-  private streamModelWithSession<TApi extends Api>(
+  private streamModelWithOptions<TApi extends Api>(
     model: Model<TApi>,
     context: Context,
     options: TauStreamOptions,
@@ -158,14 +171,6 @@ export class ModelRuntime {
         model,
         context,
         resolveOpenAIResponsesOptions(model, options) as ApiStreamOptions<"openai-responses">,
-      );
-    }
-
-    if (isOpenAICodexModel(model)) {
-      return this.models.stream<"openai-codex-responses">(
-        model,
-        context,
-        resolveOpenAIResponsesOptions(model, options) as ApiStreamOptions<"openai-codex-responses">,
       );
     }
 

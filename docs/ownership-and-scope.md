@@ -22,7 +22,7 @@ The intrinsic `tau_docs` tool is also host-owned. It reads documentation package
 
 ### Execution environment
 
-The **execution environment** is the machine the agent can act on. It owns the agent-visible working directory (`cwd`), home, platform, environment, filesystem, processes, project repository, project configuration and content, `AGENTS.md` files, model overlays, skills, and command resolution.
+The **execution environment** is the machine the agent can act on. It owns the agent-visible working directory (`cwd`), home, platform, environment, filesystem, processes, project repository, project configuration and content, `AGENTS.md` files, skills, and command resolution.
 
 Tau asks the execution environment to read or execute against those resources. The host must not treat its own filesystem as a shortcut, even when a local execution environment happens to share it.
 
@@ -52,9 +52,9 @@ A Fly Sprite can place the execution environment on another target while the hos
 | Resource or behavior | Canonical owner | Consequence |
 | --- | --- | --- |
 | Agent `cwd`, home, repository, files, and commands | Execution environment | Use target paths in prompts, `session.create`, and agent tool calls. |
-| `.tau/config.json`, `.tau/models.json`, personas, prompts, skills, and `AGENTS.md` used by a session | Execution environment | Edit them on the target and relative to the session `cwd`. |
+| `.tau/config.json`, personas, prompts, skills, and `AGENTS.md` used by a session | Execution environment | Edit them on the target and relative to the session `cwd`. |
 | Global runtime content for a session | Execution-environment home | `~/.config/tau` is the target user's home when runtime content is collected. |
-| Model and host-tool credentials | Host | Set environment secrets where the host process runs. Runtime `apiKeys` may be loaded from execution-environment config and consumed by the host. |
+| Model and host-tool credentials | Host | Set environment secrets where the host process runs. API keys come from the host environment or private global host configuration. |
 | Codex OAuth accounts | Host home | Run `tau auth …` on the host machine. Do not edit auth storage. |
 | Session snapshots | Host home | Local defaults live under the host's Tau config directory. Do not edit session files. |
 | Local transcript history and remote history outbox | Host home | History follows the host, not an attached TUI or execution target. |

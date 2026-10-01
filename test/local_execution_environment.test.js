@@ -3,7 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createLocalToolExecutionBackend } from "../dist/core/index.js";
-import { personas } from "../dist/core/personas.js";
 import {
   LocalExecutionEnvironment,
   LocalExecutionEnvironmentResolver,
@@ -237,10 +236,8 @@ describe("LocalExecutionEnvironment", () => {
 
     const runtimeContext = await environment.resolveRuntimeContext({
       cwd,
-      persona: personas[0],
       discoveredSkills: [],
       includeAgentContext: false,
-      agentContextFiles: [],
     });
 
     const { promptBootstrap } = runtimeContext;
@@ -270,10 +267,8 @@ describe("LocalExecutionEnvironment", () => {
 
       const runtimeContext = await environment.resolveRuntimeContext({
         cwd: repo,
-        persona: personas[0],
         discoveredSkills: [],
         includeAgentContext: true,
-        agentContextFiles: [],
       });
 
       expect(runtimeContext.promptBootstrap.promptContext.projectContextBlock).toContain(
@@ -315,7 +310,7 @@ describe("LocalExecutionEnvironment", () => {
       const largePrompt = "x".repeat(1_100_000);
       await writeFile(
         join(repo, ".tau", "prompts", "large.md"),
-        `---\nid: large\n---\n${largePrompt}`,
+        `---\nlabel: large\n---\n${largePrompt}`,
         "utf8",
       );
       const resolver = new LocalExecutionEnvironmentResolver({

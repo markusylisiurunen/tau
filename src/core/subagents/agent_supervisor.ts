@@ -157,7 +157,6 @@ export class AgentSupervisor {
       model: runtimeConfig.model,
       settings: runtimeConfig.settings,
       tools: runtimeConfig.tools,
-      skills: [],
       subagentLaunchModels: [],
     };
     const runtime = new AgentRuntime({

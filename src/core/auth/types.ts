@@ -7,7 +7,6 @@ export type StoredApiKeyAccount = {
 export type StoredOAuthAccount = {
   type: "oauth";
   accountId: string;
-  disabled: boolean;
   providerAccountId?: string;
   access: string;
   refresh: string;
@@ -20,6 +19,7 @@ export type StoredOAuthAccount = {
 export type StoredAccount = StoredApiKeyAccount | StoredOAuthAccount;
 
 export type ProviderAuthData = {
+  activeAccountId: string | null;
   accounts: StoredAccount[];
 };
 
@@ -41,7 +41,6 @@ export type AuthAccountUsage = {
 export type AuthAccountInfo = {
   provider: string;
   accountId: string;
-  disabled: boolean;
   email?: string;
   plan?: string;
   credentialExpired: boolean;

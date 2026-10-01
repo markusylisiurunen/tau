@@ -1,4 +1,3 @@
-import { resolve } from "node:path";
 import { z } from "zod";
 import {
   type LoadedModelResolver,
@@ -31,7 +30,6 @@ export interface Config {
   defaultTheme?: string;
   clientTools?: CommandClientToolConfig[];
   enabledClientTools?: string[];
-  agentContextFiles?: string[];
   subagents?: {
     launchModels?: string[];
   };
@@ -47,15 +45,11 @@ export type RecordingShortcut = {
   gesture: "press" | "double-tap";
 };
 
-export type FlySpritesApiConfig = {
+export type FlySpritesConfig = {
   baseURL?: string;
   token?: string;
   tokenEnv?: string;
   home?: string;
-};
-
-export type FlySpritesConfig = {
-  apis?: Record<string, FlySpritesApiConfig>;
 };
 
 export type NookConfig = {
@@ -118,20 +112,14 @@ type ConfigDiagnostics = {
 };
 
 const NonEmptyStringSchema = z.string().trim().min(1);
-const AgentContextFilesSchema = z.array(NonEmptyStringSchema);
 const ApiKeyProviderSchema = z.string();
 const ApiKeysSchema = z.object({}).catchall(z.unknown());
-const FlySpritesApiSchema = z
+const FlySpritesConfigSchema = z
   .object({
     baseURL: NonEmptyStringSchema.optional(),
     token: NonEmptyStringSchema.optional(),
     tokenEnv: NonEmptyStringSchema.optional(),
     home: NonEmptyStringSchema.optional(),
-  })
-  .strip();
-const FlySpritesConfigSchema = z
-  .object({
-    apis: z.record(NonEmptyStringSchema, FlySpritesApiSchema).optional(),
   })
   .strip();
 const NookConfigSchema = z
@@ -311,8 +299,12 @@ function validateConfigData(
   const config: Config = {};
   const errors: string[] = [];
 
-  const apiKeysResult = parseApiKeysConfig(data.apiKeys, sourceLabel);
-  assignParsedConfigValue(config, errors, "apiKeys", apiKeysResult.config, apiKeysResult.errors);
+  if (data.apiKeys !== undefined && options.scope !== "global") {
+    errors.push(`${sourceLabel}: 'apiKeys' may only be configured in the global config.`);
+  } else {
+    const apiKeysResult = parseApiKeysConfig(data.apiKeys, sourceLabel);
+    assignParsedConfigValue(config, errors, "apiKeys", apiKeysResult.config, apiKeysResult.errors);
+  }
 
   const defaultPersonaResult = parseDefaultPersona(data.defaultPersona, sourceLabel);
   assignParsedConfigValue(
@@ -378,15 +370,6 @@ function validateConfigData(
     );
   }
 
-  const agentResult = parseAgentContextFiles(data.agentContextFiles, sourceLabel);
-  assignParsedConfigValue(
-    config,
-    errors,
-    "agentContextFiles",
-    agentResult.paths.length > 0 ? agentResult.paths : undefined,
-    agentResult.errors,
-  );
-
   const subagentsResult = parseSubagentsConfig(data.subagents, sourceLabel, options.resolveModel);
   assignParsedConfigValue(
     config,
@@ -434,25 +417,6 @@ function validateConfigData(
   return { config, errors };
 }
 
-function parseAgentContextFiles(
-  raw: unknown,
-  sourceLabel: string,
-): { paths: string[]; errors: string[] } {
-  if (raw === undefined) {
-    return { paths: [], errors: [] };
-  }
-
-  const parsed = AgentContextFilesSchema.safeParse(raw);
-  if (!parsed.success) {
-    return {
-      paths: [],
-      errors: [`${sourceLabel}: 'agentContextFiles' must be a string array.`],
-    };
-  }
-
-  return { paths: parsed.data, errors: [] };
-}
-
 function parseFlySpritesConfig(
   raw: unknown,
   sourceLabel: string,
@@ -464,15 +428,11 @@ function parseFlySpritesConfig(
   const parsed = FlySpritesConfigSchema.safeParse(raw);
   if (!parsed.success) {
     return {
-      errors: [`${sourceLabel}: 'flySprites' must be an object with an 'apis' map of API configs.`],
+      errors: [`${sourceLabel}: 'flySprites' must contain connection options.`],
     };
   }
 
-  const apis = parsed.data.apis;
-  return {
-    config: apis && Object.keys(apis).length > 0 ? { apis } : undefined,
-    errors: [],
-  };
+  return { config: parsed.data, errors: [] };
 }
 
 function parseNookConfig(
@@ -747,41 +707,6 @@ function mergeSubagentsConfig(
   return merged;
 }
 
-function mergeFlySpritesConfig(
-  target: FlySpritesConfig | undefined,
-  overlay: FlySpritesConfig | undefined,
-): FlySpritesConfig | undefined {
-  if (!target && !overlay) {
-    return undefined;
-  }
-
-  const apis = new Map<string, FlySpritesApiConfig>();
-  for (const [id, api] of Object.entries(target?.apis ?? {})) {
-    apis.set(id, { ...api });
-  }
-  for (const [id, api] of Object.entries(overlay?.apis ?? {})) {
-    apis.set(id, { ...api });
-  }
-
-  return apis.size > 0 ? { apis: Object.fromEntries(apis.entries()) } : undefined;
-}
-
-function resolveAgentContextPaths(level: ConfigLevel, rawPaths: string[]): string[] {
-  const root = level.levelRoot;
-  return rawPaths.map((entry) => resolve(root, entry));
-}
-
-function dedupePaths(paths: string[]): string[] {
-  const seen = new Set<string>();
-  const unique: string[] = [];
-  for (const path of paths) {
-    if (seen.has(path)) continue;
-    seen.add(path);
-    unique.push(path);
-  }
-  return unique;
-}
-
 function mergeConfigLevels(levels: ConfigLevel[], configs: Config[], home: string): Config {
   const merged: Config = getVirtualConfigDefaults();
   let apiKeys: Config["apiKeys"] | undefined;
@@ -792,7 +717,6 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[], home: strin
   let flySprites: FlySpritesConfig | undefined;
   let nook: NookConfig | undefined;
   let history: HistoryConfig | undefined;
-  const agentContextFiles: string[] = [];
 
   for (let i = 0; i < levels.length; i += 1) {
     const level = levels[i]!;
@@ -810,7 +734,7 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[], home: strin
     }
     subagents = mergeSubagentsConfig(subagents, config.subagents);
     modelSystemNotices = mergeOptionalObject(modelSystemNotices, config.modelSystemNotices);
-    flySprites = mergeFlySpritesConfig(flySprites, config.flySprites);
+    flySprites = mergeOptionalObject(flySprites, config.flySprites);
     if (config.nook !== undefined) {
       nook = { ...config.nook };
     }
@@ -830,10 +754,6 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[], home: strin
 
     if (config.defaultTheme !== undefined) {
       merged.defaultTheme = config.defaultTheme;
-    }
-
-    if (config.agentContextFiles) {
-      agentContextFiles.push(...resolveAgentContextPaths(level, config.agentContextFiles));
     }
   }
 
@@ -868,10 +788,6 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[], home: strin
     merged.history = history;
   }
 
-  if (agentContextFiles.length > 0) {
-    merged.agentContextFiles = dedupePaths(agentContextFiles);
-  }
-
   return merged;
 }
 
@@ -897,13 +813,13 @@ export function loadConfigWithDiagnostics(
       results.map((result) => result.config),
       deps.env.home(),
     ),
-    errors: [...modelResolverResult.errors, ...results.flatMap((result) => result.errors)],
+    errors: results.flatMap((result) => result.errors),
   };
 }
 
 export function loadConfig(cwd: string, deps: ConfigDeps): Config {
   const levels = resolveConfigLevels(deps, { cwd });
-  const modelResolver = loadModelResolver({ deps, levels });
+  const modelResolver = loadModelResolver();
   return loadConfigWithDiagnostics(deps, { levels, modelResolver }).config;
 }
 

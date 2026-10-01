@@ -54,12 +54,12 @@ async function createInProcessSdkHost(
   const resolvers: ConstructorParameters<typeof CompositeExecutionEnvironmentResolver>[0] = {
     local: localResolver,
   };
-  if (config.flySprites?.apis) {
+  if (config.flySprites) {
     const { FlySpriteExecutionEnvironmentResolver } = await import(
       "../execution/fly_sprite_execution_environment.js"
     );
     resolvers["fly-sprite"] = new FlySpriteExecutionEnvironmentResolver({
-      apis: config.flySprites.apis,
+      connection: config.flySprites,
     });
   }
   const executionEnvironmentResolver = new CompositeExecutionEnvironmentResolver(resolvers);
@@ -121,7 +121,7 @@ async function createInProcessSdkHost(
         personas: envRuntime.personas.map(clonePersonaForSession),
         prompts: envRuntime.prompts,
         modelResolver: envRuntime.bootstrap.modelResolver.resolveModel,
-        config: envRuntime.config,
+        config: { ...envRuntime.config, apiKeys: config.apiKeys },
       };
     },
   });

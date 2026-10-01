@@ -11,7 +11,9 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { parsePrompt } from "../dist/core/config/content_loader.js";
 import { loadAllContent, resolveConfigLevels } from "../dist/core/config/index.js";
+import { buildVirtualBundle } from "../dist/core/config/virtual_bundle.js";
 import { loadModelResolver, resolveModel } from "../dist/core/models/catalog.js";
 
 function setupFixture() {
@@ -31,14 +33,13 @@ function setupFixture() {
 async function loadAllContentWithModelResolver(config, options) {
   const levels = resolveConfigLevels(options.deps, { cwd: options.cwd });
   const modelResolverResult = loadModelResolver({
-    deps: options.deps,
-    levels,
     remoteCatalog: options.remoteCatalog,
   });
   return await loadAllContent(config, {
     deps: options.deps,
     levels,
-    modelResolver: modelResolverResult,
+    modelResolver: modelResolverResult.resolveModel,
+    virtualBundle: buildVirtualBundle(modelResolverResult.resolveConfiguredModel),
   });
 }
 
@@ -59,43 +60,45 @@ describe("custom personas", () => {
     };
   }
 
-  it("supports extends from built-in personas", async () => {
+  it("requires a self-contained prompt and does not inherit settings", async () => {
     const fx = setupFixture();
-
     try {
-      mkdirSync(join(fx.home, ".config", "tau", "personas"), { recursive: true });
+      const dir = join(fx.home, ".config", "tau", "personas");
+      mkdirSync(dir, { recursive: true });
       writeFileSync(
-        join(fx.home, ".config", "tau", "personas", "haiku-clone-of-gpt-coder.md"),
-        [
-          "---",
-          "id: haiku-clone-of-gpt-coder",
-          "extends: gpt-6.1-sol-coder",
-          "provider: anthropic",
-          "model: claude-haiku-4-5",
-          "---",
-          "",
-        ].join("\n"),
+        join(dir, "empty.md"),
+        "---\nid: empty\nprovider: anthropic\nmodel: claude-haiku-4-5\n---\n",
       );
-
-      const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
-      const { personas, errors } = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
-      expect(errors).toEqual([]);
-
-      const base = personas.find((p) => p.id === "gpt-6.1-sol-coder");
-      const clone = personas.find((p) => p.id === "haiku-clone-of-gpt-coder");
-
-      expect(base).toBeTruthy();
-      expect(clone).toBeTruthy();
-
-      expect(clone.model.provider).toBe("anthropic");
-      expect(clone.systemPrompt).toBe(base.systemPrompt);
-      expect(clone.skills).toEqual(base.skills);
-
-      expect(clone.tools).toEqual(base.tools);
-
-      expect(clone.subagentLaunchModels).toEqual(base.subagentLaunchModels);
+      writeFileSync(
+        join(dir, "custom.md"),
+        "---\nid: custom\nprovider: anthropic\nmodel: claude-haiku-4-5\nallowedReasoningLevels: [low, high]\ntools: [bash]\n---\nmy own prompt",
+      );
+      const { personas, errors } = await loadAllContentWithModelResolver(
+        {},
+        { deps: createConfigDeps(fx), cwd: fx.cwd },
+      );
+      expect(personas.some((persona) => persona.id === "empty")).toBe(false);
+      expect(errors).toHaveLength(1);
+      expect(personas.find((persona) => persona.id === "custom")).toMatchObject({
+        systemPrompt: "my own prompt",
+        settings: {},
+        tools: ["bash"],
+        allowedReasoningLevels: ["low", "high"],
+      });
     } finally {
       fx.cleanup();
+    }
+  });
+
+  it("derives prompt ids from filenames and requires labels", () => {
+    expect(
+      parsePrompt(
+        "/prompts/review.md",
+        "---\nlabel: Review\nid: ignored\ndescription: ignored\n---\nreview code",
+      ),
+    ).toEqual({ prompt: { id: "review", label: "Review", template: "review code" } });
+    for (const content of ["plain markdown", "---\nlabel: ''\n---\nbody"]) {
+      expect(parsePrompt("/prompts/review.md", content).prompt).toBeUndefined();
     }
   });
 
@@ -170,11 +173,8 @@ describe("custom personas", () => {
         {
           deps,
           levels,
-          modelResolver: {
-            resolveModel: resolveAvailableModel,
-            resolveConfiguredModel: resolveAvailableModel,
-            errors: [],
-          },
+          virtualBundle: buildVirtualBundle(resolveAvailableModel),
+          modelResolver: resolveAvailableModel,
         },
       );
       expect(errors).toEqual([]);
@@ -421,67 +421,6 @@ describe("custom personas", () => {
     }
   });
 
-  it("applies configured models.json entries to built-in personas", async () => {
-    const fx = setupFixture();
-
-    try {
-      mkdirSync(join(fx.home, ".config", "tau"), { recursive: true });
-      writeFileSync(
-        join(fx.home, ".config", "tau", "models.json"),
-        JSON.stringify(
-          {
-            providers: {
-              openai: {
-                models: [
-                  {
-                    id: "gpt-6.1-sol",
-                    contextWindow: 400000,
-                  },
-                ],
-              },
-              "openai-codex": {
-                models: [
-                  {
-                    id: "gpt-6.1-sol",
-                    contextWindow: 400000,
-                  },
-                ],
-              },
-            },
-          },
-          null,
-          2,
-        ),
-      );
-
-      const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
-      const { personas, errors } = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
-      expect(errors).toEqual([]);
-
-      expect(
-        personas.find((persona) => persona.id === "gpt-6.1-sol-chat")?.model.contextWindow,
-      ).toBe(400000);
-      expect(
-        personas.find((persona) => persona.id === "gpt-6.1-sol-coder")?.model.contextWindow,
-      ).toBe(400000);
-      expect(
-        personas.find((persona) => persona.id === "gpt-6.1-sol-chatgpt-chat")?.model.contextWindow,
-      ).toBe(400000);
-      expect(
-        personas.find((persona) => persona.id === "gpt-6.1-sol-chatgpt-coder")?.model.contextWindow,
-      ).toBe(400000);
-      expect(
-        personas.find((persona) => persona.id === "gpt-6.1-sol-chatgpt-fast-chat"),
-      ).toBeUndefined();
-      expect(
-        personas.find((persona) => persona.id === "gpt-6.1-sol-chatgpt-fast-coder")?.settings
-          .serviceTier,
-      ).toBe("priority");
-    } finally {
-      fx.cleanup();
-    }
-  });
-
   it("lets custom personas replace built-in ids while retaining other built-ins", async () => {
     const fx = setupFixture();
 
@@ -506,72 +445,8 @@ describe("custom personas", () => {
 
       const custom = personas.find((persona) => persona.id === "gpt-6.1-sol-chat");
       expect(custom.source).toBe("user");
-      expect(custom.skills).toBe("*");
+      expect(custom).not.toHaveProperty("skills");
       expect(personas.some((persona) => persona.source === "builtin")).toBe(true);
-    } finally {
-      fx.cleanup();
-    }
-  });
-
-  it("allows disabling skills for custom personas with an empty list", async () => {
-    const fx = setupFixture();
-
-    try {
-      mkdirSync(join(fx.home, ".config", "tau", "personas"), { recursive: true });
-      writeFileSync(
-        join(fx.home, ".config", "tau", "personas", "no-skills.md"),
-        [
-          "---",
-          "id: no-skills",
-          "provider: anthropic",
-          "model: claude-haiku-4-5",
-          "skills: []",
-          "---",
-          "custom prompt",
-          "",
-        ].join("\n"),
-      );
-
-      const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
-      const { personas, errors } = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
-      expect(errors).toEqual([]);
-
-      const persona = personas.find((p) => p.id === "no-skills");
-      expect(persona).toBeTruthy();
-      expect(persona.skills).toEqual([]);
-    } finally {
-      fx.cleanup();
-    }
-  });
-
-  it("supports selecting a subset of skills for custom personas", async () => {
-    const fx = setupFixture();
-
-    try {
-      mkdirSync(join(fx.home, ".config", "tau", "personas"), { recursive: true });
-      writeFileSync(
-        join(fx.home, ".config", "tau", "personas", "subset-skills.md"),
-        [
-          "---",
-          "id: subset-skills",
-          "provider: anthropic",
-          "model: claude-haiku-4-5",
-          "skills:",
-          "  - alpha",
-          "  - beta",
-          "---",
-          "custom prompt",
-          "",
-        ].join("\n"),
-      );
-
-      const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
-      const { personas, errors } = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
-      expect(errors).toEqual([]);
-
-      const persona = personas.find((p) => p.id === "subset-skills");
-      expect(persona).toBeTruthy();
-      expect(persona.skills).toEqual(["alpha", "beta"]);
     } finally {
       fx.cleanup();
     }
@@ -618,7 +493,6 @@ describe("custom personas", () => {
         [
           "---",
           "id: no-subagents",
-          "extends: gpt-6.1-sol-coder",
           "provider: anthropic",
           "model: claude-haiku-4-5",
           "tools: [bash, edit]",

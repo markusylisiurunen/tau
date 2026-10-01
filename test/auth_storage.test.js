@@ -34,6 +34,7 @@ vi.mock("@earendil-works/pi-ai/providers/openai-codex", () => ({
 import { AuthManager } from "../dist/core/auth/auth_manager.js";
 import { AuthStorage } from "../dist/core/auth/auth_storage.js";
 import { TauCredentialStore } from "../dist/core/auth/credential_store.js";
+import { ModelRuntime } from "../dist/core/utils/model_stream.js";
 
 function toBase64Url(value) {
   return Buffer.from(value, "utf-8")
@@ -131,7 +132,7 @@ describe("AuthStorage", () => {
     }
   });
 
-  it("defaults existing OAuth accounts to enabled", () => {
+  it("activates the unique enabled account in older stores", () => {
     const fx = createTempAuthPath();
     try {
       writeCodexAccounts(fx.authPath, [
@@ -147,7 +148,7 @@ describe("AuthStorage", () => {
       const storage = new AuthStorage(fx.authPath);
 
       expect(storage.getInvalidReason()).toBeUndefined();
-      expect(storage.getData().providers["openai-codex"].accounts[0].disabled).toBe(false);
+      expect(storage.getData().providers["openai-codex"].activeAccountId).toBe("acct-existing");
     } finally {
       fx.cleanup();
     }
@@ -286,9 +287,9 @@ describe("AuthManager and TauCredentialStore", () => {
       writeFileSync(fx.authPath, invalidAuth, { mode: 0o600 });
       const storage = new AuthStorage(fx.authPath);
 
-      expect(() =>
-        new AuthManager(storage).setAccountEnabled("openai-codex", "acct-invalid", false),
-      ).toThrow("failed to parse auth.json");
+      expect(() => new AuthManager(storage).useAccount("openai-codex", "acct-invalid")).toThrow(
+        "failed to parse auth.json",
+      );
       expect(readFileSync(fx.authPath, "utf8")).toBe(invalidAuth);
     } finally {
       fx.cleanup();
@@ -398,72 +399,77 @@ describe("AuthManager and TauCredentialStore", () => {
     }
   });
 
-  it("does not let a later parallel refresh overwrite a newer credential generation", async () => {
+  it("serializes refresh callbacks across credential stores and observes the newer generation", async () => {
     const fx = createTempAuthPath();
     try {
-      writeCodexAccounts(
-        fx.authPath,
-        [
-          {
-            type: "oauth",
-            accountId: "acct-parallel",
-            providerAccountId: "acct-parallel",
-            access: "access-original",
-            refresh: "refresh-original",
-            expires: 1,
-          },
-        ],
-        { mode: 0o600 },
+      writeCodexAccounts(fx.authPath, [
+        {
+          type: "oauth",
+          accountId: "acct-parallel",
+          access: "access-original",
+          refresh: "refresh-original",
+          expires: 1,
+        },
+      ]);
+      const started = deferred();
+      const release = deferred();
+      const stores = [0, 1].map(
+        () =>
+          new TauCredentialStore({
+            authStorage: new AuthStorage(fx.authPath),
+            getConfig: () => ({}),
+          }),
       );
-      const bothRefreshesStarted = deferred();
-      const refreshes = [deferred(), deferred()];
-      let refreshCallCount = 0;
-      codexRefresh.mockImplementation(async () => {
-        const callIndex = refreshCallCount++;
-        if (refreshCallCount === 2) {
-          bothRefreshesStarted.resolve();
-        }
-        return await refreshes[callIndex].promise;
+      const first = stores[0].modify("openai-codex", async (current) => {
+        started.resolve();
+        await release.promise;
+        return {
+          ...current,
+          access: "access-newer",
+          refresh: "refresh-newer",
+          expires: Number.MAX_SAFE_INTEGER,
+        };
       });
+      await started.promise;
+      const second = stores[1].modify("openai-codex", async (current) => {
+        expect(current.refresh).toBe("refresh-newer");
+        return undefined;
+      });
+      release.resolve();
+      for (const result of await Promise.all([first, second]))
+        expect(result.refresh).toBe("refresh-newer");
+      expect(
+        JSON.parse(readFileSync(fx.authPath, "utf8")).providers["openai-codex"].accounts[0].refresh,
+      ).toBe("refresh-newer");
+    } finally {
+      fx.cleanup();
+    }
+  });
 
-      const firstRead = new TauCredentialStore({
-        authStorage: new AuthStorage(fx.authPath),
-        getConfig: () => ({}),
-      }).read("openai-codex");
-      const secondRead = new TauCredentialStore({
-        authStorage: new AuthStorage(fx.authPath),
-        getConfig: () => ({}),
-      }).read("openai-codex");
-      await bothRefreshesStarted.promise;
-
-      refreshes[0].resolve({
-        type: "oauth",
-        access: "access-newer",
-        refresh: "refresh-newer",
-        expires: 100,
-        accountId: "acct-parallel",
+  it("preserves credentials replaced during an in-flight refresh", async () => {
+    const fx = createTempAuthPath();
+    try {
+      writeCodexAccounts(fx.authPath, [
+        { type: "oauth", accountId: "a", access: "original", refresh: "original", expires: 0 },
+      ]);
+      const started = deferred();
+      const release = deferred();
+      const storage = new AuthStorage(fx.authPath);
+      const store = new TauCredentialStore({ authStorage: storage, getConfig: () => ({}) });
+      const result = store.modify("openai-codex", async (current) => {
+        started.resolve();
+        await release.promise;
+        return { ...current, access: "stale", refresh: "stale" };
       });
-      await expect(firstRead).resolves.toMatchObject({
-        type: "oauth",
-        access: "access-newer",
-        refresh: "refresh-newer",
+      await started.promise;
+      new AuthStorage(fx.authPath).update((data) => {
+        data.providers["openai-codex"].accounts[0].refresh = "replacement";
       });
-
-      refreshes[1].resolve({
-        type: "oauth",
-        access: "access-stale",
-        refresh: "refresh-stale",
-        expires: 200,
-        accountId: "acct-parallel",
-      });
-      await expect(secondRead).resolves.toBeUndefined();
-
-      const saved = JSON.parse(readFileSync(fx.authPath, "utf8"));
-      expect(saved.providers["openai-codex"].accounts[0]).toMatchObject({
-        access: "access-newer",
-        refresh: "refresh-newer",
-        expires: 100,
-      });
+      release.resolve();
+      expect((await result).refresh).toBe("replacement");
+      expect(
+        JSON.parse(readFileSync(fx.authPath, "utf8")).providers["openai-codex"].accounts[0].refresh,
+      ).toBe("replacement");
     } finally {
       fx.cleanup();
     }
@@ -707,269 +713,6 @@ describe("AuthManager and TauCredentialStore", () => {
     }
   });
 
-  it("uses codex failover selection in pi-ai credential store", async () => {
-    const fx = createTempAuthPath();
-    try {
-      writeCodexAccounts(fx.authPath, [
-        {
-          type: "oauth",
-          accountId: "acct-exhausted",
-          providerAccountId: "provider-exhausted",
-          access: "access-exhausted",
-          refresh: "refresh-exhausted",
-          expires: 0,
-          usage: createUsage(100),
-        },
-        {
-          type: "oauth",
-          accountId: "acct-disabled",
-          disabled: true,
-          providerAccountId: "provider-disabled",
-          access: "access-disabled",
-          refresh: "refresh-disabled",
-          expires: 0,
-          usage: createUsage(100),
-        },
-        {
-          type: "oauth",
-          accountId: "acct-next",
-          providerAccountId: "provider-next",
-          access: "access-next",
-          refresh: "refresh-next",
-          expires: 0,
-          usage: createUsage(100),
-        },
-      ]);
-
-      codexToAuth.mockImplementation(async (credential) => ({
-        apiKey: credential.refresh === "refresh-exhausted" ? "api-exhausted" : "api-next",
-      }));
-
-      vi.stubGlobal(
-        "fetch",
-        vi.fn(async (_url, init) => {
-          const rawHeaders = init?.headers;
-          const accountId =
-            rawHeaders instanceof Headers
-              ? rawHeaders.get("ChatGPT-Account-Id")
-              : rawHeaders && typeof rawHeaders === "object"
-                ? rawHeaders["ChatGPT-Account-Id"]
-                : undefined;
-          const usedPercent = accountId === "provider-next" ? 12 : 100;
-          return createUsageResponse(usedPercent);
-        }),
-      );
-
-      const storage = new AuthStorage(fx.authPath);
-      const store = new TauCredentialStore({ authStorage: storage, getConfig: () => ({}) });
-      const credential = await store.read("openai-codex");
-
-      expect(credential?.type).toBe("oauth");
-      expect(credential?.refresh).toBe("refresh-next");
-      expect(
-        fetch.mock.calls.some(
-          ([, init]) => init.headers["ChatGPT-Account-Id"] === "provider-disabled",
-        ),
-      ).toBe(false);
-    } finally {
-      fx.cleanup();
-    }
-  });
-
-  it("excludes disabled accounts from automatic selection", async () => {
-    const fx = createTempAuthPath();
-    try {
-      writeCodexAccounts(
-        fx.authPath,
-        [
-          {
-            type: "oauth",
-            accountId: "acct-disabled",
-            disabled: true,
-            access: "access-disabled",
-            refresh: "refresh-disabled",
-            expires: Number.MAX_SAFE_INTEGER,
-            usage: createUsage(90),
-          },
-          {
-            type: "oauth",
-            accountId: "acct-enabled",
-            access: "access-enabled",
-            refresh: "refresh-enabled",
-            expires: Number.MAX_SAFE_INTEGER,
-            usage: createUsage(10),
-          },
-        ],
-        { mode: 0o600 },
-      );
-      const storage = new AuthStorage(fx.authPath);
-      const store = new TauCredentialStore({ authStorage: storage, getConfig: () => ({}) });
-
-      const credential = await store.read("openai-codex");
-      expect(credential?.type).toBe("oauth");
-      expect(credential?.refresh).toBe("refresh-enabled");
-
-      new AuthManager(storage).setAccountEnabled("openai-codex", "acct-enabled", false);
-      await expect(store.read("openai-codex")).resolves.toBeUndefined();
-      expect(codexToAuth).toHaveBeenCalledOnce();
-    } finally {
-      fx.cleanup();
-    }
-  });
-
-  it("does not complete an in-flight selection after the account is disabled", async () => {
-    const fx = createTempAuthPath();
-    try {
-      writeCodexAccounts(
-        fx.authPath,
-        [
-          {
-            type: "oauth",
-            accountId: "acct-disable-race",
-            access: "access-disable-race",
-            refresh: "refresh-disable-race",
-            expires: Number.MAX_SAFE_INTEGER,
-            usage: createUsage(10),
-          },
-        ],
-        { mode: 0o600 },
-      );
-      const authStarted = deferred();
-      const releaseAuth = deferred();
-      codexToAuth.mockImplementation(async () => {
-        authStarted.resolve();
-        return await releaseAuth.promise;
-      });
-      const storage = new AuthStorage(fx.authPath);
-      const selection = new TauCredentialStore({
-        authStorage: storage,
-        getConfig: () => ({}),
-      }).read("openai-codex");
-      await authStarted.promise;
-
-      new AuthManager(storage).setAccountEnabled("openai-codex", "acct-disable-race", false);
-      releaseAuth.resolve({ apiKey: "api-disable-race" });
-
-      await expect(selection).resolves.toBeUndefined();
-    } finally {
-      fx.cleanup();
-    }
-  });
-
-  it("does not return a sticky account disabled during a usage refresh", async () => {
-    const fx = createTempAuthPath();
-    try {
-      writeCodexAccounts(
-        fx.authPath,
-        [
-          {
-            type: "oauth",
-            accountId: "acct-usage-disable-race",
-            providerAccountId: "provider-usage-disable-race",
-            access: "access-usage-disable-race",
-            refresh: "refresh-usage-disable-race",
-            expires: Number.MAX_SAFE_INTEGER,
-            usage: createUsage(10),
-          },
-        ],
-        { mode: 0o600 },
-      );
-      const storage = new AuthStorage(fx.authPath);
-      const store = new TauCredentialStore({
-        authStorage: storage,
-        getConfig: () => ({}),
-        getSessionId: () => "usage-disable-race-session",
-      });
-      await expect(store.read("openai-codex")).resolves.toMatchObject({
-        refresh: "refresh-usage-disable-race",
-      });
-      storage.update((data) => {
-        data.providers["openai-codex"].accounts[0].usage.windows[0].resetAt = 1;
-      });
-
-      const usageStarted = deferred();
-      const releaseUsage = deferred();
-      vi.stubGlobal(
-        "fetch",
-        vi.fn(async () => {
-          usageStarted.resolve();
-          await releaseUsage.promise;
-          return createUsageResponse(10);
-        }),
-      );
-
-      const selection = store.read("openai-codex");
-      await usageStarted.promise;
-      new AuthManager(new AuthStorage(fx.authPath)).setAccountEnabled(
-        "openai-codex",
-        "acct-usage-disable-race",
-        false,
-      );
-      releaseUsage.resolve();
-
-      await expect(selection).resolves.toBeUndefined();
-      const saved = JSON.parse(readFileSync(fx.authPath, "utf8"));
-      expect(saved.providers["openai-codex"].accounts[0].disabled).toBe(true);
-    } finally {
-      fx.cleanup();
-    }
-  });
-
-  it("propagates credential read cancellation through codex refresh and usage requests", async () => {
-    const fx = createTempAuthPath();
-    try {
-      writeCodexAccounts(
-        fx.authPath,
-        [
-          {
-            type: "oauth",
-            accountId: "acct-cancel",
-            providerAccountId: "provider-cancel",
-            access: "access-cancel",
-            refresh: "refresh-cancel",
-            expires: 0,
-          },
-        ],
-        { mode: 0o600 },
-      );
-
-      const abortController = new AbortController();
-      codexRefresh.mockImplementation(async (credential) => ({
-        ...credential,
-        expires: Number.MAX_SAFE_INTEGER,
-      }));
-      const fetchStarted = deferred();
-      let fetchSignal;
-      vi.stubGlobal(
-        "fetch",
-        vi.fn((_url, init) => {
-          fetchSignal = init?.signal;
-          fetchStarted.resolve();
-          return new Promise((_resolve, reject) => {
-            const onAbort = () => reject(fetchSignal.reason);
-            fetchSignal.addEventListener("abort", onAbort, { once: true });
-            if (fetchSignal.aborted) onAbort();
-          });
-        }),
-      );
-
-      const store = new TauCredentialStore({
-        authStorage: new AuthStorage(fx.authPath),
-        getConfig: () => ({}),
-      });
-      const read = store.read("openai-codex", { signal: abortController.signal });
-      await fetchStarted.promise;
-
-      expect(codexRefresh.mock.calls[0]?.[1]).toBe(abortController.signal);
-      expect(fetchSignal).toBe(abortController.signal);
-
-      abortController.abort();
-      await expect(read).rejects.toMatchObject({ name: "AbortError" });
-    } finally {
-      fx.cleanup();
-    }
-  });
-
   it("lists stored credential metadata without resolving credentials", async () => {
     const fx = createTempAuthPath();
     try {
@@ -1019,229 +762,148 @@ describe("AuthManager and TauCredentialStore", () => {
     }
   });
 
-  it("matches forced codex accounts by email in pi-ai credential store", async () => {
+  it("preserves ambiguous old accounts without choosing by quota", async () => {
     const fx = createTempAuthPath();
     try {
-      writeCodexAccounts(fx.authPath, [
-        {
-          type: "oauth",
-          accountId: "acct-email",
-          providerAccountId: "provider-email",
-          access: createAccessToken({
-            accountId: "acct-email",
-            email: "user@example.com",
-            plan: "plus",
-          }),
-          refresh: "refresh-email",
-          expires: Number.MAX_SAFE_INTEGER,
-        },
-      ]);
-
+      const accounts = ["a", "b"].map((id) => ({
+        type: "oauth",
+        accountId: id,
+        access: `access-${id}`,
+        refresh: `refresh-${id}`,
+        expires: Number.MAX_SAFE_INTEGER,
+        usage: createUsage(id === "a" ? 100 : 0),
+      }));
+      writeCodexAccounts(fx.authPath, accounts);
       const storage = new AuthStorage(fx.authPath);
-      const store = new TauCredentialStore({
-        authStorage: storage,
-        getConfig: () => ({}),
-        env: { TAU_CODEX_ACCOUNT: "user@example.com" },
+      expect(storage.getData().providers["openai-codex"]).toEqual({
+        accounts,
+        activeAccountId: null,
       });
-      const credential = await store.read("openai-codex");
-
-      expect(credential?.type).toBe("oauth");
-      expect(credential?.refresh).toBe("refresh-email");
+      await expect(
+        new TauCredentialStore({ authStorage: storage, getConfig: () => ({}) }).read(
+          "openai-codex",
+        ),
+      ).rejects.toThrow(/auth use/);
     } finally {
       fx.cleanup();
     }
   });
 
-  it("rejects a forced disabled codex account", async () => {
+  it("reads expired credentials without refreshing and binds an account only for one request", async () => {
     const fx = createTempAuthPath();
     try {
       writeCodexAccounts(
         fx.authPath,
-        [
-          {
-            type: "oauth",
-            accountId: "acct-disabled-forced",
-            disabled: true,
-            access: createAccessToken({
-              accountId: "acct-disabled-forced",
-              email: "disabled@example.com",
-              plan: "plus",
-            }),
-            refresh: "refresh-disabled",
-            expires: Number.MAX_SAFE_INTEGER,
-          },
-          {
-            type: "oauth",
-            accountId: "acct-enabled-fallback",
-            access: "access-enabled",
-            refresh: "refresh-enabled",
-            expires: Number.MAX_SAFE_INTEGER,
-          },
-        ],
-        { mode: 0o600 },
+        ["a", "b"].map((id) => ({
+          type: "oauth",
+          accountId: id,
+          access: `access-${id}`,
+          refresh: `refresh-${id}`,
+          expires: 0,
+        })),
       );
-      const store = new TauCredentialStore({
+      const storage = new AuthStorage(fx.authPath);
+      const manager = new AuthManager(storage);
+      manager.useAccount("openai-codex", "a");
+      const store = new TauCredentialStore({ authStorage: storage, getConfig: () => ({}) });
+      const request = store.bindCodexAccount();
+      manager.useAccount("openai-codex", "b");
+      expect((await request.read("openai-codex")).refresh).toBe("refresh-a");
+      expect((await store.read("openai-codex")).refresh).toBe("refresh-b");
+      expect(codexRefresh).not.toHaveBeenCalled();
+    } finally {
+      fx.cleanup();
+    }
+  });
+  it.each(["identity", "usage"])(
+    "serializes CLI %s token rotation with a model request",
+    async (phase) => {
+      const fx = createTempAuthPath();
+      try {
+        const access = createAccessToken({ accountId: "a", email: "a@example.com", plan: "pro" });
+        writeCodexAccounts(fx.authPath, [
+          {
+            type: "oauth",
+            accountId: "a",
+            providerAccountId: "a",
+            access,
+            refresh: "original",
+            expires: 0,
+          },
+        ]);
+        const started = deferred();
+        const release = deferred();
+        if (phase === "usage")
+          codexRefresh.mockRejectedValueOnce(new Error("identity refresh failed"));
+        codexRefresh.mockImplementationOnce(async (credential) => {
+          started.resolve();
+          await release.promise;
+          return { ...credential, refresh: "rotated", expires: Number.MAX_SAFE_INTEGER };
+        });
+        vi.stubGlobal(
+          "fetch",
+          vi.fn(async () => createUsageResponse(12)),
+        );
+        const runtime = new ModelRuntime({
+          authStorage: new AuthStorage(fx.authPath),
+          getConfig: () => ({}),
+          env: {},
+        });
+        const provider = runtime.models.getProvider("openai-codex");
+        runtime.models.setProvider({
+          ...provider,
+          auth: { oauth: { ...provider.auth.oauth, refresh: codexRefresh, toAuth: codexToAuth } },
+        });
+        const listing = new AuthManager(new AuthStorage(fx.authPath)).listProviderAccounts();
+        await started.promise;
+        const request = runtime.getAuth(runtime.resolveModel("openai-codex", "gpt-6.1-sol"));
+        expect(codexRefresh).toHaveBeenCalledTimes(phase === "identity" ? 1 : 2);
+        release.resolve();
+        expect((await request).auth.apiKey).toBe(access);
+        expect((await listing)[0].accounts[0].usageRefreshStatus).toBe("succeeded");
+        expect(codexRefresh).toHaveBeenCalledTimes(phase === "identity" ? 1 : 2);
+        expect(
+          JSON.parse(readFileSync(fx.authPath, "utf8")).providers["openai-codex"].accounts[0]
+            .refresh,
+        ).toBe("rotated");
+      } finally {
+        fx.cleanup();
+      }
+    },
+  );
+
+  it("rereads the account after waiting for a request refresh before listing", async () => {
+    const fx = createTempAuthPath();
+    try {
+      const access = createAccessToken({ accountId: "a", email: "a@example.com", plan: "pro" });
+      writeCodexAccounts(fx.authPath, [
+        { type: "oauth", accountId: "a", access, refresh: "original", expires: 0 },
+      ]);
+      const started = deferred();
+      const release = deferred();
+      const request = new TauCredentialStore({
         authStorage: new AuthStorage(fx.authPath),
         getConfig: () => ({}),
-        env: { TAU_CODEX_ACCOUNT: "disabled@example.com" },
+      }).modify("openai-codex", async (credential) => {
+        started.resolve();
+        await release.promise;
+        return { ...credential, refresh: "rotated", expires: Number.MAX_SAFE_INTEGER };
       });
-
-      await expect(store.read("openai-codex")).rejects.toThrow(
-        'TAU_CODEX_ACCOUNT matched disabled Codex account "acct-disabled-forced"',
-      );
-      expect(codexToAuth).not.toHaveBeenCalled();
-    } finally {
-      fx.cleanup();
-    }
-  });
-
-  it("keeps codex account selection sticky per model runtime session", async () => {
-    const fx = createTempAuthPath();
-    try {
-      writeCodexAccounts(fx.authPath, [
-        {
-          type: "oauth",
-          accountId: "acct-a",
-          providerAccountId: "provider-a",
-          access: "access-a",
-          refresh: "refresh-a",
-          expires: Number.MAX_SAFE_INTEGER,
-          usage: createUsage(80),
-        },
-        {
-          type: "oauth",
-          accountId: "acct-b",
-          providerAccountId: "provider-b",
-          access: "access-b",
-          refresh: "refresh-b",
-          expires: Number.MAX_SAFE_INTEGER,
-          usage: createUsage(10),
-        },
-      ]);
-
-      let sessionId = "sticky-disable-session-1";
-      const storage = new AuthStorage(fx.authPath);
-      const store = new TauCredentialStore({
-        authStorage: storage,
-        getConfig: () => ({}),
-        getSessionId: () => sessionId,
+      await started.promise;
+      codexRefresh.mockImplementation(async (credential) => {
+        expect(credential.refresh).toBe("rotated");
+        return credential;
       });
-
-      const first = await store.read("openai-codex");
-      expect(first?.type).toBe("oauth");
-      expect(first?.refresh).toBe("refresh-a");
-
-      storage.update((data) => {
-        const accounts = data.providers["openai-codex"].accounts;
-        accounts[0].usage.windows[0].usedPercent = 20;
-        accounts[1].usage.windows[0].usedPercent = 90;
-      });
-
-      const sameSession = await store.read("openai-codex");
-      expect(sameSession?.type).toBe("oauth");
-      expect(sameSession?.refresh).toBe("refresh-a");
-
-      new AuthManager(storage).setAccountEnabled("openai-codex", "acct-a", false);
-      const afterDisable = await store.read("openai-codex");
-      expect(afterDisable?.type).toBe("oauth");
-      expect(afterDisable?.refresh).toBe("refresh-b");
-
-      sessionId = "sticky-disable-session-2";
-      const nextSession = await store.read("openai-codex");
-      expect(nextSession?.type).toBe("oauth");
-      expect(nextSession?.refresh).toBe("refresh-b");
-    } finally {
-      fx.cleanup();
-    }
-  });
-
-  it("clears sticky codex account selection after exhausted-account provider errors", async () => {
-    const fx = createTempAuthPath();
-    try {
-      writeCodexAccounts(fx.authPath, [
-        {
-          type: "oauth",
-          accountId: "acct-a",
-          providerAccountId: "provider-a",
-          access: "access-a",
-          refresh: "refresh-a",
-          expires: Number.MAX_SAFE_INTEGER,
-          usage: createUsage(80),
-        },
-        {
-          type: "oauth",
-          accountId: "acct-b",
-          providerAccountId: "provider-b",
-          access: "access-b",
-          refresh: "refresh-b",
-          expires: Number.MAX_SAFE_INTEGER,
-          usage: createUsage(10),
-        },
-      ]);
-
       vi.stubGlobal(
         "fetch",
-        vi.fn(async (_url, init) => {
-          const rawHeaders = init?.headers;
-          const accountId =
-            rawHeaders instanceof Headers
-              ? rawHeaders.get("ChatGPT-Account-Id")
-              : rawHeaders && typeof rawHeaders === "object"
-                ? rawHeaders["ChatGPT-Account-Id"]
-                : undefined;
-          return createUsageResponse(accountId === "provider-a" ? 100 : 10);
-        }),
+        vi.fn(async () => createUsageResponse(12)),
       );
-
-      const storage = new AuthStorage(fx.authPath);
-      const store = new TauCredentialStore({
-        authStorage: storage,
-        getConfig: () => ({}),
-        getSessionId: () => "session-1",
-      });
-
-      const first = await store.read("openai-codex");
-      expect(first?.type).toBe("oauth");
-      expect(first?.refresh).toBe("refresh-a");
-
-      await store.noteProviderError("openai-codex", {
-        sessionId: "session-1",
-        error: new Error("quota exceeded"),
-      });
-
-      const afterError = await store.read("openai-codex");
-      expect(afterError?.type).toBe("oauth");
-      expect(afterError?.refresh).toBe("refresh-b");
-    } finally {
-      fx.cleanup();
-    }
-  });
-
-  it("fails early when codex usage windows change unexpectedly", async () => {
-    const fx = createTempAuthPath();
-    try {
-      writeCodexAccounts(fx.authPath, [
-        {
-          type: "oauth",
-          accountId: "acct-old",
-          providerAccountId: "provider-old",
-          access: "old-access",
-          refresh: "old-refresh",
-          expires: 0,
-        },
-      ]);
-
-      vi.stubGlobal(
-        "fetch",
-        vi.fn(async () => createUsageResponse(12, 3600)),
-      );
-
-      const storage = new AuthStorage(fx.authPath);
-      const store = new TauCredentialStore({ authStorage: storage, getConfig: () => ({}) });
-
-      await expect(store.read("openai-codex")).rejects.toThrow(
-        "unexpected ChatGPT Codex primary usage window: 3600 seconds (expected 18000 for 5h or 604800 for 7d)",
-      );
+      const listing = new AuthManager(new AuthStorage(fx.authPath)).listProviderAccounts();
+      expect(codexRefresh).not.toHaveBeenCalled();
+      release.resolve();
+      await request;
+      expect((await listing)[0].accounts[0].credentialRefreshStatus).toBe("succeeded");
+      expect(codexRefresh).toHaveBeenCalledTimes(1);
     } finally {
       fx.cleanup();
     }

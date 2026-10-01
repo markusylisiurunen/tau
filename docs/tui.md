@@ -17,7 +17,7 @@ Tau creates a local execution environment rooted at that directory. A startup pe
 tau --persona gpt-6.1-sol-coder:high
 ```
 
-`-p` is the short form. `--no-agent-context-files` omits `AGENTS.md` and explicitly configured context files, and `--no-client-tools` prevents the TUI from advertising its built-in and configured [client tools](client-tools.md).
+`-p` is the short form. `--no-agent-context-files` omits `AGENTS.md` injection and the descendant context-file scan, and `--no-client-tools` prevents the TUI from advertising its built-in and configured [client tools](client-tools.md).
 
 Piped stdin becomes the first message in a local TUI session:
 
@@ -26,6 +26,8 @@ printf 'summarize the current changes' | tau
 ```
 
 Use `tau attach` for a session hosted elsewhere. The terminal, themes, clipboard, speech commands, built-in diff review tool, and command-backed client tools still belong to the attaching machine. Bash tools, file access, project configuration, and model work use the session’s execution environment. See [remote sessions](remote-sessions.md) for transport and creation examples.
+
+The startup summary lists discovered skills, project context files, configured client tools, and enabled MCP server names. MCP servers are labeled configured, not connected: connections open lazily on first use. In attached sessions, the MCP list comes from the session host. Empty sections are omitted.
 
 ## Work in the editor
 
@@ -194,7 +196,7 @@ Speech transcription uses Gemini and requires `GEMINI_API_KEY` or `apiKeys.googl
 
 ## Reload the right component
 
-Run `/reload` while idle after changing session-owned configuration, model overlays, personas, prompts, skills, or AGENTS.md content in the execution environment. The host resolves them again from the session cwd, keeps the current persona when it still exists, and otherwise selects the first available persona. Warnings are shown in the transcript.
+Run `/reload` while idle after changing session-owned configuration, personas, prompts, skills, or AGENTS.md content in the execution environment. The host resolves them again from the session cwd, keeps the current persona when it still exists, and otherwise selects the first available persona. Warnings are shown in the transcript.
 
 Restart the TUI instead after changing client-owned themes, the diff launcher, speech settings, or configured client tools. Effective model `apiKeys` in session configuration can update through `/reload`, and managed Codex auth storage is read again on later credential resolutions. Restart the host after changing its binary, process environment variables, WebSocket listener, or hosted execution-environment resolver configuration. [Credentials](credentials.md) has the canonical apply boundaries, and [remote sessions](remote-sessions.md) explains the component split.
 

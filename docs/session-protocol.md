@@ -18,7 +18,7 @@ The server sends `ready` as its first message:
 
 ```json
 {
-  "version": 15,
+  "version": 16,
   "type": "ready",
   "methods": ["initialize", "session.create", "session.list"]
 }
@@ -30,7 +30,7 @@ After `ready`, send `initialize` with non-empty client metadata:
 
 ```json
 {
-  "version": 15,
+  "version": 16,
   "type": "request",
   "id": "init-1",
   "method": "initialize",
@@ -50,7 +50,7 @@ Every request has the same envelope:
 
 ```json
 {
-  "version": 15,
+  "version": 16,
   "type": "request",
   "id": "req-42",
   "method": "session.snapshot",
@@ -64,7 +64,7 @@ Successful responses echo the request id:
 
 ```json
 {
-  "version": 15,
+  "version": 16,
   "type": "response",
   "id": "req-42",
   "ok": true,
@@ -101,12 +101,14 @@ Observation controls delivery, not session ownership. `session.unobserve` stops 
 | `lifecycle` | `idle` or `running`. |
 | `agentState` | Independent agent revision, model context key, and optional usage checkpoint. |
 | `goal`, `settings`, `costTotal` | Current goal, persona and reasoning settings, and accumulated session cost. |
-| `bootstrap`, `catalog` | Selected model and prompt metadata plus available personas, prompt metadata, and skills. |
+| `bootstrap`, `catalog` | Selected model and prompt metadata plus available personas, prompt metadata, skills, and enabled host-configured MCP server names. |
 | `executionEnvironment` | The environment kind, identity, `cwd`, and home used for agent-visible work. |
 | `messages`, `turns` | Synchronized model-facing records and durable logical-turn receipts. |
 | `timeline` | Ordered active transcript placement. |
 | `tools`, `operations`, `agents` | Mutable semantic state referenced by timeline items or client views. |
 | `facets` | Versioned client-facing metadata. Unknown facet kinds and versions should be ignored. |
+
+`catalog.mcpServers` lists enabled MCP server names from the host configuration. It does not indicate live connections; servers connect lazily when used. Only names are exposed, not connection settings or credentials.
 
 `bootstrap.prompt.subagentSystemPrompt` is present when subagent launches are enabled. Each catalog persona has a `subagentLaunchModels` allowlist. Subagent records have task titles and IDs, not worker-type names.
 
@@ -130,7 +132,7 @@ Observed snapshot changes arrive as `session.delta`:
 
 ```json
 {
-  "version": 15,
+  "version": 16,
   "type": "session.delta",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "fromRevision": 8,
@@ -168,7 +170,7 @@ Not all observed state belongs in the recoverable snapshot. Each live channel ha
 
 ```json
 {
-  "version": 15,
+  "version": 16,
   "type": "session.pendingUserMessages",
   "sessionId": "...",
   "state": {
@@ -205,7 +207,7 @@ An initialized client that advertised a tool can receive:
 
 ```json
 {
-  "version": 15,
+  "version": 16,
   "type": "session.clientTool.call",
   "sessionId": "...",
   "agentId": "main",
@@ -229,7 +231,7 @@ Error responses use `ok: false`:
 
 ```json
 {
-  "version": 15,
+  "version": 16,
   "type": "response",
   "id": "req-42",
   "ok": false,

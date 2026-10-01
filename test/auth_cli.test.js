@@ -26,7 +26,7 @@ import {
   runListCommand,
   runLoginCommand,
   runLogoutCommand,
-  runSetAccountEnabledCommand,
+  runUseAccountCommand,
 } from "../dist/core/auth/cli.js";
 
 function toBase64Url(value) {
@@ -82,15 +82,10 @@ describe("auth cli", () => {
       providerArg: "codex",
       accountId: "user@example.com",
     });
-    expect(parseAuthCliArgs(["disable", "codex", "--account", "user@example.com"])).toEqual({
-      type: "disable",
+    expect(parseAuthCliArgs(["use", "codex", "--account", "user@example.com"])).toEqual({
+      type: "use",
       providerArg: "codex",
       accountId: "user@example.com",
-    });
-    expect(parseAuthCliArgs(["enable", "codex", "--account", "acct-123"])).toEqual({
-      type: "enable",
-      providerArg: "codex",
-      accountId: "acct-123",
     });
   });
 
@@ -104,8 +99,8 @@ describe("auth cli", () => {
       'duplicate auth logout option "--account"',
     ],
     [["logout", "codex", "--account"], 'missing value for auth logout option "--account"'],
-    [["disable", "codex"], "missing --account <id> for disable"],
-    [["enable", "codex", "--bogus"], 'unknown auth enable option "--bogus"'],
+    [["use", "codex"], "missing --account <id> for use"],
+    [["use", "codex", "--bogus"], 'unknown auth use option "--bogus"'],
   ])("rejects invalid arguments %#", (args, message) => {
     expect(() => parseAuthCliArgs(args)).toThrow(message);
   });
@@ -152,73 +147,6 @@ describe("auth cli", () => {
 
       const removed = JSON.parse(readFileSync(fx.authPath, "utf-8"));
       expect(removed.providers["openai-codex"].accounts.length).toBe(0);
-    } finally {
-      fx.cleanup();
-    }
-  });
-
-  it("disables accounts by email and preserves the state across login", async () => {
-    const fx = createTempAuthPath();
-    try {
-      const authStorage = new AuthStorage(fx.authPath);
-      const credentials = {
-        type: "oauth",
-        access: createAccessToken({
-          accountId: "acct-toggle",
-          email: "toggle@example.com",
-          plan: "pro",
-        }),
-        refresh: "refresh-original",
-        expires: Number.MAX_SAFE_INTEGER,
-        accountId: "acct-toggle",
-      };
-
-      await runLoginCommand({
-        providerArg: "codex",
-        authStorage,
-        authPath: fx.authPath,
-        prompt: async () => "",
-        log: () => {},
-        loginHandlers: { "openai-codex": async () => credentials },
-      });
-      await runSetAccountEnabledCommand({
-        enabled: false,
-        providerArg: "codex",
-        accountId: "toggle@example.com",
-        authStorage,
-        authPath: fx.authPath,
-        prompt: async () => "",
-        log: () => {},
-      });
-      await runLoginCommand({
-        providerArg: "codex",
-        authStorage,
-        authPath: fx.authPath,
-        prompt: async () => "",
-        log: () => {},
-        loginHandlers: {
-          "openai-codex": async () => ({ ...credentials, refresh: "refresh-reauthenticated" }),
-        },
-      });
-
-      let saved = JSON.parse(readFileSync(fx.authPath, "utf-8"));
-      expect(saved.providers["openai-codex"].accounts[0]).toMatchObject({
-        disabled: true,
-        refresh: "refresh-reauthenticated",
-      });
-
-      await runSetAccountEnabledCommand({
-        enabled: true,
-        providerArg: "codex",
-        accountId: "acct-toggle",
-        authStorage,
-        authPath: fx.authPath,
-        prompt: async () => "",
-        log: () => {},
-      });
-
-      saved = JSON.parse(readFileSync(fx.authPath, "utf-8"));
-      expect(saved.providers["openai-codex"].accounts[0].disabled).toBe(false);
     } finally {
       fx.cleanup();
     }
@@ -278,67 +206,6 @@ describe("auth cli", () => {
     }
   });
 
-  it("refreshes and labels disabled accounts without selecting them", async () => {
-    const fx = createTempAuthPath();
-    try {
-      const access = createAccessToken({
-        accountId: "acct-disabled",
-        email: "disabled@example.com",
-        plan: "pro",
-      });
-      writeFileSync(
-        fx.authPath,
-        JSON.stringify({
-          providers: {
-            "openai-codex": {
-              accounts: [
-                {
-                  type: "oauth",
-                  accountId: "acct-disabled",
-                  disabled: true,
-                  providerAccountId: "acct-disabled",
-                  access,
-                  refresh: "refresh-disabled",
-                  expires: Number.MAX_SAFE_INTEGER,
-                },
-              ],
-            },
-          },
-        }),
-        { mode: 0o600 },
-      );
-      vi.stubGlobal(
-        "fetch",
-        vi.fn(async () => ({
-          ok: true,
-          json: async () => ({
-            rate_limit: {
-              primary_window: {
-                used_percent: 25,
-                reset_at: 4102444800,
-                limit_window_seconds: 18000,
-              },
-            },
-          }),
-        })),
-      );
-      const output = [];
-
-      await runListCommand({
-        authStorage: new AuthStorage(fx.authPath),
-        log: (message) => output.push(message),
-      });
-
-      expect(codexRefresh).toHaveBeenCalledOnce();
-      expect(fetch).toHaveBeenCalledOnce();
-      const accountLine = output.find((line) => line.includes("disabled@example.com"));
-      expect(accountLine).toContain("[pro] [disabled]");
-      expect(accountLine.trimStart().startsWith("*")).toBe(false);
-    } finally {
-      fx.cleanup();
-    }
-  });
-
   it("supports manual prompt fallback during login", async () => {
     const fx = createTempAuthPath();
     try {
@@ -385,6 +252,63 @@ describe("auth cli", () => {
       const saved = JSON.parse(readFileSync(fx.authPath, "utf-8"));
       expect(saved.providers["openai-codex"].accounts[0].access).toBe(expectedAccess);
       expect(promptCalls).toEqual(["Paste code:"]);
+    } finally {
+      fx.cleanup();
+    }
+  });
+  it("requires explicit use after active logout and never switches during later logins", async () => {
+    const fx = createTempAuthPath();
+    try {
+      const authStorage = new AuthStorage(fx.authPath);
+      const options = {
+        providerArg: "codex",
+        authStorage,
+        authPath: fx.authPath,
+        prompt: async () => "",
+        log: () => {},
+      };
+      const login = (id) =>
+        runLoginCommand({
+          ...options,
+          loginHandlers: {
+            "openai-codex": async () => ({
+              type: "oauth",
+              accountId: id,
+              access: createAccessToken({ accountId: id, email: `${id}@example.com`, plan: "pro" }),
+              refresh: `refresh-${id}`,
+              expires: Number.MAX_SAFE_INTEGER,
+            }),
+          },
+        });
+      const active = () =>
+        JSON.parse(readFileSync(fx.authPath, "utf8")).providers["openai-codex"].activeAccountId;
+      await login("a");
+      expect(active()).toBe("a");
+      await login("b");
+      expect(active()).toBe("a");
+      await runUseAccountCommand({ ...options, accountId: "b@example.com" });
+      expect(active()).toBe("b");
+      await login("a");
+      expect(active()).toBe("b");
+      await runLogoutCommand({ ...options, accountId: "b" });
+      expect(active()).toBeNull();
+      await login("c");
+      expect(active()).toBeNull();
+      await runUseAccountCommand({ ...options, accountId: "a" });
+      expect(active()).toBe("a");
+      const output = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => ({ ok: false })),
+      );
+      await runListCommand({ authStorage, log: (line) => output.push(line) });
+      expect(
+        output.some((line) => line.includes("a@example.com") && line.includes("[active]")),
+      ).toBe(true);
+      await expect(runUseAccountCommand({ ...options, accountId: "missing" })).rejects.toThrow();
+      expect(active()).toBe("a");
+      expect(() => parseAuthCliArgs(["enable", "codex", "--account", "a"])).toThrow();
+      expect(() => parseAuthCliArgs(["disable", "codex", "--account", "a"])).toThrow();
     } finally {
       fx.cleanup();
     }

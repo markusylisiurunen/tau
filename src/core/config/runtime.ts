@@ -40,7 +40,7 @@ export function loadRuntimeBootstrap(
   options: { remoteCatalog?: RemoteModelCatalogSnapshot } = {},
 ): RuntimeBootstrap {
   const levels = resolveConfigLevels(deps, { cwd });
-  const modelResolver = loadModelResolver({ deps, levels, remoteCatalog: options.remoteCatalog });
+  const modelResolver = loadModelResolver({ remoteCatalog: options.remoteCatalog });
   const configResult = loadConfigWithDiagnostics(deps, {
     levels,
     modelResolver,
@@ -207,7 +207,8 @@ export async function loadRuntimeConfig(
   const content = await loadAllContent(bootstrap.config, {
     deps,
     levels: bootstrap.levels,
-    modelResolver: bootstrap.modelResolver,
+    modelResolver: bootstrap.modelResolver.resolveModel,
+    virtualBundle: bootstrap.virtualBundle,
   });
   const warnings = [...bootstrap.warnings, ...content.errors];
   if (bootstrap.config.defaultPersona) {

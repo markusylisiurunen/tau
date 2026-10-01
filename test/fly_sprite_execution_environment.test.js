@@ -190,7 +190,6 @@ describe("Fly Sprite execution environment", () => {
     };
     const backend = createFlySpriteToolExecutionBackend({ sprite, cwd: repo });
     const environment = new FlySpriteExecutionEnvironment({
-      apiId: "default",
       spriteName: "sprite-1",
       cwd: repo,
       home,
@@ -223,16 +222,11 @@ describe("Fly Sprite execution environment", () => {
     }
   });
 
-  it("resolves configured APIs through the SDK client factory", async () => {
+  it("resolves the configured connection through the SDK client factory", async () => {
     const sprite = createFakeSprite(() => executionResult());
     const clients = [];
     const resolver = new FlySpriteExecutionEnvironmentResolver({
-      apis: {
-        default: {
-          baseURL: "https://sprites.example",
-          tokenEnv: "SPRITES_TOKEN",
-        },
-      },
+      connection: { baseURL: "https://sprites.example", tokenEnv: "SPRITES_TOKEN" },
       env: { SPRITES_TOKEN: "token-1" },
       createClient(token, options) {
         clients.push({ token, options });
@@ -247,7 +241,6 @@ describe("Fly Sprite execution environment", () => {
 
     const environment = await resolver.resolve({
       kind: "fly-sprite",
-      apiId: "default",
       spriteName: "sprite-1",
       cwd: "/home/sprite/repo",
     });
@@ -258,7 +251,6 @@ describe("Fly Sprite execution environment", () => {
     ]);
     expect(environment.snapshot()).toEqual({
       kind: "fly-sprite",
-      apiId: "default",
       spriteName: "sprite-1",
       cwd: "/home/sprite/repo",
       home: "/home/sprite",

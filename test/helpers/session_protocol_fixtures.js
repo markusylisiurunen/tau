@@ -20,7 +20,6 @@ export function createProtocolBootstrap(overrides = {}) {
       systemPrompt: "system prompt",
       settings: { reasoning: "none" },
       subagentLaunchModels: [],
-      skills: "*",
       source: "builtin",
     },
     prompt: {
@@ -125,15 +124,14 @@ export function createProtocolSnapshot(overrides = {}) {
           : {}),
         subagentLaunchModels: [...(persona.subagentLaunchModels ?? [])],
         ...(persona.tools ? { tools: [...persona.tools] } : {}),
-        skills: Array.isArray(persona.skills) ? [...persona.skills] : (persona.skills ?? "*"),
         source: persona.source ?? "builtin",
       })),
       prompts: (catalog.prompts ?? []).map((prompt) => ({
         id: prompt.id,
-        ...(prompt.label !== undefined ? { label: prompt.label } : {}),
-        ...(prompt.description !== undefined ? { description: prompt.description } : {}),
+        label: prompt.label,
       })),
       skills: catalog.skills ?? [],
+      mcpServers: catalog.mcpServers ?? [],
     },
     executionEnvironment: overrides.executionEnvironment ?? {
       kind: "local",

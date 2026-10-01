@@ -1,8 +1,8 @@
 # Prompts and project context
 
-Tau has several ways to provide instructions or reusable text, and they enter a session at different points. Prompt templates fill the editor on demand. `AGENTS.md` files provide standing project instructions. Additional context files extend that `AGENTS.md` set. Leading hidden system blocks attach model-facing instructions to one user message.
+Tau has several ways to provide instructions or reusable text, and they enter a session at different points. Prompt templates fill the editor on demand. `AGENTS.md` files provide standing project instructions. Leading hidden system blocks attach model-facing instructions to one user message.
 
-These mechanisms do not choose models or tool access. [Personas](personas.md) own the base system prompt, model settings, skill selection, and tool allowlist. Model-specific system notices are configured separately in the [configuration reference](config-reference.md).
+These mechanisms do not choose models or tool access. [Personas](personas.md) own the base system prompt, model settings and tool allowlist. Model-specific system notices are configured separately in the [configuration reference](config-reference.md).
 
 ## Prompt templates fill the editor
 
@@ -17,27 +17,19 @@ Tau discovers prompt files from:
 
 The global location is in scope only when the execution-environment working directory is inside its home directory. Tau walks project levels from the working directory toward home, or toward the filesystem root when outside home. The nearest project definition wins over parent and global definitions. Prompt IDs are compared case-insensitively for precedence and lookup.
 
-A prompt file needs YAML frontmatter with an `id` that exactly matches its filename without `.md`:
+A prompt's ID is its filename without `.md`. Each file requires YAML frontmatter with a non-empty display `label`. For example, `release-summary.md`:
 
 ```markdown
 ---
-id: release-summary
 label: release summary
-description: Summarize changes for a release announcement.
 ---
 
 Summarize the changes since the previous release. Separate user-visible changes from internal maintenance, and call out any migration steps.
 ```
 
-The fields are:
+The required `label` appears in TUI autocomplete and the Telegram prompt picker. Unknown frontmatter fields are discarded. The Markdown body is the text inserted into the editor.
 
-- `id`: required, non-empty, and exactly equal to the filename stem.
-- `label`: optional display label.
-- `description`: optional catalog and autocomplete description.
-
-Unknown fields are discarded. The Markdown body is the text inserted into the editor.
-
-Only files ending in lowercase `.md` are discovered. Invalid YAML, non-object frontmatter, a missing `id`, or an ID/filename mismatch causes Tau to skip the file and report a warning.
+Only files ending in lowercase `.md` are discovered. Invalid YAML, non-object frontmatter, or a missing or invalid label causes Tau to skip the file and report a warning.
 
 ### Invoke a prompt
 
@@ -101,32 +93,6 @@ When scanning directly from the execution home, Tau also skips direct children m
 
 It additionally skips the direct `Library` child on macOS and `snap` on Linux. A project directory with one of these names is still scanned when it is not a direct child of home.
 
-The limits and exclusions apply only to automatic descendant discovery. They do not constrain explicitly configured context files.
-
-## Add explicit context files
-
-`agentContextFiles` adds specific text files to the full injected context. The files can use any name:
-
-```json
-{
-  "agentContextFiles": ["docs/AI_GUIDE.md", "services/api/AGENTS.md"]
-}
-```
-
-Paths are resolved from the level that declares them:
-
-- A global path in `~/.config/tau/config.json` is relative to home.
-- A project path in `<project>/.tau/config.json` is relative to `<project>`, the directory containing `.tau/`.
-- Absolute paths remain absolute.
-
-Values are additive across configuration levels, from global through the nearest project level. Tau resolves them to paths and removes exact duplicates while preserving order.
-
-An explicit path must resolve to a real file whose directory is an ancestor or descendant of the working directory. An in-home session cannot escape home through a path or symlink. Sibling files, missing files, and ineligible files are not injected.
-
-Explicit files bypass the automatic child scan's depth, directory-count, and excluded-directory rules. Tau still discovers only `AGENTS.md` automatically; every other filename must be configured explicitly.
-
-Use this setting when important project instructions live outside the ordinary `AGENTS.md` hierarchy. Every included file is sent to the model as project context, so do not include secrets or unrelated content.
-
 ## Disable project context
 
 Start Tau with:
@@ -135,7 +101,7 @@ Start Tau with:
 tau --no-agent-context-files
 ```
 
-This disables ancestor `AGENTS.md` injection, configured `agentContextFiles`, and the descendant paths-only scan. It does not disable personas, prompt templates, or [skills](skills.md).
+This disables ancestor `AGENTS.md` injection and the descendant paths-only scan. It does not disable personas, prompt templates, or [skills](skills.md).
 
 The option applies to local TUI sessions and to hosts started with `tau serve`. For the Node SDK, `noAgentContextFiles: true` provides the same host-level behavior. An attached client cannot retroactively change how an existing remote host session was created.
 
@@ -146,10 +112,10 @@ A subagent normally inherits the parent session's working directory and composed
 The alternate directory controls:
 
 - target environment and repository metadata,
-- target applicable `AGENTS.md` and `agentContextFiles`,
-- target-discovered skills filtered by the parent persona.
+- target applicable `AGENTS.md`,
+- all target-discovered skills.
 
-The parent session remains the source of truth for the selected persona, model catalog, model settings, and tool policy. Tau filters skills discovered at the alternate directory through the parent persona's skill selection. It does not replace the source persona with a persona found in the target directory. See [subagents](subagents.md) for the full launch contract.
+The parent session remains the source of truth for the selected persona, model catalog, model settings, and tool policy. It does not replace the source persona with a persona found in the target directory. See [subagents](subagents.md) for the full launch contract.
 
 ## Leading hidden system blocks
 
@@ -176,4 +142,4 @@ tau --debug --persona release-coder
 
 Add `--no-agent-context-files` to verify the context-free variant. Debug mode is TUI startup functionality and is not available with `tau serve`.
 
-If expected context is missing, verify the execution-environment `cwd` and `home`, not just the attached client's current directory. Then check exact filenames, canonical path eligibility, configuration-level path bases, scan exclusions, and reload warnings. See [troubleshooting](troubleshooting.md) for broader diagnostics.
+If expected context is missing, verify the execution-environment `cwd` and `home`, not just the attached client's current directory. Then check exact filenames, canonical path eligibility, scan exclusions, and reload warnings. See [troubleshooting](troubleshooting.md) for broader diagnostics.

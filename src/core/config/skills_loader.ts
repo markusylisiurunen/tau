@@ -2,7 +2,6 @@ import { join } from "node:path";
 import type { Skill } from "../types.js";
 import type { ConfigDeps } from "./deps.js";
 import type { ConfigLevel } from "./paths.js";
-import type { Config } from "./schema.js";
 import { parseSkill } from "./skill_parser.js";
 
 export type SkillsLoadResult = {
@@ -65,18 +64,21 @@ function loadSkillsFromDir(dir: string, deps: ConfigDeps): SkillsLoadResult {
   return { skills, errors };
 }
 
-export async function loadSkillsContent(
-  _config: Config | undefined,
-  options: { deps: ConfigDeps; levels: ConfigLevel[] },
-): Promise<SkillsLoadResult> {
+export async function loadSkillsContent(options: {
+  deps: ConfigDeps;
+  levels: ConfigLevel[];
+}): Promise<SkillsLoadResult> {
   const deps = options.deps;
   const levels = options.levels;
 
   const skillsByName = new Map<string, Skill>();
+  const loadedDirs = new Set<string>();
   const errors: string[] = [];
 
   for (const level of levels) {
-    for (const dir of [level.skillsDir, level.agentsSkillsDir]) {
+    for (const dir of [level.agentsSkillsDir, level.skillsDir]) {
+      if (loadedDirs.has(dir)) continue;
+      loadedDirs.add(dir);
       const result = loadSkillsFromDir(dir, deps);
       errors.push(...result.errors);
       for (const skill of result.skills) {

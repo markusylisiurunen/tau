@@ -154,10 +154,8 @@ export class HostedEphemeralAgentSession {
     const cwd = this.options.executionEnvironment.snapshot().cwd;
     const runtimeContext = await this.options.executionEnvironment.resolveRuntimeContext({
       cwd,
-      persona: this.options.persona,
       discoveredSkills: this.options.discoveredSkills,
       includeAgentContext: this.options.includeAgentContext,
-      agentContextFiles: this.options.config.agentContextFiles ?? [],
     });
     const deps = createDefaultCoreDeps();
     const promptContext = runtimeContext.promptBootstrap.promptContext;

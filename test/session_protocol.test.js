@@ -41,6 +41,65 @@ const bootstrap = createProtocolBootstrap();
 const catalog = createProtocolCatalog();
 
 describe("session_protocol", () => {
+  it("requires configured MCP names and preserves them through catalog deltas", () => {
+    const snapshot = createProtocolSnapshot();
+    const next = structuredClone(snapshot);
+    next.revision += 1;
+    next.catalog.mcpServers = ["github", "linear"];
+    expect(validateSessionProtocolResult("session.snapshot", next).ok).toBe(true);
+    const delta = createSessionProtocolDeltaMessage({
+      sessionId: snapshot.sessionId,
+      fromRevision: snapshot.revision,
+      toRevision: next.revision,
+      cause: { type: "configuration" },
+      delta: { type: "snapshot.reset", snapshot: next },
+    });
+    expect(applySessionProtocolDelta(snapshot, delta)).toEqual(next);
+    for (const mcpServers of [undefined, [""], [{ name: "github" }]]) {
+      expect(
+        validateSessionProtocolResult("session.snapshot", {
+          ...snapshot,
+          catalog: { ...snapshot.catalog, mcpServers },
+        }).ok,
+      ).toBe(false);
+    }
+  });
+
+  it("uses one Fly connection and requires canonical labeled prompt metadata", () => {
+    const params = {
+      executionEnvironment: { kind: "fly-sprite", spriteName: "existing", cwd: "/repo" },
+      attributes: { source: "test" },
+    };
+    expect(validateSessionProtocolParams("session.create", params).ok).toBe(true);
+    expect(
+      validateSessionProtocolParams("session.create", {
+        ...params,
+        executionEnvironment: { ...params.executionEnvironment, apiId: "obsolete" },
+      }).value,
+    ).toEqual(params);
+    const snapshot = createProtocolSnapshot();
+    snapshot.catalog.prompts = [{ id: "review", label: "Review" }];
+    expect(validateSessionProtocolResult("session.snapshot", snapshot).ok).toBe(true);
+    const historical = {
+      ...snapshot,
+      catalog: {
+        ...snapshot.catalog,
+        prompts: [{ id: "review", label: "Review", description: "obsolete" }],
+      },
+    };
+    expect(
+      validateSessionProtocolResult("session.snapshot", historical).value.catalog.prompts,
+    ).toEqual([{ id: "review", label: "Review" }]);
+    for (const prompt of [{ id: "review" }, { id: "review", label: "" }]) {
+      expect(
+        validateSessionProtocolResult("session.snapshot", {
+          ...snapshot,
+          catalog: { ...snapshot.catalog, prompts: [prompt] },
+        }).ok,
+      ).toBe(false);
+    }
+  });
+
   it("preserves bounded client-tool images and rejects invalid image output", () => {
     const image = createProtocolImage();
     const params = {
@@ -589,7 +648,6 @@ describe("session_protocol", () => {
         {
           executionEnvironment: {
             kind: "fly-sprite",
-            apiId: "default",
             spriteName: "sprite-1",
             cwd: "/home/sprite/repo",
           },
@@ -1119,7 +1177,6 @@ describe("session_protocol", () => {
     const flySnapshot = createProtocolSnapshot({
       executionEnvironment: {
         kind: "fly-sprite",
-        apiId: "default",
         spriteName: "sprite-1",
         cwd: "/home/sprite/repo",
         home: "/home/sprite",

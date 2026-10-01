@@ -149,7 +149,7 @@ Compaction and rewind differ in an important way: compaction preserves the flat 
 
 ## Reload session content
 
-Run `/reload` from the TUI while the session is idle. The host rereads runtime configuration and model overlays, personas, prompts, skills, and AGENTS.md context from the execution environment cwd. It keeps the current persona if that id still exists and otherwise selects the first available persona. Reload warnings appear in the transcript.
+Run `/reload` from the TUI while the session is idle. The host rereads runtime configuration and personas, prompts, skills, and AGENTS.md context from the execution environment cwd. It keeps the current persona if that id still exists and otherwise selects the first available persona. Reload warnings appear in the transcript.
 
 Reload updates future turns. It does not rewrite committed conversation content or change the execution environment. It also does not reload client-owned themes, diff launchers, speech settings, or client tools. Restart the attaching TUI for those. Effective configured model `apiKeys` update through `/reload`, while managed Codex auth storage is read again on later credential resolutions. Restart the host for changed process environment variables, listener settings, resolver targets, or the Tau binary. [Credentials](credentials.md) has the canonical distinctions, and [remote sessions](remote-sessions.md) identifies each owner.
 

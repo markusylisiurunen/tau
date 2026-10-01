@@ -189,7 +189,7 @@ Members live at `<composite-root>/<member-project-id>` and use each repository's
 
 `subagents.launchModels` sets the subagent launch override allowlist. Runtime config resolves and enforces entries. See [subagents](subagents.md) for model syntax and inheritance.
 
-The composite owns the parent persona, subagents, model catalog, config, settings, and tools. Child `.tau/config.json` files are not merged. A subagent in a member directory rebuilds only target context: environment and repository metadata, applicable `AGENTS.md` and `agentContextFiles`, and skills filtered by the parent persona.
+The composite owns the parent persona, subagents, model catalog, config, settings, and tools. Child `.tau/config.json` files are not merged. A subagent in a member directory rebuilds only target context: environment and repository metadata, applicable `AGENTS.md`, and all discovered skills.
 
 Composite preparation is all-or-nothing. If one member cannot be prepared, Tau removes the generated composite workspace. Composite workspaces and member repository caches use the top-level `workspaceRoot`.
 
@@ -213,7 +213,7 @@ New and reconstructed workspaces run their hooks; preserved workspaces and persi
 
 ## Normal Tau configuration inside workspaces
 
-After preparation, Tau creates an ordinary local session at the workspace `cwd`. Runtime discovery reads normal `~/.config/tau` and ancestor `.tau` content visible from that path: models, personas, prompts, skills, project context, host tools, and other session settings work as they do in the TUI.
+After preparation, Tau creates an ordinary local session at the workspace `cwd`. Runtime discovery reads normal `~/.config/tau` and ancestor `.tau` content visible from that path: personas, prompts, skills, project context, host tools, and other session settings work as they do in the TUI.
 
 A project `persona` overrides the normal default for that session. Sessions include applicable `AGENTS.md` instructions. Composite root context is generated deliberately and uses its required persona.
 

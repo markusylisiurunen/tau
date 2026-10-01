@@ -9,7 +9,6 @@ function createPersona(overrides = {}) {
     model: personas[0].model,
     systemPrompt: "source main instructions",
     settings: { reasoning: "high" },
-    skills: "*",
     source: "project",
     tools: ["bash", "spawn_agent"],
     subagentLaunchModels: [],
@@ -29,18 +28,12 @@ function createPromptBootstrap(cwd = "/workspace/repo") {
       projectContextBlock: "### Project context\n\ntarget AGENTS context",
     },
     agentsFiles: ["/workspace/repo/docs/AGENTS.md"],
-    unknownSkills: [],
   };
 }
 
 describe("execution environment subagent prompt resolver", () => {
   it("combines the source persona with target-directory prompt context", async () => {
     const sourcePersona = createPersona();
-    const targetPersona = createPersona({
-      systemPrompt: "conflicting target main instructions",
-      settings: { reasoning: "low" },
-      subagentLaunchModels: [],
-    });
     const skills = [
       {
         name: "target-skill",
@@ -48,30 +41,33 @@ describe("execution environment subagent prompt resolver", () => {
         path: "/workspace/repo/.tau/skills/target-skill/SKILL.md",
       },
     ];
-    const config = {
-      agentContextFiles: ["/workspace/repo/docs/AGENTS.md"],
-      modelSystemNotices: {},
-    };
     const resolveRuntimeContext = vi.fn(async () => ({
       promptBootstrap: createPromptBootstrap(),
     }));
     const executionEnvironment = {
-      resolveRuntimeConfig: vi.fn(async () => ({
-        bootstrap: { modelResolver: { resolveModel: vi.fn() } },
-        config,
-        personas: [targetPersona],
-        prompts: [],
-        skills,
-        themes: [],
-        warnings: [],
-      })),
+      resolveRuntimeConfig: vi.fn(() => {
+        throw new Error("must not load runtime config");
+      }),
+      snapshot: () => ({ home: "/workspace" }),
+      getToolExecutionBackend: () => ({
+        runNodeScript: vi.fn(async () => ({
+          exitCode: 0,
+          output: JSON.stringify({
+            files: [
+              {
+                path: skills[0].path,
+                content: "---\nname: target-skill\ndescription: target skill\n---\n",
+              },
+            ],
+          }),
+          truncated: false,
+        })),
+      }),
       resolveRuntimeContext,
     };
-    const remoteCatalog = new Map();
     const resolvePrompts = createExecutionEnvironmentSubagentPromptResolver({
       sessionId: "session-1",
       executionEnvironment,
-      getRemoteModelCatalog: () => remoteCatalog,
       includeAgentContext: true,
       sessionStartedAt: Date.parse("2026-01-01T00:00:00.000Z"),
     });
@@ -81,15 +77,11 @@ describe("execution environment subagent prompt resolver", () => {
       persona: sourcePersona,
     });
 
-    expect(executionEnvironment.resolveRuntimeConfig).toHaveBeenCalledWith("/workspace/repo", {
-      remoteCatalog,
-    });
+    expect(executionEnvironment.resolveRuntimeConfig).not.toHaveBeenCalled();
     expect(resolveRuntimeContext).toHaveBeenCalledWith({
       cwd: "/workspace/repo",
-      persona: sourcePersona,
       discoveredSkills: skills,
       includeAgentContext: true,
-      agentContextFiles: config.agentContextFiles,
     });
     expect(prompts).toContain("source main instructions");
     expect(prompts).not.toContain("conflicting target main instructions");
@@ -105,21 +97,15 @@ describe("execution environment subagent prompt resolver", () => {
       promptBootstrap: createPromptBootstrap("/workspace/other"),
     }));
     const executionEnvironment = {
-      resolveRuntimeConfig: vi.fn(async () => ({
-        bootstrap: { modelResolver: { resolveModel: vi.fn() } },
-        config: {},
-        personas: [],
-        prompts: [],
-        skills: [],
-        themes: [],
-        warnings: [],
-      })),
+      snapshot: () => ({ home: "/workspace" }),
+      getToolExecutionBackend: () => ({
+        runNodeScript: async () => ({ exitCode: 0, output: '{"files":[]}', truncated: false }),
+      }),
       resolveRuntimeContext,
     };
     const resolvePrompts = createExecutionEnvironmentSubagentPromptResolver({
       sessionId: "session-1",
       executionEnvironment,
-      getRemoteModelCatalog: () => new Map(),
       includeAgentContext: true,
       sessionStartedAt: 0,
     });
@@ -128,7 +114,7 @@ describe("execution environment subagent prompt resolver", () => {
       resolvePrompts({ cwd: "/workspace/other", persona: sourcePersona }),
     ).resolves.toEqual(expect.stringContaining("source main instructions"));
     expect(resolveRuntimeContext).toHaveBeenCalledWith(
-      expect.objectContaining({ persona: sourcePersona }),
+      expect.objectContaining({ cwd: "/workspace/other" }),
     );
   });
 });

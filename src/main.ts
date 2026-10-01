@@ -96,8 +96,7 @@ function printAuthHelp(): void {
       "usage:",
       "  tau auth login <provider>",
       "  tau auth list",
-      "  tau auth disable <provider> --account <email-or-id>",
-      "  tau auth enable <provider> --account <email-or-id>",
+      "  tau auth use <provider> --account <email-or-id>",
       "  tau auth logout <provider> --account <email-or-id>",
       "",
       "providers:",
@@ -106,8 +105,7 @@ function printAuthHelp(): void {
       "examples:",
       "  tau auth login codex",
       "  tau auth list",
-      "  tau auth disable codex --account user@example.com",
-      "  tau auth enable codex --account user@example.com",
+      "  tau auth use codex --account user@example.com",
       "  tau auth logout codex --account user@example.com",
     ].join("\n"),
   );
@@ -119,7 +117,6 @@ type AttachCliOptions = {
   createNew: boolean;
   cwd?: string;
   executionKind?: SessionProtocolExecutionEnvironmentInput["kind"];
-  flyApiId?: string;
   flySpriteName?: string;
   target?: AttachTarget;
   authToken?: string;
@@ -145,7 +142,6 @@ function parseAttachArgs(args: string[]): AttachCliOptions {
   let createNew = false;
   let cwd: string | undefined;
   let executionKind: SessionProtocolExecutionEnvironmentInput["kind"] | undefined;
-  let flyApiId: string | undefined;
   let flySpriteName: string | undefined;
   let authToken: string | undefined;
   let target: AttachTarget | undefined;
@@ -183,13 +179,6 @@ function parseAttachArgs(args: string[]): AttachCliOptions {
         throw new CliError("--execution-kind must be local or fly-sprite");
       }
       executionKind = parsed.value;
-      i = parsed.nextIndex;
-      continue;
-    }
-    if (arg === "--fly-api" || arg.startsWith("--fly-api=")) {
-      const parsed = parseAttachValue(arg, args, i);
-      flyApiId = parsed.value;
-      executionKind ??= "fly-sprite";
       i = parsed.nextIndex;
       continue;
     }
@@ -234,8 +223,8 @@ function parseAttachArgs(args: string[]): AttachCliOptions {
 
   if (!help && createNew) {
     const kind = executionKind ?? "local";
-    if (kind === "fly-sprite" && (!flyApiId || !flySpriteName)) {
-      throw new CliError("--new --execution-kind fly-sprite requires --fly-api and --fly-sprite");
+    if (kind === "fly-sprite" && !flySpriteName) {
+      throw new CliError("--new --execution-kind fly-sprite requires --fly-sprite");
     }
   }
 
@@ -245,7 +234,6 @@ function parseAttachArgs(args: string[]): AttachCliOptions {
     createNew,
     cwd,
     executionKind,
-    flyApiId,
     flySpriteName,
     target,
     authToken,
@@ -323,13 +311,12 @@ function buildAttachCreateInput(attach: AttachCliOptions): SessionProtocolCreate
     case "local":
       return { executionEnvironment: { kind: "local", cwd }, attributes: { source: "tui" } };
     case "fly-sprite":
-      if (!attach.flyApiId || !attach.flySpriteName) {
-        throw new CliError("--new --execution-kind fly-sprite requires --fly-api and --fly-sprite");
+      if (!attach.flySpriteName) {
+        throw new CliError("--new --execution-kind fly-sprite requires --fly-sprite");
       }
       return {
         executionEnvironment: {
           kind: "fly-sprite",
-          apiId: attach.flyApiId,
           spriteName: attach.flySpriteName,
           cwd,
         },
@@ -351,7 +338,6 @@ function printAttachHelp(): void {
       "  --new                          create and attach to a new hosted session.",
       "  --cwd <path>                   absolute cwd for a new session's execution environment.",
       "  --execution-kind <kind>        local or fly-sprite. default: local.",
-      "  --fly-api <id>                 configured Fly Sprites API id.",
       "  --fly-sprite <name>            already-provisioned Fly Sprite name.",
       "  --auth-token <token>           token for websocket servers started with --auth-token.",
       "  --no-client-tools              disable built-in and configured TUI client tools.",
@@ -360,7 +346,7 @@ function printAttachHelp(): void {
       "examples:",
       "  tau attach ws://127.0.0.1:8787",
       "  tau attach --new --cwd /srv/workspaces/repo ws://127.0.0.1:8787",
-      "  tau attach --new --execution-kind fly-sprite --fly-api default --fly-sprite sprite-1 --cwd /home/sprite/repo ws://127.0.0.1:8787",
+      "  tau attach --new --execution-kind fly-sprite --fly-sprite sprite-1 --cwd /home/sprite/repo ws://127.0.0.1:8787",
       "  tau attach --session 0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3 --auth-token $TAU_WS_AUTH_TOKEN ws://vps:8787",
       "",
       "without --session or --new, attach lists hosted sessions and prompts for a selection.",
@@ -428,6 +414,7 @@ function clonePersonaForSession(persona: Persona): Persona {
 async function resolveHostedSessionBootstrap(options: {
   cli: CliOptions;
   runtime: RuntimeConfigResult;
+  apiKeys: Config["apiKeys"];
   cwd: string;
 }): Promise<{
   persona: Persona;
@@ -477,7 +464,7 @@ async function resolveHostedSessionBootstrap(options: {
     personas: runtime.personas.map(clonePersonaForSession),
     prompts: runtime.prompts,
     modelResolver: runtime.bootstrap.modelResolver.resolveModel,
-    config: runtime.config,
+    config: { ...runtime.config, apiKeys: options.apiKeys },
   };
 }
 
@@ -496,12 +483,12 @@ async function createLocalSessionHost(options: {
     local: localExecutionEnvironmentResolver,
   };
 
-  if (options.config.flySprites?.apis) {
+  if (options.config.flySprites) {
     const { FlySpriteExecutionEnvironmentResolver } = await import(
       "./execution/fly_sprite_execution_environment.js"
     );
     resolvers["fly-sprite"] = new FlySpriteExecutionEnvironmentResolver({
-      apis: options.config.flySprites.apis,
+      connection: options.config.flySprites,
     });
   }
 
@@ -527,6 +514,7 @@ async function createLocalSessionHost(options: {
       return await resolveHostedSessionBootstrap({
         cli: options.cli,
         runtime,
+        apiKeys: options.config.apiKeys,
         cwd: snapshot.cwd,
       });
     },
@@ -548,7 +536,7 @@ if (argv[0] === "auth") {
     runListCommand,
     runLoginCommand,
     runLogoutCommand,
-    runSetAccountEnabledCommand,
+    runUseAccountCommand,
   } = await import("./core/auth/index.js");
   let command: AuthCliCommand;
   try {
@@ -603,9 +591,8 @@ if (argv[0] === "auth") {
         authPath,
         prompt,
       });
-    } else if (command.type === "enable" || command.type === "disable") {
-      await runSetAccountEnabledCommand({
-        enabled: command.type === "enable",
+    } else if (command.type === "use") {
+      await runUseAccountCommand({
         providerArg: command.providerArg,
         accountId: command.accountId,
         authStorage,
@@ -1034,12 +1021,10 @@ if (cli.debug) {
   const debugBackend = createLocalToolExecutionBackend();
   const debugPromptBootstrap = debugPersona
     ? await resolveRuntimePromptBootstrap({
-        persona: debugPersona,
         discoveredSkills: skills,
         cwd,
         home: debugDeps.env.home() || process.env.HOME || homedir(),
         includeAgentContext: !cli.noAgentContextFiles,
-        agentContextFiles: config.agentContextFiles ?? [],
         backend: debugBackend,
       })
     : undefined;

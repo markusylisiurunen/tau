@@ -39,7 +39,7 @@ export interface PersonaSuggestion {
 
 export interface PromptSuggestion {
   id: string;
-  label?: string;
+  label: string;
 }
 
 export interface ThemeSuggestion {

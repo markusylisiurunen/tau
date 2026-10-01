@@ -19,7 +19,7 @@ export type AuthCliCommand =
   | { type: "help" }
   | { type: "login"; providerArg?: string }
   | { type: "list" }
-  | { type: "logout" | "enable" | "disable"; providerArg?: string; accountId: string };
+  | { type: "logout" | "use"; providerArg?: string; accountId: string };
 
 export const SUPPORTED_OAUTH_PROVIDERS: OAuthProviderSpec[] = [
   { id: "openai-codex", cliId: "codex", label: "OpenAI Codex (ChatGPT Plus/Pro)" },
@@ -75,7 +75,7 @@ export function parseAuthCliArgs(args: string[]): AuthCliCommand {
     return { type: "list" };
   }
 
-  if (subcommand === "logout" || subcommand === "enable" || subcommand === "disable") {
+  if (subcommand === "logout" || subcommand === "use") {
     return parseAccountCommand(subcommand, subcommandArgs);
   }
 
@@ -83,9 +83,9 @@ export function parseAuthCliArgs(args: string[]): AuthCliCommand {
 }
 
 function parseAccountCommand(
-  subcommand: "logout" | "enable" | "disable",
+  subcommand: "logout" | "use",
   args: string[],
-): Extract<AuthCliCommand, { type: "logout" | "enable" | "disable" }> {
+): Extract<AuthCliCommand, { type: "logout" | "use" }> {
   let index = 0;
   let providerArg: string | undefined;
   if (args[index] && !args[index]!.startsWith("-")) {
@@ -253,8 +253,7 @@ export async function runLogoutCommand(options: {
   log(`removed account ${options.accountId} for ${provider} from ${options.authPath}`);
 }
 
-export async function runSetAccountEnabledCommand(options: {
-  enabled: boolean;
+export async function runUseAccountCommand(options: {
   providerArg?: string;
   accountId: string;
   authStorage: AuthStorage;
@@ -272,9 +271,8 @@ export async function runSetAccountEnabledCommand(options: {
   }
 
   const authManager = new AuthManager(options.authStorage);
-  authManager.setAccountEnabled(provider, options.accountId, options.enabled);
-  const action = options.enabled ? "enabled" : "disabled";
-  log(`${action} account ${options.accountId} for ${provider} in ${options.authPath}`);
+  authManager.useAccount(provider, options.accountId);
+  log(`activated account ${options.accountId} for ${provider} in ${options.authPath}`);
 }
 
 export async function runListCommand(options: {
@@ -294,13 +292,14 @@ export async function runListCommand(options: {
     if (providerIndex > 0) log("");
     log(`${provider.providerLabel} (${provider.providerId})`);
     const selectedId = provider.selectedAccountId;
+    if (!selectedId) log('  no active account; run "tau auth use codex --account <email-or-id>".');
     for (const [accountIndex, account] of provider.accounts.entries()) {
       const isSelected = selectedId === account.accountId;
       const marker = isSelected ? chalk.yellow("*") : " ";
       const label = account.email ?? account.accountId;
       const plan = account.plan ? `[${account.plan}]` : undefined;
-      const disabled = account.disabled ? "[disabled]" : undefined;
-      const headerSegments = [`  ${marker}`, label, plan, disabled].filter(Boolean);
+      const active = isSelected ? "[active]" : undefined;
+      const headerSegments = [`  ${marker}`, label, plan, active].filter(Boolean);
       log(headerSegments.join(" "));
       if (account.credentialRefreshStatus === "failed") {
         log(

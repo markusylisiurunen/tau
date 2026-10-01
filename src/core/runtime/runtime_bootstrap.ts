@@ -2,79 +2,22 @@ import {
   MAX_COMMAND_CAPTURE_BYTES,
   type ToolExecutionBackend,
 } from "../tools/execution_backend.js";
-import type { Persona, Skill } from "../types.js";
+import type { Skill } from "../types.js";
 import { buildProjectContextBlock, buildSkillsIndexBlock } from "../utils/context_builder.js";
 import { normalizeRepositoryReference } from "../utils/repository.js";
 import type { ChatRuntimePromptContext } from "./chat_runtime.js";
 
-export type ResolvedPersonaSkills = {
-  skills: Skill[];
-  unknown: string[];
-  skillsBlock?: string;
-};
-
-export function resolvePersonaSkillsForPromptContext(args: {
-  persona: Persona;
-  discoveredSkills: Skill[];
-}): ResolvedPersonaSkills {
-  const personaSkills = args.persona.skills;
-
-  if (personaSkills === "*") {
-    const skills = [...args.discoveredSkills];
-    return {
-      skills,
-      unknown: [],
-      skillsBlock: buildSkillsIndexBlock(skills),
-    };
-  }
-
-  if (personaSkills.length === 0) {
-    return { skills: [], unknown: [], skillsBlock: undefined };
-  }
-
-  const skillsByName = new Map<string, Skill>();
-  for (const skill of args.discoveredSkills) {
-    skillsByName.set(skill.name.toLowerCase(), skill);
-  }
-
-  const skills: Skill[] = [];
-  const unknown: string[] = [];
-
-  for (const name of personaSkills) {
-    const trimmed = name.trim();
-    if (!trimmed) {
-      throw new Error(`persona '${args.persona.id}' has an empty skill name`);
-    }
-
-    const skill = skillsByName.get(trimmed.toLowerCase());
-    if (skill) {
-      skills.push(skill);
-      continue;
-    }
-    unknown.push(trimmed);
-  }
-
-  return {
-    skills,
-    unknown,
-    skillsBlock: buildSkillsIndexBlock(skills),
-  };
-}
-
 export type ResolveRuntimePromptBootstrapArgs = {
-  persona: Persona;
   discoveredSkills: Skill[];
   cwd: string;
   home: string;
   includeAgentContext: boolean;
-  agentContextFiles: string[];
   backend: ToolExecutionBackend;
 };
 
 export type RuntimePromptBootstrap = {
   promptContext: ChatRuntimePromptContext;
   agentsFiles: string[];
-  unknownSkills: string[];
 };
 
 const INSPECT_RUNTIME_PROMPT_CONTEXT_SCRIPT = `
@@ -85,14 +28,13 @@ const { spawnSync } = require("node:child_process");
 const cwd = path.resolve(process.argv[1]);
 const home = path.resolve(process.argv[2]);
 const includeAgentContext = process.argv[3] === "true";
-const additionalFiles = JSON.parse(process.argv[4]);
-const ignoredChildDirs = new Set(JSON.parse(process.argv[5]));
-const ignoredHomeChildDirs = new Set(JSON.parse(process.argv[6]));
+const ignoredChildDirs = new Set(JSON.parse(process.argv[4]));
+const ignoredHomeChildDirs = new Set(JSON.parse(process.argv[5]));
 const ignoredPlatformHomeChildDirs = new Set(
   process.platform === "darwin" ? ["Library"] : process.platform === "linux" ? ["snap"] : [],
 );
-const maxDirs = Number(process.argv[7]);
-const maxDepth = Number(process.argv[8]);
+const maxDirs = Number(process.argv[6]);
+const maxDepth = Number(process.argv[7]);
 
 function realpath(pathname) {
   try {
@@ -113,11 +55,11 @@ const cwdReal = realpath(cwd) || cwd;
 const homeReal = realpath(home) || home;
 const cwdWithinHome = isSameOrParent(homeReal, cwdReal);
 
-function resolveContextFile(pathname, requireAgentsBasename) {
+function resolveContextFile(pathname) {
   const resolved = path.resolve(pathname);
-  if (requireAgentsBasename && path.basename(resolved) !== "AGENTS.md") return undefined;
+  if (path.basename(resolved) !== "AGENTS.md") return undefined;
   const canonical = realpath(resolved);
-  if (!canonical || (requireAgentsBasename && path.basename(canonical) !== "AGENTS.md")) {
+  if (!canonical || (path.basename(canonical) !== "AGENTS.md")) {
     return undefined;
   }
   let stat;
@@ -149,8 +91,8 @@ function ancestorCandidates() {
 
 const agentsFiles = [];
 const seenFiles = new Set();
-function addContextFile(pathname, requireAgentsBasename) {
-  const file = resolveContextFile(pathname, requireAgentsBasename);
+function addContextFile(pathname) {
+  const file = resolveContextFile(pathname);
   if (!file || seenFiles.has(file.canonical)) return;
   seenFiles.add(file.canonical);
   agentsFiles.push({ path: file.path, content: fs.readFileSync(file.canonical, "utf8") });
@@ -159,10 +101,7 @@ function addContextFile(pathname, requireAgentsBasename) {
 const childAgentsFiles = [];
 if (includeAgentContext) {
   for (const candidate of ancestorCandidates()) {
-    addContextFile(candidate, true);
-  }
-  for (const candidate of additionalFiles) {
-    addContextFile(candidate, false);
+    addContextFile(candidate);
   }
 
   const queuedDirs = new Set([cwdReal]);
@@ -182,7 +121,7 @@ if (includeAgentContext) {
       agentsEntry &&
       (agentsEntry.isFile() || agentsEntry.isSymbolicLink())
     ) {
-      const candidate = resolveContextFile(path.join(current.dir, agentsEntry.name), true);
+      const candidate = resolveContextFile(path.join(current.dir, agentsEntry.name));
       if (candidate && !seenFiles.has(candidate.canonical)) {
         childAgentsFiles.push(candidate.path);
       }
@@ -325,10 +264,6 @@ export async function resolveRuntimePromptBootstrap(
         },
       })
     : undefined;
-  const resolvedSkills = resolvePersonaSkillsForPromptContext({
-    persona: args.persona,
-    discoveredSkills: args.discoveredSkills,
-  });
   const repository = inspection.repositoryRemote
     ? normalizeRepositoryReference(inspection.repositoryRemote)
     : undefined;
@@ -342,10 +277,9 @@ export async function resolveRuntimePromptBootstrap(
       platform: inspection.platform,
       includeAgentContext: args.includeAgentContext,
       projectContextBlock,
-      skillsBlock: resolvedSkills.skillsBlock,
+      skillsBlock: buildSkillsIndexBlock(args.discoveredSkills),
     },
     agentsFiles: inspection.agentsFiles.map((file) => file.path),
-    unknownSkills: resolvedSkills.unknown,
   };
 }
 
@@ -358,7 +292,6 @@ async function inspectRuntimePromptContext(
       args.cwd,
       args.home,
       String(args.includeAgentContext),
-      JSON.stringify(args.agentContextFiles),
       JSON.stringify(DEFAULT_IGNORED_CHILD_DIRS),
       JSON.stringify(HOME_IGNORED_CHILD_DIRS),
       String(CHILD_AGENTS_WALK_MAX_DIRS),

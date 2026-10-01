@@ -5,7 +5,7 @@ import {
 } from "../protocol/session_protocol.js";
 
 export const STORED_SESSION_DOCUMENT_FORMAT = "tau-session" as const;
-export const STORED_SESSION_DOCUMENT_VERSION = 9 as const;
+export const STORED_SESSION_DOCUMENT_VERSION = 10 as const;
 export const LEGACY_SESSION_MODEL_CONTEXT_KEY = "legacy-v3";
 
 export type StoredSessionDocument = {
@@ -26,6 +26,7 @@ const storedSessionMigrations = new Map<number, StoredSessionMigration>([
   [6, migrateStoredSessionV6ToV7],
   [7, migrateStoredSessionV7ToV8],
   [8, migrateStoredSessionV8ToV9],
+  [9, migrateStoredSessionV9ToV10],
 ]);
 
 export class UnsupportedStoredSessionVersionError extends Error {
@@ -92,6 +93,29 @@ function decodeStoredSessionDocument(value: unknown): {
     version: value.version as number,
     snapshot: value.snapshot,
   };
+}
+
+function migrateStoredSessionV9ToV10(value: unknown): unknown {
+  if (!isRecord(value)) throw new Error("stored session snapshot must be an object");
+  const snapshot = structuredClone(value);
+  if (isRecord(snapshot.executionEnvironment)) delete snapshot.executionEnvironment.apiId;
+  if (isRecord(snapshot.catalog)) {
+    snapshot.catalog.mcpServers = [];
+    if (Array.isArray(snapshot.catalog.personas)) {
+      for (const persona of snapshot.catalog.personas) {
+        if (isRecord(persona)) delete persona.skills;
+      }
+    }
+    if (Array.isArray(snapshot.catalog.prompts)) {
+      for (const prompt of snapshot.catalog.prompts) {
+        if (isRecord(prompt)) {
+          delete prompt.description;
+          if (typeof prompt.label !== "string" || !prompt.label.trim()) prompt.label = prompt.id;
+        }
+      }
+    }
+  }
+  return snapshot;
 }
 
 function migrateStoredSessionV8ToV9(value: unknown): unknown {

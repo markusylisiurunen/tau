@@ -1,12 +1,12 @@
 # Personas
 
-A persona is Tau's complete model-facing working profile. It chooses a provider and model, supplies the base system prompt, sets reasoning and service behavior, and selects tools and skills. Changing persona changes how future turns run without creating a new session.
+A persona is Tau's complete model-facing working profile. It chooses a provider and model, supplies the base system prompt, sets reasoning and service behavior, and selects tools. Changing persona changes how future turns run without creating a new session.
 
 Tau ships generated built-in personas and discovers custom persona Markdown from the execution environment. The effective list is version-specific and scope-specific, so inspect the current catalog rather than relying on a memorized list of names.
 
 ## Built-in and effective personas
 
-Built-in personas are generated from Tau's current model catalog. Most model families have separate chat and coder variants; some families expose only the variants Tau supports. Built-ins carry Tau-maintained prompts, defaults, tool selections, skills, and subagent supervision tools.
+Built-in personas are generated from Tau's current model catalog. Most model families have separate chat and coder variants; some families expose only the variants Tau supports. Built-ins carry Tau-maintained prompts, defaults, tool selections and subagent supervision tools.
 
 The Opus 5.5 chat and coder personas are available only when `anthropic/claude-opus-5-5` is present in the effective model catalog. The Sonnet 5.5 variants (`sonnet-5.5-chat` and `sonnet-5.5-coder`) likewise require `anthropic/claude-sonnet-5-5`.
 
@@ -44,7 +44,7 @@ These locations belong to the execution environment. An attached TUI does not co
 
 ## Persona file contract
 
-A persona is Markdown with YAML frontmatter. `id`, `provider`, and `model` are required. The Markdown body is the persona's base system prompt.
+A persona is Markdown with YAML frontmatter. `id`, `provider`, and `model` are required. A non-empty Markdown body is required and supplies the persona's own base system prompt.
 
 ```markdown
 ---
@@ -58,8 +58,6 @@ allowedReasoningLevels:
   - medium
   - high
   - xhigh
-skills:
-  - release-check
 tools:
   - bash
   - write
@@ -82,22 +80,20 @@ The frontmatter must be a YAML object between valid delimiters. Unknown fields a
 | `provider` | Non-empty provider ID from the installed [model catalog](models.md). |
 | `model` | Non-empty model ID for that provider. The ID may be unbundled when the provider is known. |
 
-`provider` and `model` are required even when the persona extends a built-in. Tau does not inherit them because selecting a model is the persona's central explicit contract.
+Each custom persona is self-contained: it supplies its provider, model, prompt, and optional settings.
 
 ### Optional fields
 
 | Field | Contract |
 | --- | --- |
-| `extends` | ID of a shipped built-in persona whose optional behavior is used as a base. |
-| `label` | Display label. A blank or omitted label falls back to the base label or `custom`. |
+| `label` | Display label. A blank or omitted label falls back to `custom`. |
 | `description` | Short catalog description. |
 | `reasoning` | Default effort: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. |
 | `serviceTier` | `priority` or `flex`. Currently meaningful for `openai` and `openai-codex`. |
 | `allowedReasoningLevels` | Array of reasoning efforts offered by the TUI selector. |
-| `skills` | `"*"`, a list of discovered skill names, or `[]`. |
 | `tools` | Explicit list of persona-controlled tools. |
 
-If a standalone custom persona omits `skills`, Tau selects all discovered skills with `"*"`. If it omits `tools`, Tau enables the ordinary host tools plus subagent supervision tools. An explicit `tools` list without `spawn_agent` prevents subagent launches. See [skills](skills.md) and [subagents](subagents.md) for those contracts.
+Every persona exposes all discovered skills. If a custom persona omits `tools`, Tau enables the ordinary host tools plus subagent supervision tools. An explicit `tools` list without `spawn_agent` prevents subagent launches. See [skills](skills.md) and [subagents](subagents.md) for those contracts.
 
 The persona-controlled tool names are:
 
@@ -105,32 +101,6 @@ The persona-controlled tool names are:
 - `spawn_agent`, `send_input_to_agent`, `wait_for_agents`, `list_agents`, and `interrupt_agent`.
 
 An explicit `tools` array replaces defaults. Names are normalized to lowercase, duplicates are removed, and unknown names reject the persona. `tools: []` leaves the persona without these persona-controlled tools. Some host capabilities, such as goal management, are supplied independently of this list. Listing `nook` does not make it usable without effective Nook configuration. Listing `mcp` requires enabled MCP servers configured on the host. [Tools](tools.md) explains eligibility and ownership.
-
-## Extending a built-in
-
-`extends` reuses one shipped built-in persona as a base while still requiring an explicit provider and model:
-
-```markdown
----
-id: concise-haiku-coder
-extends: opus-5.5-coder
-provider: anthropic
-model: claude-haiku-4-5
-reasoning: low
----
-```
-
-Because the body is empty, this persona inherits the built-in's base prompt. It also inherits the base label, description, settings not explicitly overridden, allowed reasoning levels, skills, tools, and subagent map.
-
-Important boundaries are:
-
-- `extends` resolves shipped built-ins, not another custom persona.
-- Lookup of the built-in ID is case-insensitive.
-- A non-empty Markdown body replaces the inherited base prompt.
-- Explicit `skills` or `tools` replaces the inherited selection.
-- `reasoning` and `serviceTier` override their individual inherited settings; omitted settings remain inherited.
-
-Extending a built-in is useful when Tau's maintained behavior is the desired base. A standalone body is more stable when the persona must not change as Tau updates its built-in prompts.
 
 ## Selecting a persona
 
@@ -166,13 +136,13 @@ The TUI resolves that command against the session catalog case-insensitively. `C
 
 `allowedReasoningLevels` controls which values the TUI cycles for that persona. It is a presentation allowlist, not a protocol-level prohibition. When omitted, the TUI offers the standard reasoning enum for a reasoning-capable model. For a model whose catalog entry says `reasoning: false`, the selector resolves to `none`.
 
-An empty `allowedReasoningLevels` does not create an empty selector. For an extending persona it falls back to inherited levels; otherwise the TUI uses its normal model-aware choices.
+An empty `allowedReasoningLevels` does not create an empty selector. The TUI uses its normal model-aware choices.
 
 `serviceTier` is passed with supported OpenAI and OpenAI Codex requests. `priority` requests the provider's priority service and `flex` requests flex service. Availability, billing, and rejection behavior remain provider-account concerns. Other providers do not currently use this setting.
 
 ## Reloading changes
 
-Run `/reload` while the TUI session is idle after editing personas, `models.json`, skills, or project context. Reload re-discovers the effective catalog and rebuilds the current session prompt and tools.
+Run `/reload` while the TUI session is idle after editing personas, skills, or project context. Reload re-discovers the effective catalog and rebuilds the current session prompt and tools.
 
 If the current persona ID still exists, Tau applies its newly loaded definition. This can reset runtime settings such as reasoning or service tier to the definition's values. If the ID disappeared, Tau selects the first effective persona. Existing session messages remain; changing a persona does not rewrite prior model-facing history.
 
@@ -183,12 +153,10 @@ A reload does not alter a turn already in progress, and the TUI refuses the oper
 An invalid persona is skipped and reported as a configuration warning. Other valid personas still load. Frequent causes are:
 
 - malformed YAML, missing frontmatter delimiters, or frontmatter that is not an object;
-- missing `id`, `provider`, or `model`;
+- missing `id`, `provider`, `model`, or a non-empty prompt body;
 - an `id` that does not exactly match the filename;
 - an unknown provider or an unresolved model;
-- an `extends` target that is not a shipped built-in;
 - an invalid reasoning effort or service tier;
-- `skills` that is neither `"*"` nor a string list, or contains a blank entry;
 - an unknown persona tool.
 
 `/reload` surfaces warning paths directly in the transcript. For a new local TUI session, `tau --debug --persona <id>` shows the selected model, settings, skills, subagents, tools, and complete effective prompt. If a remote edit appears to have no effect, confirm the session execution environment and `cwd` before changing another copy of the file. [Troubleshooting](troubleshooting.md) covers that check in more detail.

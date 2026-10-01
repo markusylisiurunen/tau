@@ -65,7 +65,6 @@ params: {
     | { kind: "local"; cwd: string; env?: Record<string, string> }
     | {
         kind: "fly-sprite";
-        apiId: string;
         spriteName: string;
         cwd: string;
       };

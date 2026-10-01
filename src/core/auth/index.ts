@@ -14,7 +14,7 @@ export {
   runListCommand,
   runLoginCommand,
   runLogoutCommand,
-  runSetAccountEnabledCommand,
+  runUseAccountCommand,
   SUPPORTED_OAUTH_PROVIDERS,
 } from "./cli.js";
 export type {

@@ -1,6 +1,5 @@
 ---
-id: "release-patch"
-description: "release a new patch version"
+label: release patch
 ---
 
 Make a new patch release of tau:

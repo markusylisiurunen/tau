@@ -1,6 +1,5 @@
 ---
-id: "release-minor"
-description: "release a new minor version"
+label: release minor
 ---
 
 Make a new minor release of tau:

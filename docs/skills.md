@@ -1,8 +1,8 @@
 # Skills
 
-Skills are local packages of instructions and supporting material that teach an agent how to handle a particular kind of work. Tau discovers them from the execution environment, shows the selected skills to the active persona, and lets the agent open a skill only when the task calls for it.
+Skills are local packages of instructions and supporting material that teach an agent how to handle a particular kind of work. Tau discovers them from the execution environment, shows all discovered skills to every persona, and lets the agent open a skill only when the task calls for it.
 
-A skill is not a prompt template, a persona, or project context. A [prompt template](prompts-and-project-context.md) is text placed in the input editor. A [persona](personas.md) chooses the model, system prompt, skills, and tools for a session. `AGENTS.md` gives standing instructions for a directory tree. A skill is a reusable, selectively activated workflow with its own directory.
+A skill is not a prompt template, a persona, or project context. A [prompt template](prompts-and-project-context.md) is text placed in the input editor. A [persona](personas.md) chooses the model, system prompt, and tools for a session. `AGENTS.md` gives standing instructions for a directory tree. A skill is a reusable, selectively activated workflow with its own directory.
 
 ## Where Tau discovers skills
 
@@ -20,7 +20,7 @@ Skills are keyed by name. Precedence runs from broadest to most specific:
 1. Global skills are the base layer.
 2. Parent project levels override global and more distant parent levels.
 3. The nearest project level wins.
-4. At the same level, `.agents/skills/` overrides `.tau/skills/`.
+4. At the same level, `.tau/skills/` overrides `.agents/skills/`.
 
 For example, with a session in `~/code/atlas/apps/api`, these definitions of `release-check` resolve to the last one listed:
 
@@ -30,7 +30,7 @@ For example, with a session in `~/code/atlas/apps/api`, these definitions of `re
 ~/code/atlas/apps/.agents/skills/release-check/SKILL.md
 ```
 
-`~/.agents/skills/` also overrides `~/.config/tau/skills/` for a same-named global skill.
+`~/.config/tau/skills/` also overrides `~/.agents/skills/` for a same-named global skill.
 
 All discovery happens in the execution environment. A remote host does not inspect the attached client's filesystem for skills.
 
@@ -83,33 +83,9 @@ Unknown frontmatter fields are discarded. `allowed-tools` does not enable, disab
 
 Keep the description useful without copying the full workflow into it. Tau initially exposes the name, description, and `SKILL.md` path. The agent opens the file after activation, then reads only the referenced resources needed for the task.
 
-## Selecting skills in a persona
+## Skill availability
 
-A persona's `skills` field controls which discovered skills appear in its skill index:
-
-```yaml
-skills: "*"
-```
-
-`"*"` selects every discovered skill. This is the default for built-in personas and for a custom persona that does not inherit another persona and omits `skills`.
-
-A list selects an explicit subset:
-
-```yaml
-skills:
-  - release-check
-  - incident-summary
-```
-
-An empty list disables skills for that persona:
-
-```yaml
-skills: []
-```
-
-When a persona extends another persona and omits `skills`, it inherits the base persona's selection. Selection names are matched case-insensitively to discovered skill names, although valid skill names themselves are lowercase. An unknown selected name produces a warning when Tau builds or reloads the session context; Tau keeps the known skills.
-
-Selecting a skill does not run it on every turn. It makes the skill discoverable to the agent and subject to activation policy.
+Every persona exposes all discovered skills. Discovery does not run a skill on every turn; it makes the skill available to the agent under its activation policy.
 
 ## Activation and trigger sensitivity
 
@@ -141,9 +117,9 @@ A running TUI session keeps its current content catalog and prompt context until
 /reload
 ```
 
-Reloading re-discovers skills, re-applies the active persona's selection, and rebuilds the effective skill index. Tau refuses to reload while a session turn is running. If the active persona disappeared, reload selects the first available persona; if no personas remain, reload fails.
+Reloading re-discovers skills and rebuilds the effective skill index. Tau refuses to reload while a session turn is running. If the active persona disappeared, reload selects the first available persona; if no personas remain, reload fails.
 
-For a new local TUI session, `tau --debug` prints the discovered skills and the effective system prompt without starting the TUI. Combine it with `--persona` to inspect a particular selection:
+For a new local TUI session, `tau --debug` prints the discovered skills and the effective system prompt without starting the TUI. Combine it with `--persona` to inspect its effective prompt:
 
 ```bash
 tau --debug --persona release-coder

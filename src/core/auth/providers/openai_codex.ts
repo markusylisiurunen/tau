@@ -2,7 +2,7 @@ import type { OAuthCredential } from "@earendil-works/pi-ai";
 import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
 import type { AuthStorage } from "../auth_storage.js";
 import { decodeJwtPayload } from "../jwt.js";
-import type { AuthProviderAdapter, AuthProviderSelection } from "../provider_adapter.js";
+import type { AuthProviderAdapter } from "../provider_adapter.js";
 import type {
   AuthAccountInfo,
   AuthAccountUsage,
@@ -14,7 +14,6 @@ import type {
 const PROVIDER_ID = "openai-codex";
 const PROVIDER_LABEL = "OpenAI Codex";
 const USAGE_ENDPOINT = "https://chatgpt.com/backend-api/wham/usage";
-const FORCED_ACCOUNT_ENV = "TAU_CODEX_ACCOUNT";
 const ALLOWED_USAGE_WINDOW_SECONDS = new Set([5 * 60 * 60, 7 * 24 * 60 * 60]);
 const openaiCodexOAuth = getOpenAICodexOAuth();
 
@@ -37,11 +36,10 @@ class UnexpectedUsageWindowError extends Error {
 
 type CodexAccount = StoredOAuthAccount;
 type UnknownRecord = Record<string, unknown>;
-type AccountPriorityCandidate = { usage?: AuthAccountUsage; index: number };
-type RefreshStatus = "not-requested" | "succeeded" | "failed";
+type RefreshStatus = "succeeded" | "failed";
 type AccountRefreshResult = {
   account: CodexAccount;
-  refreshStatus: Exclude<RefreshStatus, "not-requested">;
+  refreshStatus: RefreshStatus;
 };
 type UsageSnapshotResult = {
   usage?: AuthAccountUsage;
@@ -62,7 +60,6 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
     const account: CodexAccount = {
       type: "oauth",
       accountId,
-      disabled: false,
       providerAccountId: normalizeString(credentials.accountId) ?? claims.accountId,
       access: credentials.access,
       refresh: credentials.refresh,
@@ -73,17 +70,17 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
 
     authStorage.update((data) => {
       const providerData = ensureProvider(data, PROVIDER_ID);
+      const isFirstAccount = providerData.accounts.length === 0;
       const existingIndex = providerData.accounts.findIndex(
         (entry) => entry.type === "oauth" && entry.accountId === accountId,
       );
       if (existingIndex >= 0) {
-        const existing = providerData.accounts[existingIndex]!;
         providerData.accounts[existingIndex] = {
           ...account,
-          disabled: existing.type === "oauth" && existing.disabled,
         };
       } else {
         providerData.accounts.push(account);
+        if (isFirstAccount) providerData.activeAccountId = accountId;
       }
     });
   }
@@ -97,6 +94,7 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
         if (account.type !== "oauth" || !matchesIdentifier(account, normalizedId)) {
           return true;
         }
+        if (providerData.activeAccountId === account.accountId) providerData.activeAccountId = null;
         removed = true;
         return false;
       });
@@ -104,18 +102,17 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
     return removed;
   }
 
-  setAccountEnabled(authStorage: AuthStorage, accountId: string, enabled: boolean): boolean {
+  useAccount(authStorage: AuthStorage, accountId: string): boolean {
     const normalizedId = normalizeIdentifier(accountId);
-    let updated = false;
-    authStorage.update((data) => {
-      const account = ensureProvider(data, PROVIDER_ID).accounts.find(
+    return authStorage.update((data) => {
+      const provider = ensureProvider(data, PROVIDER_ID);
+      const account = provider.accounts.find(
         (entry) => entry.type === "oauth" && matchesIdentifier(entry, normalizedId),
       );
-      if (account?.type !== "oauth") return;
-      account.disabled = !enabled;
-      updated = true;
+      if (!account) return false;
+      provider.activeAccountId = account.accountId;
+      return true;
     });
-    return updated;
   }
 
   async listAccountInfo(authStorage: AuthStorage): Promise<AuthAccountInfo[]> {
@@ -128,9 +125,7 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
         if (!accountRefresh) {
           return undefined;
         }
-        const usageSnapshot = await this.getUsageSnapshot(authStorage, accountRefresh.account, {
-          forceRefresh: true,
-        });
+        const usageSnapshot = await this.getUsageSnapshot(authStorage, accountRefresh.account);
         const currentAccount = getAccounts(authStorage).find(
           (entry) => entry.accountId === account.accountId,
         );
@@ -146,170 +141,45 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
         return {
           provider: PROVIDER_ID,
           accountId: currentAccount.accountId,
-          disabled: currentAccount.disabled,
           email: identity.email,
           plan: identity.plan,
           credentialExpired: Date.now() >= currentAccount.expires,
           credentialRefreshStatus,
           usage: usageSnapshot.usage,
-          usageRefreshStatus: usageSnapshot.refreshStatus === "succeeded" ? "succeeded" : "failed",
+          usageRefreshStatus: usageSnapshot.refreshStatus,
         } satisfies AuthAccountInfo;
       }),
     );
     return accountInfo.filter((account): account is AuthAccountInfo => account !== undefined);
   }
 
-  async selectAccount(
-    authStorage: AuthStorage,
-    options?: { signal?: AbortSignal },
-  ): Promise<AuthProviderSelection | undefined> {
-    options?.signal?.throwIfAborted();
-    const forcedAccount = resolveForcedAccount(authStorage);
-    if (forcedAccount?.disabled) {
-      throw new Error(
-        `${FORCED_ACCOUNT_ENV} matched disabled Codex account "${forcedAccount.accountId}". ` +
-          `Run "tau auth enable codex --account ${forcedAccount.accountId}" to enable it.`,
-      );
-    }
-    if (forcedAccount) {
-      const apiKey = await this.getApiKeyForAccount(authStorage, forcedAccount.accountId, options);
-      return apiKey && isAccountEnabled(authStorage, forcedAccount.accountId)
-        ? { accountId: forcedAccount.accountId, apiKey }
-        : undefined;
-    }
-
-    const accounts = getSelectableAccounts(authStorage);
-    if (accounts.length === 0) return undefined;
-
-    const now = nowSeconds();
-    const candidates = accounts.map((account, index) => ({ account, index, usage: account.usage }));
-    candidates.sort((a, b) => compareAccountPriority(a, b, now));
-
-    for (const candidate of candidates) {
-      const apiKey = await this.getApiKeyForAccount(
-        authStorage,
-        candidate.account.accountId,
-        options,
-      );
-      if (!apiKey) continue;
-
-      let usage = candidate.usage;
-      if (!isUsageUsable(usage, now) || !usage || isUsageExpired(usage, now)) {
-        const refreshed = await this.getUsageSnapshot(authStorage, candidate.account, {
-          apiKey,
-          forceRefresh: true,
-          signal: options?.signal,
-        });
-        usage = refreshed.usage ?? usage;
-      }
-
-      if (isUsageUsable(usage, now) && isAccountEnabled(authStorage, candidate.account.accountId)) {
-        return { accountId: candidate.account.accountId, apiKey };
-      }
-    }
-
-    return undefined;
-  }
-
-  selectAccountFromList(accounts: AuthAccountInfo[]): string | undefined {
-    if (accounts.length === 0) return undefined;
-
-    const forcedAccountId = getForcedAccountIdFromList(accounts);
-    if (forcedAccountId) return forcedAccountId;
-
-    const now = nowSeconds();
-    const candidates = accounts
-      .filter((account) => !account.disabled)
-      .map((account, index) => ({ accountId: account.accountId, usage: account.usage, index }))
-      .filter((candidate) => isUsageUsable(candidate.usage, now));
-    if (candidates.length === 0) return undefined;
-
-    candidates.sort((a, b) => compareAccountPriority(a, b, now));
-    return candidates[0]?.accountId;
-  }
-
-  async getApiKeyForAccount(
+  private async getApiKeyForAccount(
     authStorage: AuthStorage,
     accountId: string,
-    options?: { signal?: AbortSignal },
   ): Promise<string | undefined> {
-    options?.signal?.throwIfAborted();
-    const account = getAccounts(authStorage).find((entry) => entry.accountId === accountId);
-    if (!account) return undefined;
+    return await authStorage.withAccountLock(PROVIDER_ID, accountId, async () => {
+      authStorage.reload();
+      const account = getAccounts(authStorage).find((entry) => entry.accountId === accountId);
+      if (!account) return undefined;
 
-    let credential = toOAuthCredential(account);
-    if (Date.now() >= credential.expires) {
-      credential = await openaiCodexOAuth.refresh(
-        credential,
-        options?.signal ?? new AbortController().signal,
+      let credential = toOAuthCredential(account);
+      if (Date.now() >= credential.expires) {
+        credential = await openaiCodexOAuth.refresh(credential, new AbortController().signal);
+      }
+
+      const updateResult = updateStoredOAuthAccount(authStorage, account, (current) =>
+        shouldUpdateAccount(current, credential)
+          ? mergeUpdatedCredentials(current, credential)
+          : current,
       );
-      options?.signal?.throwIfAborted();
-    }
+      if (updateResult.status !== "updated") {
+        return undefined;
+      }
 
-    const updateResult = updateStoredOAuthAccount(authStorage, account, (current) =>
-      shouldUpdateAccount(current, credential)
-        ? mergeUpdatedCredentials(current, credential)
-        : current,
-    );
-    if (updateResult.status !== "updated") {
-      return undefined;
-    }
-
-    const apiKey = (await openaiCodexOAuth.toAuth(toOAuthCredential(updateResult.account))).apiKey;
-    options?.signal?.throwIfAborted();
-    return apiKey;
-  }
-
-  getForcedAccountId(authStorage: AuthStorage): string | undefined {
-    return resolveForcedAccountId(authStorage);
-  }
-
-  async isAccountUsable(
-    authStorage: AuthStorage,
-    accountId: string,
-    options?: { apiKey?: string; signal?: AbortSignal },
-  ): Promise<boolean> {
-    options?.signal?.throwIfAborted();
-    const account = getAccounts(authStorage).find((entry) => entry.accountId === accountId);
-    if (!account || account.disabled) return false;
-
-    const usageSnapshot = await this.getUsageSnapshot(authStorage, account, {
-      apiKey: options?.apiKey,
-      refreshIfExpired: true,
-      refreshIfMissing: true,
-      signal: options?.signal,
+      const apiKey = (await openaiCodexOAuth.toAuth(toOAuthCredential(updateResult.account)))
+        .apiKey;
+      return apiKey;
     });
-    return (
-      isUsageUsable(usageSnapshot.usage, nowSeconds()) && isAccountEnabled(authStorage, accountId)
-    );
-  }
-
-  async handleProviderError(
-    authStorage: AuthStorage,
-    accountId: string,
-    _error: unknown,
-  ): Promise<boolean> {
-    const accounts = getSelectableAccounts(authStorage);
-    if (accounts.length === 0) return false;
-
-    const selectedAccount = accounts.find((account) => account.accountId === accountId);
-    if (!selectedAccount) return false;
-
-    const selectedUsage = await this.getUsageSnapshot(authStorage, selectedAccount, {
-      forceRefresh: true,
-      refreshIfMissing: true,
-    });
-    if (!selectedUsage.usage || !isUsageExhausted(selectedUsage.usage)) return false;
-
-    for (const account of accounts) {
-      if (account.accountId === accountId) continue;
-      await this.getUsageSnapshot(authStorage, account, {
-        forceRefresh: true,
-        refreshIfMissing: true,
-      });
-    }
-
-    return true;
   }
 
   private async refreshAccountIdentity(
@@ -317,18 +187,25 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
     account: CodexAccount,
   ): Promise<AccountRefreshResult | undefined> {
     try {
-      const refreshedCredentials = await openaiCodexOAuth.refresh(
-        toOAuthCredential(account),
-        new AbortController().signal,
-      );
-      const updateResult = updateStoredOAuthAccount(authStorage, account, (current) =>
-        shouldUpdateAccount(current, refreshedCredentials)
-          ? mergeUpdatedCredentials(current, refreshedCredentials)
-          : current,
-      );
-      return updateResult.status === "missing"
-        ? undefined
-        : { account: updateResult.account, refreshStatus: "succeeded" };
+      return await authStorage.withAccountLock(PROVIDER_ID, account.accountId, async () => {
+        authStorage.reload();
+        const currentAccount = getAccounts(authStorage).find(
+          (entry) => entry.accountId === account.accountId,
+        );
+        if (!currentAccount) return undefined;
+        const refreshedCredentials = await openaiCodexOAuth.refresh(
+          toOAuthCredential(currentAccount),
+          new AbortController().signal,
+        );
+        const updateResult = updateStoredOAuthAccount(authStorage, currentAccount, (current) =>
+          shouldUpdateAccount(current, refreshedCredentials)
+            ? mergeUpdatedCredentials(current, refreshedCredentials)
+            : current,
+        );
+        return updateResult.status === "missing"
+          ? undefined
+          : { account: updateResult.account, refreshStatus: "succeeded" };
+      });
     } catch {
       authStorage.reload();
       const currentAccount = getAccounts(authStorage).find(
@@ -348,39 +225,16 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
   private async getUsageSnapshot(
     authStorage: AuthStorage,
     account: CodexAccount,
-    options?: {
-      apiKey?: string;
-      forceRefresh?: boolean;
-      refreshIfExpired?: boolean;
-      refreshIfMissing?: boolean;
-      signal?: AbortSignal;
-    },
   ): Promise<UsageSnapshotResult> {
-    options?.signal?.throwIfAborted();
-    const now = nowSeconds();
     const usage = account.usage;
-    const shouldRefresh =
-      Boolean(options?.forceRefresh) ||
-      (Boolean(options?.refreshIfMissing) && !usage) ||
-      (Boolean(options?.refreshIfExpired) && usage !== undefined && isUsageExpired(usage, now));
-    if (!shouldRefresh) return { usage, refreshStatus: "not-requested" };
 
     try {
-      const apiKey =
-        options?.apiKey ??
-        (await this.getApiKeyForAccount(authStorage, account.accountId, {
-          signal: options?.signal,
-        }));
+      const apiKey = await this.getApiKeyForAccount(authStorage, account.accountId);
       if (!apiKey) return { usage, refreshStatus: "failed" };
 
       const refreshedAccount =
         getAccounts(authStorage).find((entry) => entry.accountId === account.accountId) ?? account;
-      const refreshedUsage = await fetchUsage(
-        apiKey,
-        refreshedAccount.providerAccountId,
-        options?.signal,
-      );
-      options?.signal?.throwIfAborted();
+      const refreshedUsage = await fetchUsage(apiKey, refreshedAccount.providerAccountId);
       if (!refreshedUsage) return { usage, refreshStatus: "failed" };
 
       const updateResult = updateStoredOAuthAccount(authStorage, refreshedAccount, (current) => ({
@@ -395,7 +249,6 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
         refreshStatus: updateResult.status === "changed" ? "failed" : "succeeded",
       };
     } catch (error) {
-      options?.signal?.throwIfAborted();
       if (error instanceof UnexpectedUsageWindowError) {
         throw error;
       }
@@ -406,7 +259,7 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
 
 function ensureProvider(data: AuthStorageData, providerId: string) {
   if (!data.providers[providerId]) {
-    data.providers[providerId] = { accounts: [] };
+    data.providers[providerId] = { accounts: [], activeAccountId: null };
   }
   return data.providers[providerId]!;
 }
@@ -415,57 +268,6 @@ function getAccounts(authStorage: AuthStorage): CodexAccount[] {
   const provider = authStorage.getData().providers[PROVIDER_ID];
   if (!provider) return [];
   return provider.accounts.filter((account): account is CodexAccount => account.type === "oauth");
-}
-
-function getSelectableAccounts(authStorage: AuthStorage): CodexAccount[] {
-  return getAccounts(authStorage).filter((account) => !account.disabled);
-}
-
-function isAccountEnabled(authStorage: AuthStorage, accountId: string): boolean {
-  return getAccounts(authStorage).some(
-    (account) => account.accountId === accountId && !account.disabled,
-  );
-}
-
-function resolveForcedAccount(authStorage: AuthStorage): CodexAccount | undefined {
-  const forced = readForcedAccountIdentifier();
-  if (!forced) return undefined;
-
-  const account = getAccounts(authStorage).find((entry) =>
-    matchesIdentifier(entry, forced.identifier),
-  );
-  if (!account) {
-    throw new Error(
-      `${FORCED_ACCOUNT_ENV} did not match any stored Codex account: "${forced.raw}". ` +
-        'Run "tau auth list" to see available accounts.',
-    );
-  }
-
-  return account;
-}
-
-function resolveForcedAccountId(authStorage: AuthStorage): string | undefined {
-  return resolveForcedAccount(authStorage)?.accountId;
-}
-
-function getForcedAccountIdFromList(accounts: AuthAccountInfo[]): string | undefined {
-  const forced = readForcedAccountIdentifier();
-  if (!forced) return undefined;
-
-  const account = accounts.find(
-    (entry) =>
-      entry.email?.trim().toLowerCase() === forced.identifier ||
-      entry.accountId.trim().toLowerCase() === forced.identifier,
-  );
-  return account?.accountId;
-}
-
-function readForcedAccountIdentifier(): { raw: string; identifier: string } | undefined {
-  const raw = process.env[FORCED_ACCOUNT_ENV];
-  if (!raw) return undefined;
-
-  const identifier = normalizeIdentifier(raw);
-  return identifier ? { raw, identifier } : undefined;
 }
 
 function toOAuthCredential(account: CodexAccount): OAuthCredential {
@@ -559,7 +361,6 @@ function matchesIdentifier(account: CodexAccount, identifier: string): boolean {
 async function fetchUsage(
   apiKey: string,
   providerAccountId?: string,
-  signal?: AbortSignal,
 ): Promise<AuthAccountUsage | undefined> {
   const headers: Record<string, string> = {
     Authorization: `Bearer ${apiKey}`,
@@ -569,7 +370,7 @@ async function fetchUsage(
     headers["ChatGPT-Account-Id"] = providerAccountId;
   }
 
-  const response = await fetch(USAGE_ENDPOINT, { method: "GET", headers, signal });
+  const response = await fetch(USAGE_ENDPOINT, { method: "GET", headers });
   if (!response.ok) return undefined;
 
   const root = asRecord((await response.json()) as unknown);
@@ -601,65 +402,6 @@ function parseUsageWindow(
     resetAt: normalizeNumber(window.reset_at),
     windowSeconds,
   };
-}
-
-function compareAccountPriority(
-  a: AccountPriorityCandidate,
-  b: AccountPriorityCandidate,
-  now: number,
-): number {
-  const activeA = hasActivePrimaryWindow(a.usage, now);
-  const activeB = hasActivePrimaryWindow(b.usage, now);
-  if (activeA !== activeB) return activeA ? -1 : 1;
-
-  const usedA = getUsageUsedPercent(a.usage, now);
-  const usedB = getUsageUsedPercent(b.usage, now);
-  if (usedA === undefined && usedB !== undefined) return 1;
-  if (usedA !== undefined && usedB === undefined) return -1;
-  if (usedA !== undefined && usedB !== undefined && usedA !== usedB) {
-    return usedB - usedA;
-  }
-  return a.index - b.index;
-}
-
-function findWindow(usage: AuthAccountUsage, name: string): AuthAccountUsageWindow | undefined {
-  return usage.windows.find((window) => window.name === name);
-}
-
-function getUsageUsedPercent(usage: AuthAccountUsage | undefined, now: number): number | undefined {
-  if (!usage || isUsageExpired(usage, now)) return undefined;
-
-  return Math.max(
-    findWindow(usage, "primary")?.usedPercent ?? 0,
-    findWindow(usage, "secondary")?.usedPercent ?? 0,
-  );
-}
-
-function nowSeconds(): number {
-  return Math.floor(Date.now() / 1000);
-}
-
-function isUsageExpired(usage: AuthAccountUsage, now: number): boolean {
-  return usage.windows.some((window) => window.resetAt > 0 && window.resetAt <= now);
-}
-
-function isUsageExhausted(usage: AuthAccountUsage): boolean {
-  return (
-    Math.max(
-      findWindow(usage, "primary")?.usedPercent ?? 0,
-      findWindow(usage, "secondary")?.usedPercent ?? 0,
-    ) >= 99
-  );
-}
-
-function isUsageUsable(usage: AuthAccountUsage | undefined, now: number): boolean {
-  return !usage || isUsageExpired(usage, now) || !isUsageExhausted(usage);
-}
-
-function hasActivePrimaryWindow(usage: AuthAccountUsage | undefined, now: number): boolean {
-  if (!usage) return false;
-  const primary = findWindow(usage, "primary");
-  return Boolean(primary && primary.resetAt > now);
 }
 
 type StoredOAuthAccountUpdateResult =

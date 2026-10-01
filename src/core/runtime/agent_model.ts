@@ -41,9 +41,7 @@ export function resolveAgentModel(
   const model: ModelExecutor = {
     model: persona.model,
     stream: (context, options) => runtime.streamModel(persona.model, context, options),
-    noteProviderError: async (options) => {
-      await runtime.noteProviderError(persona.model.provider, options);
-    },
+
     cleanupSession: cleanupSessionResources,
   };
   const modelNotice = options.includeModelNotice

@@ -1,4 +1,4 @@
-import type { RemoteModelCatalogSnapshot } from "../core/models/remote_catalog.js";
+import { loadSkillsFromToolBackend } from "../core/config/runtime_config_snapshot.js";
 import { composeSessionPrompts } from "../core/runtime/session_prompt_composer.js";
 import type { ResolveSubagentPrompt } from "../core/tools/spawn_agent.js";
 import type { ExecutionEnvironment } from "../execution/execution_environment.js";
@@ -6,20 +6,19 @@ import type { ExecutionEnvironment } from "../execution/execution_environment.js
 export function createExecutionEnvironmentSubagentPromptResolver(options: {
   sessionId: string;
   executionEnvironment: ExecutionEnvironment;
-  getRemoteModelCatalog: () => RemoteModelCatalogSnapshot;
   includeAgentContext: boolean;
   sessionStartedAt: number;
 }): ResolveSubagentPrompt {
   return async ({ cwd, persona }) => {
-    const { config, skills } = await options.executionEnvironment.resolveRuntimeConfig(cwd, {
-      remoteCatalog: options.getRemoteModelCatalog(),
+    const { skills } = await loadSkillsFromToolBackend({
+      backend: options.executionEnvironment.getToolExecutionBackend(),
+      cwd,
+      home: options.executionEnvironment.snapshot().home,
     });
     const runtimeContext = await options.executionEnvironment.resolveRuntimeContext({
       cwd,
-      persona,
       discoveredSkills: skills,
       includeAgentContext: options.includeAgentContext,
-      agentContextFiles: config.agentContextFiles ?? [],
     });
     const promptContext = runtimeContext.promptBootstrap.promptContext;
     return composeSessionPrompts({

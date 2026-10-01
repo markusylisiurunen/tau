@@ -63,7 +63,6 @@ function createSession(recordUsage = vi.fn(), config = {}, reasoning = "medium")
         },
         agentsFiles: [],
         warnings: [],
-        unknownSkills: [],
       },
     }),
   };

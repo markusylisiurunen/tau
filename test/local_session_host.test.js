@@ -9,6 +9,7 @@ import { LocalHistoryStore } from "../dist/core/history/local_history_store.js";
 import { createLocalToolExecutionBackend } from "../dist/core/index.js";
 import { resolveModel } from "../dist/core/models/catalog.js";
 import { personas } from "../dist/core/personas.js";
+import { ToolCatalog } from "../dist/core/tools/catalog.js";
 import {
   buildToolRunPresentation,
   TOOL_UI_FACET_VERSION,
@@ -86,7 +87,6 @@ function createTestExecutionEnvironment(
         },
         agentsFiles: [],
         warnings: [],
-        unknownSkills: [],
       },
     }),
     getToolExecutionBackend: () => toolBackend,
@@ -212,7 +212,6 @@ function expectedCatalogPersona(persona = personas[0]) {
       : {}),
     subagentLaunchModels: [...(persona.subagentLaunchModels ?? [])],
     ...(persona.tools ? { tools: [...persona.tools] } : {}),
-    skills: Array.isArray(persona.skills) ? [...persona.skills] : persona.skills,
     source: persona.source,
   };
 }
@@ -222,6 +221,7 @@ function expectedCatalog(persona = personas[0]) {
     personas: [expectedCatalogPersona(persona)],
     prompts: [],
     skills: [],
+    mcpServers: [],
   };
 }
 
@@ -4197,11 +4197,11 @@ describe("LocalSessionHost", () => {
       ...createTestExecutionEnvironment(),
       resolveRuntimeConfig,
       resolveRuntimeContext: async (options) => {
-        const { persona, discoveredSkills } = options;
+        const { discoveredSkills } = options;
         const context = await createTestExecutionEnvironment().resolveRuntimeContext(options);
         context.promptBootstrap.promptContext.projectContextBlock =
           "<project-context>live context</project-context>";
-        context.promptBootstrap.promptContext.skillsBlock = `<skills>${persona.id}:${discoveredSkills.length}</skills>`;
+        context.promptBootstrap.promptContext.skillsBlock = `<skills>${discoveredSkills.map((skill) => skill.name).join(",")}</skills>`;
         return context;
       },
     };
@@ -4223,6 +4223,7 @@ describe("LocalSessionHost", () => {
       },
     ]);
     expect(snapshot.messages[0].message.content).toContain("live persona system prompt");
+    expect(snapshot.messages[0].message.content).toContain("<skills>live-skill</skills>");
     expect(snapshot.messages[0].message.content).toContain(
       "<project-context>live context</project-context>",
     );
@@ -4286,7 +4287,7 @@ describe("LocalSessionHost", () => {
       bootstrap: { modelResolver: { resolveModel } },
       config: {},
       personas: [reloadedPersona],
-      prompts: [{ id: "reload-prompt", template: "reload prompt" }],
+      prompts: [{ id: "reload-prompt", label: "reload prompt", template: "reload prompt" }],
       skills: [
         {
           name: "reload-skill",
@@ -4302,7 +4303,7 @@ describe("LocalSessionHost", () => {
         files: [
           {
             path: "/repo/.tau/prompts/reload-prompt.md",
-            content: "---\nid: reload-prompt\n---\nreload prompt",
+            content: "---\nlabel: reload prompt\n---\nreload prompt",
           },
         ],
       }),
@@ -4310,7 +4311,7 @@ describe("LocalSessionHost", () => {
         files: [
           {
             path: "/repo/.tau/prompts/reload-prompt.md",
-            content: "---\nid: reload-prompt\n---\nreload prompt",
+            content: "---\nlabel: reload prompt\n---\nreload prompt",
           },
         ],
       }),
@@ -4322,14 +4323,13 @@ describe("LocalSessionHost", () => {
       ...createTestExecutionEnvironment(undefined, { runNodeScript }),
       resolveRuntimeConfig,
       resolveRuntimeContext: async (options) => {
-        const { persona, discoveredSkills } = options;
+        const { discoveredSkills } = options;
         const context = await createTestExecutionEnvironment().resolveRuntimeContext(options);
         context.promptBootstrap.promptContext.projectContextBlock =
           "<project-context>reloaded</project-context>";
-        context.promptBootstrap.promptContext.skillsBlock = `<skills>${persona.id}:${discoveredSkills.length}</skills>`;
+        context.promptBootstrap.promptContext.skillsBlock = `<skills>${discoveredSkills.map((skill) => skill.name).join(",")}</skills>`;
         context.promptBootstrap.agentsFiles = ["/repo/AGENTS.md"];
         context.promptBootstrap.warnings = ["agents warning"];
-        context.promptBootstrap.unknownSkills = ["missing-skill"];
         return context;
       },
     };
@@ -4339,15 +4339,15 @@ describe("LocalSessionHost", () => {
     const result = await session.reload();
 
     expect(result.counts).toEqual({ personas: 1, prompts: 1, skills: 1 });
-    expect(result.warnings).toEqual([
-      "config warning",
-      `unknown skill enabled by persona '${personas[0].id}': missing-skill`,
-    ]);
+    expect(result.warnings).toEqual(["config warning"]);
     expect(result.snapshot.catalog.personas[0].label).toBe("reloaded persona");
+    expect(result.snapshot.messages[0].message.content).toContain("<skills>reload-skill</skills>");
     expect(result.snapshot.messages[0].message.content).toContain(
       "<project-context>reloaded</project-context>",
     );
-    expect(result.snapshot.catalog.prompts).toEqual([{ id: "reload-prompt" }]);
+    expect(result.snapshot.catalog.prompts).toEqual([
+      { id: "reload-prompt", label: "reload prompt" },
+    ]);
     expect(result.snapshot.catalog.skills).toEqual([
       {
         name: "reload-skill",
@@ -4392,6 +4392,42 @@ describe("LocalSessionHost", () => {
     expect(executionEnvironment.resolveRuntimeConfig.mock.calls[1][1]).toEqual({
       remoteCatalog: refreshedCatalog,
     });
+  });
+
+  it("preserves startup credentials through reload, persona changes, and ephemeral contexts", async () => {
+    const apiKeys = { openai: "host-model-key", exa: "host-tool-key" };
+    const alternatePersona = { ...personas[0], id: "alternate" };
+    const executionEnvironment = createTestExecutionEnvironment();
+    const resolveRuntimeConfig = executionEnvironment.resolveRuntimeConfig;
+    executionEnvironment.resolveRuntimeConfig = async () => ({
+      ...(await resolveRuntimeConfig()),
+      config: { apiKeys: { openai: "target-model-key", exa: "target-tool-key" } },
+      personas: [personas[0], alternatePersona],
+    });
+    const host = createHostForEnvironment(new MemorySessionStore(), executionEnvironment, {
+      config: { apiKeys },
+    });
+    const session = await host.createSession(localCreateInput);
+    const registry = vi.spyOn(ToolCatalog, "createSubagentRegistry");
+    try {
+      await session.reload();
+      expect(session.runtime.config.apiKeys).toEqual(apiKeys);
+      await session.setPersona(alternatePersona.id);
+      expect(session.runtime.persona.id).toBe(alternatePersona.id);
+      expect(session.runtime.config.apiKeys).toEqual(apiKeys);
+
+      const { contextId } = await session.createEphemeralContext({
+        instructions: "review instructions",
+        tools: ["bash"],
+      });
+      const context = session.ephemeralAgentSessions.get(contextId);
+      expect(context.options.config.apiKeys).toEqual(apiKeys);
+      await context.createThread("thread-1");
+      expect(registry.mock.calls.at(-1)[3].apiKeys).toEqual(apiKeys);
+    } finally {
+      registry.mockRestore();
+      await session.dispose();
+    }
   });
 
   it("keeps execution-environment context in hosted ephemeral system prompts", async () => {
@@ -4441,7 +4477,7 @@ describe("LocalSessionHost", () => {
         files: [
           {
             path: "/repo/.tau/prompts/live-prompt.md",
-            content: `---\nid: live-prompt\n---\n${promptText}`,
+            content: `---\nlabel: live prompt\n---\n${promptText}`,
           },
         ],
       }),
@@ -4449,7 +4485,7 @@ describe("LocalSessionHost", () => {
         files: [
           {
             path: "/repo/.tau/prompts/live-prompt.md",
-            content: `---\nid: live-prompt\n---\n${promptText}`,
+            content: `---\nlabel: live prompt\n---\n${promptText}`,
           },
         ],
       }),
@@ -4461,9 +4497,7 @@ describe("LocalSessionHost", () => {
       ...createTestExecutionEnvironment(undefined, { runNodeScript }),
       resolveRuntimeConfig,
       resolveRuntimeContext: async (options) => {
-        const { persona } = options;
         const context = await createTestExecutionEnvironment().resolveRuntimeContext(options);
-        context.promptBootstrap.promptContext.skillsBlock = `<skills>${persona.id}</skills>`;
         return context;
       },
     };
@@ -4505,10 +4539,10 @@ describe("LocalSessionHost", () => {
         warnings: [],
       }),
       resolveRuntimeContext: async (options) => {
-        const { persona, discoveredSkills } = options;
+        const { discoveredSkills } = options;
         const context = await createTestExecutionEnvironment().resolveRuntimeContext(options);
         context.promptBootstrap.promptContext.projectContextBlock = "";
-        context.promptBootstrap.promptContext.skillsBlock = `<skills>${persona.id}:${discoveredSkills.length}</skills>`;
+        context.promptBootstrap.promptContext.skillsBlock = `<skills>${discoveredSkills.map((skill) => skill.name).join(",")}</skills>`;
         return context;
       },
     };
@@ -4567,7 +4601,9 @@ describe("LocalSessionHost", () => {
         default: legacy.bootstrap.prompt.subagentSystemPrompt,
       };
       delete legacy.bootstrap.prompt.subagentSystemPrompt;
+      legacy.catalog.prompts = [{ id: "old-prompt", description: "obsolete" }];
       for (const persona of legacy.catalog.personas) {
+        persona.skills = "*";
         persona.subagents = { default: { launchModels: persona.subagentLaunchModels } };
         delete persona.subagentLaunchModels;
       }
@@ -4581,6 +4617,10 @@ describe("LocalSessionHost", () => {
         snapshot.bootstrap.prompt.subagentSystemPrompt,
       );
       expect((await recovered.snapshot()).messages).toEqual(snapshot.messages);
+      for (const prompt of (await recovered.snapshot()).catalog.prompts) {
+        expect(prompt.label.length).toBeGreaterThan(0);
+        expect(prompt).not.toHaveProperty("description");
+      }
       const spawn = vi.spyOn(recovered.runtime.supervisor, "spawn").mockReturnValue({
         ok: true,
         state: createRunningSubagentState(),
@@ -4968,9 +5008,7 @@ describe("LocalSessionHost", () => {
       ...createTestExecutionEnvironment(),
       resolveRuntimeConfig,
       resolveRuntimeContext: async (options) => {
-        const { persona } = options;
         const context = await createTestExecutionEnvironment().resolveRuntimeContext(options);
-        context.promptBootstrap.promptContext.skillsBlock = `<skills>${persona.id}</skills>`;
         return context;
       },
     };
@@ -5983,7 +6021,6 @@ describe("LocalSessionHost", () => {
         revision: 1,
         executionEnvironment: {
           kind: "fly-sprite",
-          apiId: "missing",
           spriteName: "sprite-1",
           cwd: "/repo",
           home: "/home/sprite",
@@ -5998,6 +6035,47 @@ describe("LocalSessionHost", () => {
 });
 
 describe("host-owned MCP tools", () => {
+  it("projects only enabled host MCP names without opening connections", async () => {
+    const store = new MemorySessionStore();
+    const servers = {
+      zebra: { type: "stdio", command: "must-not-run" },
+      alpha: {
+        type: "http",
+        url: "https://example.invalid/mcp",
+        headers: { authorization: "private" },
+      },
+      disabled: { type: "stdio", command: "must-not-run", enabled: false },
+    };
+    const host = createHost(store, {
+      mcpServers: servers,
+      config: { mcpServers: { target: { type: "stdio", command: "must-not-run" } } },
+    });
+    let sessionId;
+    try {
+      const session = await host.createSession(localCreateInput);
+      sessionId = session.sessionId;
+      let projected = await session.snapshot();
+      session.onDelta((delta) => {
+        projected = applySessionProtocolDelta(projected, delta);
+      });
+      expect(projected.catalog.mcpServers).toEqual(["alpha", "zebra"]);
+      const reloaded = await session.reload();
+      expect(reloaded.snapshot.catalog.mcpServers).toEqual(["alpha", "zebra"]);
+      expect(projected).toEqual(reloaded.snapshot);
+      expect(JSON.stringify(projected.catalog)).not.toContain("private");
+      expect(JSON.stringify(projected.catalog)).not.toContain("example.invalid");
+    } finally {
+      await host.shutdown();
+    }
+    const recoveredHost = createHost(store, { mcpServers: { current: servers.zebra } });
+    try {
+      const recovered = await recoveredHost.observeSession(sessionId);
+      expect((await recovered.snapshot()).catalog.mcpServers).toEqual(["current"]);
+    } finally {
+      await recoveredHost.shutdown();
+    }
+  });
+
   it("binds only host servers and persists ordinary tool lifecycle through observers", async () => {
     const store = new MemorySessionStore();
     const host = createHost(store, {

@@ -208,7 +208,6 @@ type PersonaSpec = {
   catalogOnly?: boolean;
   allowedReasoningLevels: NonNullable<Persona["allowedReasoningLevels"]>;
   settings: Persona["settings"];
-  skills: string[] | "*";
 };
 
 const PERSONA_SPECS: PersonaSpec[] = [
@@ -220,7 +219,6 @@ const PERSONA_SPECS: PersonaSpec[] = [
     catalogOnly: true,
     allowedReasoningLevels: ["low", "medium", "high", "xhigh", "max"],
     settings: { reasoning: "medium" },
-    skills: "*",
   },
   {
     id: "gpt-6-luna",
@@ -230,7 +228,6 @@ const PERSONA_SPECS: PersonaSpec[] = [
     catalogOnly: true,
     allowedReasoningLevels: ["low", "medium", "high", "xhigh", "max"],
     settings: { reasoning: "medium" },
-    skills: "*",
   },
   {
     id: "gpt-6.1-sol-chatgpt",
@@ -240,7 +237,6 @@ const PERSONA_SPECS: PersonaSpec[] = [
     catalogOnly: true,
     allowedReasoningLevels: ["low", "medium", "high", "xhigh", "max"],
     settings: { reasoning: "medium" },
-    skills: "*",
   },
   {
     id: "gpt-6-luna-chatgpt",
@@ -250,7 +246,6 @@ const PERSONA_SPECS: PersonaSpec[] = [
     catalogOnly: true,
     allowedReasoningLevels: ["low", "medium", "high", "xhigh", "max"],
     settings: { reasoning: "medium" },
-    skills: "*",
   },
   {
     id: "gpt-6.1-sol-chatgpt-fast",
@@ -260,7 +255,6 @@ const PERSONA_SPECS: PersonaSpec[] = [
     catalogOnly: true,
     allowedReasoningLevels: ["low", "medium", "high", "xhigh", "max"],
     settings: { reasoning: "medium", serviceTier: "priority" },
-    skills: "*",
   },
   {
     id: "gpt-6-luna-chatgpt-fast",
@@ -270,7 +264,6 @@ const PERSONA_SPECS: PersonaSpec[] = [
     catalogOnly: true,
     allowedReasoningLevels: ["low", "medium", "high", "xhigh", "max"],
     settings: { reasoning: "medium", serviceTier: "priority" },
-    skills: "*",
   },
   {
     id: "gpt-6-astra",
@@ -280,7 +273,6 @@ const PERSONA_SPECS: PersonaSpec[] = [
     catalogOnly: true,
     allowedReasoningLevels: ["low", "medium", "high", "xhigh", "max"],
     settings: { reasoning: "medium" },
-    skills: "*",
   },
   {
     id: "gpt-6-astra-chatgpt",
@@ -290,7 +282,6 @@ const PERSONA_SPECS: PersonaSpec[] = [
     catalogOnly: true,
     allowedReasoningLevels: ["low", "medium", "high", "xhigh", "max"],
     settings: { reasoning: "medium" },
-    skills: "*",
   },
   {
     id: "gpt-6-astra-chatgpt-fast",
@@ -300,7 +291,6 @@ const PERSONA_SPECS: PersonaSpec[] = [
     catalogOnly: true,
     allowedReasoningLevels: ["low", "medium", "high", "xhigh", "max"],
     settings: { reasoning: "medium", serviceTier: "priority" },
-    skills: "*",
   },
   {
     id: "fable-5.1",
@@ -310,7 +300,6 @@ const PERSONA_SPECS: PersonaSpec[] = [
     catalogOnly: true,
     allowedReasoningLevels: ["low", "medium", "high", "xhigh", "max"],
     settings: { reasoning: "medium" },
-    skills: "*",
   },
   {
     id: "opus-5.5",
@@ -320,7 +309,6 @@ const PERSONA_SPECS: PersonaSpec[] = [
     catalogOnly: true,
     allowedReasoningLevels: ["low", "medium", "high", "xhigh", "max"],
     settings: { reasoning: "medium" },
-    skills: "*",
   },
   {
     id: "sonnet-5.5",
@@ -330,7 +318,6 @@ const PERSONA_SPECS: PersonaSpec[] = [
     catalogOnly: true,
     allowedReasoningLevels: ["low", "medium", "high", "xhigh", "max"],
     settings: { reasoning: "medium" },
-    skills: "*",
   },
 ];
 
@@ -368,7 +355,6 @@ function buildPersona(spec: PersonaSpec, variant: Variant, modelResolver: ModelR
   }
 
   const config = VARIANT_CONFIG[variant];
-  const skills = spec.skills;
   const settings = structuredClone(spec.settings);
 
   const tools = [...BASE_TOOLS, ...SUBAGENT_TOOLS];
@@ -381,7 +367,6 @@ function buildPersona(spec: PersonaSpec, variant: Variant, modelResolver: ModelR
     systemPrompt: config.systemPrompt,
     allowedReasoningLevels: spec.allowedReasoningLevels,
     settings,
-    skills,
     subagentLaunchModels: [],
     tools,
     source: "builtin",

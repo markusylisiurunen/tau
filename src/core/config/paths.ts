@@ -7,7 +7,6 @@ export type ConfigLevel = {
   levelRoot: string;
   configDir: string;
   configPath: string;
-  modelsPath: string;
   personasDir: string;
   promptsDir: string;
   skillsDir: string;
@@ -22,7 +21,6 @@ function buildLevel(levelRoot: string, configDir: string, scope: ConfigLevelScop
     levelRoot: root,
     configDir: dir,
     configPath: join(dir, "config.json"),
-    modelsPath: join(dir, "models.json"),
     personasDir: join(dir, "personas"),
     promptsDir: join(dir, "prompts"),
     skillsDir: join(dir, "skills"),

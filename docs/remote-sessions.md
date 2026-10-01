@@ -105,19 +105,18 @@ The host process executes agent-visible filesystem and command operations on its
 
 ### Fly Sprite
 
-The host must already have a named API target in `flySprites.apis`, and the Sprite must already exist:
+The host must already have a connection configured in `flySprites`, and the Sprite must already exist:
 
 ```sh
 tau attach \
   --new \
   --execution-kind fly-sprite \
-  --fly-api production \
   --fly-sprite tau-build-7 \
   --cwd /home/sprite/tau \
   wss://tau.example.com
 ```
 
-`--fly-api` identifies host configuration. `--fly-sprite` names an existing Sprite. Tau does not provision it or prepare its repository.
+`--fly-sprite` names an existing Sprite. Tau does not provision it or prepare its repository.
 
 Bridge URLs, API targets, home paths, and credential environment variables are host-owned [configuration](configuration.md). Session creation resolves Tau project configuration and content from the execution cwd through the selected environment. The execution environment itself remains a generic filesystem and process target; it does not own Tau’s configuration precedence or session policy.
 
@@ -146,7 +145,7 @@ An attached session spans three logical machines even when two happen to share o
 ### The execution environment owns
 
 - the agent-visible cwd, home, files, and repository
-- project `.tau` content, model overlays, prompts, skills, and AGENTS.md files
+- project `.tau` content, prompts, skills, and AGENTS.md files
 - command execution, platform, PATH, and runtime dependencies
 - automatic-compaction archives and other target-side temporary files
 
@@ -158,15 +157,15 @@ Different changes have different owners:
 
 | Change | Action |
 | --- | --- |
-| Project config, model overlays, personas, prompts, skills, or AGENTS.md in the execution environment | Wait for idle, then run `/reload`. |
-| Effective model `apiKeys` in execution-environment or session configuration | Wait for idle, then run `/reload`; new sessions also resolve the current values. |
+| Project config, personas, prompts, skills, or AGENTS.md in the execution environment | Wait for idle, then run `/reload`. |
+| Global model `apiKeys` on the host | Restart the host. |
 | Managed Codex auth changed with `tau auth` | No host restart; auth storage is read again on later credential resolutions. |
 | Attaching themes, speech config, or configured client tools | Restart `tau attach`. |
 | Host process environment variables, history target, WebSocket listener, Fly API target, or host startup flags | Restart `tau serve`. |
 | Host Tau package, built-in tools, protocol, session recovery code, or built-in documentation | Upgrade and restart the host. |
 | TUI package, keybindings, rendering, local speech, or client-tool implementation | Upgrade and restart the attaching client. |
 
-`/reload` is a session operation. It asks the host to resolve session-owned content, including configured model `apiKeys`, from the execution environment and does not reload either process’s executable code or environment. Managed Codex auth storage is separate and is read again on later credential resolutions. For a long-running WebSocket host, restarting only the client cannot update the model-facing built-in docs or host tools. For an old client against a new host, restarting only the host cannot update local TUI behavior. See [credentials](credentials.md) for complete precedence and apply boundaries.
+`/reload` is a session operation. It asks the host to resolve session-owned content, from the execution environment and does not reload either process’s executable code or environment. Managed Codex auth storage is separate and is read again on later credential resolutions. For a long-running WebSocket host, restarting only the client cannot update the model-facing built-in docs or host tools. For an old client against a new host, restarting only the host cannot update local TUI behavior. See [credentials](credentials.md) for complete precedence and apply boundaries.
 
 ## Reconnect and observe safely
 

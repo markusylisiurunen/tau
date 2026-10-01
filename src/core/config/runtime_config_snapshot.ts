@@ -7,7 +7,9 @@ import {
   type ToolExecutionBackend,
 } from "../tools/execution_backend.js";
 import type { ConfigDeps } from "./deps.js";
+import { resolveConfigLevels } from "./paths.js";
 import { loadRuntimeConfig, type RuntimeConfigResult } from "./runtime.js";
+import { loadSkillsContent } from "./skills_loader.js";
 
 type RuntimeConfigFileSnapshot = {
   path: string;
@@ -25,6 +27,7 @@ const path = require("node:path");
 const cwd = path.resolve(process.argv[1]);
 const home = path.resolve(process.argv[2]);
 const files = new Map();
+const skillsOnly = process.argv[3] === "skills";
 
 function stat(pathname) {
   try {
@@ -78,10 +81,11 @@ function addSkills(dir) {
 }
 
 function addLevel(root, configDir) {
-  addFile(path.join(configDir, "config.json"));
-  addFile(path.join(configDir, "models.json"));
-  addFiles(path.join(configDir, "personas"), ".md");
-  addFiles(path.join(configDir, "prompts"), ".md");
+  if (!skillsOnly) {
+    addFile(path.join(configDir, "config.json"));
+    addFiles(path.join(configDir, "personas"), ".md");
+    addFiles(path.join(configDir, "prompts"), ".md");
+  }
   addSkills(path.join(configDir, "skills"));
   addSkills(path.join(root, ".agents", "skills"));
 }
@@ -119,9 +123,29 @@ export async function loadRuntimeConfigFromToolBackend(options: {
   home: string;
   remoteCatalog: RemoteModelCatalogSnapshot;
 }): Promise<RuntimeConfigResult> {
+  const deps = await collectRuntimeConfigDeps(options, "runtime");
+  return await loadRuntimeConfig(options.cwd, deps, { remoteCatalog: options.remoteCatalog });
+}
+
+export async function loadSkillsFromToolBackend(options: {
+  backend: ToolExecutionBackend;
+  cwd: string;
+  home: string;
+}) {
+  const deps = await collectRuntimeConfigDeps(options, "skills");
+  return await loadSkillsContent({
+    deps,
+    levels: resolveConfigLevels(deps, { cwd: options.cwd }),
+  });
+}
+
+async function collectRuntimeConfigDeps(
+  options: { backend: ToolExecutionBackend; cwd: string; home: string },
+  scope: "runtime" | "skills",
+): Promise<ConfigDeps> {
   const result = await options.backend.runNodeScript(
     COLLECT_RUNTIME_CONFIG_SCRIPT,
-    [options.cwd, options.home],
+    [options.cwd, options.home, scope],
     { cwd: options.cwd, timeoutMs: 30_000, maxCaptureBytes: MAX_COMMAND_CAPTURE_BYTES },
   );
   if (result.exitCode !== 0) {
@@ -130,17 +154,11 @@ export async function loadRuntimeConfigFromToolBackend(options: {
   if (result.truncated) {
     throw new Error("execution environment config snapshot exceeded the capture limit");
   }
-
-  const snapshot = parseRuntimeConfigSnapshot(result.output);
-  return await loadRuntimeConfig(
-    options.cwd,
-    createRuntimeConfigSnapshotDeps({
-      cwd: options.cwd,
-      home: options.home,
-      snapshot,
-    }),
-    { remoteCatalog: options.remoteCatalog },
-  );
+  return createRuntimeConfigSnapshotDeps({
+    cwd: options.cwd,
+    home: options.home,
+    snapshot: parseRuntimeConfigSnapshot(result.output),
+  });
 }
 
 function formatConfigSnapshotCommandFailure(result: BashExecutionResult): string {

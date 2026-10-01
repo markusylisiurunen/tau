@@ -44,6 +44,5 @@ export interface Persona {
   allowedReasoningLevels?: ReasoningEffort[];
   subagentLaunchModels: string[];
   tools: ToolName[];
-  skills: string[] | "*";
   source: PersonaSource;
 }

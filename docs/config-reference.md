@@ -13,7 +13,7 @@ These are defaults built into this Tau version, not a dump of the effective conf
 | Default persona                        | `sonnet-5.5-coder`   |
 | Default TUI theme                      | `gold`               |
 | Built-in personas                      | Enabled              |
-| Speech-to-text provider when unset     | `openai`             |
+| Speech-to-text provider                | Gemini               |
 | Built-in diff tool code theme          | `github-dark-dimmed` |
 | Command client tool timeout when unset | `60000` ms           |
 
@@ -23,16 +23,15 @@ Project and global content can change which persona ids are available. A configu
 
 | Field | Type | Scope | Combination | Primary owner and apply boundary |
 | --- | --- | --- | --- | --- |
-| `apiKeys` | Object of string values | Global, project | Merge by provider id | Host or feature consumer; `/reload` for session runtime keys, process restart for environment changes |
+| `apiKeys` | Object of string values | Global only | Provider-keyed map | Owning host or feature process; restart after changes |
 | `defaultPersona` | Non-empty string | Global, project | Most-specific wins | Session host; new session |
 | `speech` | Object with optional `voiceId` and `recordingShortcut` | Global, project | Merge by field | TUI client or Telegram runner; process restart |
 | `defaultTheme` | Non-empty string | Global, project | Most-specific wins | TUI client; client restart |
 | `clientTools` | Array of objects | Global only | One global definition list | Owning client; TUI restart or new Telegram session client |
 | `enabledClientTools` | String array | Project only | Most-specific project list | Owning client; TUI restart or new Telegram session client |
-| `agentContextFiles` | String array | Global, project | Additive, resolved and deduplicated | Execution environment and session host; `/reload` or new session |
 | `subagents` | Object | Global, project | Field-wise, currently one selectable list | Session runtime; `/reload` or new session |
 | `modelSystemNotices` | String map | Global, project | Merge by model target | Session runtime; `/reload`, affects later inputs |
-| `flySprites` | Object | Global, project | Merge APIs by id | Host startup; host restart |
+| `flySprites` | Object | Global, project | Merge connection fields | Host startup; host restart |
 | `nook` | Object | Global, project | Most-specific complete object | Host tool runtime; `/reload` or new session |
 | `history` | Object | Global only | One global object | Host startup; host restart |
 | `mcpServers` | Object keyed by server name | Global and project | Merge names; nearer entry replaces | Host startup; host restart |
@@ -54,20 +53,6 @@ A persona id, optionally followed by `:` and a reasoning level:
 Allowed reasoning suffixes are `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. The persona id is matched exactly and case-sensitively during startup selection. The id must exist after built-in, global, and project personas are loaded.
 
 `defaultPersona` selects a new session when no CLI or session-creation override is supplied. Reloading an existing session retains its current persona id when possible. See [personas](personas.md).
-
-### `agentContextFiles`
-
-An array of non-empty paths to additional text files included as project context:
-
-```json
-{
-  "agentContextFiles": ["docs/AI_GUIDE.md", "services/payments/AGENTS.md"]
-}
-```
-
-Entries are additive across levels. Global paths resolve from home; project paths resolve from the directory containing `.tau`. Tau deduplicates identical resolved paths. Eligibility and ordinary `AGENTS.md` discovery are described in [prompts and project context](prompts-and-project-context.md).
-
-The startup flag `--no-agent-context-files` disables context injection independently of this list.
 
 ### `subagents`
 
@@ -104,7 +89,7 @@ A map from exact `<provider>/<model>` targets to non-empty notice text:
 }
 ```
 
-Provider ids must be known, and model ids must resolve against the merged built-in and `models.json` catalog. Entries merge by normalized target, with the more-specific value winning. Tau prepends the matching notice to later committed main-session and subagent user input. Ephemeral agents and maintenance model calls do not receive a newly resolved notice.
+Provider ids must be known, and model ids must resolve against the bundled and refreshed model catalog. Entries merge by normalized target, with the more-specific value winning. Tau prepends the matching notice to later committed main-session and subagent user input. Ephemeral agents and maintenance model calls do not receive a newly resolved notice.
 
 Use this for model-specific operational guidance, not for persona behavior that belongs in a persona file. See [models](models.md) and [personas](personas.md).
 
@@ -126,13 +111,9 @@ A map from provider or feature id to a string credential:
 }
 ```
 
-The map accepts arbitrary non-empty provider names and string values. Values are trimmed when consumed; an empty string is not a usable credential. Maps merge by key, so a project can replace one provider without removing others.
+The global map accepts arbitrary non-empty provider names and string values. Values are trimmed when consumed; an empty string is not a usable credential.
 
-For model requests, credential precedence is an explicit request override, configured `apiKeys.<provider>`, then the provider runtime's ambient authentication. This means `apiKeys.openai` wins over `OPENAI_API_KEY` for model calls. The `openai-codex` provider uses managed OAuth separately and does not use `apiKeys.openai`.
-
-Feature-specific helpers use different precedence: `EXA_API_KEY`, `GEMINI_API_KEY`, `MISTRAL_API_KEY`, and `OPENAI_API_KEY` take precedence over their matching `apiKeys` entries for the features that consume those helpers. See [credentials](credentials.md) for the exact feature matrix.
-
-Credentials are consumed where the model or feature runs. In an attached session that is usually the host, not the TUI client. Avoid committing project API keys. See [credentials](credentials.md).
+For model requests and feature helpers, provider-supported environment credentials take precedence over global `apiKeys`. Provider-supported ambient authentication remains available. Project `apiKeys` values are rejected. Codex managed OAuth uses the explicitly active account separately. See [credentials](credentials.md).
 
 ### `speech`
 
@@ -319,28 +300,22 @@ These fields configure resolvers owned by a host process. They do not provision 
 
 ### `flySprites`
 
-An optional `apis` map keyed by API id:
+One configured connection:
 
 ```json
 {
   "flySprites": {
-    "apis": {
-      "personal": {
-        "tokenEnv": "FLY_SPRITES_TOKEN",
-        "home": "/home/sprite"
-      }
-    }
+    "tokenEnv": "FLY_SPRITES_TOKEN",
+    "home": "/home/sprite"
   }
 }
 ```
 
-Each API accepts:
-
-| Nested field | Type | Required | Default or behavior |
+| Field | Type | Required | Default or behavior |
 | --- | --- | --- | --- |
 | `baseURL` | Non-empty string | No | Defaults to `https://api.sprites.dev` |
 | `token` | Non-empty string | No | Inline token; takes precedence when present |
 | `tokenEnv` | Non-empty string | No | Host environment variable used when `token` is absent |
-| `home` | Non-empty string | No | Execution-environment home, default `/home/sprite` |
+| `home` | Non-empty string | No | Sprite home, default `/home/sprite` |
 
-A usable token is required when the host resolves a Sprite. API maps merge by id, with the more-specific complete entry replacing the broader entry.
+A usable token is required when the host resolves a Sprite. Select an existing Sprite by name. More-specific connection fields replace broader values.

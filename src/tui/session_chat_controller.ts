@@ -582,7 +582,7 @@ export class SessionChatController {
     }
 
     if (this.snapshot.catalog.mcpServers.length > 0) {
-      lines.push("", "mcp servers (configured):");
+      lines.push("", "mcp servers:");
       for (const name of this.snapshot.catalog.mcpServers) {
         lines.push(`  ${name}`);
       }

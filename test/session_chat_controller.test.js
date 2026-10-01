@@ -1065,7 +1065,7 @@ describe("SessionChatController", () => {
     expect(intro.body).toContain(
       "context:\n  ~/repo/AGENTS.md\n  ~/repo/docs/AI_GUIDE.md\n\nclient tools:\n  notify",
     );
-    expect(intro.body).toContain("mcp servers (configured):\n  github");
+    expect(intro.body).toContain("mcp servers:\n  github");
     expect(intro.body).not.toContain("diff_review");
     expect(intro.body).not.toContain("prefill_input");
     expect(intro.body).not.toContain("~/repo/src/AGENTS.md");

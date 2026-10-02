@@ -45,3 +45,4 @@ The intrinsic `tau_docs` tool reads one exact Markdown path at a time. It does n
 - [PDF unpacking](pdf-unpacking.md) covers PDF OCR with Mistral, Markdown extraction, and page-image patches.
 - [Image generation](image-generation.md) covers image generation and reference editing with Google and OpenAI.
 - [Speech generation](speech-generation.md) covers caller-chunked narration and dialogue, ElevenLabs voices, and long-form WAV assembly.
+- [OpenRouter](openrouter.md) covers standalone typed decisions and text, image, audio, and video understanding with fixed model choices.

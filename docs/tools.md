@@ -143,6 +143,7 @@ The supported formats are JPEG, PNG, and WebP. Source reads are capped at 50 MiB
 | `tau tool pdf-unpack` | Extract OCR Markdown and page-image patches from a PDF using Mistral. | [PDF unpacking](pdf-unpacking.md) |
 | `tau tool image-generate` | Generate or edit an image using Google or OpenAI. | [Image generation](image-generation.md) |
 | `tau tool speech-generate` | Generate narration or dialogue using ElevenLabs and assemble a WAV. | [Speech generation](speech-generation.md) |
+| `tau tool openrouter` | Typed decisions and standalone text/media analysis. | [OpenRouter](openrouter.md) |
 
 Each guide covers setup, input, examples, outputs, and failure behavior. Use `tau tool --help` to list commands or `tau tool <command> --help` for command-specific help. The same guides are packaged for `tau_docs` and linked from its `index.md`.
 

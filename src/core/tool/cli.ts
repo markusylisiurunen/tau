@@ -1,6 +1,7 @@
 import type { Config } from "../config/schema.js";
 import { ToolCliError } from "./errors.js";
 import { runImageGenerateCommand } from "./image_generate.js";
+import { runOpenRouterCommand } from "./openrouter.js";
 import { printPdfUnpackHelp, runPdfUnpackCommand } from "./pdf_unpack.js";
 import { runSpeechGenerateCommand } from "./speech_generate.js";
 
@@ -23,6 +24,7 @@ export function printToolHelp(log: (line: string) => void = console.log): void {
       "  pdf-unpack       extract markdown and page image patches from a PDF.",
       "  image-generate   generate or edit an image using local references.",
       "  speech-generate  generate and assemble single- or multi-speaker speech.",
+      "  openrouter       typed decisions and standalone multimodal chat.",
       "",
       "examples:",
       "  tau tool pdf-unpack ./docs/spec.pdf",
@@ -54,10 +56,18 @@ export async function runToolCommand(
     return;
   }
 
-  if (subcommand === "image-generate" || subcommand === "speech-generate") {
+  if (
+    subcommand === "image-generate" ||
+    subcommand === "speech-generate" ||
+    subcommand === "openrouter"
+  ) {
     try {
       const run =
-        subcommand === "image-generate" ? runImageGenerateCommand : runSpeechGenerateCommand;
+        subcommand === "openrouter"
+          ? runOpenRouterCommand
+          : subcommand === "image-generate"
+            ? runImageGenerateCommand
+            : runSpeechGenerateCommand;
       await run(subcommandArgs, options);
     } catch (error) {
       if (error instanceof ToolCliError) throw error;

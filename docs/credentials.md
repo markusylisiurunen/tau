@@ -20,7 +20,7 @@ Common cases are:
 | Fly Sprite API | Session host startup |
 | `/listen` and `/speak` | TUI client |
 | Telegram transcription and voice responses | Telegram runner |
-| `tau tool pdf-unpack`, `image-generate`, and `speech-generate` | The process running that command |
+| Standalone `tau tool` commands | The process running that command |
 
 With local `tau`, these roles normally share one machine. With `tau attach`, setting a key only in the attached client's shell does not authenticate the remote host. Run `tau auth` on the host machine and set host-owned environment variables where `tau serve` or the SDK host actually runs. See [ownership and scope](ownership-and-scope.md) for the full boundary.
 
@@ -53,6 +53,7 @@ Feature helpers use environment variables first, then global configuration:
 | Exa web search and fetch | `EXA_API_KEY`, then `apiKeys.exa` |
 | Google image generation, speech-to-text, and Telegram transcription | `GEMINI_API_KEY`, then `apiKeys.google` |
 | Mistral PDF OCR | `MISTRAL_API_KEY`, then `apiKeys.mistral` |
+| OpenRouter decisions and chat | `OPENROUTER_API_KEY`, then `apiKeys.openrouter` |
 | OpenAI image generation, speech rewriting, and transcription spelling hints | `OPENAI_API_KEY`, then `apiKeys.openai` |
 | ElevenLabs speech generation, `/speak` synthesis, Telegram voice synthesis, and voice listing | `ELEVENLABS_API_KEY`, then `apiKeys.elevenlabs` |
 

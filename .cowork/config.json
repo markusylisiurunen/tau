@@ -1,8 +1,14 @@
 {
   "workflows": {
     "issue-plan": { "reasoning": "medium" },
-    "pull-request-explain": { "reasoning": "medium" },
+    "pull-request-explain": {
+      "persona": "gpt-6.1-sol-chatgpt-coder",
+      "reasoning": "medium"
+    },
     "pull-request-review": { "reasoning": "high" },
-    "pull-request-diff": { "reasoning": "medium" }
+    "pull-request-diff": {
+      "persona": "gpt-6.1-sol-chatgpt-coder",
+      "reasoning": "medium"
+    }
   }
 }

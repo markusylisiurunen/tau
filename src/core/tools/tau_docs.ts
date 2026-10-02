@@ -34,7 +34,7 @@ const TAU_DOCS_DESCRIPTION = [
   "- PDF unpacking: extract OCR text, tables, and page-image patches from a PDF. Documentation: pdf-unpacking.md.",
   "- Image generation: generate images from prompts or edit images using local references. Documentation: image-generation.md.",
   "- Speech generation: turn narration or multi-speaker dialogue scripts into an audio file. Documentation: speech-generation.md.",
-  "- OpenRouter: get typed decision probabilities or a standalone second opinion on text, images, audio, and video from a fixed set of models. Documentation: openrouter.md.",
+  "- OpenRouter: call a selection of AI models for tasks such as analysis, writing, and typed decisions, with support for text, image, audio, and video inputs depending on the model. Documentation: openrouter.md.",
   "",
   "Guidelines:",
   "- Selection: Consider these tools when their capabilities match the task, even if the user has not explicitly named them. Their use is optional; choose the approach that best fits the request.",

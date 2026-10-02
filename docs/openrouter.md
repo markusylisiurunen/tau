@@ -71,7 +71,7 @@ tau tool openrouter decisions --model typesafe/jev-1.13 --input - <<'JSON'
 JSON
 ```
 
-Pipelines and heredocs work inside Tau's noninteractive Bash. Stdin must not be a terminal and must reach EOF within 30 seconds. Empty input, malformed JSON, multiple documents, invalid UTF-8, and oversized input fail before any request.
+Stdin must not be a terminal and must reach EOF within 30 seconds. Empty input, malformed JSON, multiple documents, invalid UTF-8, and oversized input fail before any request.
 
 The input contains exactly `state` and `questions`. The model belongs only in `--model`, not the document. `state` is a string, JSON object, or array. `questions` is a nonempty map of nonempty names to questions:
 

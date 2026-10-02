@@ -1253,6 +1253,7 @@ describe("compaction context message", () => {
     });
 
     expect(preparation.cutType).toBe("split-turn");
+    expect(preparation.messagesToSummarize[0]).toEqual(entries[0].message);
     expect(JSON.stringify(preparation.messagesToSummarize)).toContain(
       "retained previous tool call",
     );

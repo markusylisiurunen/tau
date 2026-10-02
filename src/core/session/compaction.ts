@@ -39,7 +39,9 @@ export type AutoCompactionPreparation = SessionCompactionPreparation & {
 
 const COMPACTION_SUMMARIZATION_PROMPT = `You are pausing your current work to compact your own conversation and free space in your context window. The conversation you can see now will be replaced with the compaction summary you write. After that, you will continue as the same agent in the same session, working on the same task, but without the full earlier conversation available.
 
-Write a compaction summary of the conversation: what the user asked for, what has been done and learned, and what remains to be done. It should also give you the handoff you will need to resume that work as smoothly as possible. Your next continuation should be able to understand what the user wants, where the work stands, and what to do next from the compaction summary alone. Think through what you would otherwise forget: important constraints, evidence, decisions and their rationale, unresolved questions, and unfinished work. Preserve what will let you continue without reconstructing the conversation, repeating completed work, or asking the user to explain it again. Recent messages may also remain, but treat them as additional detail rather than something your compaction summary depends on. Some overlap is expected.
+Write a summary that serves two purposes: a precise handoff for your current work and a compact, cumulative memory of the session as a whole. Smooth continuation is the first priority: from the summary alone, you should understand what the user wants now, where the work stands, and what to do next, without repeating completed work or asking the user to explain it again. Also preserve enough of earlier topics, completed work, and significant decisions to recognize later references to them and understand what they were about. This is not a message-by-message account. Recent messages may also remain, but treat them as additional detail rather than something your summary depends on. Some overlap is expected.
+
+Allocate detail by recency and continuing importance. Be most precise about recent and unfinished work. Compress older work into its purpose, outcomes, and significant decisions with their useful rationale. Keep distinctive names or terms that will help you recognize a later reference. An older constraint or decision that still governs current work needs more precision than a recent tangent. Not every detail can survive; preserve the context needed to understand the session rather than trying to retain every exchange.
 
 Preserve continuity-critical information in compact form:
 - The current objective, still-relevant original requests, and user constraints, preferences, and corrections.
@@ -49,13 +51,13 @@ Preserve continuity-critical information in compact form:
 - Uncertainties, unverified assumptions, pending validation, and the difference between attempted work and confirmed outcomes.
 - For unfinished tool work, the request being pursued, results already received, and what remains to interpret or do. Do not repeat completed tool calls just because the earlier exchange is no longer visible.
 
-Incorporate still-relevant information from any previous compaction summary. Remove information that is clearly obsolete or superseded. Collapse tangents and repetition unless they affect the work. When a detail may matter later, preserve it concisely rather than omitting it solely for brevity.
+Integrate any previous compaction summary with the newer conversation. Across repeated compactions, progressively reduce the detail of older material rather than dropping whole topics solely because they are old or completed. Distinguish completed work from pending work, and superseded decisions from current ones. Remove obsolete details, collapse repetition and minor tangents, and combine related work so the summary stays compact instead of growing into a running log. Preserve the broad coverage of the session while giving the current handoff the space it needs.
 
 Choose the structure that best supports your continuation. Goal, Constraints, Progress, Decisions, Next actions, and Critical context can be useful headings, but are not a required form. Record actionable conclusions and rationale, not a transcript of internal thinking. The base system instructions remain available separately; do not spend the compaction summary reproducing them.
 
 Do not include large verbatim chunks from user messages, pasted documents, or tool output. Summarize the relevant requirements and findings.
 
-Output only the compaction summary.
+Start directly with the summary itself. Do not preface it with an acknowledgement, progress update, or explanation of how you are compacting the conversation. Every part of your response must belong to the summary, not commentary about writing it.
 
 Do not answer the latest request, perform more work, or call tools.`;
 

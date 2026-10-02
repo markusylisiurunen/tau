@@ -107,6 +107,8 @@ Compaction replaces model-visible conversation context with a checkpoint so the 
 
 The working model creates the checkpoint from its native conversation context, including the base instructions, previous checkpoint, and reasoning state supported by its provider. The checkpoint covers the whole active context and does not depend on knowing which recent messages will remain. It is an isolated maintenance request with no tool execution, not a submitted user turn. Reasoning continuity depends on the provider; the checkpoint records useful conclusions and rationale rather than reproducing internal thinking.
 
+The summary is intended to support both immediate continuation and recognition of earlier work. Recent and unfinished work receives the most detail; older work is compressed into its purpose, outcomes, and significant decisions. Across repeated compactions, the agent integrates the previous summary with newer conversation rather than discarding topics solely because they are old or completed. Important ongoing constraints retain precision regardless of age. Compaction is lossy: this cumulative overview does not preserve every topic or detail indefinitely.
+
 ### Automatic compaction
 
 Automatic compaction runs before a model subturn when fresh provider usage plus newly added estimated context exceeds the threshold. The threshold is the model context window minus a fixed reserve of 16,384 tokens. Checkpoint generation inherits the normal model stream settings without a compaction-specific output limit. Requests whose input cannot fit fail rather than falling back to a flattened transcript. Compaction can run more than once during a long logical turn.

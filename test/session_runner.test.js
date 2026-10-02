@@ -4,16 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { captureDiffReviewSnapshot } from "../dist/core/diff_review/snapshot.js";
-import { prepareSessionCompaction } from "../dist/core/session/compaction.js";
 import { runDirectBashCommand } from "../dist/core/session/direct_bash.js";
 import { runModelSubturn, SequentialToolCallRunner } from "../dist/core/session/runner.js";
 import { BASH_DEFAULT_TIMEOUT_MS } from "../dist/core/tools/bash.js";
 import { scopeToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
 import { buildToolRunPresentation } from "../dist/core/tools/presentation.js";
 import { ToolRegistry } from "../dist/core/tools/registry.js";
-import { buildCompactionUserMessage } from "../dist/core/utils/compact.js";
 import { autocompleteProjectPathsWithBackend } from "../dist/core/utils/project_files.js";
-import { prependTauUserMetadata } from "../dist/core/utils/user_metadata.js";
 import {
   createSdkDiffSnapshotDeps,
   createSdkToolExecutionBackend,
@@ -493,38 +490,6 @@ describe("session runner", () => {
     runner.cancelPendingAcknowledgements(new Error("event sink failed"));
 
     await expect(runner.finish()).rejects.toThrow("event sink failed");
-  });
-
-  it("de-duplicates preserved user message candidates across repeated compactions", () => {
-    const summaryText = prependTauUserMetadata(buildCompactionUserMessage({ summary: "old" }), [
-      {
-        type: "auto-compaction",
-        version: 1,
-        summary: "old",
-        preservedUserMessages: [{ id: "entry-1", text: "retained request from summary" }],
-        cutType: "turn-boundary",
-        retainedMessageCount: 1,
-      },
-    ]);
-    const entries = [
-      { id: "summary", message: userMessage(summaryText) },
-      {
-        id: "entry-1",
-        message: userMessage("retained request from live history"),
-      },
-      { id: "entry-2", message: userMessage("new request") },
-    ];
-
-    const preparation = prepareSessionCompaction(entries);
-
-    expect(preparation.userMessageCandidates).toEqual([
-      {
-        id: "entry-1",
-        text: "retained request from live history",
-        source: "conversation",
-      },
-      { id: "entry-2", text: "new request", source: "conversation" },
-    ]);
   });
 });
 

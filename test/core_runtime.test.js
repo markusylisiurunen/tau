@@ -15,11 +15,14 @@ import { describe, expect, it, vi } from "vitest";
 import { personas } from "../dist/core/personas.js";
 import { resolveRuntimePromptBootstrap } from "../dist/core/runtime/runtime_bootstrap.js";
 import { composeSessionPrompts } from "../dist/core/runtime/session_prompt_composer.js";
-import { createAutoCompactionArchiver } from "../dist/core/session/auto_compaction_archive.js";
+import {
+  AUTO_COMPACTION_ARCHIVE_DOCUMENTATION,
+  createAutoCompactionArchiver,
+} from "../dist/core/session/auto_compaction_archive.js";
 import {
   buildAutoCompactionContinuationMessage,
+  buildAutoCompactionPrompt,
   buildSessionCompactionPrompt,
-  parseCompactionSummaryResponse,
   prepareAutoCompaction,
   prepareSessionCompaction,
   selectAutoCompactionCut,
@@ -728,6 +731,13 @@ describe("automatic compaction archive", () => {
       const record = JSON.parse(readFileSync(first.jsonPath, "utf8"));
       const text = readFileSync(first.textPath, "utf8");
       const documentation = readFileSync(first.documentationPath, "utf8");
+      expect(documentation).toBe(AUTO_COMPACTION_ARCHIVE_DOCUMENTATION);
+      const continuation = buildAutoCompactionContinuationMessage({
+        cutType: "split-turn",
+        now: request.createdAt,
+        archive: first,
+      });
+      expect(stripTauUserMetadata(continuation.content[0].text)).toContain(documentation);
 
       expect(first.textPath).toMatch(/000001\.txt$/);
       expect(first.jsonPath).toMatch(/000001\.json$/);
@@ -844,7 +854,6 @@ describe("compaction context message", () => {
         type: "compaction",
         version: 1,
         summary: "## Goal\nShip feature",
-        preservedUserMessages: [{ id: "history-one", text: "ship the feature" }],
       },
     ]);
     const message = {
@@ -861,7 +870,6 @@ describe("compaction context message", () => {
       type: "compaction",
       version: 1,
       summary: "## Goal\nShip feature",
-      preservedUserMessages: [{ id: "history-one", text: "ship the feature" }],
     });
   });
 
@@ -932,7 +940,6 @@ describe("compaction context message", () => {
           type: "compaction",
           version: 1,
           summary: "summary",
-          preservedUserMessages: [{ id: "user-1", text: "keep me" }],
         },
       ],
       visibleText: "visible",
@@ -950,87 +957,18 @@ describe("compaction context message", () => {
     const result = prepareSessionCompaction(historyEntries(history));
 
     expect(result.messagesToSummarize).toHaveLength(1);
-    expect(result.userMessageCandidates).toEqual([
-      { id: "entry-1", text: "new request", source: "conversation" },
-    ]);
     expect(JSON.stringify(result.messagesToSummarize)).toContain("new request");
     expect(JSON.stringify(result.messagesToSummarize)).not.toContain(
       "The conversation context before this point has been compacted",
     );
   });
 
-  it("asks the summarizer to select preserved user message ids", () => {
-    const entries = historyEntries([
-      userMessage("keep this standing constraint"),
-      assistantMessage("done"),
-      toolResultMessage("verification output"),
-      userMessage("ignore this resolved aside"),
-    ]);
-    const preparation = prepareSessionCompaction(entries);
-
-    const prompt = buildSessionCompactionPrompt({ preparation });
-    expect(prompt).toContain("<user-message-candidates>");
-    expect(prompt).toContain('"id": "entry-0"');
-    expect(prompt).toContain('"id": "entry-3"');
-    expect(prompt).toContain("<preserved-user-message-ids>");
-
-    const parsed = parseCompactionSummaryResponse({
-      response: compactionSummary("## Goal\nContinue", ["entry-0"]),
-      userMessageCandidates: preparation.userMessageCandidates,
-    });
-
-    expect(parsed).toEqual({
-      summary: "## Goal\nContinue",
-      preservedUserMessages: [{ id: "entry-0", text: "keep this standing constraint" }],
-    });
-  });
-
-  it("ignores unknown selected preserved user message ids", () => {
-    const parsed = parseCompactionSummaryResponse({
-      response: compactionSummary("## Goal\nContinue", ["unknown", "valid"]),
-      userMessageCandidates: [{ id: "valid", text: "keep this standing constraint" }],
-    });
-
-    expect(parsed).toEqual({
-      summary: "## Goal\nContinue",
-      preservedUserMessages: [{ id: "valid", text: "keep this standing constraint" }],
-    });
-  });
-
-  it("accepts an all-unknown preserved user message selection", () => {
-    const parsed = parseCompactionSummaryResponse({
-      response: compactionSummary("## Goal\nContinue", ["unknown"]),
-      userMessageCandidates: [{ id: "valid", text: "keep this standing constraint" }],
-    });
-
-    expect(parsed).toEqual({
-      summary: "## Goal\nContinue",
-      preservedUserMessages: [],
-    });
-  });
-
-  it("middle-truncates selected preserved user messages by size", () => {
-    const first = `first start ${"a".repeat(60000)} first end`;
-    const second = `second start ${"b".repeat(120000)} second end`;
-
-    const parsed = parseCompactionSummaryResponse({
-      response: compactionSummary("## Goal\nContinue", ["first", "second"]),
-      userMessageCandidates: [
-        { id: "first", text: first },
-        { id: "second", text: second },
-      ],
-    });
-
-    expect(parsed.preservedUserMessages).toHaveLength(2);
-    expect(parsed.preservedUserMessages[0].text).toContain("first start");
-    expect(parsed.preservedUserMessages[0].text).toContain("tokens truncated");
-    expect(parsed.preservedUserMessages[0].text).toContain("first end");
-    expect(parsed.preservedUserMessages[1].text).toContain("second start");
-    expect(parsed.preservedUserMessages[1].text).toContain("tokens truncated");
-    expect(parsed.preservedUserMessages[1].text).toContain("second end");
-    expect(parsed.preservedUserMessages[1].text.length).toBeGreaterThan(
-      parsed.preservedUserMessages[0].text.length,
-    );
+  it("describes transcript archives only for automatic compaction", () => {
+    expect(buildSessionCompactionPrompt()).not.toContain("transcript archive");
+    const automatic = buildAutoCompactionPrompt();
+    expect(automatic).toContain("transcript archive");
+    expect(automatic).toContain(".txt");
+    expect(automatic).toContain(".json");
   });
 
   it("keeps auto-compaction continuation guidance hidden", () => {
@@ -1073,12 +1011,7 @@ describe("compaction context message", () => {
 
     const result = prepareSessionCompaction(historyEntries(history));
 
-    expect(result.previousSummary).toBe("old summary");
     expect(result.messagesToSummarize).toHaveLength(2);
-    expect(result.userMessageCandidates).toEqual([
-      { id: "entry-old", text: "old request", source: "previous-preserved" },
-      { id: "entry-1", text: "new request", source: "conversation" },
-    ]);
     expect(JSON.stringify(result.messagesToSummarize)).toContain("new request");
     expect(JSON.stringify(result.messagesToSummarize)).toContain("old summary");
   });
@@ -1100,12 +1033,7 @@ describe("compaction context message", () => {
 
     const result = prepareSessionCompaction(historyEntries(history));
 
-    expect(result.previousSummary).toBeUndefined();
     expect(result.messagesToSummarize).toHaveLength(2);
-    expect(result.userMessageCandidates).toEqual([
-      { id: "entry-0", text: oldVisibleCompactionText, source: "conversation" },
-      { id: "entry-1", text: "new request", source: "conversation" },
-    ]);
     expect(JSON.stringify(result.messagesToSummarize)).toContain("old summary");
     expect(JSON.stringify(result.messagesToSummarize)).toContain("new request");
   });
@@ -1122,9 +1050,6 @@ describe("compaction context message", () => {
 
     const result = prepareSessionCompaction(entries);
 
-    expect(result.userMessageCandidates).toEqual([
-      { id: "entry-0", text: "original request", source: "conversation" },
-    ]);
     expect(JSON.stringify(result.messagesToSummarize)).toContain("recovered tool result");
   });
 
@@ -1246,19 +1171,6 @@ describe("compaction context message", () => {
     expect(preparation.retainedEntries).toEqual(entries.slice(7));
   });
 
-  it("offers user candidates independently of failed assistant generations", () => {
-    const entries = historyEntries([
-      userMessage(`older request ${"x".repeat(9000)}`),
-      { ...assistantMessage("provider failed"), stopReason: "error" },
-      userMessage("current request"),
-    ]);
-    const preparation = prepareAutoCompaction(entries, { keepRecentTokens: 1000 });
-    expect(preparation.userMessageCandidates.map((candidate) => candidate.id)).toEqual([
-      "entry-0",
-      "entry-2",
-    ]);
-  });
-
   it("does not retain an oversized user message partially", () => {
     const entries = historyEntries([userMessage(`latest request ${"x".repeat(15000)}`)]);
     expect(selectAutoCompactionCut(entries, { startIndex: 0, keepRecentTokens: 1000 })).toEqual({
@@ -1275,7 +1187,7 @@ describe("compaction context message", () => {
           type: "auto-compaction",
           version: 1,
           summary: "old summary",
-          preservedUserMessages: [],
+
           cutType: "turn-boundary",
           retainedMessageCount: 2,
         },
@@ -1299,9 +1211,6 @@ describe("compaction context message", () => {
     });
 
     expect(preparation.cutType).toBe("split-turn");
-    expect(preparation.userMessageCandidates).toEqual([
-      { id: "entry-1", text: "current request", source: "conversation" },
-    ]);
     expect(JSON.stringify(preparation.messagesToSummarize)).toContain("current request");
     expect(JSON.stringify(preparation.messagesToSummarize)).not.toContain(
       "The conversation context before this point has been compacted",
@@ -1318,7 +1227,7 @@ describe("compaction context message", () => {
           type: "auto-compaction",
           version: 1,
           summary: "old summary",
-          preservedUserMessages: [],
+
           cutType: "split-turn",
           retainedMessageCount: 2,
         },
@@ -1362,7 +1271,7 @@ describe("compaction context message", () => {
           type: "auto-compaction",
           version: 1,
           summary: "old summary",
-          preservedUserMessages: [],
+
           cutType: "turn-boundary",
           retainedMessageCount: 2,
         },
@@ -1385,12 +1294,6 @@ describe("compaction context message", () => {
       keepRecentTokens: 1000,
     });
 
-    expect(preparation.previousSummary).toBe("old summary");
-    expect(preparation.userMessageCandidates).toEqual([
-      { id: "entry-1", text: "retained old request", source: "conversation" },
-      { id: "entry-3", text: `new request ${"x".repeat(9000)}`, source: "conversation" },
-      { id: "entry-4", text: "current request", source: "conversation" },
-    ]);
     expect(JSON.stringify(preparation.messagesToSummarize)).toContain("retained old request");
     expect(JSON.stringify(preparation.messagesToSummarize)).toContain("new request");
     expect(JSON.stringify(preparation.messagesToSummarize)).not.toContain(
@@ -1401,17 +1304,13 @@ describe("compaction context message", () => {
       type: "auto-compaction",
       version: 1,
       summary: "old summary",
-      preservedUserMessages: [],
+
       cutType: "turn-boundary",
       retainedMessageCount: 2,
     });
     expect(hasAutoCompactionContinuationMetadata(continuation)).toBe(true);
   });
 });
-
-function compactionSummary(summary, preservedUserMessageIds = []) {
-  return `${summary}\n\n<preserved-user-message-ids>\n${JSON.stringify(preservedUserMessageIds)}\n</preserved-user-message-ids>`;
-}
 
 function historyEntries(messages) {
   return messages.map((message, index) => ({ id: `entry-${index}`, message }));
@@ -1492,10 +1391,6 @@ describe("native system instruction compaction", () => {
     expect(JSON.stringify(manual.messagesToSummarize)).toContain("older native instruction");
     expect(JSON.stringify(manual.messagesToSummarize)).toContain("retained native instruction");
     expect(JSON.stringify(manual.messagesToSummarize)).not.toContain("obsolete");
-    expect(manual.userMessageCandidates.map((candidate) => candidate.id)).toEqual([
-      "entry-0",
-      "entry-4",
-    ]);
     const auto = prepareAutoCompaction(entries, {
       keepRecentTokens: 1_000,
     });

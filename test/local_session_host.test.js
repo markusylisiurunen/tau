@@ -887,9 +887,7 @@ describe("LocalSessionHost", () => {
     const session = await host.createSession(localCreateInput);
     const responses = [
       fauxAssistantMessage("completed before compaction"),
-      fauxAssistantMessage(
-        "compacted summary\n\n<preserved-user-message-ids>\n[]\n</preserved-user-message-ids>",
-      ),
+      fauxAssistantMessage("compacted summary"),
     ];
     session.runtime.agent.spec.model.stream = () => {
       const response = responses.shift();
@@ -944,7 +942,7 @@ describe("LocalSessionHost", () => {
         type: "auto-compaction",
         version: 1,
         summary: "summary",
-        preservedUserMessages: [],
+
         cutType: "split-turn",
         retainedMessageCount: 0,
       },
@@ -1019,6 +1017,46 @@ describe("LocalSessionHost", () => {
       expect((await recovered.snapshot()).timeline.epoch).toBe(snapshot.timeline.epoch);
     } finally {
       await recoveredHost.shutdown();
+    }
+  });
+
+  it("recovers older compaction messages with verbatim user context intact", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "tau-compaction-recovery-"));
+    const store = new FileSessionStore({ directory });
+    const host = createHost(store);
+    const recoveredHost = createHost(store);
+    try {
+      const session = await host.createSession(localCreateInput);
+      const oldUserText = "do not change the production deployment";
+      const summaryBody = `summary\n\n<preserved-user-messages>\n<user-message id="old-user">\n${oldUserText}\n</user-message>\n</preserved-user-messages>`;
+      const rawText = prependTauUserMetadata(summaryBody, [
+        {
+          type: "compaction",
+          version: 1,
+          summary: "summary",
+          preservedUserMessages: [{ id: "old-user", text: oldUserText }],
+        },
+      ]);
+      await session.session.commitUserText(rawText);
+      const before = await session.snapshot();
+      await host.shutdown();
+      const recovered = await recoveredHost.observeSession(session.sessionId);
+      expect(recovered.runtime.agent.rawHistory[0].content[0].text).toBe(rawText);
+      expect((await recovered.snapshot()).messages).toEqual(before.messages);
+      const stream = vi.fn(() => ({
+        async *[Symbol.asyncIterator]() {},
+        async result() {
+          return fauxAssistantMessage("continued");
+        },
+      }));
+      recovered.runtime.agent.spec.model.stream = stream;
+      await recovered.record({ text: "continue" });
+      await recovered.runTurn();
+      expect(stream.mock.calls[0][0].messages[0].content[0].text).toBe(summaryBody);
+    } finally {
+      await host.shutdown();
+      await recoveredHost.shutdown();
+      rmSync(directory, { recursive: true, force: true });
     }
   });
 
@@ -2266,9 +2304,7 @@ describe("LocalSessionHost", () => {
       session.runtime.agent.spec.model.stream = () => ({
         async *[Symbol.asyncIterator]() {},
         async result() {
-          return fauxAssistantMessage(
-            "compacted summary\n\n<preserved-user-message-ids>\n[]\n</preserved-user-message-ids>",
-          );
+          return fauxAssistantMessage("compacted summary");
         },
       });
       await session.compact({ mode: "summary-only" });
@@ -2285,9 +2321,7 @@ describe("LocalSessionHost", () => {
     const hostedSession = await host.createSession(localCreateInput);
     const responses = [
       fauxAssistantMessage("first response"),
-      fauxAssistantMessage(
-        "compacted summary\n\n<preserved-user-message-ids>\n[]\n</preserved-user-message-ids>",
-      ),
+      fauxAssistantMessage("compacted summary"),
     ];
     hostedSession.runtime.agent.spec.model.stream = () => {
       const response = responses.shift();
@@ -2338,9 +2372,7 @@ describe("LocalSessionHost", () => {
     const hostedSession = await host.createSession(localCreateInput);
     const responses = [
       fauxAssistantMessage("first response"),
-      fauxAssistantMessage(
-        "compacted summary\n\n<preserved-user-message-ids>\n[]\n</preserved-user-message-ids>",
-      ),
+      fauxAssistantMessage("compacted summary"),
       fauxAssistantMessage("response after compaction"),
     ];
     hostedSession.runtime.agent.spec.model.stream = () => {
@@ -4967,7 +4999,6 @@ describe("LocalSessionHost", () => {
         type: "compaction",
         version: 1,
         summary: "summary",
-        preservedUserMessages: [],
       },
     ]);
     const historyEntryId = await originalSession.session.commitUserText(rawText, {
@@ -5131,7 +5162,7 @@ describe("LocalSessionHost", () => {
       content: [
         {
           type: "text",
-          text: "summary\n\n<preserved-user-message-ids>\n[]\n</preserved-user-message-ids>",
+          text: "summary",
         },
       ],
       usage: { ...firstMessage.usage, input: 1, output: 1, totalTokens: 2 },

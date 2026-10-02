@@ -42,7 +42,7 @@ export function createBashCapability(
   return {
     name: "bash",
     description:
-      "Run fresh noninteractive login Bash commands. Use run for foreground work and start for persistent background jobs. Never use tmux or shell &. Launch is not readiness.",
+      "Run shell commands and manage background jobs. Use for command-line tools, repository and filesystem work, or processes whose structured output is needed in a program.",
     documentation: `## tau.bash
 
 - await tau.bash.run({ command, workingDirectory?, timeout? }) returns { output, stdout, stderr, exitCode, truncated, timedOut, aborted, closeSignal }. Timeout is in milliseconds, default ${BASH_DEFAULT_TIMEOUT_MS}. Nonzero exits are data; invalid arguments or launch failures throw.
@@ -55,7 +55,7 @@ export function createBashCapability(
 
 Job records contain id, command, workingDirectory, status, output, truncated, and exit/termination or error fields when available. Each job retains 64 KiB of output; up to 64 records are retained. Unknown IDs do not prove a command never ran: check current process and output state before restarting it.
 
-Each command uses a fresh shell. No TTY or interactive stdin is available. workingDirectory defaults to the current working directory; prefer it over cd. Shell state does not carry between calls, but filesystem side effects do. Interrupting a program stops foreground commands, not already launched background jobs. Commands are not automatically retried and completed actions are not rolled back.`,
+Use run for foreground work and start for persistent background jobs. Never use tmux or shell &. Launch is not readiness. Each command uses a fresh noninteractive login Bash shell. No TTY or interactive stdin is available. workingDirectory defaults to the current working directory; prefer it over cd. Shell state does not carry between calls, but filesystem side effects do. Interrupting a program stops foreground commands, not already launched background jobs. Commands are not automatically retried and completed actions are not rolled back.`,
     api: {
       run: async (args, context) => {
         const [options] = z.tuple([runOptions]).parse(args);

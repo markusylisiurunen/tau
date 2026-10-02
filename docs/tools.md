@@ -162,7 +162,7 @@ When the runtime guide is not already visible, the agent first runs a documentat
 printText(docs);
 ```
 
-The guide contains runtime rules and the enabled capability index. Before using a capability whose API reference is not visible, the agent retrieves it in a separate documentation-only call:
+The guide covers runtime rules, enabled capabilities, and composition with examples of chaining, bounded concurrency, and partial failure. Before using a capability whose API reference is not visible, the agent retrieves it in a separate documentation-only call:
 
 ```js
 printText(await tau.docs("web"));
@@ -181,7 +181,7 @@ printText(truncate(result.stdout, { maxChars: 4000 }));
 
 ### Execution and limits
 
-Programs have no ambient filesystem, process, environment, credential, import, timer, network, or fetch access. Explicit capabilities supply their own authority. JavaScript variables hold intermediate data; file operations use `tau.bash` when enabled. There is no scratch-file API.
+Programs have no ambient filesystem, process, environment, credential, import, timer, network, or fetch access. Explicit capabilities supply their own authority. JavaScript variables hold intermediate data; file operations use Bash when enabled. There is no scratch-file API.
 
 Built-in programs have a 15-minute deadline, at most 128 API requests, and eight unresolved requests at once. Each serialized request or response is limited to 64 MiB. Undefined object properties are omitted from arguments; undefined arguments and array entries are rejected. Programs are not automatically retried. Failure, interruption, or timeout does not undo completed actions.
 
@@ -192,7 +192,7 @@ Built-in programs have a 15-minute deadline, at most 128 API requests, and eight
 - `tau.nook`: site deployment, templates, and site-scoped JSON KV. The agent uses it for user-requested publishing or Nook management. App authoring requires reading `tau.nook.skill()` in a separate documentation-only call first. See [Nook](nook.md).
 - `tau.mcp`: discovery and invocation of connected tools and resources. The agent reads each tool's description and schema before calling it. Connections are shared and lazy; mutations are not retried. `isError` is result data; protocol failures throw. Existing MCP server configuration and trust rules apply. See [configuration reference](config-reference.md#mcpservers) and [security](security.md#trust-mcp-servers).
 - `tau.bash`: `run`, `start`, `list`, `read`, `wait`, and `stop`. Foreground execution returns structured stdout, stderr, exit, and termination fields, with a 24 MiB capture safety ceiling rather than a model-facing preview. Overflow retains a tail and sets `truncated`; programs must check it before parsing structured data. Background operations share the direct tools' job registry and retain bounded output tails. Jobs survive program exit and interruption; foreground work is cancelled. The shell and ownership rules above apply.
-- `tau.models`: lists fixed OpenRouter model choices and performs standalone chat or typed decisions. No session conversation or tools are inherited. Chat media accepts either paths on the agent's machine or inline padded base64 with a matching MIME type. Credentials stay with the host. Reported costs are included in session accounting even when later program work fails. Requests are cancellable and not automatically retried. Input, model, media, response, and request limits match [OpenRouter](openrouter.md); inspect completion/refusal status rather than assuming every response is a complete answer.
+- `tau.models`: lists fixed OpenRouter model choices and performs standalone chat or typed decisions. No session conversation or tools are inherited. Chat media accepts either paths on the agent's machine or inline padded base64 with a matching MIME type. Credentials stay with the host. Provider usage metadata is returned, but external model charges are not included in session cumulative cost or usage logs. Requests are cancellable and not automatically retried. Input, model, media, response, and request limits match [OpenRouter](openrouter.md); inspect completion/refusal status rather than assuming every response is a complete answer.
 
 SDK and command client tools use the same sandbox globals and output contract with their own explicitly declared APIs. Their default program deadline is 60 seconds unless configured otherwise.
 

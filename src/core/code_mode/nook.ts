@@ -16,11 +16,8 @@ const MAX_KV_KEY_LENGTH = 256;
 const MAX_KV_VALUE_BYTES = 64 * 1024;
 
 const description = [
-  "Operate the configured Nook platform: Tau's Cloudflare-backed static mini-app host for publishing built front-end artifacts with optional per-site same-origin JSON KV.",
-  "Do not use tau.nook autonomously; use tau.nook only when the user asks to manage Nook, deploy/publish/host an app or artifact, inspect Nook state, or manage Nook KV.",
-  "If the user asks to deploy a static artifact or mini-app, this is usually the right deployment target.",
-
-  "When app-authoring guidance is needed, treat tau.nook.skill() as a second documentation step: after reading docs, run a separate documentation-only call that does nothing except printText(await tau.nook.skill()). Read the returned guide before authoring or modifying the app in later calls.",
+  "Publish static apps and artifacts, inspect hosted sites, and manage their JSON KV on Nook.",
+  "Use tau.nook only when the user asks for deployment, hosting, or Nook management. Nook is the usual target for static mini-app publishing.",
 ].join(" ");
 
 type NookClient = ReturnType<typeof createNookClientFromConfig>;

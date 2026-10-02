@@ -1994,8 +1994,8 @@ describe("LocalSessionHost", () => {
     );
   });
 
-  it.each(["failure", "interruption"])(
-    "persists composed model usage before later %s",
+  it.each(["success", "failure"])(
+    "excludes composed model usage from session accounting after program %s",
     async (ending) => {
       const store = new MemorySessionStore();
       const recordUsage = vi.fn();
@@ -2010,19 +2010,6 @@ describe("LocalSessionHost", () => {
           choices: [{ finish_reason: "stop", message: { role: "assistant", content: "sampled" } }],
         }),
       );
-      const usageReached = deferred();
-      const releaseUsage = deferred();
-      const commit = store.commitSessionSnapshot.bind(store);
-      let blocked = false;
-      if (ending === "interruption")
-        store.commitSessionSnapshot = async (snapshot, options) => {
-          if (snapshot.costTotal > 0 && !blocked) {
-            blocked = true;
-            usageReached.resolve();
-            await releaseUsage.promise;
-          }
-          await commit(snapshot, options);
-        };
       try {
         const session = await host.createSession(localCreateInput);
         let projected = await session.snapshot();
@@ -2032,7 +2019,7 @@ describe("LocalSessionHost", () => {
         const call = fauxToolCall(
           "code",
           {
-            code: 'await tau.models.chat({ model: "openai/gpt-6-luna", prompt: "sample" }); throw new Error("later failure")',
+            code: `const result = await tau.models.chat({ model: "openai/gpt-6-luna", prompt: "sample" }); printText(JSON.stringify(result.usage)); ${ending === "failure" ? 'throw new Error("later failure")' : ""}`,
           },
           { id: "sampling-call" },
         );
@@ -2053,34 +2040,27 @@ describe("LocalSessionHost", () => {
           };
         };
         await session.record({ text: "sample explicitly" });
-        const turn = session.runTurn();
-        if (ending === "interruption") {
-          await usageReached.promise;
-          session.interruptActiveWork();
-          releaseUsage.resolve();
-        }
-        await turn;
+        await session.runTurn();
         const snapshot = await session.snapshot();
-        expect(snapshot.costTotal).toBe(0.02);
+        expect(snapshot.costTotal).toBe(0);
         expect(projected).toEqual(snapshot);
-        expect(snapshot.tools[call.id].status).toBe(ending === "failure" ? "failed" : "cancelled");
+        expect(snapshot.tools[call.id].status).toBe(ending === "failure" ? "failed" : "succeeded");
         expect(
           recordUsage.mock.calls.filter(([entry]) => entry.provider === "openrouter"),
-        ).toHaveLength(1);
+        ).toHaveLength(0);
         expect(fetchImpl).toHaveBeenCalledOnce();
         await host.shutdown();
         const recoveredHost = createHost(store, { recordUsage });
         try {
           const recovered = await recoveredHost.observeSession(session.sessionId);
-          expect((await recovered.snapshot()).costTotal).toBe(0.02);
+          expect((await recovered.snapshot()).costTotal).toBe(0);
           expect(
             recordUsage.mock.calls.filter(([entry]) => entry.provider === "openrouter"),
-          ).toHaveLength(1);
+          ).toHaveLength(0);
         } finally {
           await recoveredHost.shutdown();
         }
       } finally {
-        releaseUsage.resolve();
         fetchImpl.mockRestore();
         await host.shutdown();
       }

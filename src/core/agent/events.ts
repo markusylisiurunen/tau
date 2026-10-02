@@ -8,7 +8,6 @@ import type { IntermediateSystemMessage } from "../../protocol/system_message.js
 import type { AssistantPartialSnapshot } from "../session/message_accumulator.js";
 import type { ToolActivity } from "../tools/activity.js";
 import type { ReasoningEffort } from "../types.js";
-import type { UsageLogEntry } from "../usage/logs.js";
 
 export type AgentTurnOutcome = "completed" | "stopped" | "interrupted" | "blocked" | "failed";
 
@@ -93,7 +92,6 @@ export type AgentEvent =
       toolCall: ToolCall;
     }
   | { type: "tool_activity"; activity: ToolActivity }
-  | { type: "tool_usage"; usage: Omit<UsageLogEntry, "sessionId" | "agent" | "personaId"> }
   | {
       type: "tool_run_queued";
       toolCallId: string;

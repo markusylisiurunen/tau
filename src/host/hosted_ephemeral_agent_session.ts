@@ -330,17 +330,6 @@ class EphemeralAgentThread {
             : `${event.message.toolName}: tool returned an error`;
         }
         break;
-      case "tool_usage": {
-        this.costTotal += event.usage.cost.total;
-        this.usage.input += event.usage.usage.input;
-        this.usage.output += event.usage.usage.output;
-        this.recordUsage({
-          ...event.usage,
-          sessionId: this.runtime.agentIdValue,
-          agent: { type: "ephemeral" },
-        });
-        break;
-      }
       case "assistant_final": {
         const usage = getUsageTotals(event.message.usage);
         const cost = getUsageCostTotal(event.message.usage);

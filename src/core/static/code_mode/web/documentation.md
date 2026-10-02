@@ -1,3 +1,5 @@
+Prefer local files and repository data, purpose-built CLIs, first-party APIs and SDKs, and direct structured endpoints when they can answer the task. For GitHub, use gh for pull requests, issues, releases, repository metadata, and authenticated access; use git for source, diffs, status, and history available in a checkout.
+
 ## Defaults
 
 The API is designed for agent workflows and defaults to token-efficient retrieval:
@@ -9,7 +11,7 @@ The API is designed for agent workflows and defaults to token-efficient retrieva
 
 ## `tau.web.discover(url)`
 
-Use discovery as a separate first step when the user provides a specific URL and a direct agent-friendly representation may exist. Also use it when search results identify an official documentation site: discover the relevant result or documentation root before retrieving individual pages. Print a concise discovery report when useful. If discovery advertises a Markdown representation or `llms.txt` file, retrieve that URL with tau.bash and curl; the same program may do this after both API references have been read. Never pass a discovered Markdown or `llms.txt` URL to `tau.web.fetch`.
+Use discovery as a separate first step when the user provides a specific URL and a direct agent-friendly representation may exist. Also use it when search results identify an official documentation site: discover the relevant result or documentation root before retrieving individual pages. Print a concise discovery report when useful. If discovery advertises a Markdown representation or `llms.txt` file, retrieve that URL with Bash and curl. Never pass a discovered Markdown or `llms.txt` URL to `tau.web.fetch`.
 
 ```js
 const discovery = await tau.web.discover("https://example.com/docs/getting-started");
@@ -57,7 +59,7 @@ Discovery returns metadata only. It does not return page or `llms.txt` bodies, p
 }
 ```
 
-Retrieve an explicit Markdown or `llms.txt` URL with curl through tau.bash:
+Retrieve an explicit Markdown or `llms.txt` URL with curl in Bash:
 
 ```bash
 curl -fsSL -H 'Accept: text/markdown' \
@@ -72,7 +74,7 @@ When researching product or library documentation:
 
 1. If you do not know the official documentation URL, find it with `tau.web.search`.
 2. Run `tau.web.discover` on the relevant official result or documentation root and print the discovery report.
-3. In the next turn, retrieve an advertised Markdown representation or `llms.txt` index with `curl`, then retrieve only the relevant Markdown pages with `curl`.
+3. Retrieve an advertised Markdown representation or `llms.txt` index with `curl`, then retrieve only the relevant Markdown pages with `curl`.
 4. Fall back to `tau.web.fetch` only for ordinary pages when no suitable agent-friendly resource exists or extraction is preferable.
 
 Do not treat search-result highlights as the primary documentation source when the site advertises agent-friendly resources.
@@ -130,7 +132,7 @@ Results are relevance ordered. Check `statuses` when inline content is important
 
 ## `tau.web.fetch(urls, options?)`
 
-Retrieve extracted content from one ordinary web page URL or an array of up to 100 ordinary page URLs. Each URL may contain up to 2,048 characters. This API uses the web extraction service rather than direct HTTP. Never pass a discovered Markdown representation or `llms.txt` URL to `tau.web.fetch`; retrieve it in a separate Bash call with `curl`.
+Retrieve extracted content from one ordinary web page URL or an array of up to 100 ordinary page URLs. Each URL may contain up to 2,048 characters. This API uses the web extraction service rather than direct HTTP. Never pass a discovered Markdown representation or `llms.txt` URL to `tau.web.fetch`; retrieve it with `curl` in Bash.
 
 ```js
 const response = await tau.web.fetch("https://example.com/article", {
@@ -193,27 +195,6 @@ for (const result of results) {
 }
 ```
 
-### Search several query variants concurrently
-
-```js
-const queries = [
-  "Tau latest release notes",
-  "Tau recent breaking changes",
-  "Tau GitHub releases",
-];
-const responses = await Promise.all(
-  queries.map((query) => tau.web.search(query, { numResults: 5 })),
-);
-
-const unique = new Map();
-for (const response of responses) {
-  for (const result of response.results) unique.set(result.url, result);
-}
-for (const result of unique.values()) {
-  printText(`${result.title}\n${result.url}`);
-}
-```
-
 ### Search for official docs, then discover agent-friendly resources
 
 ```js
@@ -231,8 +212,4 @@ for (const representation of discovery.markdown) {
 for (const file of discovery.llmsTxt) printText(`llms.txt: ${file.url}`);
 ```
 
-In the next turn, retrieve the selected Markdown representation or `llms.txt` with `curl` in a separate Bash call. Never pass those URLs to `tau.web.fetch`. For ordinary pages without agent-friendly resources, use `tau.web.fetch` on the relevant search results instead.
-
-## Output guidance
-
-Print only information needed for the task. Prefer concise labeled text over serialized response objects. Select relevant fields when possible; when all fields matter, flatten and label them compactly. Emit JSON only when the user explicitly requests JSON or another machine-readable result.
+Retrieve the selected Markdown representation or `llms.txt` with `curl` in Bash. Never pass those URLs to `tau.web.fetch`. For ordinary pages without agent-friendly resources, use `tau.web.fetch` on the relevant search results instead.

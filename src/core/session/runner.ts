@@ -37,11 +37,7 @@ type ToolRunAgentEvent = Extract<
     type: "tool_run_queued" | "tool_run_blocked" | "tool_run_started" | "tool_run_finished";
   }
 >;
-type AcknowledgedToolRunnerEvent = (
-  | ToolActivityAgentEvent
-  | ToolRunAgentEvent
-  | Extract<AgentEvent, { type: "tool_usage" }>
-) & {
+type AcknowledgedToolRunnerEvent = (ToolActivityAgentEvent | ToolRunAgentEvent) & {
   acknowledge: (error?: Error) => void;
 };
 type RunnerAssistantPartialEvent = {
@@ -454,7 +450,7 @@ export async function* runModelSubturn(
 
 type SequentialToolCallRunnerOptions = {
   toolRegistry: ToolRegistry;
-  executionContext: Omit<ToolExecutionContext, "signal" | "emitActivity" | "recordUsage">;
+  executionContext: Omit<ToolExecutionContext, "signal" | "emitActivity">;
   now?: () => number;
 };
 
@@ -753,7 +749,7 @@ function completeToolRun(
 async function* runPreparedToolCall(
   prepared: PreparedToolCall,
   signal: AbortSignal,
-  executionContext: Omit<ToolExecutionContext, "signal" | "emitActivity" | "recordUsage">,
+  executionContext: Omit<ToolExecutionContext, "signal" | "emitActivity">,
   now: () => number = Date.now,
 ): AsyncGenerator<ToolRunnerEvent, CompletedToolRun, void> {
   if (prepared.type === "rejected") {
@@ -774,7 +770,7 @@ async function* runPreparedToolCall(
   const { toolCall, definition } = prepared;
   try {
     const activities: Array<{
-      event: ToolActivityAgentEvent | Extract<AgentEvent, { type: "tool_usage" }>;
+      activity: ToolActivity;
       resolve: () => void;
       reject: (error: Error) => void;
     }> = [];
@@ -788,12 +784,7 @@ async function* runPreparedToolCall(
         signal,
         emitActivity: (activity) =>
           new Promise<void>((resolve, reject) => {
-            activities.push({ event: { type: "tool_activity", activity }, resolve, reject });
-            wake?.();
-          }),
-        recordUsage: (usage) =>
-          new Promise<void>((resolve, reject) => {
-            activities.push({ event: { type: "tool_usage", usage }, resolve, reject });
+            activities.push({ activity, resolve, reject });
             wake?.();
           }),
       })
@@ -818,7 +809,7 @@ async function* runPreparedToolCall(
           const acknowledged = new Promise<void>((resolve, reject) => {
             acknowledge = (error) => (error ? reject(error) : resolve());
           });
-          yield { ...next.event, acknowledge };
+          yield { type: "tool_activity", activity: next.activity, acknowledge };
           try {
             await acknowledged;
             next.resolve();

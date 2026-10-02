@@ -1,13 +1,11 @@
 import { z } from "zod";
 import type { Config } from "../config/index.js";
 import {
-  type OpenRouterRequestOptions,
   openRouterModels,
   requestOpenRouterChat,
   requestOpenRouterDecisions,
 } from "../models/openrouter.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
-import type { ToolExecutionContext } from "../tools/registry.js";
 import type { CodeModeCapability } from "./capability.js";
 
 const kind = z.enum(["image", "audio", "video"]);
@@ -31,13 +29,12 @@ const decisionOptions = z.strictObject({
 export function createModelsCapability(
   backend: ToolExecutionBackend,
   config: Config,
-  recordUsage: ToolExecutionContext["recordUsage"],
   fetchImpl?: typeof fetch,
 ): CodeModeCapability {
   return {
     name: "models",
     description:
-      "Explicit standalone OpenRouter chat and typed decisions. No inherited conversation, tools, or automatic retries. Requests may incur charges even when a program later fails.",
+      "Standalone OpenRouter inference for text or media analysis and typed classification, scoring, or verification. Use for focused tasks with explicit inputs, without conversation context or agent tools.",
     documentation: `## tau.models
 
 - await tau.models.list() returns { chat: Model[], decisions: Model[] }. Each model has id, inputs, reasoning, and role. Only listed model IDs and supported reasoning efforts/modalities are accepted.
@@ -46,7 +43,7 @@ export function createModelsCapability(
 - Chat returns requested_model, model, answer (string or null), finish_reason (stop, length, content_filter), and optional id, provider, refusal, native_finish_reason, usage. Inspect finish_reason and refusal: a length result is incomplete and content_filter or refusal is not a completed answer.
 - await tau.models.decisions({ model, state, questions }) returns requested_model, model, answers, usage and optional id/provider. state is a string, object, or array. questions maps names to { type: "noul", instructions, criteria?: { true, false } }, { type: "choice", instructions, criteria: { category: guidance } }, or { type: "score", instructions, criteria: [guidance, ...] }. Guidance may be a string, object, or array (choice criteria may also be null). noul answers are probabilities, choice answers name a category, and score answers are positions in the ordered rubric. Answers are advisory, not permission checks.
 
-Only explicitly supplied inputs are sent. Credentials remain outside the sandbox. Model calls are billed to the session using reported usage/cost, including calls completed before later program failure. There are no automatic retries or model substitutions. No output token cap is sent. Limits: text/decisions input 1 MB; 16 attachments including at most 4 audio and 1 video; image 5 MB, one frame, 8000 pixels per edge and 32 megapixels; audio/video 12 MB each, WAV PCM16/MP3 or H.264 MP4 with optional AAC, 600 seconds combined; encoded request 20 MB, response 8 MB.`,
+Only explicitly supplied inputs are sent. Credentials remain outside the sandbox. Provider usage metadata is returned but does not contribute to session cost or usage logs. Requests may incur external charges even if the program later fails. There are no automatic retries or model substitutions. No output token cap is sent. Limits: text/decisions input 1 MB; 16 attachments including at most 4 audio and 1 video; image 5 MB, one frame, 8000 pixels per edge and 32 megapixels; audio/video 12 MB each, WAV PCM16/MP3 or H.264 MP4 with optional AAC, 600 seconds combined; encoded request 20 MB, response 8 MB.`,
     api: {
       list: (args) => {
         z.tuple([]).parse(args);
@@ -63,7 +60,9 @@ Only explicitly supplied inputs are sent. Credentials remain outside the sandbox
             })),
           },
           {
-            ...requestOptions(input.reasoning, context.signal),
+            config,
+            signal: context.signal,
+            fetchImpl,
             mediaAdapter: {
               readFile: async (path, limit) => {
                 context.signal.throwIfAborted();
@@ -93,37 +92,11 @@ Only explicitly supplied inputs are sent. Credentials remain outside the sandbox
         return await requestOpenRouterDecisions(
           input.model,
           { state: input.state, questions: input.questions },
-          requestOptions(undefined, context.signal),
+          { config, signal: context.signal, fetchImpl },
         );
       },
     },
   };
-
-  function requestOptions(
-    reasoning: string | undefined,
-    signal: AbortSignal,
-  ): OpenRouterRequestOptions {
-    return {
-      config,
-      signal,
-      ...(fetchImpl ? { fetchImpl } : {}),
-      onUsage: async (result) => {
-        const usage = result.usage;
-        if (!usage) return;
-        const input = usage.prompt_tokens ?? usage.input_tokens ?? 0;
-        const output = usage.completion_tokens ?? usage.output_tokens ?? 0;
-        await recordUsage({
-          timestamp: Date.now(),
-          provider: "openrouter",
-          model: result.model,
-          api: "openrouter",
-          reasoningEffort: reasoning ?? "none",
-          usage: { input, output, cacheRead: 0, cacheWrite: 0, total: input + output },
-          cost: { total: usage.cost ?? 0 },
-        });
-      },
-    };
-  }
 }
 
 const probeScript = `

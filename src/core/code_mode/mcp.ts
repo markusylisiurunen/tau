@@ -29,7 +29,7 @@ export function createMcpCapability(manager: McpManager): CodeModeCapability {
   return {
     name: "mcp",
     description:
-      "Discover connected tools and resources. Read a tool's description and input schema before calling it. Mutations are not retried or undone if the program fails.",
+      "Discover and call tools or read resources from connected MCP servers. Use when a connected service provides data or actions relevant to the task.",
     documentation,
     api: {
       listServers: async (args) => {

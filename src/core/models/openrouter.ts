@@ -22,16 +22,6 @@ export type OpenRouterRequestOptions = {
   signal: AbortSignal;
   env?: NodeJS.ProcessEnv;
   fetchImpl?: typeof fetch;
-  onUsage?: (result: {
-    model: string;
-    usage?: {
-      prompt_tokens?: number;
-      completion_tokens?: number;
-      input_tokens?: number;
-      output_tokens?: number;
-      cost?: number | null;
-    };
-  }) => Promise<void>;
 };
 
 export type OpenRouterChatInput = {
@@ -169,15 +159,6 @@ async function requestOpenRouter(
     decodeOpenRouterText(await readMediaResponse(response, 8_000_000)),
     "OpenRouter response",
   );
-  const reportedUsage =
-    operation === "decisions"
-      ? z
-          .object({ model: decisionResponse.shape.model, usage: decisionResponse.shape.usage })
-          .safeParse(value)
-      : z
-          .object({ model: chatResponse.shape.model, usage: chatResponse.shape.usage })
-          .safeParse(value);
-  if (reportedUsage.success) await options.onUsage?.(reportedUsage.data);
   if (value && typeof value === "object" && "error" in value) {
     const error = z.object({ code: z.number().int() }).safeParse(value.error);
     if (error.success) throw requestFailure(error.data.code);

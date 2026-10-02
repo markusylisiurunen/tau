@@ -43,14 +43,16 @@ export function createCodeToolDefinition(options: {
     capabilities.push(createNookCapability(options.backend, options.config));
   if (allowed.has("mcp") && options.mcp?.available)
     capabilities.push(createMcpCapability(options.mcp));
-  const modelsEnabled = allowed.has("models");
-  if (!capabilities.length && !modelsEnabled) return undefined;
+  if (allowed.has("models"))
+    capabilities.push(createModelsCapability(options.backend, options.config));
+  if (!capabilities.length) return undefined;
+  const sdk = bindCodeModeSdk(capabilities);
   return createCodeModeToolDefinition({
     schema: {
       name: TOOL_NAME_CODE,
       description: [
-        "Run a one-shot JavaScript program composing enabled Tau capabilities.",
-        `Available capabilities: ${[...capabilities.map((capability) => capability.name), ...(modelsEnabled ? ["models"] : [])].join(", ")}.`,
+        "Run a one-shot JavaScript program using enabled Tau capabilities. Use it to chain dependent calls, combine independent work, or process results before printing a concise answer.",
+        `Available capabilities: ${capabilities.map((capability) => capability.name).join(", ")}.`,
         ...capabilities.map((capability) => `tau.${capability.name}: ${capability.description}`),
         "When this tool is useful and its runtime guide is not visible, first run only printText(docs). Read it before writing a later program. Before using each capability, printText(await tau.docs(name)) in a documentation-only call unless that reference is already visible. Do not guess API signatures.",
         "Use printText(string) and await printImage({ data, mimeType }) for output. Return values are ignored. Programs have finite execution, request, and output limits. Side effects are not rolled back and programs are not automatically retried.",
@@ -82,12 +84,6 @@ export function createCodeToolDefinition(options: {
         : { ok: false, error: formatZodError(parsed.error), code, subject };
     },
     execute: async ({ code, context }) => {
-      const sdk = bindCodeModeSdk([
-        ...capabilities,
-        ...(modelsEnabled
-          ? [createModelsCapability(options.backend, options.config, context.recordUsage)]
-          : []),
-      ]);
       return await executeInternalCodeMode({
         name: "tau",
         ...sdk,

@@ -5,11 +5,8 @@ import { formatZodError } from "../utils/zod.js";
 import type { CodeModeCapability } from "./capability.js";
 
 const description = [
-  "Search and read durable transcripts from the configured history collection.",
-  "Use tau.history only when the user or other active instructions directly ask you to reference, search, or read historical transcripts; do not invoke tau.history merely because prior sessions might be relevant.",
-  "For a known historical session without a clear lookup key, a bounded chronological overview is one way to identify entries worth inspecting in detail.",
-  "When a remote session descriptor includes webUrl, return it when the user asks for a conversation link.",
-  "tau.history is read-only and can search conversations across repositories and machines.",
+  "Search and read saved conversation transcripts across repositories and machines; tau.history is read-only.",
+  "Use tau.history only when the user or active instructions explicitly ask to reference, search, or read historical transcripts, not merely because prior sessions might be relevant.",
 ].join(" ");
 
 const attributeFilterSchema = z.union([

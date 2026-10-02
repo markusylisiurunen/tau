@@ -19,7 +19,6 @@ function context(overrides = {}) {
     assistantMessageId: "assistant",
     signal: new AbortController().signal,
     emitActivity: vi.fn(async () => {}),
-    recordUsage: vi.fn(async () => {}),
     ...overrides,
   };
 }
@@ -52,12 +51,56 @@ describe("code composition", () => {
       bashJobs: new BashJobRegistry(),
     });
     const description = tool.schema.description;
-    for (const name of ["bash", "web", "history", "nook", "mcp"])
+    for (const name of ["bash", "web", "history", "nook", "mcp", "models"])
       expect(description).toContain(`tau.${name}:`);
     for (const name of ["web", "history", "nook"])
       expect(description.toLowerCase()).toContain(`use tau.${name} only`);
     expect(description).not.toMatch(/(?:use this tool only|the tool is read-only)/i);
     expect(description).toContain("tau.history is read-only");
+  });
+
+  it("runs the SDK composition examples with bounded calls and selected output", async () => {
+    const run = vi.fn(async () => ({
+      exitCode: 0,
+      truncated: false,
+      timedOut: false,
+      aborted: false,
+      stdout: "change footprint",
+      output: "command output",
+    }));
+    const chat = vi.fn(async () => ({ finish_reason: "stop", answer: "summary" }));
+    const search = vi.fn(async () => ({
+      results: [{ title: "source", url: "https://example.com" }],
+      statuses: [{ id: "https://example.com", status: "success" }],
+    }));
+    const sdk = bindCodeModeSdk(
+      Object.entries({ bash: { run }, models: { chat }, web: { search } }).map(([name, api]) => ({
+        name,
+        api,
+        description: "test",
+        documentation: "test",
+      })),
+    );
+    const examples = [...sdk.documentation.matchAll(/```js\n([\s\S]*?)```/g)].map(
+      (match) => match[1],
+    );
+    expect(examples).toHaveLength(3);
+    for (const code of examples) {
+      const result = await runTauCodeMode({ name: "tau", ...sdk, code });
+      expect(result.status).toBe("succeeded");
+    }
+    expect(run).toHaveBeenCalledTimes(3);
+    expect(chat).toHaveBeenCalledOnce();
+    expect(chat.mock.calls[0][0][0].prompt).toContain("change footprint");
+    expect(search).toHaveBeenCalledTimes(2);
+    run.mockResolvedValueOnce({ exitCode: 0, truncated: true, stdout: "partial" });
+    const incomplete = await runTauCodeMode({ name: "tau", ...sdk, code: examples[0] });
+    expect(incomplete.status).toBe("failed");
+    expect(chat).toHaveBeenCalledOnce();
+    run.mockRejectedValueOnce(new Error("unavailable"));
+    const partial = await runTauCodeMode({ name: "tau", ...sdk, code: examples[2] });
+    expect(partial.status).toBe("succeeded");
+    expect(text(partial.result)).toContain("command output");
   });
 
   it("owns model and media validation before adapter access", async () => {
@@ -179,9 +222,8 @@ describe("code composition", () => {
     }
   });
 
-  it("passes inline MCP-shaped media directly to inference and records usage before later failure", async () => {
+  it("passes inline MCP-shaped media directly to inference and returns provider usage", async () => {
     const backend = { readFileBinary: vi.fn() };
-    const recordUsage = vi.fn(async () => {});
     const fetchImpl = vi.fn(async () => Response.json(chatReply()));
     const image = createProtocolImage();
     const sdk = bindCodeModeSdk([
@@ -191,20 +233,16 @@ describe("code composition", () => {
         documentation: "test",
         api: { screenshot: async () => image },
       },
-      createModelsCapability(
-        backend,
-        { apiKeys: { openrouter: "secret" } },
-        recordUsage,
-        fetchImpl,
-      ),
+      createModelsCapability(backend, { apiKeys: { openrouter: "secret" } }, fetchImpl),
     ]);
     const result = await runTauCodeMode({
       name: "tau",
       ...sdk,
-      code: 'const image = await tau.mcp.screenshot(); const result = await tau.models.chat({ model: "openai/gpt-6-luna", prompt: "Describe", attachments: [{ type: "image", data: image.data, mimeType: image.mimeType }] }); printText(result.answer); throw new Error("later failure");',
+      code: 'const image = await tau.mcp.screenshot(); const result = await tau.models.chat({ model: "openai/gpt-6-luna", prompt: "Describe", attachments: [{ type: "image", data: image.data, mimeType: image.mimeType }] }); printText(result.answer); printText(JSON.stringify(result.usage));',
     });
-    expect(result.status).toBe("failed");
+    expect(result.status).toBe("succeeded");
     expect(text(result.result)).toContain("summary");
+    expect(JSON.parse(text(result.result).split("\n")[1])).toEqual(chatReply().usage);
     expect(backend.readFileBinary).not.toHaveBeenCalled();
     expect(fetchImpl).toHaveBeenCalledOnce();
     const body = JSON.parse(fetchImpl.mock.calls[0][1].body);
@@ -212,21 +250,13 @@ describe("code composition", () => {
     expect(body.messages[0].content[1].image_url.url).toBe(
       `data:${image.mimeType};base64,${image.data}`,
     );
-    expect(recordUsage).toHaveBeenCalledOnce();
-    expect(recordUsage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        cost: { total: 0.02 },
-        usage: { input: 5, output: 7, cacheRead: 0, cacheWrite: 0, total: 12 },
-      }),
-    );
     expect(text(result.result)).not.toContain("secret");
   });
 
-  it("accounts reported usage even when the response is unusable", async () => {
-    const recordUsage = vi.fn(async () => {});
+  it("rejects an unusable response even when it includes valid usage", async () => {
     const fetchImpl = vi.fn(async () => Response.json({ ...chatReply(), choices: [] }));
     const sdk = bindCodeModeSdk([
-      createModelsCapability({}, { apiKeys: { openrouter: "secret" } }, recordUsage, fetchImpl),
+      createModelsCapability({}, { apiKeys: { openrouter: "secret" } }, fetchImpl),
     ]);
     const result = await runTauCodeMode({
       name: "tau",
@@ -235,14 +265,12 @@ describe("code composition", () => {
     });
     expect(result.status).toBe("failed");
     expect(fetchImpl).toHaveBeenCalledOnce();
-    expect(recordUsage).toHaveBeenCalledOnce();
-    expect(recordUsage).toHaveBeenCalledWith(expect.objectContaining({ cost: { total: 0.02 } }));
   });
 
   it("rejects ambiguous or mismatched media before reading files or making requests", async () => {
     const backend = { readFileBinary: vi.fn() };
     const fetchImpl = vi.fn();
-    const sdk = bindCodeModeSdk([createModelsCapability(backend, {}, vi.fn(), fetchImpl)]);
+    const sdk = bindCodeModeSdk([createModelsCapability(backend, {}, fetchImpl)]);
     const image = createProtocolImage();
     for (const attachment of [
       { type: "image", path: "file.png", data: image.data, mimeType: image.mimeType },
@@ -291,7 +319,7 @@ describe("code composition", () => {
     const fetchImpl = vi.fn(async () => Response.json(chatReply()));
     const controller = new AbortController();
     const sdk = bindCodeModeSdk([
-      createModelsCapability(backend, { apiKeys: { openrouter: "secret" } }, vi.fn(), fetchImpl),
+      createModelsCapability(backend, { apiKeys: { openrouter: "secret" } }, fetchImpl),
     ]);
     try {
       await writeFile(
@@ -351,9 +379,8 @@ describe("code composition", () => {
         }),
       );
     });
-    const recordUsage = vi.fn();
     const sdk = bindCodeModeSdk([
-      createModelsCapability({}, { apiKeys: { openrouter: "secret" } }, recordUsage, fetchImpl),
+      createModelsCapability({}, { apiKeys: { openrouter: "secret" } }, fetchImpl),
     ]);
     const running = runTauCodeMode({
       name: "tau",
@@ -365,7 +392,6 @@ describe("code composition", () => {
     controller.abort();
     expect((await running).status).toBe("cancelled");
     expect(fetchImpl).toHaveBeenCalledOnce();
-    expect(recordUsage).not.toHaveBeenCalled();
   });
 
   it("bounds Unicode and line output locally and rejects non-string printing", async () => {

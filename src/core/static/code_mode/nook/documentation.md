@@ -1,4 +1,4 @@
-Use absolute file system paths for Nook methods that accept them. Generated code has no ambient filesystem, process, environment, network, credential, import, timer, or `fetch` access. Use tau.bash for filesystem operations when available.
+Use absolute file system paths for Nook methods that accept them. Use Bash for filesystem operations when needed.
 
 ## App-authoring guidance
 

@@ -10,12 +10,8 @@ const EXA_API_BASE_URL = "https://api.exa.ai";
 const EXA_MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 
 const description = [
-  "Search the web and retrieve page content.",
-  "Use tau.web only when the task requires open-web search or webpage extraction and no more direct or structured source can answer it.",
-  "Before using tau.web, prefer local files and repository data, purpose-built CLIs, first-party APIs and SDKs, and direct structured endpoints.",
-  "A URL alone does not justify using tau.web.",
-  "For any GitHub URL, prefer gh for pull requests, issues, releases, repository metadata, and authenticated GitHub access; prefer git for source, diffs, status, and history available from a repository checkout.",
-  "Use tau.web only if those options cannot provide the needed information or the user explicitly asks to search the open web or inspect a webpage as a webpage.",
+  "Search the open web, discover agent-friendly resources, and extract page content.",
+  "Use tau.web only when direct sources cannot answer the task or the user explicitly asks for web search or webpage inspection. Prefer local files, purpose-built CLIs, and first-party APIs; a URL alone is not a reason to use web.",
 ].join(" ");
 
 type ExaClient = {

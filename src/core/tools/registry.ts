@@ -1,5 +1,4 @@
 import type { Tool, ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
-import type { AgentEvent } from "../agent/events.js";
 import type { ToolActivity } from "./activity.js";
 import type { ToolRunPresentation } from "./presentation.js";
 
@@ -49,7 +48,6 @@ export type ToolExecutionContext = {
   assistantMessageId: string;
   signal: AbortSignal;
   emitActivity: (activity: ToolActivity) => Promise<void>;
-  recordUsage: (usage: Extract<AgentEvent, { type: "tool_usage" }>["usage"]) => Promise<void>;
 };
 
 export interface AgentTool {

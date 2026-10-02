@@ -32,9 +32,9 @@
     "access": "public"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "0.99.2",
-    "@earendil-works/pi-mcp": "0.99.2",
-    "@earendil-works/pi-tui": "0.99.2",
+    "@earendil-works/pi-ai": "1.0.0",
+    "@earendil-works/pi-mcp": "1.0.0",
+    "@earendil-works/pi-tui": "1.0.0",
     "@fly/sprites": "^0.2.3",
     "chalk": "^6.0.1",
     "colorjs.io": "^0.7.1",
@@ -50,13 +50,13 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
-    "@cloudflare/workers-types": "^5.20260930.2",
-    "@types/node": "^24.19.0",
+    "@cloudflare/workers-types": "^5.20261002.1",
+    "@types/node": "^24.19.1",
     "@types/ws": "^8.18.2",
     "prettier": "^3.9.9",
     "typescript": "^7.0.2",
     "vitest": "^5.0.3",
-    "wrangler": "^4.145.0"
+    "wrangler": "^4.146.0"
   },
   "engines": {
     "node": ">=24.0.0"
@@ -66,6 +66,6 @@
     "protobufjs@7.6.6": false,
     "fsevents@2.3.3": true,
     "@google/genai@2.21.0": false,
-    "workerd@1.20260930.2": true
+    "workerd@1.20261001.1": true
   }
 }

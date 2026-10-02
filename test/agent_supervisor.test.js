@@ -370,11 +370,7 @@ describe("AgentSupervisor", () => {
           return toolMessage;
         },
       },
-      createStream(
-        createAssistant(
-          "compacted summary\n\n<preserved-user-message-ids>\n[]\n</preserved-user-message-ids>",
-        ),
-      ),
+      createStream(createAssistant("compacted summary")),
       createStream(createAssistant("finished after compaction")),
     ];
     const streamModel = vi.fn(() => streams.shift());

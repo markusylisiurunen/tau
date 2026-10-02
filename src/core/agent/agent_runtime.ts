@@ -27,11 +27,9 @@ import type {
 import {
   buildAutoCompactionContinuationMessage,
   buildAutoCompactionPrompt,
-  buildCompactionSummary,
   buildSessionCompactionMessage,
   buildSessionCompactionPrompt,
-  COMPACTION_SUMMARIZATION_SYSTEM_PROMPT,
-  parseCompactionSummaryResponse,
+  COMPACTION_CONTINUATION_GUIDANCE,
   prepareAutoCompaction,
   prepareSessionCompaction,
   type SessionCompactionMode,
@@ -49,7 +47,7 @@ import { buildCompactionUserMessage } from "../utils/compact.js";
 import { extractAssistantText } from "../utils/messages.js";
 import { prependModelNotice } from "../utils/model_notices.js";
 import type { TauStreamOptions } from "../utils/streaming_settings.js";
-import { estimateMessageTokens } from "../utils/token.js";
+import { bytesToTokens, estimateMessageTokens } from "../utils/token.js";
 import {
   formatTauUserText,
   getAutoCompactionMetadataFromMessage,
@@ -70,6 +68,7 @@ import type {
 
 const DEFAULT_RETRY_POLICY = { maxRetries: 1, delayMs: 3_000 } as const;
 const COMPACTION_MAX_ATTEMPTS = 2;
+const COMPACTION_REQUEST_TEXT = "Compact the context.";
 const AUTO_COMPACTION_RESERVE_TOKENS = 16_384;
 const AUTO_COMPACTION_KEEP_RECENT_TOKENS = 20_000;
 const DEFAULT_MAX_MODEL_SUBTURNS = 1024;
@@ -963,33 +962,28 @@ export class AgentRuntime {
   }
 
   private async compactNow(options: AgentCompactionOptions): Promise<AgentCompactionResult> {
-    const preparation = prepareSessionCompaction(this.historyEntries, {
-      systemPrompt: this.currentSpec.systemPrompt,
-    });
+    const preparation = prepareSessionCompaction(this.historyEntries);
     if (!preparation) {
       throw new Error("no conversation to compact.");
     }
 
     const summaryPrompt = buildSessionCompactionPrompt({
-      preparation,
       guidance: options.guidance,
     });
 
-    const summaryResponse = await this.runCompactionSummary(summaryPrompt, {
+    const summary = await this.runCompactionSummary(summaryPrompt, {
       sessionId: `summary-${randomUUID()}`,
       signal: options.signal,
       streamOptions: this.currentSpec.streamOptions,
-    });
-    const summaryResult = parseCompactionSummaryResponse({
-      response: summaryResponse,
-      userMessageCandidates: preparation.userMessageCandidates,
+      systemPrompt: this.currentSpec.systemPrompt,
+      messages: preparation.messagesToSummarize,
+      contextTokens: this.getFreshContextUsageEstimateTokens(this.modelContextKey),
     });
 
     const { compactionMessage, includedLastAssistant } = buildSessionCompactionMessage({
-      summary: summaryResult.summary,
+      summary,
       mode: options.mode,
       messagesToSummarize: preparation.messagesToSummarize,
-      preservedUserMessages: summaryResult.preservedUserMessages,
     });
 
     const textWithContext = this.prependCompactionContext(compactionMessage);
@@ -997,8 +991,7 @@ export class AgentRuntime {
       {
         type: "compaction",
         version: 1,
-        summary: summaryResult.summary,
-        preservedUserMessages: summaryResult.preservedUserMessages,
+        summary,
       },
     ]);
 
@@ -1025,32 +1018,60 @@ export class AgentRuntime {
       sessionId: string;
       signal?: AbortSignal;
       streamOptions: Readonly<TauStreamOptions>;
+      systemPrompt: string;
+      messages: readonly Message[];
+      contextTokens: number | undefined;
     },
     model: ModelExecutor = this.currentSpec.model,
   ): Promise<string> {
+    const instruction: UserMessage = {
+      role: "user",
+      content: [
+        {
+          type: "text",
+          text: prependTauHiddenSystemMessages(COMPACTION_REQUEST_TEXT, [summaryPrompt]),
+        },
+      ],
+      timestamp: this.clock.now(),
+    };
+    const context: Context = {
+      systemPrompt: options.systemPrompt,
+      messages: [
+        ...options.messages.flatMap((message) => {
+          if (
+            message.role === "assistant" &&
+            (message.stopReason === "error" || message.stopReason === "aborted")
+          ) {
+            return [];
+          }
+          return [structuredClone(projectSystemMessage(stripTauUserMetadataFromMessage(message)))];
+        }),
+        instruction,
+      ],
+    };
+    const instructionTokens = estimateMessageTokens(instruction);
+    const inputTokens =
+      Math.max(
+        bytesToTokens(Buffer.byteLength(options.systemPrompt, "utf8")) +
+          context.messages
+            .slice(0, -1)
+            .reduce((total, message) => total + estimateMessageTokens(message), 0),
+        options.contextTokens ?? 0,
+      ) + instructionTokens;
+    if (inputTokens >= model.model.contextWindow) {
+      throw new Error("native compaction context exceeds the model context budget");
+    }
     try {
       for (let attempt = 1; attempt <= COMPACTION_MAX_ATTEMPTS; attempt += 1) {
         options.signal?.throwIfAborted();
 
         let final: AssistantMessage;
         try {
-          const stream = model.stream(
-            {
-              systemPrompt: COMPACTION_SUMMARIZATION_SYSTEM_PROMPT,
-              messages: [
-                {
-                  role: "user",
-                  content: [{ type: "text", text: summaryPrompt }],
-                  timestamp: this.clock.now(),
-                },
-              ],
-            },
-            {
-              ...options.streamOptions,
-              sessionId: options.sessionId,
-              ...(options.signal ? { signal: options.signal } : {}),
-            },
-          );
+          const stream = model.stream(structuredClone(context), {
+            ...options.streamOptions,
+            sessionId: options.sessionId,
+            ...(options.signal ? { signal: options.signal } : {}),
+          });
           final = await stream.result();
         } catch (error) {
           if (options.signal?.aborted || attempt === COMPACTION_MAX_ATTEMPTS) {
@@ -1064,8 +1085,14 @@ export class AgentRuntime {
           throw new Error(final.errorMessage || "summarization was aborted.");
         }
 
+        if (
+          final.content.some((block) => block.type === "toolCall") ||
+          final.stopReason === "toolUse"
+        ) {
+          throw new Error("compaction returned a tool call instead of a checkpoint");
+        }
         const summary = extractAssistantText(final).trim();
-        if (final.stopReason !== "error" && summary) {
+        if (final.stopReason === "stop" && summary) {
           return summary;
         }
 
@@ -1293,40 +1320,33 @@ export class AgentRuntime {
         AUTO_COMPACTION_KEEP_RECENT_TOKENS,
         this.getAutoCompactionThresholdTokens(turnSettings),
       ),
-      systemPrompt: turnSettings.systemPrompt,
     });
     if (!preparation) {
       return undefined;
     }
 
-    const summaryResponse = await this.runCompactionSummary(
-      buildAutoCompactionPrompt(preparation),
+    const summary = await this.runCompactionSummary(
+      buildAutoCompactionPrompt(),
       {
         sessionId: `auto-summary-${randomUUID()}`,
         signal,
         streamOptions: turnSettings.streamOptions,
+        systemPrompt: turnSettings.systemPrompt,
+        messages: preparation.messagesToSummarize,
+        contextTokens: this.getFreshContextUsageEstimateTokens(turnSettings.modelContextKey),
       },
       turnSettings.model,
     );
-    const summaryResult = parseCompactionSummaryResponse({
-      response: summaryResponse,
-      userMessageCandidates: preparation.userMessageCandidates,
-    });
     const archive = await this.tryArchiveAutoCompaction(signal);
     signal.throwIfAborted();
 
-    const compactionSummary = buildCompactionSummary({
-      summary: summaryResult.summary,
-      preservedUserMessages: summaryResult.preservedUserMessages,
-    });
-    const compactionMessage = buildCompactionUserMessage({ summary: compactionSummary });
+    const compactionMessage = buildCompactionUserMessage({ summary });
     const retainedMessageCount = preparation.retainedEntries.length;
     const textWithMetadata = prependTauUserMetadata(compactionMessage, [
       {
         type: "auto-compaction",
         version: 1,
-        summary: summaryResult.summary,
-        preservedUserMessages: summaryResult.preservedUserMessages,
+        summary,
         cutType: preparation.cutType,
         retainedMessageCount,
       },
@@ -1391,16 +1411,16 @@ export class AgentRuntime {
   }
 
   private prependCompactionContext(text: string): string {
-    return prependTauHiddenSystemMessages(
-      text,
-      this.getCompactionContinuationSystemMessages?.() ?? [],
-    );
+    return prependTauHiddenSystemMessages(text, [
+      ...(this.getCompactionContinuationSystemMessages?.() ?? []),
+      COMPACTION_CONTINUATION_GUIDANCE,
+    ]);
   }
 
   private shouldRunAutoCompaction(turnSettings: AgentTurnSpec): boolean {
     const thresholdTokens = this.getAutoCompactionThresholdTokens(turnSettings);
     if (thresholdTokens <= 0) {
-      return false;
+      return this.modelHistory.length > 0;
     }
 
     const usageTokens = this.getFreshContextUsageEstimateTokens(turnSettings.modelContextKey);
@@ -1408,7 +1428,7 @@ export class AgentRuntime {
   }
 
   private getAutoCompactionThresholdTokens(turnSettings: AgentTurnSpec): number {
-    return (turnSettings.model.model.contextWindow ?? 0) - AUTO_COMPACTION_RESERVE_TOKENS;
+    return turnSettings.model.model.contextWindow - AUTO_COMPACTION_RESERVE_TOKENS;
   }
 
   private getFreshContextUsageEstimateTokens(modelContextKey: string): number | undefined {

@@ -18,7 +18,7 @@ import { truncateForTokens } from "../utils/truncate.js";
 const ARCHIVE_TEXT_TOOL_RESULT_MAX_TOKENS = 256;
 const ARCHIVE_WRITE_TIMEOUT_MS = 30_000;
 
-const AUTO_COMPACTION_ARCHIVE_DOCUMENTATION = [
+export const AUTO_COMPACTION_ARCHIVE_DOCUMENTATION = [
   "# Automatic compaction archive",
   "",
   "This directory contains snapshots of model-visible context immediately before automatic compaction.",

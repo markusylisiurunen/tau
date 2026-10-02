@@ -1794,7 +1794,7 @@ describe("SessionChatController", () => {
         type: "auto-compaction",
         version: 1,
         summary: "compacted summary",
-        preservedUserMessages: [],
+
         cutType: "turn-boundary",
         retainedMessageCount: 1,
       },
@@ -1930,7 +1930,7 @@ describe("SessionChatController", () => {
         type: "auto-compaction",
         version: 1,
         summary: "second compacted summary",
-        preservedUserMessages: [],
+
         cutType: "turn-boundary",
         retainedMessageCount: 1,
       },
@@ -2021,7 +2021,7 @@ describe("SessionChatController", () => {
         type: "auto-compaction",
         version: 1,
         summary: "compacted summary",
-        preservedUserMessages: [],
+
         cutType: "turn-boundary",
         retainedMessageCount: 1,
       },
@@ -2434,7 +2434,6 @@ describe("SessionChatController", () => {
         type: "compaction",
         version: 1,
         summary: "summary",
-        preservedUserMessages: [],
       },
     ]);
     const session = new FakeSession(

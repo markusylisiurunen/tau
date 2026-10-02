@@ -2,8 +2,10 @@ import { fauxToolCall } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import { AgentRuntime, createAgentSpec } from "../dist/core/index.js";
 import { personas } from "../dist/core/personas.js";
+import { AUTO_COMPACTION_ARCHIVE_DOCUMENTATION } from "../dist/core/session/auto_compaction_archive.js";
 import { buildToolRunPresentation } from "../dist/core/tools/presentation.js";
 import { ToolRegistry } from "../dist/core/tools/registry.js";
+import { splitTauUserText } from "../dist/core/utils/user_metadata.js";
 
 function createPersona(overrides = {}) {
   return {
@@ -808,15 +810,7 @@ describe("AgentRuntime", () => {
         createToolStream(toolMessage),
       ];
       if (shouldCompact) {
-        streams.push(
-          createStream(
-            [],
-            createAssistant(
-              persona,
-              "summary\n\n<preserved-user-message-ids>\n[]\n</preserved-user-message-ids>",
-            ),
-          ),
-        );
+        streams.push(createStream([], createAssistant(persona, "summary")));
       }
       streams.push(createStream([], createAssistant(persona, finalText)));
       const streamModel = setStreams(runtime, streams);
@@ -906,13 +900,7 @@ describe("AgentRuntime", () => {
     const streamModel = setStreams(runtime, [
       createStream([], first),
       createStream([], undefined, new Error("temporary summary failure")),
-      createStream(
-        [],
-        createAssistant(
-          persona,
-          "summary\n\n<preserved-user-message-ids>\n[]\n</preserved-user-message-ids>",
-        ),
-      ),
+      createStream([], createAssistant(persona, "summary")),
       createStream([], createAssistant(persona, "after compaction")),
     ]);
 
@@ -951,13 +939,7 @@ describe("AgentRuntime", () => {
     });
     const streamModel = setStreams(runtime, [
       createStream([], first),
-      createStream(
-        [],
-        createAssistant(
-          persona,
-          "summary\n\n<preserved-user-message-ids>\n[]\n</preserved-user-message-ids>",
-        ),
-      ),
+      createStream([], createAssistant(persona, "summary")),
       createStream([], createAssistant(persona, "after compaction")),
     ]);
 
@@ -983,19 +965,9 @@ describe("AgentRuntime", () => {
     expect(continuationContext).toContain("/tmp/tau-auto-compaction-agent/000004.txt");
     expect(continuationContext).toContain("/tmp/tau-auto-compaction-agent/000004.json");
     expect(continuationContext).toContain("/tmp/tau-auto-compaction-agent/README.md");
-    expect(continuationContext).toContain("Before continuing");
-    expect(continuationContext).toContain("full contents are present in the current model context");
-    expect(continuationContext).toContain("read the guide now");
-    expect(continuationContext).toContain(
-      "required even when no archive lookup is currently planned",
+    expect(continuationMessages.at(-1).content[0].text).toContain(
+      AUTO_COMPACTION_ARCHIVE_DOCUMENTATION,
     );
-    expect(continuationContext).toContain(
-      "use these execution-environment files rather than the separate history tool",
-    );
-    expect(continuationContext).toContain(
-      "adaptable, bounded lookup examples, including how to inspect earlier numbered pairs",
-    );
-    expect(continuationContext).not.toContain("Avoid blind guessed-term searches");
   });
 
   it("continues automatic compaction without archive guidance when archiving fails", async () => {
@@ -1020,13 +992,7 @@ describe("AgentRuntime", () => {
     });
     const streamModel = setStreams(runtime, [
       createStream([], first),
-      createStream(
-        [],
-        createAssistant(
-          persona,
-          "summary\n\n<preserved-user-message-ids>\n[]\n</preserved-user-message-ids>",
-        ),
-      ),
+      createStream([], createAssistant(persona, "summary")),
       createStream([], createAssistant(persona, "after compaction")),
     ]);
 
@@ -1039,6 +1005,9 @@ describe("AgentRuntime", () => {
     const continuationContext = JSON.stringify(streamModel.mock.calls[2][0]);
     expect(continuationContext).not.toContain("temporary storage unavailable");
     expect(continuationContext).not.toContain("000001.json");
+    expect(streamModel.mock.calls[2][0].messages.at(-1).content[0].text).not.toContain(
+      AUTO_COMPACTION_ARCHIVE_DOCUMENTATION,
+    );
   });
 
   it("rejects system insertion while manual compaction is in progress", async () => {
@@ -1049,10 +1018,7 @@ describe("AgentRuntime", () => {
       async *[Symbol.asyncIterator]() {},
       async result() {
         await gate.promise;
-        return createAssistant(
-          persona,
-          "summary\n\n<preserved-user-message-ids>\n[]\n</preserved-user-message-ids>",
-        );
+        return createAssistant(persona, "summary");
       },
     }));
     const compact = runtime.compact({ mode: "summary-only" });
@@ -1066,38 +1032,230 @@ describe("AgentRuntime", () => {
     expect(runtime.rawHistory.at(-1).content).toBe("after compaction");
   });
 
-  it("inherits stream options and cleans up manual compaction sessions", async () => {
-    const { runtime, persona, spec } = createRuntime();
-    const modelNotice = "agent-only notice";
-    spec.modelNotice = modelNotice;
-    spec.streamOptions.temperature = 0.25;
-    const streamModel = setStreams(runtime, [
-      createStream([], createAssistant(persona, "first response")),
-      createStream(
-        [],
-        createAssistant(
-          persona,
-          "summary\n\n<preserved-user-message-ids>\n[]\n</preserved-user-message-ids>",
-        ),
-      ),
-    ]);
-    const cleanupSession = vi.fn();
-    spec.model.cleanupSession = cleanupSession;
+  it.each([undefined, 24_000])(
+    "inherits stream options without imposing a checkpoint output cap (%s)",
+    async (maxTokens) => {
+      const { runtime, persona, spec } = createRuntime();
+      const modelNotice = "agent-only notice";
+      spec.modelNotice = modelNotice;
+      spec.streamOptions.temperature = 0.25;
+      if (maxTokens !== undefined) spec.streamOptions.maxTokens = maxTokens;
+      const streamModel = setStreams(runtime, [
+        createStream([], createAssistant(persona, "first response")),
+        createStream([], createAssistant(persona, "summary")),
+      ]);
+      const cleanupSession = vi.fn();
+      spec.model.cleanupSession = cleanupSession;
 
-    await runtime.submit("first request");
-    expect(JSON.stringify(runtime.rawHistory)).toContain(modelNotice);
-    await runtime.compact({ mode: "summary-only" });
+      await runtime.submit("first request");
+      expect(JSON.stringify(runtime.rawHistory)).toContain(modelNotice);
+      await runtime.compact({ mode: "summary-only" });
 
-    expect(JSON.stringify(streamModel.mock.calls[0][0])).toContain(modelNotice);
-    expect(JSON.stringify(streamModel.mock.calls[1][0])).toContain(modelNotice);
-    expect(streamModel.mock.calls[1][1]).toEqual(
-      expect.objectContaining({
-        temperature: 0.25,
-        reasoning: "medium",
+      expect(JSON.stringify(streamModel.mock.calls[0][0])).toContain(modelNotice);
+      expect(JSON.stringify(streamModel.mock.calls[1][0])).toContain(modelNotice);
+      expect(streamModel.mock.calls[1][1]).toEqual({
+        ...spec.streamOptions,
         sessionId: expect.stringMatching(/^summary-/),
+      });
+      expect(cleanupSession).toHaveBeenCalledWith(streamModel.mock.calls[1][1].sessionId);
+    },
+  );
+
+  it("compacts native messages with reasoning and full tool results without exposing tools", async () => {
+    const execute = vi.fn(async () => ({
+      content: [{ type: "text", text: `result ${"x".repeat(60_000)}` }],
+      isError: false,
+    }));
+    const { runtime, persona } = createRuntime({ tools: [createTool("inspect", execute)] });
+    const assistant = createAssistant(
+      persona,
+      [
+        {
+          type: "thinking",
+          thinking: "important reasoning",
+          thinkingSignature: "opaque-signature",
+        },
+        { type: "toolCall", id: "inspect-1", name: "inspect", arguments: {} },
+      ],
+      { stopReason: "toolUse" },
+    );
+    const stream = setStreams(runtime, [
+      createToolStream(assistant),
+      createStream([], createAssistant(persona, "findings")),
+      createStream([], createAssistant(persona, "checkpoint")),
+    ]);
+    await runtime.submit("investigate");
+    await runtime.commitSystemMessage("keep validating", { type: "instruction", version: 1 });
+    await runtime.commitSystemMessage("obsolete", {
+      type: "auto-compaction-continuation",
+      version: 1,
+    });
+    const userId = runtime.rawHistoryEntriesSnapshot[0].id;
+    const before = structuredClone(runtime.rawHistory);
+    await runtime.compact({ mode: "summary-only" });
+    const [context, options] = stream.mock.calls[2];
+    expect(context.systemPrompt).toBe("system");
+    expect(context).not.toHaveProperty("tools");
+    expect(context.messages.map((message) => message.role)).toEqual([
+      "user",
+      "assistant",
+      "toolResult",
+      "assistant",
+      "system",
+      "user",
+    ]);
+    expect(context.messages[1]).toEqual(assistant);
+    expect(context.messages[2]).toEqual(before[2]);
+    expect(context.messages[4]).not.toHaveProperty("metadata");
+    const checkpointRequest = splitTauUserText(context.messages.at(-1).content[0].text);
+    expect(checkpointRequest.displayText).toBe("Compact the context.");
+    expect(checkpointRequest.hiddenSystemBlocks).toHaveLength(1);
+    expect(checkpointRequest.hiddenSystemBlocks[0].text).not.toContain(userId);
+    expect(checkpointRequest.hiddenSystemBlocks[0].text).not.toContain(
+      "<preserved-user-message-ids>",
+    );
+    expect(options).not.toHaveProperty("maxTokens");
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["tool-call", "empty", "cancelled", "provider-error", "length"])(
+    "preserves original context when native compaction is %s",
+    async (failure) => {
+      const execute = vi.fn();
+      const { runtime, persona } = createRuntime({ tools: [createTool("mutate", execute)] });
+      await runtime.commitUserText("original request");
+      const before = runtime.snapshot();
+      const controller = new AbortController();
+      const response =
+        failure === "tool-call"
+          ? createAssistant(
+              persona,
+              [
+                { type: "text", text: "partial checkpoint" },
+                { type: "toolCall", id: "mutation", name: "mutate", arguments: {} },
+              ],
+              { stopReason: "toolUse" },
+            )
+          : createAssistant(persona, failure === "empty" ? "   " : "checkpoint", {
+              stopReason: failure === "length" ? "length" : "stop",
+            });
+      const stream = setStreams(runtime, [
+        {
+          async result() {
+            if (failure === "cancelled") controller.abort();
+            if (failure === "provider-error") throw new Error("provider failure");
+            return response;
+          },
+        },
+        createStream([], undefined, new Error("provider failure")),
+      ]);
+      await expect(
+        runtime.compact({ mode: "summary-only", signal: controller.signal }),
+      ).rejects.toThrow();
+      expect(runtime.snapshot()).toEqual(before);
+      expect(execute).not.toHaveBeenCalled();
+      expect(stream.mock.calls[0][0]).not.toHaveProperty("tools");
+    },
+  );
+
+  it("rejects oversized native checkpoint requests before inference", async () => {
+    const persona = createPersona({ model: { ...personas[0].model, contextWindow: 20_000 } });
+    const { runtime } = createRuntime({ persona });
+    await runtime.commitUserText("x".repeat(180_000));
+    const before = runtime.snapshot();
+    const stream = setStreams(runtime, []);
+    await expect(runtime.compact({ mode: "summary-only" })).rejects.toThrow();
+    expect(stream).not.toHaveBeenCalled();
+    expect(runtime.snapshot()).toEqual(before);
+  });
+
+  it("compacts near the context limit without imposing an output limit", async () => {
+    const persona = createPersona({
+      model: {
+        ...personas[0].model,
+        api: "anthropic-messages",
+        provider: "anthropic",
+        contextWindow: 100_000,
+        compat: { forceAdaptiveThinking: false },
+      },
+      settings: { reasoning: "high" },
+    });
+    const { runtime, events } = createRuntime({ persona });
+    const first = createAssistant(persona, `first response ${"x".repeat(144_000)}`, {
+      usage: {
+        input: 90_000,
+        output: 1,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 90_001,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+    });
+    const stream = setStreams(runtime, [
+      createStream([], first),
+      createStream([], createAssistant(persona, "checkpoint")),
+      createStream([], createAssistant(persona, "continued")),
+    ]);
+    await runtime.submit(`first request ${"x".repeat(90_000)}`);
+    await runtime.submit("second request");
+    expect(stream).toHaveBeenCalledTimes(3);
+    expect(stream.mock.calls[1][1]).toMatchObject({ reasoning: "high" });
+    expect(stream.mock.calls[1][1]).not.toHaveProperty("maxTokens");
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "compaction_end", outcome: "compacted" }),
+    );
+  });
+
+  it("continues with a checkpoint-only context after an oversized complete tool exchange", async () => {
+    const persona = createPersona({ model: { ...personas[0].model, contextWindow: 100_000 } });
+    const output = "x".repeat(150_000);
+    const { runtime, events } = createRuntime({
+      persona,
+      tools: [
+        createTool("inspect", async () => ({
+          content: [{ type: "text", text: output }],
+          isError: false,
+        })),
+      ],
+    });
+    const assistant = createAssistant(
+      persona,
+      [{ type: "toolCall", id: "inspect-1", name: "inspect", arguments: {} }],
+      {
+        stopReason: "toolUse",
+        usage: {
+          input: 60_000,
+          output: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 60_001,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+      },
+    );
+    const stream = setStreams(runtime, [
+      createToolStream(assistant),
+      createStream([], createAssistant(persona, "findings and unfinished analysis")),
+      createStream([], createAssistant(persona, "continued")),
+    ]);
+    await runtime.submit("investigate");
+    expect(stream.mock.calls[1][0].messages[2].content[0].text).toBe(output);
+    const checkpointRequest = splitTauUserText(
+      stream.mock.calls[1][0].messages.at(-1).content[0].text,
+    );
+    expect(checkpointRequest.displayText).toBe("Compact the context.");
+    expect(checkpointRequest.hiddenSystemBlocks).toHaveLength(1);
+    expect(stream.mock.calls[2][0].messages.map((message) => message.role)).toEqual([
+      "user",
+      "user",
+    ]);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "compaction_end",
+        outcome: "compacted",
+        result: expect.objectContaining({ retainedMessageCount: 0 }),
       }),
     );
-    expect(cleanupSession).toHaveBeenCalledWith(streamModel.mock.calls[1][1].sessionId);
   });
 
   it("does not report compaction failure after a committed success event cannot be delivered", async () => {
@@ -1112,13 +1270,7 @@ describe("AgentRuntime", () => {
     });
     setStreams(runtime, [
       createStream([], createAssistant(persona, "first response")),
-      createStream(
-        [],
-        createAssistant(
-          persona,
-          "summary\n\n<preserved-user-message-ids>\n[]\n</preserved-user-message-ids>",
-        ),
-      ),
+      createStream([], createAssistant(persona, "summary")),
     ]);
 
     await runtime.submit("first request");

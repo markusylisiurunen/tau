@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { runInNewContext } from "node:vm";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createNookCapability } from "../dist/core/code_mode/nook.js";
 import { getNookAccessClientSecret } from "../dist/core/config/index.js";
 import {
   buildNookDeployManifest,
@@ -22,8 +23,8 @@ import {
   parseNookSetupInputs,
   runNookSetup,
 } from "../dist/core/nook/setup.js";
-import { createNookToolDefinition } from "../dist/core/tools/nook.js";
 import worker, { cacheControlForDeployedAsset, RegistryDO } from "../dist/nook/worker/index.js";
+import { createCapabilityTool } from "./helpers/code_mode.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -965,7 +966,7 @@ function createNookToolBackend(entries = []) {
 }
 
 function createNookTool(backend, deps, config = { nook: { domain: "nook.example.com" } }) {
-  return createNookToolDefinition(backend, config, deps);
+  return createCapabilityTool(backend, createNookCapability(backend, config, deps), deps);
 }
 
 async function runNookCode(tool, code, signal = new AbortController().signal) {
@@ -990,7 +991,7 @@ describe("nook code-mode tool", () => {
       { createClient },
       {
         nook: {
-          domain: "nook.example.com",
+          domain: "tau.nook.example.com",
           accessClientId: "client-id",
           accessClientSecret: "top-secret",
         },
@@ -999,19 +1000,19 @@ describe("nook code-mode tool", () => {
     const result = await runNookCode(
       tool,
       [
-        "console.log(typeof process, typeof fetch, typeof require, typeof _requestNook);",
-        "console.log(typeof Date.now(), Number.isFinite(new Date().getTime()), Math.random() >= 0 && Math.random() < 1);",
+        'printText([typeof process,  typeof fetch,  typeof require,  typeof _requestNook].join(" "));',
+        'printText([typeof Date.now(),  Number.isFinite(new Date().getTime()),  Math.random() >= 0 && Math.random() < 1].join(" "));',
         "const DerivedDate = new Date().constructor;",
-        "console.log(DerivedDate === Date, Object.getPrototypeOf(new Date()) === Date.prototype, typeof DerivedDate(), new DerivedDate() instanceof Date, Object.isFrozen(Date), Object.isFrozen(Date.prototype));",
-        "console.log('docs=' + docs.includes('nook.sites.deploy'));",
-        "console.log('secret=' + docs.includes('top-secret'));",
-        "console.log(await nook.skill());",
-        "try { console.log.constructor('return process')(); } catch { console.log('escape blocked'); }",
+        'printText([DerivedDate === Date,  Object.getPrototypeOf(new Date()) === Date.prototype,  typeof DerivedDate(),  new DerivedDate() instanceof Date,  Object.isFrozen(Date),  Object.isFrozen(Date.prototype)].join(" "));',
+        "printText('docs=' + (await tau.docs('nook')).includes('tau.nook.sites.deploy'));",
+        "printText('secret=' + docs.includes('top-secret'));",
+        "printText(await tau.nook.skill());",
+        "try { printText.constructor('return process')(); } catch { printText('escape blocked'); }",
         "return 'ignored';",
       ].join("\n"),
     );
 
-    expect(result.uiEvent).toMatchObject({ type: "code_mode_finished", toolName: "nook" });
+    expect(result.uiEvent).toMatchObject({ type: "code_mode_finished", toolName: "code" });
     expect(result.toolResult.outcome).toBe("succeeded");
     expect(getToolText(result)).toContain("undefined undefined undefined undefined");
     expect(getToolText(result)).toContain("number true true");
@@ -1030,7 +1031,7 @@ describe("nook code-mode tool", () => {
   it("composes facade calls and returns list values as arrays", async () => {
     const backend = createNookToolBackend();
     const client = {
-      listSites: vi.fn(async () => [{ slug: "demo", url: "https://nook.example.com/demo" }]),
+      listSites: vi.fn(async () => [{ slug: "demo", url: "https://tau.nook.example.com/demo" }]),
       listTemplates: vi.fn(async () => [{ name: "starter" }]),
       getKv: vi.fn(async () => ({ theme: "dark" })),
       putKv: vi.fn(async (site, key) => ({ site, key })),
@@ -1043,11 +1044,11 @@ describe("nook code-mode tool", () => {
     const result = await runNookCode(
       tool,
       [
-        "const [sites, templates] = await Promise.all([nook.sites.list(), nook.templates.list()]);",
-        "const settings = await nook.kv.get('demo', 'settings');",
-        "const stored = await nook.kv.put('demo', 'next', { enabled: true });",
-        "const keys = await nook.kv.list('demo', { prefix: 'set' });",
-        "console.log(sites[0].slug, templates[0].name, settings.theme, stored.key, keys[0].key);",
+        "const [sites, templates] = await Promise.all([tau.nook.sites.list(), tau.nook.templates.list()]);",
+        "const settings = await tau.nook.kv.get('demo', 'settings');",
+        "const stored = await tau.nook.kv.put('demo', 'next', { enabled: true });",
+        "const keys = await tau.nook.kv.list('demo', { prefix: 'set' });",
+        'printText([sites[0].slug,  templates[0].name,  settings.theme,  stored.key,  keys[0].key].join(" "));',
       ].join("\n"),
     );
 
@@ -1077,9 +1078,9 @@ describe("nook code-mode tool", () => {
     const result = await runNookCode(
       tool,
       [
-        "const saved = await nook.kv.getToFile('demo', 'settings', '/tmp/settings.json');",
-        "const stored = await nook.kv.putFromFile('demo', 'settings-copy', saved.file);",
-        "console.log(saved.file, saved.bytes, stored.key);",
+        "const saved = await tau.nook.kv.getToFile('demo', 'settings', '/tmp/settings.json');",
+        "const stored = await tau.nook.kv.putFromFile('demo', 'settings-copy', saved.file);",
+        'printText([saved.file,  saved.bytes,  stored.key].join(" "));',
       ].join("\n"),
     );
 
@@ -1118,19 +1119,19 @@ describe("nook code-mode tool", () => {
       tool,
       [
         "for (const call of [",
-        "  () => nook.sites.deploy('demo', '/tmp/dist'),",
-        "  () => nook.sites.deploy('Demo', '/tmp/dist', { visibility: 'private' }),",
-        "  () => nook.sites.deploy('demo', '/tmp/dist', { visibility: 'private', public: true }),",
+        "  () => tau.nook.sites.deploy('demo', '/tmp/dist'),",
+        "  () => tau.nook.sites.deploy('Demo', '/tmp/dist', { visibility: 'private' }),",
+        "  () => tau.nook.sites.deploy('demo', '/tmp/dist', { visibility: 'private', public: true }),",
         "]) {",
-        "  try { await call(); } catch (error) { console.log(error.message); }",
+        "  try { await call(); } catch (error) { printText(error.message); }",
         "}",
-        "const deployed = await nook.sites.deploy('demo', '/tmp/dist', { visibility: 'public' });",
-        "console.log(deployed.visibility);",
+        "const deployed = await tau.nook.sites.deploy('demo', '/tmp/dist', { visibility: 'public' });",
+        "printText(JSON.stringify(deployed.visibility));",
       ].join("\n"),
     );
 
     expect(result.toolResult.outcome).toBe("succeeded");
-    expect(getToolText(result)).toContain("Invalid nook.sites.deploy arguments");
+    expect(getToolText(result)).toContain("Invalid tau.nook.sites.deploy arguments");
     expect(getToolText(result)).toContain("Site slug must be");
     expect(getToolText(result)).toContain('Unrecognized key: "public"');
     expect(getToolText(result)).toContain("public");
@@ -1151,7 +1152,7 @@ describe("nook code-mode tool", () => {
       tool,
       [
         "for (const value of [undefined, 1n, Infinity]) {",
-        "  try { await nook.kv.put('demo', 'settings', value); } catch (error) { console.log(error.message); }",
+        "  try { await tau.nook.kv.put('demo', 'settings', value); } catch (error) { printText(error.message); }",
         "}",
       ].join("\n"),
     );
@@ -1172,7 +1173,7 @@ describe("nook code-mode tool", () => {
     const tool = createNookTool(backend, { createClient: () => client });
     const result = await runNookCode(
       tool,
-      "await nook.templates.copy('starter', '/workspace/app')",
+      "await tau.nook.templates.copy('starter', '/workspace/app')",
     );
 
     expect(result.toolResult.outcome).toBe("failed");
@@ -1181,18 +1182,10 @@ describe("nook code-mode tool", () => {
     expect(client.downloadTemplateFiles).not.toHaveBeenCalled();
   });
 
-  it("fails fast when Nook is not configured", async () => {
+  it("rejects binding Nook without configuration", () => {
     const backend = createNookToolBackend();
-    const tool = createNookTool(backend, undefined, {});
-    const result = await runNookCode(
-      tool,
-      "await nook.sites.list()",
-      new AbortController().signal,
-      {},
-    );
-
-    expect(result.toolResult.outcome).toBe("blocked");
-    expect(getToolText(result)).toContain("nook is not configured");
+    expect(() => createNookCapability(backend, {})).toThrow();
+    expect(backend.runNodeScript).not.toHaveBeenCalled();
   });
 
   it("rejects unknown tool arguments without starting the sandbox", async () => {
@@ -1205,7 +1198,7 @@ describe("nook code-mode tool", () => {
         type: "toolCall",
         id: "call_1",
         name: "nook",
-        arguments: { code: "console.log(docs)", operation: "list_sites" },
+        arguments: { code: "printText(docs)", operation: "list_sites" },
       },
       new AbortController().signal,
     );
@@ -1229,7 +1222,7 @@ describe("nook code-mode tool", () => {
     const tool = createNookTool(backend, { createClient });
     const result = await runNookCode(
       tool,
-      "await Promise.all(Array.from({ length: 9 }, () => nook.sites.list()))",
+      "await Promise.all(Array.from({ length: 9 }, () => tau.nook.sites.list()))",
     );
 
     expect(result.toolResult.outcome).toBe("failed");
@@ -1243,7 +1236,7 @@ describe("nook code-mode tool", () => {
     const tool = createNookTool(backend, { createClient });
     const result = await runNookCode(
       tool,
-      "for (let index = 0; index < 129; index += 1) await nook.sites.list()",
+      "for (let index = 0; index < 129; index += 1) await tau.nook.sites.list()",
     );
 
     expect(result.toolResult.outcome).toBe("failed");
@@ -1278,7 +1271,7 @@ describe("nook code-mode tool", () => {
     const createClient = vi.fn(() => client);
     const tool = createNookTool(backend, { createClient });
     const controller = new AbortController();
-    const run = runNookCode(tool, "await nook.sites.list()", controller.signal);
+    const run = runNookCode(tool, "await tau.nook.sites.list()", controller.signal);
 
     await requestStarted;
     controller.abort();

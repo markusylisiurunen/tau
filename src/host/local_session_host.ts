@@ -2632,6 +2632,12 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         );
         return;
       }
+      case "tool_usage": {
+        this.costTotal += event.usage.cost.total;
+        this.recordUsage({ ...event.usage, sessionId: this.sessionId, agent: { type: "main" } });
+        await this.emitPatch("tool-result", [{ type: "cost.set", costTotal: this.costTotal }]);
+        return;
+      }
       case "assistant_final": {
         this.draftAssistantMessage = undefined;
         const messageState = event.message.stopReason === "aborted" ? "interrupted" : "committed";

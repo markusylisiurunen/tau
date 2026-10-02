@@ -177,7 +177,7 @@ describe("sdk npm pack types", () => {
       writeFileSync(
         codeModeFixturePath,
         [
-          'import type { TauCodeModeApi, TauCodeModeFilesOptions, TauCodeModePersistOutput } from "@markusylisiurunen/tau/code-mode";',
+          'import type { TauCodeModeApi, TauCodeModePersistOutput } from "@markusylisiurunen/tau/code-mode";',
           'import { buildTauCodeModeToolDescription, executeTauCodeMode, runTauCodeModeCommand, truncateTauClientToolText } from "@markusylisiurunen/tau/code-mode";',
           'import { createTauCodeModeClientTool } from "@markusylisiurunen/tau/sdk";',
           "",
@@ -186,8 +186,7 @@ describe("sdk npm pack types", () => {
           "const definition = { name: 'fixture', documentation: '# Fixture API', api, persistOutput };",
           "const description = buildTauCodeModeToolDescription({ name: 'fixture', description: 'Use the fixture API.' });",
           "const tool = createTauCodeModeClientTool({ ...definition, description });",
-          "declare const files: TauCodeModeFilesOptions;",
-          "void executeTauCodeMode({ ...definition, code: 'console.log(await fixture.echo(1))', files });",
+          "void executeTauCodeMode({ ...definition, code: 'printText(JSON.stringify(await fixture.echo(1)))' });",
           "void runTauCodeModeCommand(definition);",
           "void truncateTauClientToolText('detail', { maxLines: 1, maxLineChars: 128 });",
           "void tool;",

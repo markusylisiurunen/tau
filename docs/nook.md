@@ -23,7 +23,7 @@ Nook crosses three Tau boundaries:
 
 - Cloudflare owns the deployed Worker, route, R2 assets, Durable Object state, DNS, and Access application.
 - The Tau CLI or session host owns Nook credentials and authenticated management HTTP.
-- A session execution environment owns any paths read or written by the `nook` agent tool.
+- A session execution environment owns any paths read or written by the `tau.nook` capability.
 
 `tau nook` CLI paths are local to the process running the command. Agent-tool paths belong to the session execution environment, even when the host is on another machine. Generated code never receives the Access secret, ambient filesystem, process environment, arbitrary network access, or `fetch`.
 
@@ -202,7 +202,7 @@ CLI and agent management operations use the Access-protected control plane rathe
 
 ## Use the host tool
 
-The assistant-facing `nook` tool appears only when both conditions hold:
+The `tau.nook` capability in the assistant-facing `code` tool is available only when both conditions hold:
 
 - the current persona selects `nook`
 - effective session configuration contains a valid `nook` block

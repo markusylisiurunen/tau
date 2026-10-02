@@ -394,6 +394,19 @@ export class AgentSupervisor {
     const record = this.records.get(id);
     if (!record) return;
 
+    if (event.type === "tool_usage") {
+      record.costTotal += event.usage.cost.total;
+      record.usage.input += event.usage.usage.input;
+      record.usage.output += event.usage.usage.output;
+      (this.options.recordUsage ?? appendUsageLogEntry)({
+        ...event.usage,
+        sessionId: record.id,
+        personaId: record.personaId,
+        agent: { type: "subagent" },
+      });
+      await this.emit({ type: "subagent_updated", state: this.toSnapshot(record) });
+      return;
+    }
     if (event.type === "assistant_final") {
       const usage = getUsageTotals(event.message.usage);
       const cost = getUsageCostTotal(event.message.usage);

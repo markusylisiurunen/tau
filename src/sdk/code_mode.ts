@@ -1,5 +1,4 @@
 import {
-  createTauCodeModeExecutionEnvironmentFiles,
   executeTauCodeMode,
   type TauCodeModeDefinition,
   validateTauCodeModeDefinition,
@@ -36,7 +35,7 @@ export function createTauCodeModeClientTool(
           code: {
             type: "string",
             description:
-              "JavaScript source to execute. Use console output for text and await image(block) to return images.",
+              "JavaScript source to execute. Use printText(text) for text and await printImage(block) to return images.",
           },
         },
         required: ["code"],
@@ -57,10 +56,6 @@ export function createTauCodeModeClientTool(
           callId: context.callId,
         },
         executionEnvironment: context.executionEnvironment,
-        files: createTauCodeModeExecutionEnvironmentFiles(
-          context.agentId,
-          context.executionEnvironment,
-        ),
       });
       return { ...result, presentation: createCodeModePresentation(code) };
     },

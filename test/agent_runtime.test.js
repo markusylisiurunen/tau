@@ -699,6 +699,83 @@ describe("AgentRuntime", () => {
     );
   });
 
+  it("awaits standalone tool usage before continuing even when the tool later fails", async () => {
+    const gate = deferred();
+    let usageReached = false;
+    let progressed = false;
+    const events = [];
+    const call = fauxToolCall("sampling", {}, { id: "sampling-call" });
+    const usage = {
+      timestamp: 1,
+      provider: "openrouter",
+      model: "openai/gpt-6-luna",
+      api: "openrouter",
+      reasoningEffort: "none",
+      usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, total: 2 },
+      cost: { total: 0.02 },
+    };
+    const tool = createTool("sampling", async (_call, context) => {
+      await context.recordUsage(usage);
+      progressed = true;
+      throw new Error("later failure");
+    });
+    const { runtime, persona } = createRuntime({
+      tools: [tool],
+      eventSink: async (event) => {
+        events.push(event);
+        if (event.type === "tool_usage") {
+          usageReached = true;
+          await gate.promise;
+        }
+      },
+    });
+    setStreams(runtime, [
+      createToolStream(createAssistant(persona, [call], { stopReason: "toolUse" })),
+      createStream([], createAssistant(persona, "finished")),
+    ]);
+    const turn = runtime.submit("sample");
+    await vi.waitFor(() => expect(usageReached).toBe(true));
+    expect(progressed).toBe(false);
+    gate.resolve();
+    await turn;
+    expect(progressed).toBe(true);
+    expect(events.filter((event) => event.type === "tool_usage")).toEqual([
+      { type: "tool_usage", usage },
+    ]);
+    expect(events.find((event) => event.type === "tool_result").message.isError).toBe(true);
+  });
+
+  it("aborts execution when standalone usage acknowledgement fails", async () => {
+    const sinkError = new Error("usage persistence failed");
+    let progressed = false;
+    const call = fauxToolCall("sampling", {}, { id: "sampling-call" });
+    const tool = createTool("sampling", async (_call, context) => {
+      await context.recordUsage({
+        timestamp: 1,
+        provider: "openrouter",
+        model: "openai/gpt-6-luna",
+        api: "openrouter",
+        reasoningEffort: "none",
+        usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, total: 2 },
+        cost: { total: 0.02 },
+      });
+      progressed = true;
+      return { content: [], outcome: "succeeded" };
+    });
+    const { runtime, persona } = createRuntime({
+      tools: [tool],
+      eventSink: async (event) => {
+        if (event.type === "tool_usage") throw sinkError;
+      },
+    });
+    const stream = setStreams(runtime, [
+      createToolStream(createAssistant(persona, [call], { stopReason: "toolUse" })),
+    ]);
+    await expect(runtime.submit("sample")).rejects.toBe(sinkError);
+    expect(progressed).toBe(false);
+    expect(stream).toHaveBeenCalledOnce();
+  });
+
   it("emits typed retry events and retries only before tool admission", async () => {
     const { runtime, persona, events, spec } = createRuntime();
     spec.retryPolicy.delayMs = 0;
@@ -1622,6 +1699,7 @@ describe("AgentRuntime", () => {
       "agentId",
       "assistantMessageId",
       "emitActivity",
+      "recordUsage",
       "signal",
       "turnId",
     ]);

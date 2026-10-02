@@ -103,11 +103,11 @@ The TUI's built-in diff review tool is also a client-local process.
 
 ## Use code mode as a capability boundary
 
-The generated JavaScript used by `web`, `history`, `nook`, `mcp`, and code-mode client tools runs in Tau's bounded worker runtime. It receives only a declared API, `docs`, console output, the asynchronous `image(block)` output helper, live `Date`, `Math.random()`, and, when configured, agent-scoped UTF-8 scratch files. Generated code has no direct imports, process, environment, credentials, timers, `fetch`, or arbitrary network access.
+The generated JavaScript used by `code` and code-mode client tools runs in Tau's bounded worker runtime. It receives only declared capabilities, `docs`, `printText`, the asynchronous `printImage` output helper, pure `truncate` and `truncateLines` helpers, live `Date`, and `Math.random()`. Generated code has no direct imports, process, environment, credentials, timers, fetch, filesystem, or arbitrary network access. Selecting Bash exposes explicit command execution through `tau.bash` with the same execution authority as direct Bash; the JavaScript sandbox does not restrict what those commands can do.
 
 API handlers run outside that worker and retain the authority deliberately exposed by the tool. The boundary therefore limits generated code to declared capabilities, but it does not make an overpowered API safe. Tool authors should validate every argument, expose narrow operations, keep credentials in the parent, enforce cancellation, and avoid returning secrets.
 
-Scratch files live in a private execution-environment temporary directory derived from the agent id. They are shared across code-mode tools for that agent, are not persisted in the session snapshot, and are not a durable secret store. Their limits and temporary lifetime are described in [tools](tools.md).
+Standalone `tau.models` requests send only explicit inputs to OpenRouter. File attachments are read from the session machine; inline media is validated against its bytes. Provider credentials stay outside the sandbox, and reported model costs are accounted independently of later program success.
 
 The `history` code-mode API is read-only, but it can see transcripts across repositories and execution environments in the configured collection. Its agent policy requires a direct user or active-instruction request before use. That policy does not replace access control on the history service.
 
@@ -153,7 +153,7 @@ Protect the runner configuration, generated session state, project-preference st
 
 Tau writes a flat transcript history in the host home independently of recoverable session snapshots. It contains committed user entries, intermediate system instructions, assistant text, and completed tool entries. The initial persona/base prompt is excluded. Compaction does not remove it. Rewind truncates entries after the selected boundary, but history is not an ephemeral cache.
 
-Without remote history configuration, this collection stays in the host's local SQLite database. The `history` tool can search the complete machine-local collection, subject to its persona and invocation policy. Protect the host account and database as transcript data.
+Without remote history configuration, this collection stays in the host's local SQLite database. The `tau.history` capability can search the complete machine-local collection, subject to its persona and invocation policy. Protect the host account and database as transcript data.
 
 When global `history` configuration is present, local SQLite remains the first durable write and a persistent outbox replicates operations to the configured service asynchronously. Remote entry projections are byte-bounded and large payloads are middle-truncated, but they can still contain source code, tool output, instructions, and personal data. The deployed service also generates semantic digests from transcript content through its configured Cloudflare AI service.
 

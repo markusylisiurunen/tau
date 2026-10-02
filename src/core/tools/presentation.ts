@@ -10,6 +10,7 @@ import {
 } from "../../protocol/session_protocol.js";
 import {
   TOOL_NAME_BASH,
+  TOOL_NAME_CODE,
   TOOL_NAME_EDIT,
   TOOL_NAME_HISTORY,
   TOOL_NAME_INTERRUPT_AGENT,
@@ -398,6 +399,7 @@ function getToolRunActionLabels(toolName: string): ToolRunActionLabels {
 }
 
 const CHARACTER_WRAPPED_SUBJECT_TOOLS = new Set([
+  TOOL_NAME_CODE,
   TOOL_NAME_BASH,
   TOOL_NAME_TAU_DOCS,
   TOOL_NAME_WEB,

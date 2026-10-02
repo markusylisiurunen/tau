@@ -1,7 +1,6 @@
 import { runTauClientToolCommand } from "../sdk/client_tool_command.js";
 import { truncateTauClientToolText } from "../sdk/client_tool_presentation.js";
 import {
-  createTauCodeModeExecutionEnvironmentFiles,
   executeTauCodeMode,
   type TauCodeModeDefinition,
   validateTauCodeModeDefinition,
@@ -24,10 +23,6 @@ export async function runTauCodeModeCommand(definition: TauCodeModeDefinition): 
           callId: context.callId,
         },
         executionEnvironment: context.executionEnvironment,
-        files: createTauCodeModeExecutionEnvironmentFiles(
-          context.agentId,
-          context.executionEnvironment,
-        ),
       });
       return { ...result, presentation: createCodeModePresentation(code) };
     },

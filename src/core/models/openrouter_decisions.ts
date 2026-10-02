@@ -1,6 +1,5 @@
 import { z } from "zod";
-import { ToolCliError } from "./errors.js";
-import { mediaValidationConstraint } from "./media.js";
+import { mediaValidationConstraint } from "../utils/media_validation.js";
 
 // Nested content is already parsed JSON; preserve its arbitrary property names verbatim.
 const guidance = z.custom<string | Record<string, unknown> | unknown[]>(
@@ -72,7 +71,7 @@ export const decisionResponse = z.object({
 export function parseDecisionInput(value: unknown): z.infer<typeof decisionInput> {
   const parsed = decisionInput.safeParse(value);
   if (!parsed.success) {
-    throw new ToolCliError(
+    throw new Error(
       `invalid decisions input: ${parsed.error.issues.map((issue) => `${issue.path.join(".") || "document"}: ${mediaValidationConstraint(issue)}`).join("; ")}`,
     );
   }
@@ -85,12 +84,12 @@ export function validateDecisionAnswers(
 ): void {
   const names = Object.keys(input.questions);
   if (names.length !== Object.keys(response.answers).length) {
-    throw new ToolCliError("OpenRouter returned mismatched decision answers");
+    throw new Error("OpenRouter returned mismatched decision answers");
   }
   for (const [name, question] of Object.entries(input.questions)) {
     const answer = Object.hasOwn(response.answers, name) ? response.answers[name] : undefined;
     if (!answer || answer.type !== question.type) {
-      throw new ToolCliError("OpenRouter returned a missing or mistyped decision answer");
+      throw new Error("OpenRouter returned a missing or mistyped decision answer");
     }
     if (answer.type === "choice" && question.type === "choice") {
       if (
@@ -98,7 +97,7 @@ export function validateDecisionAnswers(
         (answer.probabilities &&
           Object.keys(answer.probabilities).some((key) => !Object.hasOwn(question.criteria, key)))
       ) {
-        throw new ToolCliError("OpenRouter returned an unknown decision category");
+        throw new Error("OpenRouter returned an unknown decision category");
       }
     }
     if (answer.type === "score" && question.type === "score") {
@@ -109,7 +108,7 @@ export function validateDecisionAnswers(
           (value) => value && Object.keys(value).some((key) => !indices.has(key)),
         )
       ) {
-        throw new ToolCliError("OpenRouter returned a score outside the supplied rubric");
+        throw new Error("OpenRouter returned a score outside the supplied rubric");
       }
     }
   }

@@ -380,9 +380,9 @@ Tau exports two higher-level helpers for client tools that expose a bounded Java
 
 For an executable configured through `clientTools`, keep the exact parameters schema to one required `code` string with no additional properties, then call `runTauCodeModeCommand` in the executable. For SDK clients, pass the returned tool from `createTauCodeModeClientTool` in the client's `clientTools` array.
 
-Both helpers supply invocation identities, cancellation, the execution-environment facade, `docs`, the API bridge, and scratch files. Code is the truncated, character-wrapped subject for both card phases. Descriptions are caller input; the shared builder is optional.
+Both helpers supply invocation identities, cancellation, the execution-environment facade, `docs`, the API bridge, and shared output and truncation functions. Code is the truncated, character-wrapped subject for both card phases. Descriptions are caller input; the shared builder is optional.
 
-`await image(block)` emits ordered text/image blocks in `content`; see [tools](tools.md) for limits.
+`await printImage(block)` emits ordered text/image blocks in `content`; see [tools](tools.md) for limits.
 
 Disclose any additional process or network authority in the tool description.
 

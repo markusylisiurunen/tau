@@ -98,7 +98,7 @@ export class BashJobRegistry {
       await Promise.race([launched, job.done]);
       signal.throwIfAborted();
       if (job.state.status === "failed") throw new Error(job.state.error);
-      return `${this.formatJobs([job], false)}\nApplication readiness has not been checked.`;
+      return job.id;
     } finally {
       signal.removeEventListener("abort", abortLaunch);
     }
@@ -111,6 +111,30 @@ export class BashJobRegistry {
         `Unknown Bash job '${id}' (jobs are not recovered after restart and older completed records may be evicted).`,
       );
     return job;
+  }
+
+  read(ids: string[] = [...this.jobs.keys()], includeOutput = true) {
+    return ids.map((id) => {
+      const job = this.get(id);
+      const state = job.state;
+      return {
+        id: job.id,
+        command: job.command,
+        workingDirectory: job.cwd,
+        ...(includeOutput ? { output: stripAnsi(job.output) } : {}),
+        truncated: job.truncated,
+        status:
+          state.status === "finished"
+            ? state.result.aborted
+              ? "stopped"
+              : state.result.exitCode === 0
+                ? "succeeded"
+                : "failed"
+            : state.status,
+        ...(state.status === "finished" ? state.result : {}),
+        ...(state.status === "failed" ? { error: state.error } : {}),
+      };
+    });
   }
 
   format(ids: string[] = [...this.jobs.keys()], includeOutput = true): string {
@@ -161,20 +185,19 @@ export class BashJobRegistry {
     );
   }
 
-  async stop(id: string, includeOutput: boolean): Promise<string> {
+  async stopJob(id: string): Promise<void> {
     const job = this.get(id);
     job.controller.abort();
     await job.done;
     if (job.state.status === "failed") throw new Error(job.state.error);
-    return this.formatJobs([job], includeOutput);
   }
 
-  async wait(
-    ids: string[],
-    timeout: number,
-    signal: AbortSignal,
-    includeOutput: boolean,
-  ): Promise<string> {
+  async stop(id: string, includeOutput: boolean): Promise<string> {
+    await this.stopJob(id);
+    return this.format([id], includeOutput);
+  }
+
+  async waitJobs(ids: string[], timeout: number, signal: AbortSignal): Promise<boolean> {
     if (!Number.isInteger(timeout) || timeout <= 0 || timeout > BASH_JOB_WAIT_MAX_MS)
       throw new Error(`timeout must be a positive integer up to ${BASH_JOB_WAIT_MAX_MS}.`);
     const jobs = [...new Set(ids)].map((id) => this.get(id));
@@ -193,11 +216,21 @@ export class BashJobRegistry {
           signal.addEventListener("abort", abort, { once: true });
         }),
       ]);
-      return `${this.formatJobs(jobs, includeOutput)}${timedOut ? `\n\nWait timed out after ${timeout}ms; jobs are still running.` : ""}`;
+      return timedOut;
     } finally {
       clearTimeout(timer);
       signal.removeEventListener("abort", abort);
     }
+  }
+
+  async wait(
+    ids: string[],
+    timeout: number,
+    signal: AbortSignal,
+    includeOutput: boolean,
+  ): Promise<string> {
+    const timedOut = await this.waitJobs(ids, timeout, signal);
+    return `${this.format(ids, includeOutput)}${timedOut ? `\n\nWait timed out after ${timeout}ms; jobs are still running.` : ""}`;
   }
 
   get hasRunning(): boolean {

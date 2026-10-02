@@ -1994,6 +1994,145 @@ describe("LocalSessionHost", () => {
     );
   });
 
+  it.each(["failure", "interruption"])(
+    "persists composed model usage before later %s",
+    async (ending) => {
+      const store = new MemorySessionStore();
+      const recordUsage = vi.fn();
+      const host = createHost(store, {
+        config: { apiKeys: { openrouter: "test-key" } },
+        recordUsage,
+      });
+      const fetchImpl = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        Response.json({
+          model: "openai/gpt-6-luna",
+          usage: { prompt_tokens: 5, completion_tokens: 7, total_tokens: 12, cost: 0.02 },
+          choices: [{ finish_reason: "stop", message: { role: "assistant", content: "sampled" } }],
+        }),
+      );
+      const usageReached = deferred();
+      const releaseUsage = deferred();
+      const commit = store.commitSessionSnapshot.bind(store);
+      let blocked = false;
+      if (ending === "interruption")
+        store.commitSessionSnapshot = async (snapshot, options) => {
+          if (snapshot.costTotal > 0 && !blocked) {
+            blocked = true;
+            usageReached.resolve();
+            await releaseUsage.promise;
+          }
+          await commit(snapshot, options);
+        };
+      try {
+        const session = await host.createSession(localCreateInput);
+        let projected = await session.snapshot();
+        session.onDelta((delta) => {
+          projected = applySessionProtocolDelta(projected, delta);
+        });
+        const call = fauxToolCall(
+          "code",
+          {
+            code: 'await tau.models.chat({ model: "openai/gpt-6-luna", prompt: "sample" }); throw new Error("later failure")',
+          },
+          { id: "sampling-call" },
+        );
+        const toolMessage = fauxAssistantMessage([call], { stopReason: "toolUse" });
+        const responses = [toolMessage, fauxAssistantMessage("finished")];
+        session.runtime.agent.spec.model.stream = () => {
+          const response = responses.shift();
+          return {
+            async *[Symbol.asyncIterator]() {
+              if (response === toolMessage) {
+                yield { type: "toolcall_start", contentIndex: 0, partial: response };
+                yield { type: "toolcall_end", contentIndex: 0, toolCall: call, partial: response };
+              }
+            },
+            async result() {
+              return response;
+            },
+          };
+        };
+        await session.record({ text: "sample explicitly" });
+        const turn = session.runTurn();
+        if (ending === "interruption") {
+          await usageReached.promise;
+          session.interruptActiveWork();
+          releaseUsage.resolve();
+        }
+        await turn;
+        const snapshot = await session.snapshot();
+        expect(snapshot.costTotal).toBe(0.02);
+        expect(projected).toEqual(snapshot);
+        expect(snapshot.tools[call.id].status).toBe(ending === "failure" ? "failed" : "cancelled");
+        expect(
+          recordUsage.mock.calls.filter(([entry]) => entry.provider === "openrouter"),
+        ).toHaveLength(1);
+        expect(fetchImpl).toHaveBeenCalledOnce();
+        await host.shutdown();
+        const recoveredHost = createHost(store, { recordUsage });
+        try {
+          const recovered = await recoveredHost.observeSession(session.sessionId);
+          expect((await recovered.snapshot()).costTotal).toBe(0.02);
+          expect(
+            recordUsage.mock.calls.filter(([entry]) => entry.provider === "openrouter"),
+          ).toHaveLength(1);
+        } finally {
+          await recoveredHost.shutdown();
+        }
+      } finally {
+        releaseUsage.resolve();
+        fetchImpl.mockRestore();
+        await host.shutdown();
+      }
+    },
+  );
+
+  it("opens older stored conversations containing removed service tool names", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "tau-old-service-session-"));
+    const store = new FileSessionStore({ directory });
+    const names = ["web", "history", "nook", "mcp"];
+    const historyEntries = names.flatMap((name) => [
+      {
+        id: `assistant-${name}`,
+        message: assistantMessageWithToolCalls([
+          fauxToolCall(name, { code: "console.log(docs)" }, { id: `old-${name}` }),
+        ]),
+      },
+      {
+        id: `result-${name}`,
+        message: {
+          role: "toolResult",
+          toolCallId: `old-${name}`,
+          toolName: name,
+          content: [{ type: "text", text: `historical ${name} result` }],
+          isError: false,
+          timestamp: 1,
+        },
+      },
+    ]);
+    const snapshot = createStoredSnapshot({ sessionId: "old-services", historyEntries });
+    delete snapshot.catalog.mcpServers;
+    writeFileSync(
+      join(directory, `${Buffer.from(snapshot.sessionId).toString("base64url")}.json`),
+      JSON.stringify({ format: STORED_SESSION_DOCUMENT_FORMAT, version: 9, snapshot }),
+    );
+    const host = createHost(store);
+    try {
+      const session = await host.observeSession(snapshot.sessionId);
+      const recovered = await session.snapshot();
+      const results = recovered.messages.filter((entry) => entry.message.role === "toolResult");
+      expect(results.map((entry) => entry.message.toolName)).toEqual(names);
+      expect(results.map((entry) => entry.message.content[0].text)).toEqual(
+        names.map((name) => `historical ${name} result`),
+      );
+      expect(session.runtime.agent.spec.tools.get("code")).toBeDefined();
+      for (const name of names) expect(session.runtime.agent.spec.tools.get(name)).toBeUndefined();
+    } finally {
+      await host.shutdown();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("rejects an exec when the backend resolves after interruption", async () => {
     const store = new MemorySessionStore();
     const toolBackend = createLocalToolExecutionBackend();
@@ -5540,7 +5679,7 @@ describe("LocalSessionHost", () => {
         process.cwd(),
         new AbortController().signal,
       );
-      const id = started.match(/`([^`]+)`/)[1];
+      const id = started;
       session.runtime.agent.spec.model.stream = () => ({
         async *[Symbol.asyncIterator]() {},
         async result() {
@@ -6182,14 +6321,14 @@ describe("host-owned MCP tools", () => {
         projected = applySessionProtocolDelta(projected, delta);
       });
       const call = fauxToolCall(
-        "mcp",
+        "code",
         {
           code: `
-        console.log(await mcp.listServers());
-        const result = await mcp.callTool("host", "echo", { message: "host service result" });
-        console.log({ message: result.structuredContent.message, pid: result.structuredContent.pid });
-        await image((await mcp.callTool("host", "screenshot", {})).content[0]);
-        console.log("after screenshot");
+        printText(JSON.stringify(await tau.mcp.listServers()));
+        const result = await tau.mcp.callTool("host", "echo", { message: "host service result" });
+        printText(JSON.stringify({ message: result.structuredContent.message, pid: result.structuredContent.pid }));
+        await printImage((await tau.mcp.callTool("host", "screenshot", {})).content[0]);
+        printText("after screenshot");
       `,
         },
         { id: "mcp-host-call" },
@@ -6222,7 +6361,7 @@ describe("host-owned MCP tools", () => {
       expect(result.turn.status).toBe("completed");
       const snapshot = await session.snapshot();
       expect(projected).toEqual(snapshot);
-      expect(snapshot.tools[call.id]).toMatchObject({ toolName: "mcp", status: "succeeded" });
+      expect(snapshot.tools[call.id]).toMatchObject({ toolName: "code", status: "succeeded" });
       const toolResult = snapshot.messages.find(
         (entry) => entry.message.role === "toolResult" && entry.message.toolCallId === call.id,
       );

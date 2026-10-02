@@ -12,17 +12,6 @@ export {
 } from "../sdk/client_tool_presentation.js";
 export { runTauCodeModeCommand } from "./command.js";
 export type {
-  TauCodeModeFileAdapter,
-  TauCodeModeFileAdapterResult,
-  TauCodeModeFileList,
-  TauCodeModeFileMetadata,
-  TauCodeModeFilesOptions,
-} from "./files.js";
-export {
-  TAU_CODE_MODE_MAX_FILES,
-  TAU_CODE_MODE_MAX_TOTAL_FILE_BYTES,
-} from "./files.js";
-export type {
   BuildTauCodeModeToolDescriptionOptions,
   ExecuteTauCodeModeOptions,
   TauCodeModeApi,

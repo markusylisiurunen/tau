@@ -55,7 +55,7 @@ describe("ToolCatalog", () => {
       history,
     );
 
-    expect(registry.schemas.map((tool) => tool.name)).toEqual(["history", "tau_docs"]);
+    expect(registry.schemas.map((tool) => tool.name)).toEqual(["code", "tau_docs"]);
   });
 
   it("binds inherited Nook only when configured", () => {
@@ -84,7 +84,7 @@ describe("ToolCatalog", () => {
       jobs,
     );
 
-    expect(inherited.schemas.map((tool) => tool.name)).toEqual(["nook", "tau_docs"]);
+    expect(inherited.schemas.map((tool) => tool.name)).toEqual(["code", "tau_docs"]);
     expect(unconfigured.schemas.map((tool) => tool.name)).toEqual(["tau_docs"]);
     expect(excluded.schemas.map((tool) => tool.name)).toEqual(["tau_docs"]);
   });
@@ -160,8 +160,8 @@ describe("ToolCatalog", () => {
       newText: "new",
     });
     await execute(registry, "view_image", { path: "image.png" });
-    await execute(registry, "web", {
-      code: "console.log(JSON.stringify(await web.discover('https://example.com/docs')))",
+    await execute(registry, "code", {
+      code: "printText(JSON.stringify(await tau.web.discover('https://example.com/docs')))",
     });
 
     expect(backend.writeFile).toHaveBeenCalledWith("/workspace/child/created.txt", "created");

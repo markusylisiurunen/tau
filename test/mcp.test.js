@@ -4,8 +4,9 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { McpClient } from "@earendil-works/pi-mcp";
 import { describe, expect, it, vi } from "vitest";
+import { createMcpCapability } from "../dist/core/code_mode/mcp.js";
 import { McpManager } from "../dist/core/mcp/manager.js";
-import { createMcpToolDefinition } from "../dist/core/tools/mcp.js";
+import { createCapabilityTool } from "./helpers/code_mode.js";
 import { createProtocolImage } from "./helpers/session_protocol_fixtures.js";
 
 const fixture = fileURLToPath(new URL("./fixtures/mcp_server.js", import.meta.url));
@@ -55,9 +56,12 @@ function assertExited(pid) {
 describe("MCP search", () => {
   it("searches through the code-mode API and observes catalog invalidation", async () => {
     const client = manager();
-    const tool = createMcpToolDefinition(backend(), client);
+    const tool = createCapabilityTool(backend(), createMcpCapability(client));
     try {
-      const result = await runTool(tool, 'console.log(await mcp.searchTools("messages"))');
+      const result = await runTool(
+        tool,
+        'printText(JSON.stringify(await tau.mcp.searchTools("messages")))',
+      );
       expect(result.outcome).toBe("succeeded");
       expect(JSON.parse(result.text)).toMatchObject({
         tools: [{ server: "test", name: "echo", score: expect.any(Number) }],
@@ -66,13 +70,13 @@ describe("MCP search", () => {
       await client.callTool("test", "refresh", {}, signal());
       const refreshed = await runTool(
         tool,
-        'console.log(await mcp.searchTools("added", { server: "test", limit: 1 }))',
+        'printText(JSON.stringify(await tau.mcp.searchTools("added", { server: "test", limit: 1 })))',
       );
       expect(JSON.parse(refreshed.text).tools.map((tool) => tool.name)).toEqual(["added"]);
       for (const code of [
-        'await mcp.searchTools(" ")',
-        'await mcp.searchTools("echo", { limit: 0 })',
-        'await mcp.searchTools("echo", { offset: 1 })',
+        'await tau.mcp.searchTools(" ")',
+        'await tau.mcp.searchTools("echo", { limit: 0 })',
+        'await tau.mcp.searchTools("echo", { offset: 1 })',
       ]) {
         expect((await runTool(tool, code)).outcome).toBe("failed");
       }
@@ -373,8 +377,11 @@ describe("MCP code-mode tool", () => {
   it("returns a clean result and strips metadata only at MCP content boundaries", async () => {
     const client = manager();
     try {
-      const tool = createMcpToolDefinition(backend(), client);
-      const result = await runTool(tool, 'console.log(await mcp.callTool("test", "metadata", {}))');
+      const tool = createCapabilityTool(backend(), createMcpCapability(client));
+      const result = await runTool(
+        tool,
+        'printText(JSON.stringify(await tau.mcp.callTool("test", "metadata", {})))',
+      );
       expect(result.outcome).toBe("succeeded");
       const value = JSON.parse(result.text);
       expect(Object.keys(value)).toEqual(["content", "structuredContent", "isError"]);
@@ -394,10 +401,10 @@ describe("MCP code-mode tool", () => {
   it("allows large resources across transport and bridge without printing their contents", async () => {
     const client = manager();
     try {
-      const tool = createMcpToolDefinition(backend(), client);
+      const tool = createCapabilityTool(backend(), createMcpCapability(client));
       const result = await runTool(
         tool,
-        'const result = await mcp.readResource("test", "docs://large"); console.log(result.contents[0].text.length)',
+        'const result = await tau.mcp.readResource("test", "docs://large"); printText(JSON.stringify(result.contents[0].text.length))',
       );
       expect(result.outcome).toBe("succeeded");
       expect(Number(result.text)).toBe(2 * 1024 * 1024);
@@ -409,11 +416,11 @@ describe("MCP code-mode tool", () => {
   it("forwards MCP screenshots as real image content without files or base64 previews", async () => {
     const client = manager();
     const executionBackend = backend();
-    const tool = createMcpToolDefinition(executionBackend, client);
+    const tool = createCapabilityTool(executionBackend, createMcpCapability(client));
     try {
       const result = await runTool(
         tool,
-        'const result = await mcp.callTool("test", "screenshot", {}); console.log("1"); await image(result.content[0]); console.log("2")',
+        'const result = await tau.mcp.callTool("test", "screenshot", {}); printText("1"); await printImage(result.content[0]); printText("2")',
       );
       expect(result.outcome).toBe("succeeded");
       expect(result.content).toEqual([
@@ -427,7 +434,7 @@ describe("MCP code-mode tool", () => {
 
       const failed = await runTool(
         tool,
-        'await image((await mcp.callTool("test", "screenshot", {})).content[0]); throw new Error("later failure")',
+        'await printImage((await tau.mcp.callTool("test", "screenshot", {})).content[0]); throw new Error("later failure")',
       );
       expect(failed.outcome).toBe("failed");
       expect(failed.content[0]).toEqual(createProtocolImage());
@@ -440,21 +447,11 @@ describe("MCP code-mode tool", () => {
   it("discovers paginated resources and templates and reads explicit text and image context", async () => {
     const client = manager();
     const executionBackend = backend();
-    const tool = createMcpToolDefinition(executionBackend, client);
+    const tool = createCapabilityTool(executionBackend, createMcpCapability(client));
     try {
       const result = await runTool(
         tool,
-        `
-        console.log(await mcp.listResources("test", { limit: 1 }));
-        console.log(await mcp.listResources("test", { offset: 1 }));
-        console.log(await mcp.listResources("test", { query: "database schema" }));
-        console.log(await mcp.listResourceTemplates("test", { query: "service documents" }));
-        console.log(await mcp.readResource("test", "docs://unlisted"));
-        const preview = await mcp.readResource("test", "docs://preview");
-        console.log("before");
-        await image({ type: "image", data: preview.contents[0].blob, mimeType: preview.contents[0].mimeType });
-        console.log("after");
-      `,
+        '\n        printText(JSON.stringify(await tau.mcp.listResources("test", { limit: 1 })));\n        printText(JSON.stringify(await tau.mcp.listResources("test", { offset: 1 })));\n        printText(JSON.stringify(await tau.mcp.listResources("test", { query: "database schema" })));\n        printText(JSON.stringify(await tau.mcp.listResourceTemplates("test", { query: "service documents" })));\n        printText(JSON.stringify(await tau.mcp.readResource("test", "docs://unlisted")));\n        const preview = await tau.mcp.readResource("test", "docs://preview");\n        printText("before");\n        await printImage({ type: "image", data: preview.contents[0].blob, mimeType: preview.contents[0].mimeType });\n        printText("after");\n      ',
       );
       expect(result.outcome).toBe("succeeded");
       const lines = result.content[0].text.split("\n");
@@ -483,12 +480,12 @@ describe("MCP code-mode tool", () => {
       expect(result.text).not.toContain("_meta");
       expect(executionBackend.writeFile).not.toHaveBeenCalled();
       expect(executionBackend.runNodeScript).not.toHaveBeenCalled();
-      const missing = await runTool(tool, 'await mcp.readResource("test", "docs://missing")');
+      const missing = await runTool(tool, 'await tau.mcp.readResource("test", "docs://missing")');
       expect(missing.outcome).toBe("failed");
       for (const code of [
-        'await mcp.listResources("test", { limit: 0 })',
-        'await mcp.listResourceTemplates("test", { unknown: true })',
-        'await mcp.readResource("test", "")',
+        'await tau.mcp.listResources("test", { limit: 0 })',
+        'await tau.mcp.listResourceTemplates("test", { unknown: true })',
+        'await tau.mcp.readResource("test", "")',
       ]) {
         expect((await runTool(tool, code)).outcome).toBe("failed");
       }
@@ -500,10 +497,10 @@ describe("MCP code-mode tool", () => {
   it("rejects oversized resource responses without preventing later reads", async () => {
     const client = manager({ timeoutMs: 1_000 });
     try {
-      const tool = createMcpToolDefinition(backend(), client);
+      const tool = createCapabilityTool(backend(), createMcpCapability(client));
       const result = await runTool(
         tool,
-        'console.log(await mcp.readResource("test", "docs://oversized"))',
+        'printText(JSON.stringify(await tau.mcp.readResource("test", "docs://oversized")))',
       );
       expect(result.outcome).toBe("failed");
       expect(result.text).not.toContain("x".repeat(100));
@@ -519,8 +516,12 @@ describe("MCP code-mode tool", () => {
     const client = manager();
     const controller = new AbortController();
     try {
-      const tool = createMcpToolDefinition(backend(), client);
-      const run = runTool(tool, 'await mcp.readResource("test", "docs://slow")', controller.signal);
+      const tool = createCapabilityTool(backend(), createMcpCapability(client));
+      const run = runTool(
+        tool,
+        'await tau.mcp.readResource("test", "docs://slow")',
+        controller.signal,
+      );
       await vi.waitFor(async () => expect((await echo(client)).structuredContent.pending).toBe(1));
       controller.abort();
       expect((await run).outcome).toBe("cancelled");
@@ -538,10 +539,10 @@ describe("MCP code-mode tool", () => {
 
   it("propagates interruption to MCP calls without closing the shared connection", async () => {
     const client = manager();
-    const tool = createMcpToolDefinition(backend(), client);
+    const tool = createCapabilityTool(backend(), createMcpCapability(client));
     const controller = new AbortController();
     try {
-      const run = runTool(tool, "await mcp.callTool('test', 'slow', {})", controller.signal);
+      const run = runTool(tool, "await tau.mcp.callTool('test', 'slow', {})", controller.signal);
       await vi.waitFor(async () => expect((await echo(client)).structuredContent.pending).toBe(1));
       controller.abort();
       expect((await run).outcome).toBe("cancelled");
@@ -557,23 +558,15 @@ describe("MCP code-mode tool", () => {
   it("progressively documents, discovers, and composes calls without workspace access", async () => {
     const client = manager();
     const executionBackend = backend();
-    const tool = createMcpToolDefinition(executionBackend, client);
+    const tool = createCapabilityTool(executionBackend, createMcpCapability(client));
     try {
-      const docs = await runTool(tool, "console.log(docs)");
+      const docs = await runTool(tool, 'printText(await tau.docs("mcp"))');
       expect(docs.outcome).toBe("succeeded");
-      expect(docs.text).toContain("mcp.describeTool");
+      expect(docs.text).toContain("tau.mcp.describeTool");
       expect(docs.text).not.toContain("test-secret");
       const result = await runTool(
         tool,
-        `
-        console.log(await mcp.listServers());
-        console.log(await mcp.listTools("test", { limit: 1 }));
-        console.log(await mcp.listTools("test", { query: "echo message" }));
-        console.log(await mcp.describeTool("test", "echo"));
-        const results = await Promise.all(["one", "two"].map(message =>
-          mcp.callTool("test", "echo", { message })));
-        console.log(results.map(result => result.structuredContent.message));
-      `,
+        '\n        printText(JSON.stringify(await tau.mcp.listServers()));\n        printText(JSON.stringify(await tau.mcp.listTools("test", { limit: 1 })));\n        printText(JSON.stringify(await tau.mcp.listTools("test", { query: "echo message" })));\n        printText(JSON.stringify(await tau.mcp.describeTool("test", "echo")));\n        const results = await Promise.all(["one", "two"].map(message =>\n          tau.mcp.callTool("test", "echo", { message })));\n        printText(JSON.stringify(results.map(result => result.structuredContent.message)));\n      ',
       );
       expect(result.outcome).toBe("succeeded");
       expect(JSON.parse(result.text.split("\n")[0])).toEqual([{ name: "test" }]);
@@ -595,26 +588,23 @@ describe("MCP code-mode tool", () => {
 
   it("handles service errors as data and bridge failures as catchable exceptions", async () => {
     const client = manager();
-    const tool = createMcpToolDefinition(backend(), client);
+    const tool = createCapabilityTool(backend(), createMcpCapability(client));
     try {
       const result = await runTool(
         tool,
-        `
-        const failed = await mcp.callTool("test", "fail", {});
-        console.log({ isError: failed.isError });
-        try { await mcp.callTool("test", "echo", { message: 1 }); }
-        catch (error) { console.log(error.message); }
-        console.log((await mcp.callTool("test", "echo", { message: "ok" })).structuredContent.calls);
-      `,
+        '\n        const failed = await tau.mcp.callTool("test", "fail", {});\n        printText(JSON.stringify({ isError: failed.isError }));\n        try { await tau.mcp.callTool("test", "echo", { message: 1 }); }\n        catch (error) { printText(error.message); }\n        printText(JSON.stringify((await tau.mcp.callTool("test", "echo", { message: "ok" })).structuredContent.calls));\n      ',
       );
       expect(result.outcome).toBe("succeeded");
       expect(result.text).toContain('"isError":true');
       expect(result.text).toContain("Invalid arguments");
       expect(result.text.split("\n").at(-1)).toBe("2");
-      const malformed = await runTool(tool, "await mcp.listTools('test', { limit: 0 })");
+      const malformed = await runTool(tool, "await tau.mcp.listTools('test', { limit: 0 })");
       expect(malformed.outcome).toBe("failed");
-      expect(malformed.text).toContain("Invalid mcp.listTools arguments");
-      const defaultList = await runTool(tool, "console.log(await mcp.listTools('test'))");
+      expect(malformed.text).toContain("Invalid tau.mcp.listTools arguments");
+      const defaultList = await runTool(
+        tool,
+        "printText(JSON.stringify(await tau.mcp.listTools('test')))",
+      );
       expect(defaultList.outcome).toBe("succeeded");
     } finally {
       await client.close();

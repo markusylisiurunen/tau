@@ -28,10 +28,11 @@ The eligible inherited tools are:
 - `history`
 - `nook`, when Nook is configured
 - `mcp`, when the host has enabled MCP servers
+- `models`
 
 Tau then adds intrinsic `tau_docs` to every subagent registry, independently of this subset. A persona’s `tools` list cannot disable it. Apart from `tau_docs`, subagents do not receive goal controls, subagent supervision tools, client tools, or TUI-local tools.
 
-The worker inherits the intersection of the main persona's tools and those eight eligible names. MCP uses the parent's shared host connections, independent of the child's working directory. For example, a main persona with `bash`, `edit`, `history`, and `spawn_agent` gives the child `bash`, `edit`, and `history`, plus intrinsic `tau_docs`. There is no separate child tool allowlist.
+The worker inherits the intersection of the main persona's tools and those nine eligible names. MCP uses the parent's shared host connections, independent of the child's working directory. For example, a main persona with `bash`, `edit`, `history`, and `spawn_agent` gives the child `bash`, `edit`, and `history`, plus intrinsic `tau_docs`. Service selectors enable namespaces in the child's `code` tool. There is no separate child tool allowlist.
 
 Subagents cannot launch other subagents: supervision tools are never included in a child's registry. See [tools](tools.md) for the broader availability contract.
 

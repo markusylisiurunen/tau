@@ -167,26 +167,43 @@ compartment.evaluate(String.raw`
   delete globalThis._requestApi;
   delete globalThis._writeOutput;
 
-  function formatOutputValue(value) {
-    if (typeof value === "string") return value;
-    if (value instanceof Error) return value.stack || value.message;
-    try {
-      const serialized = JSON.stringify(value);
-      if (serialized !== undefined) return serialized;
-    } catch {}
-    return String(value);
+  Object.defineProperty(globalThis, "printText", {
+    value: (text) => {
+      if (typeof text !== "string") throw new TypeError("printText expects a string");
+      writeOutputBridge("stdout", text);
+    },
+  });
+  delete globalThis.console;
+
+  function bound(values, limit, position, unit) {
+    if (!Number.isSafeInteger(limit) || limit <= 0) throw new TypeError("limit must be a positive integer");
+    if (!["middle", "start", "end"].includes(position)) throw new TypeError("invalid truncation position");
+    if (values.length <= limit) return values.join(unit === "lines" ? "\n" : "");
+    const joiner = unit === "lines" ? "\n" : "";
+    let kept = unit === "lines" ? limit - 1 : limit;
+    let marker;
+    while (true) {
+      marker = "[" + (values.length - kept) + " " + unit + " omitted]";
+      const next = unit === "lines" ? kept : Math.max(0, limit - Array.from(marker).length);
+      if (next === kept) break;
+      kept = next;
+    }
+    if (unit !== "lines" && marker.length > limit) return "…";
+    const head = position === "end" ? 0 : position === "start" ? kept : Math.ceil(kept / 2);
+    const tail = kept - head;
+    return [...values.slice(0, head), marker, ...(tail ? values.slice(-tail) : [])].join(joiner);
   }
-  function writeConsole(stream, values) {
-    writeOutputBridge(stream, values.map(formatOutputValue).join(" "));
-  }
-  Object.defineProperty(globalThis, "console", {
-    value: Object.freeze({
-      debug: (...values) => writeConsole("stdout", values),
-      error: (...values) => writeConsole("stderr", values),
-      info: (...values) => writeConsole("stdout", values),
-      log: (...values) => writeConsole("stdout", values),
-      warn: (...values) => writeConsole("stderr", values),
-    }),
+  Object.defineProperty(globalThis, "truncate", {
+    value: (text, { maxChars, position = "middle" }) => {
+      if (typeof text !== "string") throw new TypeError("truncate expects a string");
+      return bound(Array.from(text), maxChars, position, "characters");
+    },
+  });
+  Object.defineProperty(globalThis, "truncateLines", {
+    value: (text, { maxLines, position = "middle" }) => {
+      if (typeof text !== "string") throw new TypeError("truncateLines expects a string");
+      return bound(text.replace(/\r\n?/g, "\n").split("\n"), maxLines, position, "lines");
+    },
   });
 
   function serializeArguments(args) {
@@ -205,7 +222,7 @@ compartment.evaluate(String.raw`
     });
   }
 
-  Object.defineProperty(globalThis, "image", {
+  Object.defineProperty(globalThis, "printImage", {
     value: async (...args) => {
       await requestApiBridge(imageMethodId, serializeArguments(args));
     },

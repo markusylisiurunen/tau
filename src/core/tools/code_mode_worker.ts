@@ -6,7 +6,7 @@ import { type BashExecutionResult, DEFAULT_COMMAND_CAPTURE_BYTES } from "./execu
 
 export const CODE_MODE_MAX_BRIDGE_REQUESTS = 128;
 export const CODE_MODE_MAX_CONCURRENT_BRIDGE_REQUESTS = 8;
-export const CODE_MODE_MAX_BRIDGE_PAYLOAD_BYTES = 16 * 1024 * 1024;
+export const CODE_MODE_MAX_BRIDGE_PAYLOAD_BYTES = 64 * 1024 * 1024;
 
 const CODE_MODE_HANDLER_DRAIN_TIMEOUT_MS = 1_000;
 
@@ -72,7 +72,7 @@ export function executeCodeModeWorker(
         ...(process.env.TZ ? { TZ: process.env.TZ } : {}),
       },
       resourceLimits: {
-        maxOldGenerationSizeMb: 128,
+        maxOldGenerationSizeMb: 512,
         maxYoungGenerationSizeMb: 32,
         stackSizeMb: 4,
       },

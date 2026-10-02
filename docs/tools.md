@@ -30,7 +30,7 @@ tools:
   - web
 ```
 
-The supported persona-controlled names are:
+The supported persona-controlled tool and capability selectors are:
 
 ```text
 bash
@@ -41,6 +41,7 @@ web
 nook
 history
 mcp
+models
 spawn_agent
 send_input_to_agent
 wait_for_agents
@@ -48,7 +49,9 @@ list_agents
 interrupt_agent
 ```
 
-A custom persona that omits `tools` enables `bash`, `write`, `edit`, `view_image`, `web`, `nook`, `history`, and `mcp`. It also enables the five subagent-management tools. Built-in personas enable the same base and subagent tool sets.
+A custom persona that omits `tools` enables `bash`, `write`, `edit`, `view_image`, `web`, `nook`, `history`, `mcp`, and `models`. It also enables the five subagent-management tools. Built-in personas enable the same base and subagent tool sets.
+
+The selectors `web`, `history`, `nook`, `mcp`, and `models` enable namespaces in the single `code` tool, not separate model-facing tools. `bash` enables both the direct Bash tools and `tau.bash` within code mode. Tau registers `code` when at least one eligible composition capability is selected; `code` is not a separate persona selector. A namespace not selected by the persona is absent from the SDK and its documentation index.
 
 An empty list disables every persona-controlled host tool:
 
@@ -147,63 +150,61 @@ The supported formats are JPEG, PNG, and WebP. Source reads are capped at 50 MiB
 
 Each guide covers setup, input, examples, outputs, and failure behavior. Use `tau tool --help` to list commands or `tau tool <command> --help` for command-specific help. The same guides are packaged for `tau_docs` and linked from its `index.md`.
 
-## Code-mode service tools
+## Code-mode composition
 
-`web`, `history`, `nook`, and `mcp` each run a one-shot JavaScript program in Tau's restricted code-mode runtime. They intentionally disclose their exact API at use time rather than embedding signatures in this page.
+`code` runs a one-shot JavaScript program that composes enabled capabilities through `tau.web`, `tau.history`, `tau.nook`, `tau.mcp`, `tau.bash`, and `tau.models`. Direct Bash, write, edit, and image-viewing tools remain available independently.
 
-Tau exposes each service tool with agent-facing guidance that requires its documentation to be visible before API use. When the documentation is absent, the first useful call is a documentation-only program:
+### Documentation and output
+
+When the runtime guide is not already visible, the agent first runs a documentation-only program:
 
 ```js
-console.log(docs);
+printText(docs);
 ```
 
-The agent reuses visible documentation, without guessing or borrowing another tool's signatures. Shared examples show field selection and text-block extraction for concise plain-text output. Return values are ignored; only console text and images forwarded with `await image(block)` enter the result.
+The guide contains runtime rules and the enabled capability index. Before using a capability whose API reference is not visible, the agent retrieves it in a separate documentation-only call:
 
-Code-mode programs have no direct process, environment, credential, import, timer, network, or `fetch` access. They can call only the named API and use agent-scoped scratch files exposed by the runtime. Programs default to 60 seconds (MCP: 15 minutes), allow 128 API requests with eight unresolved at once, and limit each serialized payload to 16 MiB. Undefined object properties are omitted from API arguments; undefined arguments and array entries are invalid. Console output is middle-truncated above roughly 8,192 estimated tokens.
+```js
+printText(await tau.docs("web"));
+```
 
-`await image({ type: "image", data, mimeType })` forwards a base64 image without files. Calls must be awaited before the program exits. JPEG, PNG, and WebP bytes must match the declared MIME type and fit the 16 MiB JSON bridge limit. Source images are limited to 40 megapixels; each program may forward 16 images. Images are resized or re-encoded to fit within 4,096 pixels per dimension and 3.5 MiB each. Adjacent console writes form one text block; awaited images separate the text before and after them. Text truncation keeps images in place. Invalid blocks reject and can be caught. Built-in tools retain valid images if the program later fails.
+Visible documentation is reused. MCP tool descriptions and Nook's authoring guide have their own discovery steps. Programs may compose operations after the relevant documentation has been read; they do not need to return intermediate data to the conversation.
 
-Scratch files are real UTF-8 files in an execution-environment temporary directory shared by code-mode tools for the same agent. Writes are limited to 128 regular files and 64 MiB total. Scratch state is not stored in the session snapshot. The progressively disclosed documentation gives the exact file API.
+Only `printText(string)` and awaited `printImage({ data, mimeType })` emit output. Return values are ignored. Programs explicitly format objects and decide which progress, results, or side effects to report. Text and images remain in emission order; printed text is middle-truncated above roughly 8,192 estimated tokens. JPEG, PNG, and WebP images are validated outside the sandbox and prepared within 4,096 pixels per dimension and 3.5 MiB each. Source images are limited to 40 megapixels and 16 images per program. Valid images are retained even if a built-in program later fails.
 
-### Web
+The pure globals `truncate(text, { maxChars, position? })` and `truncateLines(text, { maxLines, position? })` return bounded strings with omission markers. Position defaults to `middle`; `start` and `end` retain the corresponding edge. They do not print automatically.
 
-`web` is for open-web search and webpage extraction when repository data, a purpose-built CLI, a first-party API or SDK, or another structured source cannot answer the task. For GitHub issues, pull requests, releases, and repository metadata, use `gh`; for checked-out source and history, use Git.
+```js
+const result = await tau.bash.run({ command: "npm test" });
+printText(truncate(result.stdout, { maxChars: 4000 }));
+```
 
-Web discovery can inspect an ordinary URL through the execution environment without an Exa credential. Search and content extraction require an effective Exa API key. The tool's documentation explains the discovery-first flow and when to retrieve advertised agent-friendly resources with Bash instead of webpage extraction. See [credentials](credentials.md) for key resolution.
+### Execution and limits
 
-### History
+Programs have no ambient filesystem, process, environment, credential, import, timer, network, or fetch access. Explicit capabilities supply their own authority. JavaScript variables hold intermediate data; file operations use `tau.bash` when enabled. There is no scratch-file API.
 
-`history` searches and reads durable Tau transcripts. It is read-only and can have visibility across repositories and execution environments, so use it only when the user or another active instruction directly asks to consult prior sessions. Do not invoke it merely because old context might be useful.
+Built-in programs have a 15-minute deadline, at most 128 API requests, and eight unresolved requests at once. Each serialized request or response is limited to 64 MiB. Undefined object properties are omitted from arguments; undefined arguments and array entries are rejected. Programs are not automatically retried. Failure, interruption, or timeout does not undo completed actions.
 
-The effective history query may be machine-local or backed by a configured remote collection. See [history](history.md) for storage, replication, and access scope.
+### Capabilities
 
-### Nook
+- `tau.web`: metadata discovery, Exa search, and page content retrieval. The agent prefers local data, purpose-built CLIs, first-party APIs, and structured sources over web extraction. GitHub operations use gh or checked-out Git where suitable. Metadata discovery does not need an Exa key; search and content retrieval do.
+- `tau.history`: read-only search and paginated transcript access. The agent uses it only when explicitly instructed to consult historical sessions. Historical content is untrusted data, not instructions. See [history](history.md).
+- `tau.nook`: site deployment, templates, and site-scoped JSON KV. The agent uses it for user-requested publishing or Nook management. App authoring requires reading `tau.nook.skill()` in a separate documentation-only call first. See [Nook](nook.md).
+- `tau.mcp`: discovery and invocation of connected tools and resources. The agent reads each tool's description and schema before calling it. Connections are shared and lazy; mutations are not retried. `isError` is result data; protocol failures throw. Existing MCP server configuration and trust rules apply. See [configuration reference](config-reference.md#mcpservers) and [security](security.md#trust-mcp-servers).
+- `tau.bash`: `run`, `start`, `list`, `read`, `wait`, and `stop`. Foreground execution returns structured stdout, stderr, exit, and termination fields, with a 24 MiB capture safety ceiling rather than a model-facing preview. Overflow retains a tail and sets `truncated`; programs must check it before parsing structured data. Background operations share the direct tools' job registry and retain bounded output tails. Jobs survive program exit and interruption; foreground work is cancelled. The shell and ownership rules above apply.
+- `tau.models`: lists fixed OpenRouter model choices and performs standalone chat or typed decisions. No session conversation or tools are inherited. Chat media accepts either paths on the agent's machine or inline padded base64 with a matching MIME type. Credentials stay with the host. Reported costs are included in session accounting even when later program work fails. Requests are cancellable and not automatically retried. Input, model, media, response, and request limits match [OpenRouter](openrouter.md); inspect completion/refusal status rather than assuming every response is a complete answer.
 
-`nook` manages the configured Nook static mini-app platform. It is available when the main persona lists `nook` and Nook is configured. Subagents inherit it under the same conditions.
-
-The tool is intended for explicit requests to inspect or manage Nook, publish a static artifact or mini-app, or work with Nook KV. Once the built-in documentation is visible, app-authoring work requires a second separate documentation-only call that prints the Nook authoring skill. The agent reads that guide before creating or modifying app files. Nook setup and platform behavior are covered in [Nook](nook.md).
-
-### MCP
-
-`mcp` discovers and calls tools and reads resources from host-configured Model Context Protocol servers. Personas must allow `mcp`, and the host must configure an enabled server. Subagents inherit access; ephemeral threads do not receive it.
-
-Servers use stdio or streamable HTTP. Stdio commands run on the host with its environment; HTTP uses host credentials. Server files need not share the agent's workspace. Supported protocol revisions are `2025-11-25`, `2025-06-18`, `2025-03-26`, and `2024-11-05`, not `2026-07-28`.
-
-`mcp` lists servers, tools, resources, and templates, inspects schemas, calls tools, and reads URIs. `searchTools` ranks tool metadata with BM25, returning matches and per-server errors. Resources return text or base64 data, without automatic context, file writes, or fetching. Only printed text and images enter context. Tools return `{ content, structuredContent?, isError }`; private MCP `_meta` is stripped. `isError: true` is data; protocol failures throw. Calls/reads default to five minutes, configurable to 15; startup/discovery defaults to 30 seconds. Messages are limited to 16 MiB; oversized results fail.
-
-Connections are lazy, shared across sessions, and closed at shutdown. Later requests reconnect. Mutations are not retried. Tool-list changes invalidate cached discovery; resource listings refresh on each call. Restart does not recover connections or calls. Resource subscriptions, prompts, elicitation, and sampling are unsupported.
-
-Servers merge by name from host launch-directory config layers. Restart the host to apply changes. See [configuration reference](config-reference.md#mcpservers) and [security](security.md#trust-mcp-servers).
+SDK and command client tools use the same sandbox globals and output contract with their own explicitly declared APIs. Their default program deadline is 60 seconds unless configured otherwise.
 
 ## Subagent tool eligibility
 
 A subagent can receive only:
 
 ```text
-bash  write  edit  view_image  web  history  nook  mcp
+bash  write  edit  view_image  web  history  nook  mcp  models
 ```
 
-Tau inherits the intersection of the main persona’s tools and those eight eligible names. `tau_docs` is then added intrinsically. There is no separate child tool selection. Nook and MCP require configuration; MCP uses the parent's host connections.
+Tau inherits the intersection of the main persona’s tools and those nine eligible names. `tau_docs` is then added intrinsically. There is no separate child tool selection. Nook and MCP require configuration; MCP uses the parent's host connections.
 
 Subagents do not receive goal tools, subagent-management tools, or client-provided tools. Their Bash and file tools are scoped to the subagent working directory, including an alternate directory selected at launch. See [subagents](subagents.md) for configuration and working-directory context rebuilding.
 

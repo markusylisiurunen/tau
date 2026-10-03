@@ -37,6 +37,10 @@ Flag code that creates a second owner or bypasses an existing boundary:
 
 Move behavior to its single owning layer. When new behavior does not fit cleanly, reshape that abstraction instead of adding another path.
 
+Apply the repository's from-scratch design test when a local patch adds an exception, a second source of truth, a duplicate path, or coordination through timing or side effects. Trace the requirement to its owner and reshape the affected contract rather than preserving the workaround merely to keep the diff small.
+
+When one component knows semantic intent, carry it through the owning event or protocol contract. Consumers should use an explicit cause, kind, status, or reference rather than infer intent from timing, message text, counts, presentation state, or nearby events. Reuse an existing canonical signal when it expresses the intent; otherwise add the required signal at its owner and update its producers and consumers.
+
 ## Contract alignment
 
 Hunt Tau-specific drift across:

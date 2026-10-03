@@ -6656,6 +6656,54 @@ describe("SessionChatController", () => {
     }
   });
 
+  it("restores the draft and guidance when Escape cancels during audio cleanup", async () => {
+    const audioPath = join(tmpdir(), `tau-session-listen-cleanup-cancel-${Date.now()}.wav`);
+    await writeFile(audioPath, Buffer.alloc(2048, 1));
+    const { view, session, controller } = await createControllerHarness({});
+    view.submitEditor = vi.fn();
+    view.editorText = "draft ";
+    controller.editorHiddenSystemMessages = ["draft guidance"];
+    const deletion = Promise.withResolvers();
+    const deleteSpy = vi
+      .spyOn(listenCapture, "deleteListenTempFile")
+      .mockReturnValueOnce(deletion.promise);
+    const transcription = { finish: vi.fn(async () => "dictated"), abort: vi.fn() };
+    controller.beginListenPreview();
+    controller.listenPreview.update("provisional");
+    controller.listenRecording = {
+      audioPath,
+      startedAt: Date.now(),
+      stopRequested: false,
+      abortController: new AbortController(),
+      completion: Promise.resolve(),
+      transcription,
+    };
+
+    try {
+      const stop = controller.runListenTransition(() => controller.stopListenCapture("submit"));
+      await waitUntil(() => deleteSpy.mock.calls.length > 0);
+      controller.getInputHandlers().onEscape();
+      expect(view.editorText).toBe("draft ");
+      expect(controller.editorHiddenSystemMessages).toEqual(["draft guidance"]);
+      expect(view.editorEnabledUpdates.at(-1)).toBe(true);
+      deletion.resolve();
+      await stop;
+
+      expect(view.editorText).toBe("draft ");
+      expect(controller.editorHiddenSystemMessages).toEqual(["draft guidance"]);
+      expect(view.submitEditor).not.toHaveBeenCalled();
+      expect(session.submit).not.toHaveBeenCalled();
+      expect(controller.retainedListenAudio).toBeUndefined();
+      await expect(readFile(audioPath)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      deletion.resolve();
+      await controller.listenTransition;
+      deleteSpy.mockRestore();
+      await controller.dispose();
+      await rm(audioPath, { force: true });
+    }
+  });
+
   it("cancels before the microphone starts when temporary file creation is pending", async () => {
     const audioPath = join(tmpdir(), `tau-session-listen-start-cancel-${Date.now()}.wav`);
     await writeFile(audioPath, Buffer.alloc(0));

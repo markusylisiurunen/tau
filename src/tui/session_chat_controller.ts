@@ -1215,10 +1215,6 @@ export class SessionChatController {
           mimeType: "audio/wav",
         });
         if (this.listenPreview !== preview) return false;
-        preview.commit(text);
-        if (text.trim() && !this.editorHiddenSystemMessages.includes(TRANSCRIPTION_GUIDANCE)) {
-          this.editorHiddenSystemMessages.push(TRANSCRIPTION_GUIDANCE);
-        }
         this.retainedListenAudio = undefined;
         try {
           await deleteListenTempFile(audioPath);
@@ -1228,7 +1224,12 @@ export class SessionChatController {
             `recording remains at ${audioPath}; delete it manually`,
           ]);
         }
-        return this.listenPreview === preview && Boolean(text.trim());
+        if (this.listenPreview !== preview) return false;
+        preview.commit(text);
+        if (text.trim() && !this.editorHiddenSystemMessages.includes(TRANSCRIPTION_GUIDANCE)) {
+          this.editorHiddenSystemMessages.push(TRANSCRIPTION_GUIDANCE);
+        }
+        return Boolean(text.trim());
       } catch (error) {
         if (this.listenPreview !== preview) return false;
         this.retainedListenAudio = { audioPath, durationMs };

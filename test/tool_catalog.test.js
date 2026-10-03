@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { printDebugInfo } from "../dist/core/debug.js";
 import { BashJobRegistry } from "../dist/core/tools/bash_jobs.js";
 import { ToolCatalog } from "../dist/core/tools/catalog.js";
 
@@ -41,6 +42,51 @@ async function execute(registry, name, args) {
 }
 
 describe("ToolCatalog", () => {
+  it.each(["web", "bash"])("prints the filtered debug schemas for a %s-only persona", (tool) => {
+    const persona = {
+      id: "debug",
+      label: "debug",
+      model: { provider: "openai", id: "test-model" },
+      settings: {},
+      systemPrompt: "Test instructions.",
+      tools: [tool],
+    };
+    const toolRegistry = ToolCatalog.createDebugRegistry({
+      backend: createBackend(),
+      cwd: "/workspace",
+      config: {},
+      persona,
+      modelResolver: () => undefined,
+      history: {},
+    });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      printDebugInfo({
+        personas: [persona],
+        prompts: [],
+        skills: [],
+        selection: {
+          persona,
+          promptContext: { cwd: "/workspace", platform: "linux" },
+        },
+        cwd: "/workspace",
+        datetime: "2026-10-03T00:00:00.000Z",
+        toolRegistry,
+      });
+      const schemas = log.mock.calls
+        .map(([value]) => value)
+        .filter((value) => value.startsWith("  name: "))
+        .map((value) => value.split("\n")[0].slice("  name: ".length));
+      expect(schemas).toEqual(toolRegistry.schemas.map((schema) => schema.name));
+      expect(schemas).toContain("code");
+      expect(schemas).toContain("tau_docs");
+      if (tool === "bash") expect(schemas).toContain("list_bash_jobs");
+      else expect(schemas).not.toContain("web");
+    } finally {
+      log.mockRestore();
+    }
+  });
+
   it("binds history for subagents without exposing its storage or credentials", () => {
     const history = {
       search: vi.fn(),

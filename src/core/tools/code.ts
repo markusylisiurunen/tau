@@ -56,7 +56,7 @@ export function createCodeToolDefinition(options: {
         ...capabilities.map((capability) => `tau.${capability.name}: ${capability.description}`),
         "When this tool is useful and its runtime guide is not visible, first run only printText(docs). Read it before writing a later program. Before using each capability, printText(await tau.docs(name)) in a documentation-only call unless that reference is already visible. Do not guess API signatures.",
         "Use printText(string) and await printImage({ data, mimeType }) for output. Return values are ignored. Programs have finite execution, request, and output limits. Side effects are not rolled back and programs are not automatically retried.",
-      ].join(" "),
+      ].join("\n\n"),
       parameters: Type.Object(
         {
           code: Type.String({

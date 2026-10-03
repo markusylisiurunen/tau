@@ -21,11 +21,15 @@ export function bindCodeModeSdk(capabilities: CodeModeCapability[]): {
 
 Use a program when keeping intermediate data in JavaScript makes the task clearer: pass one call's result into another, combine independent evidence, or reduce a large response to the relevant facts. A single direct tool call is fine when composition adds nothing. Only enabled capabilities are callable, and their use restrictions still apply inside a program.
 
-Plan around dependencies. Await a result before using it; run independent calls concurrently only when every result is needed, with a small explicit bound below the runtime's concurrency limit. Use service filters and pagination to bound inputs before processing them. Keep reusable logic in small functions and avoid elaborate frameworks for one-shot work.
+Plan around dependencies. Await a result before using it; run independent calls concurrently only when every result is needed, with a small explicit bound below the runtime's concurrency limit. Use service filters and pagination to bound inputs before processing them. For paginated work, print continuation values and resume in another program before exhausting its call or output budget. Keep reusable logic in small functions and avoid elaborate frameworks for one-shot work.
 
 Check results before passing them onward: command exit and truncation fields, per-item retrieval errors, and model completion or refusal status can indicate failure even when the call itself resolves. Stop dependent work when required input is incomplete. For independent work, catch errors per item only when partial results are useful, and report what is missing rather than silently treating failures as empty data.
 
 Print a concise result with evidence, identifiers, and any limitations needed for the next decision. Intermediate values stay in the program unless printed. Side effects and external charges are not rolled back. After failure or interruption, inspect what completed and retry only the necessary work, not the whole program blindly.
+
+For web documentation research (requires web and Bash), search for the official site if needed, then discover its relevant page or root. Retrieve advertised Markdown or llms.txt and relevant Markdown pages with curl, using the Accept: text/markdown header for content negotiation. Do not pass these resources to tau.web.fetch. Prefer them over search highlights; use extraction for ordinary pages when no suitable representation exists or extraction is preferable.
+
+For app authoring (requires Nook and filesystem tools), read Nook's authoring guide first. Keep a new app's complete working tree in a fresh temporary directory, create or copy its sources, build with Bash, and deploy the built static output with explicit visibility. These steps can be composed after the relevant references have been read; Nook does not build source trees itself.
 
 ### Examples for adaptation
 

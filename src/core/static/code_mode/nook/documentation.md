@@ -1,205 +1,144 @@
-Use absolute file system paths for Nook methods that accept them. Use Bash for filesystem operations when needed.
+# tau.nook
 
-## App-authoring guidance
+Manage static sites, reusable source templates, and per-site JSON KV on the configured Nook deployment. Use absolute paths for file and directory arguments; these refer to files on your machine.
 
-`tau.docs("nook")` describes this agent-facing management SDK. `tau.nook.skill()` is separate and returns the configured Nook deployment's app-authoring guide, including its browser SDK and KV contract.
+## Interface
 
-When authoring or modifying a Nook app, retrieve the skill in a separate documentation-only Nook call:
+```ts
+type NookApi = {
+  skill(): Promise<string>;
+  sites: SitesApi;
+  templates: TemplatesApi;
+  kv: KvApi;
+};
+```
+
+## `tau.nook.skill()`
+
+Takes no arguments and returns the app-authoring guide as a string, including the browser SDK and KV contract. When authoring or modifying an app, retrieve it in a separate documentation-only call and read it before subsequent work:
 
 ```js
 printText(await tau.nook.skill());
 ```
 
-Do not combine skill retrieval with management SDK operations. Read the returned guide before writing or modifying the app in later tool calls.
+Do not combine this retrieval with management operations. Reuse a guide already visible in the conversation. This reference describes management methods, not the API available inside a hosted app.
 
 ## Sites
 
-### `tau.nook.sites.list()`
+```ts
+type Visibility = "private" | "public";
+type Site = {
+  slug: string;
+  url: string;
+  createdAt?: string;
+  updatedAt?: string;
+  latestDeploymentId?: string;
+  visibility?: Visibility;
+  kv?: { keyCount: number; bytesUsed: number; maxKeys: number; maxBytes: number };
+};
+type Deployment = {
+  site: string;
+  url: string;
+  visibility: Visibility;
+  deploymentId: string;
+  fileCount: number;
+  byteCount: number;
+};
+type SiteCopy = Omit<Deployment, "url"> & { directory: string };
 
-Return the configured target's sites as an array.
-
-```js
-const sites = await tau.nook.sites.list();
-for (const site of sites) {
-  printText(`${site.slug}: ${site.url} (${site.visibility ?? "not deployed"})`);
-}
+type SitesApi = {
+  list(): Promise<Site[]>;
+  copy(site: string, directory: string): Promise<SiteCopy>;
+  deploy(site: string, directory: string, options: { visibility: Visibility }): Promise<Deployment>;
+  delete(site: string): Promise<{ site: string; deleted: boolean }>;
+};
 ```
 
-Each site may contain:
+These methods are called on `tau.nook.sites`:
+
+- `list()`: list site summaries. Deployment and KV metadata may be absent for an undeployed site.
+- `copy(site, directory)`: copy the active deployment into an existing empty directory. Downloads are verified against the manifest before writing. Interruption during file writes can leave a partial destination; inspect it before retrying.
+- `deploy(site, directory, { visibility })`: publish the directory as the new active deployment, creating the site if needed. Visibility is required, never implicit. KV survives redeploys. The result's `url` is the link to return to the user.
+- `delete(site)`: delete the site and its managed state. This is destructive; `deleted` reports whether anything was deleted.
+
+Site slugs are 2–63 lowercase letters, digits, or hyphens, starting and ending with a letter or digit. Reserved slugs are `admin`, `api`, `assets`, `login`, `logout`, `nook`, `quick`, `static`, and `www`.
+
+Deploy built static output, not an editable source tree unless it is already the complete artifact. A deployment requires root `index.html`. Limits: 1,000 files, 10 MiB per file, 100 MiB total, paths up to 512 characters. Hidden paths, symlinks, traversal, and `/__nook` or its descendants are rejected. Build relative asset URLs or use the site's `/<slug>/` base path.
 
 ```js
-{
-  slug: string,
-  url: string,
-  createdAt?: string,
-  updatedAt?: string,
-  latestDeploymentId?: string,
-  visibility?: "private" | "public",
-  kv?: {
-    keyCount: number,
-    bytesUsed: number,
-    maxKeys: number,
-    maxBytes: number,
-  },
-}
-```
-
-### `tau.nook.sites.copy(site, directory)`
-
-Copy the active deployment into an existing empty directory. The site slug must be a valid non-reserved Nook slug. Files are downloaded and verified against the deployment manifest before any file is written.
-
-```js
-const copied = await tau.nook.sites.copy("demo", "/tmp/demo-source");
-printText(`copied ${copied.fileCount} files to ${copied.directory}`);
-```
-
-The result contains `site`, `directory`, `deploymentId`, `visibility`, `fileCount`, and `byteCount`.
-
-### `tau.nook.sites.deploy(site, directory, options)`
-
-Deploy a static directory as the site's new active deployment. `options.visibility` is required and must be `"private"` or `"public"`; visibility never defaults implicitly. The directory must contain a root `index.html` and satisfy Nook's path, file-count, and size limits.
-
-```js
-const deployed = await tau.nook.sites.deploy("demo", "/tmp/demo-dist", {
+const deployed = await tau.nook.sites.deploy("demo", "/absolute/path/to/built-app", {
   visibility: "private",
 });
-printText(`deployed ${deployed.url} as ${deployed.visibility}`);
+printText(`${deployed.url} (${deployed.visibility})`);
 ```
 
-The result contains `site`, `url`, `visibility`, `deploymentId`, `fileCount`, and `byteCount`.
-
-Build app artifacts before deploying. When creating a new app, put the complete working tree under a fresh temporary directory rather than scattering files into the project, then deploy its built static output directory.
-
-### `tau.nook.sites.delete(site)`
-
-Delete a site and its managed state.
-
-```js
-const deleted = await tau.nook.sites.delete("demo");
-printText(`deleted ${deleted.site}: ${deleted.deleted}`);
-```
+Replace the example directory with the absolute path of an existing built artifact. Nook uploads files; it does not run a build command.
 
 ## Templates
 
-### `tau.nook.templates.list()`
+Templates are reusable editable directory snapshots, separate from deployed sites.
 
-Return templates as an array.
-
-```js
-const templates = await tau.nook.templates.list();
-for (const template of templates) {
-  printText(`${template.name}: ${template.fileCount} files, revision ${template.revisionId}`);
-}
+```ts
+type Template = {
+  name: string;
+  revisionId: string;
+  createdAt: string;
+  updatedAt: string;
+  fileCount: number;
+  byteCount: number;
+};
+type TemplatesApi = {
+  list(): Promise<Template[]>;
+  copy(name: string, directory: string): Promise<Template & { directory: string }>;
+  save(name: string, directory: string): Promise<Template>;
+  delete(name: string): Promise<{ template: string; deleted: boolean }>;
+};
 ```
 
-Each template contains `name`, `revisionId`, `createdAt`, `updatedAt`, `fileCount`, and `byteCount`.
+These methods are called on `tau.nook.templates`:
 
-### `tau.nook.templates.copy(name, directory)`
+- `list()`: discover available templates and revisions.
+- `copy(name, directory)`: copy a verified revision into an existing empty directory. The result includes its summary and the destination.
+- `save(name, directory)`: save the directory as the template's new active revision. File/path limits match deployments, but `index.html` is not required.
+- `delete(name)`: delete a template, not sites built from it.
 
-Copy a verified template revision into an existing empty directory.
-
-```js
-const copied = await tau.nook.templates.copy("starter", "/tmp/new-app");
-printText(`copied ${copied.name} to ${copied.directory}`);
-```
-
-The result contains the template summary fields plus `directory`.
-
-### `tau.nook.templates.save(name, directory)`
-
-Save a directory as the template's new active revision. Templates use the same path, file-count, and size validation as deployments but do not require `index.html`.
-
-```js
-const saved = await tau.nook.templates.save("starter", "/tmp/app-source");
-printText(`saved ${saved.name} revision ${saved.revisionId}`);
-```
-
-### `tau.nook.templates.delete(name)`
-
-Delete a template.
-
-```js
-const deleted = await tau.nook.templates.delete("starter");
-printText(`deleted ${deleted.template}: ${deleted.deleted}`);
-```
+Template names follow the same 2–63-character format as site slugs, without the site reserved-name list. A copied template is a source snapshot, not necessarily a built static artifact. Saving a template does not deploy it.
 
 ## Per-site KV
 
-KV values must be JSON-serializable. Keys must contain 1-256 characters.
+Values are JSON, not files or arbitrary JavaScript objects. Keys are 1–256 characters, each encoded value is at most 64 KiB, and each site permits up to 1,000 keys and 5 MiB total storage.
 
-### `tau.nook.kv.get(site, key)`
-
-Return the stored JSON value directly.
-
-```js
-const settings = await tau.nook.kv.get("demo", "settings");
-printText(`theme: ${settings.theme}`);
+```ts
+type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
+type KvEntry = { key: string; sizeBytes: number; updatedAt: string };
+type KvApi = {
+  get(site: string, key: string): Promise<Json>;
+  getToFile(site: string, key: string, file: string): Promise<{
+    site: string; key: string; file: string; bytes: number;
+  }>;
+  put(site: string, key: string, value: Json): Promise<{ site: string; key: string }>;
+  putFromFile(site: string, key: string, file: string): Promise<{
+    site: string; key: string; file: string;
+  }>;
+  delete(site: string, key: string): Promise<{ site: string; key: string; deleted: boolean }>;
+  list(site: string, options?: { prefix?: string }): Promise<KvEntry[]>;
+};
 ```
 
-### `tau.nook.kv.getToFile(site, key, file)`
+These methods are called on `tau.nook.kv`:
 
-Write the stored JSON value to a file in the session execution environment. Parent directories are created as needed. Return `{ site, key, file, bytes }`.
-
-```js
-const saved = await tau.nook.kv.getToFile("demo", "settings", "/tmp/settings.json");
-printText(`wrote ${saved.bytes} bytes to ${saved.file}`);
-```
-
-### `tau.nook.kv.put(site, key, value)`
-
-Store a JSON value and return `{ site, key }`.
-
-```js
-const stored = await tau.nook.kv.put("demo", "settings", { theme: "dark" });
-printText(`stored ${stored.site}/${stored.key}`);
-```
-
-### `tau.nook.kv.putFromFile(site, key, file)`
-
-Parse a JSON file from the session execution environment, store its value, and return `{ site, key, file }`. Files are limited to the 64 KiB maximum size of a KV value.
-
-```js
-const stored = await tau.nook.kv.putFromFile("demo", "settings", "/tmp/settings.json");
-printText(`stored ${stored.site}/${stored.key} from ${stored.file}`);
-```
-
-### `tau.nook.kv.delete(site, key)`
-
-Delete a value and return `{ site, key, deleted }`.
-
-```js
-const deleted = await tau.nook.kv.delete("demo", "settings");
-printText(`deleted: ${deleted.deleted}`);
-```
-
-### `tau.nook.kv.list(site, options?)`
-
-Return matching key metadata as an array. `options.prefix` optionally filters keys.
+- `get`: returns the stored value directly, not an envelope. Missing keys return `null`, indistinguishable from a stored JSON null; use `list` when existence matters. Inspect the value before accessing fields.
+- `getToFile`: writes JSON to the specified file, creating parent directories as needed. It may overwrite an existing file.
+- `put`: stores or replaces one key's JSON value.
+- `putFromFile`: parses UTF-8 JSON from a file of at most 64 KiB and stores its value.
+- `delete`: removes one key; check `deleted` if existence matters.
+- `list`: returns key metadata, not values; optional `prefix` restricts matching keys. There is no pagination argument.
 
 ```js
 const keys = await tau.nook.kv.list("demo", { prefix: "todos/" });
-for (const entry of keys) {
-  printText(`${entry.key}: ${entry.sizeBytes} bytes, updated ${entry.updatedAt}`);
-}
+for (const entry of keys) printText(`${entry.key}: ${entry.sizeBytes} bytes`);
 ```
 
-Each entry contains `key`, `sizeBytes`, and `updatedAt`.
+## Limits and failures
 
-## Common patterns
-
-List sites and templates concurrently:
-
-```js
-const [sites, templates] = await Promise.all([
-  tau.nook.sites.list(),
-  tau.nook.templates.list(),
-]);
-printText(`sites: ${sites.map((site) => site.slug).join(", ") || "none"}`);
-printText(`templates: ${templates.map((template) => template.name).join(", ") || "none"}`);
-```
-
-Copy, inspect or modify with filesystem tools in later calls, build with Bash, then deploy the built directory in a later Nook call. Do not deploy an editable source directory unless it is already the complete static artifact.
-
-## Output guidance
-
-Print only information needed for the task. Prefer concise labeled text over serialized response objects. Select relevant fields when possible; when all fields matter, flatten and label them compactly. Emit JSON only when the user explicitly requests JSON or another machine-readable result.
+Invalid arguments, failed requests, invalid artifacts, and exceeded quotas throw. Mutations and local file writes are not rolled back when a program fails or is interrupted. Inspect current site, template, KV, or file state before retrying an uncertain mutation.

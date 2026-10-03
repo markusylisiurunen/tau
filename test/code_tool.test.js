@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { runTauCodeMode } from "../dist/code_mode/runtime.js";
+import { createBashCapability } from "../dist/core/code_mode/bash.js";
 import { createModelsCapability } from "../dist/core/code_mode/models.js";
 import { bindCodeModeSdk } from "../dist/core/code_mode/sdk.js";
 import { requestOpenRouterChat } from "../dist/core/models/openrouter.js";
@@ -10,6 +11,7 @@ import { BashJobRegistry } from "../dist/core/tools/bash_jobs.js";
 import { ToolCatalog } from "../dist/core/tools/catalog.js";
 import { createCodeToolDefinition } from "../dist/core/tools/code.js";
 import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
+import { SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES } from "../dist/protocol/session_protocol.js";
 import { createProtocolImage } from "./helpers/session_protocol_fixtures.js";
 
 function context(overrides = {}) {
@@ -156,6 +158,66 @@ describe("code composition", () => {
         bashJobs: jobs,
       }),
     ).toBeUndefined();
+  });
+
+  it.each([
+    { label: "omitted", stdin: undefined },
+    { label: "empty", stdin: "" },
+    { label: "text", stdin: "héllo\n$HOME; $(printf injected)\n'quoted'\u0000" },
+  ])("supplies $label foreground stdin and closes it", async ({ stdin }) => {
+    const backend = createLocalToolExecutionBackend();
+    const run = vi.spyOn(backend, "runBash");
+    const tool = createCodeToolDefinition({
+      backend,
+      cwd: process.cwd(),
+      allowedTools: ["bash"],
+      config: {},
+      bashJobs: new BashJobRegistry(),
+    });
+    const options = JSON.stringify({ command: "cat", stdin, timeout: 1000 });
+    const result = await execute(
+      tool,
+      `const result = await tau.bash.run(${options}); printText(JSON.stringify(result));`,
+    );
+    expect(result.outcome).toBe("succeeded");
+    expect(JSON.parse(text(result))).toMatchObject({
+      stdout: stdin ?? "",
+      stderr: "",
+      exitCode: 0,
+      truncated: false,
+      timedOut: false,
+      aborted: false,
+    });
+    expect(run).toHaveBeenCalledOnce();
+    expect(run.mock.calls[0][1].stdin).toEqual(
+      stdin === undefined ? undefined : Buffer.from(stdin, "utf8"),
+    );
+  });
+
+  it("bounds foreground stdin by UTF-8 bytes before launching commands", async () => {
+    const runBash = vi.fn(async () => ({}));
+    const jobs = new BashJobRegistry();
+    const start = vi.spyOn(jobs, "start");
+    const capability = createBashCapability({ runBash }, process.cwd(), jobs);
+    for (const stdin of [
+      null,
+      123,
+      "x".repeat(SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES + 1),
+      "é".repeat(SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES / 2 + 1),
+    ]) {
+      await expect(capability.api.run([{ command: "cat", stdin }], context())).rejects.toThrow();
+    }
+    await expect(
+      capability.api.start([{ command: "cat", stdin: "data" }], context()),
+    ).rejects.toThrow();
+    expect(runBash).not.toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
+    await capability.api.run(
+      [{ command: "cat", stdin: "é".repeat(SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES / 2) }],
+      context(),
+    );
+    expect(runBash).toHaveBeenCalledOnce();
+    expect(runBash.mock.calls[0][1].stdin.length).toBe(SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES);
   });
 
   it("composes structured shell data and history without model-facing intermediate output", async () => {

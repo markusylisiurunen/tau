@@ -148,7 +148,7 @@ class GeminiStreamingTranscriptionImpl implements GeminiStreamingTranscription {
       this.fail(new Error(`Gemini transcription connection failed: ${error.message}`));
     });
     this.socket.on("close", (code, reason) => {
-      if (this.aborted || this.completedTranscript) return;
+      if (this.aborted || this.completedTranscript !== undefined) return;
       const detail = reason.toString("utf8").trim();
       this.fail(
         new Error(
@@ -161,7 +161,13 @@ class GeminiStreamingTranscriptionImpl implements GeminiStreamingTranscription {
   }
 
   appendAudio(audio: Buffer): void {
-    if (audio.length === 0 || this.aborted || this.failure || this.completedTranscript) return;
+    if (
+      audio.length === 0 ||
+      this.aborted ||
+      this.failure ||
+      this.completedTranscript !== undefined
+    )
+      return;
     this.hasAudio = true;
     if (!this.ready) {
       this.pendingAudio.push(audio);
@@ -183,7 +189,7 @@ class GeminiStreamingTranscriptionImpl implements GeminiStreamingTranscription {
       await this.readyPromise;
       if (this.failure) throw this.failure;
       if (this.aborted) throw new Error("Gemini transcription was aborted");
-      if (this.completedTranscript) return this.completedTranscript;
+      if (this.completedTranscript !== undefined) return this.completedTranscript;
       if (!this.hasAudio) throw new Error("Gemini transcription received no audio");
 
       const completion = new Promise<string>((resolve, reject) => {
@@ -204,7 +210,7 @@ class GeminiStreamingTranscriptionImpl implements GeminiStreamingTranscription {
   }
 
   abort(): void {
-    if (this.aborted || this.completedTranscript) return;
+    if (this.aborted || this.completedTranscript !== undefined) return;
     const error = new Error("Gemini transcription was aborted");
     this.aborted = true;
     this.pendingAudio = [];
@@ -246,7 +252,7 @@ class GeminiStreamingTranscriptionImpl implements GeminiStreamingTranscription {
   }
 
   private handleMessage(data: unknown): void {
-    if (this.aborted || this.failure || this.completedTranscript) return;
+    if (this.aborted || this.failure || this.completedTranscript !== undefined) return;
     let payload: unknown;
     try {
       payload = JSON.parse(formatWebSocketMessage(data)) as unknown;
@@ -293,10 +299,6 @@ class GeminiStreamingTranscriptionImpl implements GeminiStreamingTranscription {
     }
     if (content?.generationComplete && this.finishing) {
       const text = this.finalizedText.trim();
-      if (!text) {
-        this.fail(new Error("transcription result was empty"));
-        return;
-      }
       this.completedTranscript = text;
       this.clearTimers();
       this.resolveCompletion?.(text);
@@ -332,7 +334,7 @@ class GeminiStreamingTranscriptionImpl implements GeminiStreamingTranscription {
   }
 
   private fail(error: Error): void {
-    if (this.failure || this.aborted || this.completedTranscript) return;
+    if (this.failure || this.aborted || this.completedTranscript !== undefined) return;
     this.failure = error;
     this.pendingAudio = [];
     this.keywordAbortController.abort(error);
@@ -420,8 +422,8 @@ export async function transcribeGeminiAudio(options: GeminiTranscriptionOptions)
     }
 
     const transcript = extractInteractionText(payload)?.trim();
-    if (!transcript) {
-      throw new Error("transcription result was empty or malformed");
+    if (transcript === undefined) {
+      throw new Error("transcription result was malformed");
     }
     return transcript;
   } finally {
@@ -508,7 +510,7 @@ function extractInteractionText(payload: unknown): string | undefined {
   const parsed = interactionSchema.safeParse(payload);
   if (!parsed.success) return undefined;
 
-  return (parsed.data.steps ?? [])
+  const texts = (parsed.data.steps ?? [])
     .flatMap((step) => {
       const modelOutput = interactionModelOutputSchema.safeParse(step);
       return modelOutput.success ? modelOutput.data.content : [];
@@ -516,8 +518,8 @@ function extractInteractionText(payload: unknown): string | undefined {
     .flatMap((content) => {
       const text = interactionTextSchema.safeParse(content);
       return text.success ? [text.data.text] : [];
-    })
-    .join("");
+    });
+  return texts.length > 0 ? texts.join("") : undefined;
 }
 
 async function readResponsePayload(

@@ -16,7 +16,7 @@ Use the narrowest practical authority for each role:
 - Use a container, virtual machine, or separately provisioned hosted environment when work should be isolated from the host. Tau preserves that external boundary, but it does not claim that every configured backend is a security sandbox.
 - Mount or copy only the repositories and files the task needs. Do not point an execution environment at a broad home directory for convenience.
 - Give the host only the provider and service credentials needed for its sessions. Give client-tool processes only the client-local credentials they need.
-- Use a persona with a narrower `tools` list for work that should not modify files or invoke external services. Remember that main-session goal tools and intrinsic `tau_docs` do not come from that list.
+- Use a persona with a narrower `tools` list for work that should not modify files or invoke external services. Remember that intrinsic `tau_docs` does not come from that list.
 
 Interruption, timeouts, output limits, and process-group termination bound execution. They are not approval controls and cannot undo an operation that already completed. Review destructive commands and use Tau's normal session operations instead of asking an agent to manipulate internal state.
 

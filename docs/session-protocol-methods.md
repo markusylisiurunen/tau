@@ -208,7 +208,7 @@ result: {
 }
 ```
 
-The session must be idle. Retry is unavailable while a goal controls the session; use `session.resumeGoal` for a blocked goal.
+The session must be idle.
 
 ### `session.interrupt`
 
@@ -374,51 +374,6 @@ result: { paths: string[] }
 ```
 
 `limit` is a positive integer no greater than 100. Results can include directories with a trailing `/` and are not snapshot state.
-
-## Manage goals
-
-### `session.startGoal`
-
-Creates a persistent active goal, commits its objective as user input, and runs autonomous continuations until the goal completes, blocks, fails, or is interrupted.
-
-```ts
-params: {
-  sessionId: string;
-  objective: string;
-}
-result: {
-  userHistoryEntryId: string;
-  turn: TurnOutcome;
-}
-```
-
-Only one goal can exist. Queued messages wait for goal work to settle.
-
-### `session.resumeGoal`
-
-Resumes a blocked goal without adding a visible user message.
-
-```ts
-params: {
-  sessionId: string;
-}
-result: {
-  turn: TurnOutcome;
-}
-```
-
-### `session.clearGoal`
-
-Clears the current goal and returns the updated snapshot.
-
-```ts
-params: {
-  sessionId: string;
-}
-result: SessionProtocolSnapshot;
-```
-
-If no goal exists, the method returns `invalid_request`. Clearing interrupts an active turn and rejects pending input.
 
 ## Reload, compact, and rewind
 

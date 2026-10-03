@@ -18,7 +18,7 @@ The server sends `ready` as its first message:
 
 ```json
 {
-  "version": 16,
+  "version": 17,
   "type": "ready",
   "methods": ["initialize", "session.create", "session.list"]
 }
@@ -30,7 +30,7 @@ After `ready`, send `initialize` with non-empty client metadata:
 
 ```json
 {
-  "version": 16,
+  "version": 17,
   "type": "request",
   "id": "init-1",
   "method": "initialize",
@@ -50,7 +50,7 @@ Every request has the same envelope:
 
 ```json
 {
-  "version": 16,
+  "version": 17,
   "type": "request",
   "id": "req-42",
   "method": "session.snapshot",
@@ -64,7 +64,7 @@ Successful responses echo the request id:
 
 ```json
 {
-  "version": 16,
+  "version": 17,
   "type": "response",
   "id": "req-42",
   "ok": true,
@@ -100,7 +100,7 @@ Observation controls delivery, not session ownership. `session.unobserve` stops 
 | `revision` | Monotonic protocol snapshot revision. |
 | `lifecycle` | `idle` or `running`. |
 | `agentState` | Independent agent revision, model context key, and optional usage checkpoint. |
-| `goal`, `settings`, `costTotal` | Current goal, persona and reasoning settings, and accumulated session cost. |
+| `settings`, `costTotal` | Persona and reasoning settings, and accumulated session cost. |
 | `bootstrap`, `catalog` | Selected model and prompt metadata plus available personas, prompt metadata, skills, and enabled host-configured MCP server names. |
 | `executionEnvironment` | The environment kind, identity, `cwd`, and home used for agent-visible work. |
 | `messages`, `turns` | Synchronized model-facing records and durable logical-turn receipts. |
@@ -124,7 +124,7 @@ Intermediate instructions are committed without a user turn receipt. Their durab
 
 Turn requests return a terminal outcome, and accepted user turns are also keyed by `userHistoryEntryId` in `snapshot.turns`. Use that ledger to distinguish an unknown request from accepted running work and settled work. Do not infer request outcomes from notice titles, message counts, or timing.
 
-User-facing behavior such as goals, retry, compaction, rewind, and recovery is described in [sessions](sessions.md).
+User-facing behavior such as retry, compaction, rewind, and recovery is described in [sessions](sessions.md).
 
 ## Apply snapshot deltas in order
 
@@ -132,7 +132,7 @@ Observed snapshot changes arrive as `session.delta`:
 
 ```json
 {
-  "version": 16,
+  "version": 17,
   "type": "session.delta",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "fromRevision": 8,
@@ -170,7 +170,7 @@ Not all observed state belongs in the recoverable snapshot. Each live channel ha
 
 ```json
 {
-  "version": 16,
+  "version": 17,
   "type": "session.pendingUserMessages",
   "sessionId": "...",
   "state": {
@@ -207,7 +207,7 @@ An initialized client that advertised a tool can receive:
 
 ```json
 {
-  "version": 16,
+  "version": 17,
   "type": "session.clientTool.call",
   "sessionId": "...",
   "agentId": "main",
@@ -231,7 +231,7 @@ Error responses use `ok: false`:
 
 ```json
 {
-  "version": 16,
+  "version": 17,
   "type": "response",
   "id": "req-42",
   "ok": false,
@@ -263,7 +263,7 @@ A WebSocket close, malformed server payload, unsupported version, or other termi
 
 The server can accept several requests before earlier requests settle, so responses and streamed messages may interleave.
 
-- Only one ordinary main-session turn or goal turn runs at a time. `session.submit`, `session.retry`, `session.startGoal`, and `session.resumeGoal` return `busy` on conflict.
+- Only one main-session turn runs at a time. `session.submit` and `session.retry` return `busy` on conflict.
 - `session.queue` waits for idle work. `session.steer` requests the next safe turn boundary. Each request receives its own eventual response.
 - Session mutations are serialized in arrival order across clients. Mutations that replace context can interrupt active work and reject pending input. `session.rewind` instead requires the session to be idle with no pending input.
 - `session.setReasoning` is serialized but does not interrupt the active turn. The new setting applies to the next independently started turn.

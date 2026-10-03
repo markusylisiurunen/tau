@@ -222,7 +222,6 @@ export class SessionChatController {
       newSession: () => this.createNewSession(),
       rewind: () => this.startRewindFlow(),
       diff: (argsText) => this.startDiffReview(argsText),
-      goal: (action) => this.handleGoalAction(action),
       compactSummaryOnly: (extra) => this.compactSession("summary-only", extra),
       compactSummaryAndLast: (extra) => this.compactSession("summary-and-last", extra),
       reload: () => this.reloadContent(),
@@ -1619,7 +1618,6 @@ export class SessionChatController {
         switch (change.type) {
           case "agent-state.set":
           case "lifecycle.set":
-          case "goal.set":
           case "cost.set":
           case "settings.set":
           case "turn.set":
@@ -1699,7 +1697,6 @@ export class SessionChatController {
       switch (change.type) {
         case "agent-state.set":
         case "lifecycle.set":
-        case "goal.set":
         case "cost.set":
         case "settings.set":
         case "turn.set":
@@ -2436,37 +2433,6 @@ export class SessionChatController {
     }
   }
 
-  private async handleGoalAction(
-    action: { type: "show" | "resume" | "clear" } | { type: "start"; objective: string },
-  ): Promise<void> {
-    if (action.type === "show") {
-      const goal = this.snapshot.goal;
-      this.view.addTranscriptNotice(
-        goal ? `goal ${goal.status}` : "no session goal",
-        "default",
-        goal ? [goal.objective] : undefined,
-      );
-      return;
-    }
-
-    if (action.type === "start") {
-      await this.runSessionTurn(() => this.session.startGoal(action.objective));
-      return;
-    }
-    if (action.type === "resume") {
-      await this.runSessionTurn(() => this.session.resumeGoal());
-      return;
-    }
-
-    try {
-      this.snapshot = await this.session.clearGoal();
-      this.refreshStatus();
-      this.view.showFooterNotice("session goal cleared", "default");
-    } catch (error) {
-      this.view.addTranscriptNotice("failed to clear goal", "error", [(error as Error).message]);
-    }
-  }
-
   private setAutoSpeak(enabled: boolean | undefined): void {
     if ((enabled ?? !this.autoSpeak) && this.deps.env.platform() !== "darwin") {
       this.view.showFooterNotice("auto-speak is currently supported only on macOS", "default");
@@ -2618,7 +2584,6 @@ export class SessionChatController {
             contextUsage: this.getContextUsageString(),
             sessionCost: this.getSessionCostString(),
             duration: this.getTurnDurationString(),
-            pursuingGoal: this.snapshot.goal?.status === "active",
             autoSpeak: this.autoSpeak,
           },
       editor: {

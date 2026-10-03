@@ -171,7 +171,7 @@ Different changes have different owners:
 
 A WebSocket connection observes a hosted session; it does not own or delete its durable state. After the last observer disconnects, the host unloads an idle live runtime while retaining its persisted snapshot. If a client disconnects while work runs, the host keeps working and unloads the runtime only after that work settles. Reattach with the same session id to recover the current persisted state and continue receiving updates.
 
-A clean `tau serve` shutdown interrupts active work, persists live sessions, and closes clients. On restart, the host lists sessions whose execution environments it can restore. Recovery returns sessions idle, drops pending queued and steering messages, discards live subagents, and changes an active persistent goal to blocked. Use `/goal resume` only after checking why the host stopped.
+A clean `tau serve` shutdown interrupts active work, persists live sessions, and closes clients. On restart, the host lists sessions whose execution environments it can restore. Recovery returns sessions idle, drops pending queued and steering messages, and discards live subagents.
 
 ## Use multiple observers carefully
 
@@ -211,4 +211,4 @@ Verify that server and client use the same token and that a reverse proxy preser
 
 ### A reconnect shows an interrupted turn
 
-A client disconnect alone does not stop a WebSocket-hosted turn, but server shutdown does. Review the last assistant and tool states, verify the execution environment with `!!pwd` and `!!git status --short`, then retry or resume a blocked goal intentionally. [Sessions](sessions.md) explains recovery and safe verification.
+A client disconnect alone does not stop a WebSocket-hosted turn, but server shutdown does. Review the last assistant and tool states, verify the execution environment with `!!pwd` and `!!git status --short`, then retry intentionally. [Sessions](sessions.md) explains recovery and safe verification.

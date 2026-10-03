@@ -109,7 +109,7 @@ For attach mode, place the flag with the attach options:
 tau attach --no-client-tools ws://host.example:8787
 ```
 
-This disables both configured command tools and the TUI's built-in `diff_review` and `prefill_input`. It does not disable host tools, intrinsic `tau_docs`, or session goal tools.
+This disables both configured command tools and the TUI's built-in `diff_review` and `prefill_input`. It does not disable host tools or intrinsic `tau_docs`.
 
 Client tools are selected and advertised when the owning client starts and connects. `/reload` refreshes host-side session configuration and content but does not recreate the TUI or Telegram client's advertised tool set. Restart or reconnect the owning client after changing `clientTools`, `enabledClientTools`, or `--no-client-tools` behavior.
 

@@ -229,7 +229,7 @@ The runner's speech credentials and `speech.voiceId` are loaded at startup from 
 | --- | --- |
 | `/use_<projectId>` | Selects the project for future `/new` sessions. |
 | `/new` | Replaces the active session using the preferred project. |
-| `/status` | Reports session state, project, model, reasoning, context usage, cost, and goal. |
+| `/status` | Reports session state, project, model, reasoning, context usage, and cost. |
 | `/persona` | Switches persona while idle without losing history or starting a turn. |
 | `/effort_low` | Selects low reasoning for future turns. |
 | `/effort_medium` | Selects medium reasoning for future turns. |

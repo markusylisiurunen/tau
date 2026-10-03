@@ -6,13 +6,12 @@ Tool availability is captured when a logical turn starts. Persona changes, confi
 
 ## Tool categories
 
-Tau uses four distinct categories:
+Tau uses three distinct categories:
 
 | Category | Owner and availability |
 | --- | --- |
 | Persona-controlled host tools | The host binds implementations that operate against the session execution environment or host services. The active persona's `tools` list selects them. |
 | Intrinsic tools | Tau binds these outside persona allowlists. `tau_docs` is available to main agents and subagents. |
-| Main-session goal tools | `get_goal`, `create_goal`, and `update_goal` are always available to the main session, independently of the persona. They are not subagent tools. |
 | Client-provided tools | An attached client advertises and executes these. TUI-owned `diff_review` and `prefill_input` are examples. Configured command client tools use the same boundary. |
 
 A tool schema tells the model how to call a tool. It does not grant operating-system permissions. Host tools execute with the authority of the execution environment or the configured host service. Client tools execute with the authority of their owning client and may separately request commands in the execution environment. See [ownership and scope](ownership-and-scope.md) and [client tools](client-tools.md).
@@ -59,7 +58,7 @@ An empty list disables every persona-controlled host tool:
 tools: []
 ```
 
-It does not remove intrinsic `tau_docs` or the main-session goal tools. It also does not select client-provided tools, which are advertised independently by an observing client.
+It does not remove intrinsic `tau_docs`. It also does not select client-provided tools, which are advertised independently by an observing client.
 
 The `nook` name has an additional eligibility check: the effective host configuration must contain a Nook target. Without one, Tau does not register the tool even if the persona lists it. Other credentials and service configuration can affect what an enabled tool can do, but not whether its schema is selected. Persona configuration is covered in [personas](personas.md).
 
@@ -74,16 +73,6 @@ index.md
 ```
 
 Then follow paths linked by that page. The tool description also advertises built-in command-line tools with capability summaries and dedicated documentation paths. Agents may read those pages directly when a tool is relevant, without first loading the index. Use of these utilities is optional and depends on the execution environment's prerequisites. Unknown paths are rejected. The corpus describes supported Tau contracts, not the current effective configuration of a particular session, so use configuration inspection or debug output when the answer depends on local state.
-
-## Main-session goal tools
-
-The main agent always receives:
-
-- `get_goal`, which reads the persisted session goal or returns no goal.
-- `create_goal`, which creates an active goal only when the user or an active instruction explicitly requests one.
-- `update_goal`, which changes, completes, or blocks the current goal.
-
-These tools are outside persona allowlists because goal lifecycle is a session capability. They are not included in subagent registries or advertised by clients. Goal behavior is described in [sessions](sessions.md).
 
 ## Execution-environment tools
 
@@ -208,7 +197,7 @@ bash  write  edit  view_image  web  history  nook  mcp  models
 
 Tau inherits the intersection of the main persona’s tools and those nine eligible names. `tau_docs` is then added intrinsically. There is no separate child tool selection. Nook and MCP require configuration; MCP uses the parent's host connections.
 
-Subagents do not receive goal tools, subagent-management tools, or client-provided tools. Their Bash and file tools are scoped to the subagent working directory, including an alternate directory selected at launch. See [subagents](subagents.md) for configuration and working-directory context rebuilding.
+Subagents do not receive subagent-management tools or client-provided tools. Their Bash and file tools are scoped to the subagent working directory, including an alternate directory selected at launch. See [subagents](subagents.md) for configuration and working-directory context rebuilding.
 
 ## Client-owned tools
 
@@ -242,7 +231,7 @@ First identify which owner should provide it:
 - For a host tool, inspect the active persona's `tools`, effective host configuration, and service credentials.
 - For a subagent tool, inspect both the subagent's explicit list and the eligible inherited set.
 - For a client tool, confirm that an observing client advertises it and that client tools were not disabled.
-- For `tau_docs` or main-session goal tools, a missing schema indicates a runtime or version problem rather than a persona setting.
+- For `tau_docs`, a missing schema indicates a runtime or version problem rather than a persona setting.
 
 Then check the execution boundary named in the error. A path that exists on the TUI client may not exist in the execution environment. A command available in the host's `PATH` may not be available in the execution environment's login shell. Client process errors belong to the client machine, while `executionEnvironment.exec` errors belong to the session machine.
 

@@ -205,7 +205,6 @@ function createStatusSnapshot(overrides = {}) {
     sessionId: "tau-session",
     revision: 1,
     lifecycle: "idle",
-    goal: null,
     costTotal: 0.12345,
     settings: {
       personaId: "default",
@@ -985,7 +984,7 @@ describe("telegram adapter", () => {
     }
   });
 
-  it("reports composite project status, active goal state, and provision failures", async () => {
+  it("reports composite project status and provision failures", async () => {
     const apiHarness = createApiHarness([
       [
         {
@@ -1008,13 +1007,7 @@ describe("telegram adapter", () => {
     ]);
 
     const managerHarness = createSessionManagerHarness([], {
-      createSnapshot: () =>
-        createStatusSnapshot({
-          goal: {
-            objective: "A very long goal objective that must not appear in Telegram status output",
-            status: "active",
-          },
-        }),
+      createSnapshot: () => createStatusSnapshot(),
     });
 
     const adapter = await startAdapter({
@@ -1036,7 +1029,7 @@ describe("telegram adapter", () => {
         apiHarness.sendMessages.some((entry) => String(entry.text).includes("context usage")),
       );
       expect(apiHarness.sendMessages.map((entry) => entry.text)).toContain(
-        "your platform (alpha, beta) session s1 is waiting for input. it is pursuing a goal. it is using Claude Opus 4.6 with medium reasoning. context usage is 6.0% of 200k tokens. cumulative cost is $0.12.",
+        "your platform (alpha, beta) session s1 is waiting for input. it is using Claude Opus 4.6 with medium reasoning. context usage is 6.0% of 200k tokens. cumulative cost is $0.12.",
       );
 
       managerHarness.manager.emit({
@@ -1058,7 +1051,7 @@ describe("telegram adapter", () => {
     }
   });
 
-  it("preserves detailed status when there is no goal", async () => {
+  it("reports detailed session status", async () => {
     const chatId = 13;
     const apiHarness = createApiHarness([
       [
@@ -1429,12 +1422,7 @@ describe("telegram adapter", () => {
           state: "waiting-input",
           createdAt: "2024-01-01T00:00:00.000Z",
           updatedAt: "2024-01-01T00:00:00.000Z",
-          snapshot: createStatusSnapshot({
-            goal: {
-              objective: "A blocked goal objective that must not appear in Telegram status output",
-              status: "blocked",
-            },
-          }),
+          snapshot: createStatusSnapshot(),
         },
       ],
       {
@@ -1468,7 +1456,7 @@ describe("telegram adapter", () => {
         { mode: "auto" },
       );
       expect(apiHarness.sendMessages.map((entry) => entry.text)).toContain(
-        "your demo session restored-session is waiting for input. its goal is blocked. it is using Claude Opus 4.6 with medium reasoning. context usage is 6.0% of 200k tokens. cumulative cost is $0.12.",
+        "your demo session restored-session is waiting for input. it is using Claude Opus 4.6 with medium reasoning. context usage is 6.0% of 200k tokens. cumulative cost is $0.12.",
       );
       expect(apiHarness.sendMessages).toEqual(
         expect.arrayContaining([

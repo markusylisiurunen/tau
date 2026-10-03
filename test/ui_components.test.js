@@ -518,7 +518,6 @@ test("FooterComponent renders dense session status", () => {
     contextUsage: "↑578k ↓87k r58M w0 · 76.9%/372k",
     sessionCost: "$63.52",
     duration: "1m 1s",
-    pursuingGoal: false,
     autoSpeak: false,
   });
   const line = renderLines(footer, 120)[0];
@@ -567,7 +566,6 @@ test("FooterComponent renders activity instead of regular status", () => {
       contextUsage: "ctx 10/100",
       sessionCost: "$0.01",
       duration: "12s",
-      pursuingGoal: false,
       autoSpeak: false,
     });
     const regularText = renderText(footer, 120);
@@ -612,7 +610,6 @@ test("FooterComponent temporarily replaces regular status with a notice", () => 
     contextUsage: "ctx 10/100",
     sessionCost: "$0.01",
     duration: "12s",
-    pursuingGoal: false,
     autoSpeak: false,
   });
 
@@ -633,7 +630,7 @@ test("FooterComponent temporarily replaces regular status with a notice", () => 
   }
 });
 
-test("FooterComponent animates active goal work and settles after completion", () => {
+test("FooterComponent animates active work and settles after completion", () => {
   vi.useFakeTimers();
   const theme = createTagTheme();
   const ui = { requestRender() {} };
@@ -644,19 +641,17 @@ test("FooterComponent animates active goal work and settles after completion", (
     contextUsage: "ctx 10/100",
     sessionCost: "$0.01",
     duration: "24s",
-    pursuingGoal: true,
     autoSpeak: false,
   });
 
   try {
     const idleLine = renderLines(footer, 120)[0];
-    expect(idleLine).not.toContain("goal");
     expect(idleLine).toContain("<textDim>24s · ~/Code/tau-one · ctx 10/100 · $0.01</textDim>");
 
     footer.startWorkingIcon();
     const activeLine = renderLines(footer, 120)[0];
     expect(activeLine).toContain(
-      "<brandAccent>⠋</brandAccent> <brandAccent>goal</brandAccent> <textDim>·</textDim> <textDim>24s · ~/Code/tau-one · ctx 10/100 · $0.01</textDim>",
+      "<brandAccent>⠋</brandAccent> <textDim>24s · ~/Code/tau-one · ctx 10/100 · $0.01</textDim>",
     );
 
     footer.stop();
@@ -732,7 +727,6 @@ test("FooterComponent compacts cwd before truncating the complete status", () =>
     contextUsage: "ctx",
     sessionCost: "$0.01",
     duration: "12s",
-    pursuingGoal: false,
     autoSpeak: false,
   });
 
@@ -746,7 +740,6 @@ test("FooterComponent compacts cwd before truncating the complete status", () =>
     contextUsage: "this is a very long context usage string",
     sessionCost: "$0.01",
     duration: "12s",
-    pursuingGoal: false,
     autoSpeak: false,
   });
 

@@ -4,12 +4,12 @@ import { fileTypeFromBuffer } from "file-type";
 import sharp from "sharp";
 import { z } from "zod";
 import { getGoogleApiKey, getOpenAIApiKey } from "../config/schema.js";
+import { mediaValidationConstraint } from "../utils/media_validation.js";
 import type { RunToolCommandOptions } from "./cli.js";
 import { ToolCliError } from "./errors.js";
 import {
   describeMediaError,
   mediaRequest,
-  mediaValidationConstraint,
   parseMediaArgs,
   prepareMediaOutput,
   publishMediaArtifact,

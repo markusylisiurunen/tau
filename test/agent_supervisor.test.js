@@ -94,12 +94,12 @@ describe("AgentSupervisor", () => {
         }),
       );
       expect(spawned.ok).toBe(true);
-      const tool = getRecord(supervisor, spawned.state.id).runtime.spec.tools.get("mcp");
+      const tool = getRecord(supervisor, spawned.state.id).runtime.spec.tools.get("code");
       const result = await tool.execute(
         {
           id: "mcp-call",
-          name: "mcp",
-          arguments: { code: "console.log(await mcp.listServers())" },
+          name: "code",
+          arguments: { code: "printText(JSON.stringify(await tau.mcp.listServers()))" },
         },
         {
           agentId: spawned.state.id,
@@ -114,7 +114,7 @@ describe("AgentSupervisor", () => {
       expect(mcp.listServers).toHaveBeenCalledOnce();
       const excluded = supervisor.spawn(createSpawnOptions({ mcp }));
       expect(
-        getRecord(supervisor, excluded.state.id).runtime.spec.tools.get("mcp"),
+        getRecord(supervisor, excluded.state.id).runtime.spec.tools.get("code"),
       ).toBeUndefined();
     } finally {
       supervisor.reset();
@@ -140,7 +140,7 @@ describe("AgentSupervisor", () => {
     expect(spawned.ok).toBe(true);
     if (!spawned.ok) throw new Error(spawned.reason);
     expect(getRecord(supervisor, spawned.state.id).runtime.spec.tools.schemas).toEqual([
-      expect.objectContaining({ name: "history" }),
+      expect.objectContaining({ name: "code" }),
       expect.objectContaining({ name: "tau_docs" }),
     ]);
     supervisor.reset();

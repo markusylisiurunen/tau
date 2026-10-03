@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { runInNewContext } from "node:vm";
 import { describe, expect, it, vi } from "vitest";
+import { createHistoryCapability } from "../dist/core/code_mode/history.js";
 import { resolveHistoryRemoteTarget } from "../dist/core/history/config.js";
 import { HistoryManager } from "../dist/core/history/history_manager.js";
 import { LocalHistoryStore } from "../dist/core/history/local_history_store.js";
@@ -18,7 +19,7 @@ import {
   toolHistoryEntry,
   userHistoryEntry,
 } from "../dist/core/history/transcript.js";
-import { createHistoryToolDefinition } from "../dist/core/tools/history.js";
+import { createCapabilityTool } from "./helpers/code_mode.js";
 
 vi.mock("../dist/history/worker/viewer.js", () => ({
   default: readFileSync(new URL("../dist/history/worker/viewer.js", import.meta.url), "utf8"),
@@ -2587,15 +2588,15 @@ describe("session history", () => {
         throw new Error("not used");
       }),
     };
-    const tool = createHistoryToolDefinition(createBackend(), history);
+    const tool = createCapabilityTool(createBackend(), createHistoryCapability(history));
     const result = await runTool(
       tool,
       [
-        'const page = await history.search({ query: "sqlite", attributes: { repository: { contains: "tau" } } });',
-        "console.log(page.sessions[0].sessionId);",
-        "console.log(typeof Date.now(), Number.isFinite(new Date().getTime()), Math.random() >= 0 && Math.random() < 1);",
+        'const page = await tau.history.search({ query: "sqlite", attributes: { repository: { contains: "tau" } } });',
+        "printText(page.sessions[0].sessionId);",
+        'printText([typeof Date.now(),  Number.isFinite(new Date().getTime()),  Math.random() >= 0 && Math.random() < 1].join(" "));',
         "const DerivedDate = new Date().constructor;",
-        "console.log(DerivedDate === Date, Object.getPrototypeOf(new Date()) === Date.prototype, typeof DerivedDate(), new DerivedDate() instanceof Date, Object.isFrozen(Date), Object.isFrozen(Date.prototype));",
+        'printText([DerivedDate === Date,  Object.getPrototypeOf(new Date()) === Date.prototype,  typeof DerivedDate(),  new DerivedDate() instanceof Date,  Object.isFrozen(Date),  Object.isFrozen(Date.prototype)].join(" "));',
       ].join("\n"),
     );
 
@@ -2611,7 +2612,7 @@ describe("session history", () => {
       expect.any(AbortSignal),
     );
 
-    const excessiveLimit = await runTool(tool, "await history.search({ limit: 76 });");
+    const excessiveLimit = await runTool(tool, "await tau.history.search({ limit: 76 });");
     expect(toolText(excessiveLimit)).toContain("expected number to be <=75");
     expect(history.search).toHaveBeenCalledTimes(1);
   });

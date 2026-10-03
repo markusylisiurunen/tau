@@ -375,11 +375,13 @@ const tickets = createTauCodeModeClientTool({
 });
 ```
 
-Pass `tickets` in `clientTools`. Generated code receives the declared API namespace, progressively disclosed `docs`, console output, the asynchronous `image(block)` output helper, live `Date` and `Math`, and agent-scoped scratch files when invoked as a client tool. API calls cross a bounded JSON bridge. The submitted code appears, concisely truncated and character-wrapped, as the running and terminal tool-card subject. The tool description remains explicit caller input; the builder is optional.
+Pass `tickets` in `clientTools`. Generated code receives the declared API namespace, progressively disclosed `docs`, `printText`, the asynchronous `printImage` output helper, `truncate` and `truncateLines`, and live `Date` and `Math`. API calls cross a bounded JSON bridge. The submitted code appears, concisely truncated and character-wrapped, as the running and terminal tool-card subject. The tool description remains explicit caller input; the builder is optional.
 
-Use `await image({ type: "image", data, mimeType })` to forward a base64 image. Successful code-mode results contain an ordered `content` array of text/image blocks. SDK client tools preserve that order: adjacent console writes form one text block, and each awaited image separates the preceding and following text. The helper validates and prepares JPEG, PNG, or WebP images outside the sandbox, creates no files, and shares the limits described in [tools](tools.md).
+Use `await printImage({ data, mimeType })` to forward a base64 image. Successful code-mode results contain an ordered `content` array of text/image blocks. SDK client tools preserve that order: adjacent text writes form one text block, and each awaited image separates the preceding and following text. The helper validates and prepares JPEG, PNG, or WebP images outside the sandbox, creates no files, and shares the limits described in [tools](tools.md).
 
-The SDK also exports `executeTauCodeMode` for standalone execution. The separate `@markusylisiurunen/tau/code-mode` entry point additionally exports file-capability types, `runTauClientToolCommand`, and `runTauCodeModeCommand` for command-backed tools. Use the helpers instead of implementing their framing manually.
+Code-mode tool calls and standalone execution accept optional `maxOutputTokens` (1 through 65,536), with an 8,192-token default text budget. Output persistence is opt-in through the definition's `persistOutput` callback.
+
+The SDK also exports `executeTauCodeMode` for standalone execution. The separate `@markusylisiurunen/tau/code-mode` entry point additionally exports `runTauClientToolCommand`, and `runTauCodeModeCommand` for command-backed tools. Use the helpers instead of implementing their framing manually.
 
 ## Cancel and close deliberately
 

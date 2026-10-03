@@ -7,14 +7,12 @@ import type { SubagentToolName } from "../subagents/types.js";
 import type { Persona } from "../types.js";
 import { createBashToolDefinition } from "./bash.js";
 import { BashJobRegistry, createBashJobToolDefinitions } from "./bash_jobs.js";
+import { createCodeToolDefinition } from "./code.js";
 import { createEditToolDefinition } from "./edit.js";
 import { scopeToolExecutionBackend, type ToolExecutionBackend } from "./execution_backend.js";
 import { createGoalToolDefinitions, type GoalManager } from "./goal.js";
-import { createHistoryToolDefinition } from "./history.js";
 import { createInterruptAgentToolDefinition } from "./interrupt_agent.js";
 import { createListAgentsToolDefinition } from "./list_agents.js";
-import { createMcpToolDefinition } from "./mcp.js";
-import { createNookToolDefinition } from "./nook.js";
 import { ToolRegistry } from "./registry.js";
 import { createSendInputToAgentToolDefinition } from "./send_input_to_agent.js";
 import { createSpawnAgentToolDefinition, type ResolveSubagentPrompt } from "./spawn_agent.js";
@@ -22,16 +20,11 @@ import { createTauDocsToolDefinition } from "./tau_docs.js";
 import {
   TOOL_NAME_BASH,
   TOOL_NAME_EDIT,
-  TOOL_NAME_HISTORY,
-  TOOL_NAME_MCP,
-  TOOL_NAME_NOOK,
   TOOL_NAME_VIEW_IMAGE,
-  TOOL_NAME_WEB,
   TOOL_NAME_WRITE,
 } from "./tool_names.js";
 import { createViewImageToolDefinition } from "./view_image.js";
 import { createWaitForAgentsToolDefinition } from "./wait_for_agents.js";
-import { createWebToolDefinition } from "./web.js";
 import { createWriteToolDefinition } from "./write.js";
 
 export const ToolCatalog = {
@@ -80,8 +73,6 @@ export const ToolCatalog = {
       createWriteToolDefinition(options.backend),
       createEditToolDefinition(options.backend),
       createViewImageToolDefinition(options.backend),
-      createWebToolDefinition(options.backend, options.config),
-      createHistoryToolDefinition(options.backend, options.history),
       createSpawnAgentToolDefinition({
         backend: options.backend,
         supervisor: options.supervisor,
@@ -102,15 +93,11 @@ export const ToolCatalog = {
       createListAgentsToolDefinition(options.supervisor),
       createInterruptAgentToolDefinition(options.supervisor),
     ];
-    if (options.mcp?.available) {
-      tools.push(createMcpToolDefinition(options.backend, options.mcp));
-    }
-    if (options.config.nook) {
-      tools.push(createNookToolDefinition(options.backend, options.config));
-    }
+    const code = createCodeToolDefinition({ ...options, allowedTools: options.persona.tools });
     const enabledToolNames = new Set<string>(options.persona.tools);
     return new ToolRegistry([
       ...tools.filter((tool) => enabledToolNames.has(tool.schema.name)),
+      ...(code ? [code] : []),
       ...(enabledToolNames.has(TOOL_NAME_BASH)
         ? createBashJobToolDefinitions(options.bashJobs)
         : []),
@@ -148,27 +135,21 @@ export const ToolCatalog = {
         case TOOL_NAME_VIEW_IMAGE:
           definitions.push(createViewImageToolDefinition(scopedBackend));
           break;
-        case TOOL_NAME_WEB:
-          definitions.push(createWebToolDefinition(scopedBackend, config));
-          break;
-        case TOOL_NAME_NOOK:
-          if (config.nook) {
-            definitions.push(createNookToolDefinition(scopedBackend, config));
-          }
-          break;
-        case TOOL_NAME_MCP:
-          if (mcp?.available) {
-            definitions.push(createMcpToolDefinition(scopedBackend, mcp));
-          }
-          break;
-        case TOOL_NAME_HISTORY:
-          if (!history) {
-            throw new Error("history query is required when history is enabled for a subagent");
-          }
-          definitions.push(createHistoryToolDefinition(scopedBackend, history));
-          break;
       }
     }
-    return new ToolRegistry([...definitions, createTauDocsToolDefinition()]);
+    const code = createCodeToolDefinition({
+      backend: scopedBackend,
+      cwd,
+      allowedTools,
+      config,
+      bashJobs,
+      history,
+      mcp,
+    });
+    return new ToolRegistry([
+      ...definitions,
+      ...(code ? [code] : []),
+      createTauDocsToolDefinition(),
+    ]);
   },
 };

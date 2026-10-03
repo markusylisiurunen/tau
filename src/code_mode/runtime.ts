@@ -9,25 +9,24 @@ import { bytesToTokens } from "../core/utils/token.js";
 import { formatBytes, truncateForTokens } from "../core/utils/truncate.js";
 import { SESSION_PROTOCOL_MAX_CLIENT_TOOL_IMAGES } from "../protocol/session_protocol.js";
 import type { TauSdkClientToolExecutionEnvironment } from "../sdk/types.js";
-import {
-  createTauCodeModeFilesApi,
-  TAU_CODE_MODE_MAX_FILES,
-  TAU_CODE_MODE_MAX_TOTAL_FILE_BYTES,
-  type TauCodeModeFilesOptions,
-} from "./files.js";
 import { CODE_MODE_MAX_IMAGE_PIXELS, prepareCodeModeImage } from "./images.js";
 import { CodeModeOutput } from "./output.js";
 
 export const TAU_CODE_MODE_DEFAULT_TIMEOUT_MS = 60_000;
-export const TAU_CODE_MODE_MAX_OUTPUT_TOKENS = 8_192;
+export const TAU_CODE_MODE_DEFAULT_MAX_OUTPUT_TOKENS = 8_192;
+export const TAU_CODE_MODE_MAX_OUTPUT_TOKENS = 65_536;
+export const CODE_MODE_MAX_OUTPUT_TOKENS_DESCRIPTION =
+  "Optional maximum number of estimated output tokens to return. Defaults to 8192. Leave unset unless more output is genuinely needed; prefer printing selected results. Do not set speculatively or just in case. When needed, request 8192 through 16384 tokens. Only exceed 16384 when the user explicitly requests more output, up to 65536. Output exceeding the limit is middle-truncated. Side effects have already happened; read saved output rather than rerunning operations with side effects.";
 
 const sandboxRunnerUrl = new URL("../core/static/code_mode/sandbox_runner.mjs", import.meta.url);
 const javascriptIdentifierPattern = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 const reservedNames = new Set([
   ...Object.getOwnPropertyNames(globalThis),
   "docs",
-  "files",
-  "image",
+  "printText",
+  "printImage",
+  "truncate",
+  "truncateLines",
 ]);
 const unsafeApiKeys = new Set(["__proto__", "constructor", "prototype"]);
 
@@ -105,10 +104,10 @@ export type TauCodeModeDefinition = {
 
 export type ExecuteTauCodeModeOptions = TauCodeModeDefinition & {
   code: string;
+  maxOutputTokens?: number;
   signal?: AbortSignal;
   invocation?: TauCodeModeInvocation | null;
   executionEnvironment?: TauSdkClientToolExecutionEnvironment | null;
-  files?: TauCodeModeFilesOptions;
 };
 
 export type TauCodeModeResult = {
@@ -119,24 +118,6 @@ export type BuildTauCodeModeToolDescriptionOptions = {
   name: string;
   description: string;
 };
-
-export function createTauCodeModeExecutionEnvironmentFiles(
-  agentId: string,
-  executionEnvironment: TauSdkClientToolExecutionEnvironment,
-): TauCodeModeFilesOptions {
-  return {
-    agentId,
-    adapter: {
-      runNodeScript: async (script, options) =>
-        await executionEnvironment.exec('exec "$0" "$@"', {
-          args: ["node", "-e", script],
-          stdin: Buffer.from(options.input),
-          signal: options.signal,
-          maxCaptureBytes: options.maxCaptureBytes,
-        }),
-    },
-  };
-}
 
 type RegisteredMethod = {
   id: number;
@@ -169,7 +150,7 @@ export function buildTauCodeModeToolDescription({
   return [
     trimmedDescription,
     "When this tool is useful, first check whether its documentation is already visible in the conversation context.",
-    "If it is not, your first call must be a documentation-only program that does nothing except print docs with console.log(docs).",
+    "If it is not, your first call must be a documentation-only program that does nothing except print docs with printText(docs).",
     `Read the returned documentation before writing a later tool call that uses ${name}.`,
     "Once the documentation is visible, use the API normally without reloading it, and do not guess API signatures.",
   ].join(" ");
@@ -208,28 +189,23 @@ export async function runTauCodeMode(
     throw new Error("code-mode documentation must not be empty");
   }
   validateTimeout(options.timeoutMs);
+  validateMaxOutputTokens(options.maxOutputTokens);
 
   const apiMethods = registerMethods(options.api, options.name);
-  const filesMethods = options.files
-    ? registerMethods(createTauCodeModeFilesApi(options.files), "files", apiMethods.length)
-    : [];
-  const apis: RegisteredApi[] = [
-    { name: options.name, methods: apiMethods },
-    ...(filesMethods.length > 0 ? [{ name: "files", methods: filesMethods }] : []),
-  ];
+  const apis: RegisteredApi[] = [{ name: options.name, methods: apiMethods }];
   const methods = apis.flatMap((api) => api.methods);
   const orderedOutput = new CodeModeOutput();
   let imageCount = 0;
   const imageMethodId = methods.length;
   methods.push({
     id: imageMethodId,
-    apiName: "image",
+    apiName: "printImage",
     path: [],
     handler: async (args, context) => {
-      if (args.length !== 1) throw new Error("image() expects exactly one image block.");
+      if (args.length !== 1) throw new Error("printImage() expects exactly one image block.");
       if (imageCount >= SESSION_PROTOCOL_MAX_CLIENT_TOOL_IMAGES) {
         throw new Error(
-          `image() allows at most ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_IMAGES} images per program.`,
+          `printImage() allows at most ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_IMAGES} images per program.`,
         );
       }
       imageCount += 1;
@@ -250,12 +226,7 @@ export async function runTauCodeMode(
   const invocation = options.invocation ?? null;
   const executionEnvironment = options.executionEnvironment ?? null;
   const signal = options.signal ?? new AbortController().signal;
-  const docs = buildRuntimeDocumentation(
-    options.name,
-    options.documentation,
-    timeoutMs,
-    filesMethods.length > 0,
-  );
+  const docs = buildRuntimeDocumentation(options.name, options.documentation, timeoutMs);
   const startedAt = Date.now();
   let execution: TauCodeModeExecutionCapture;
   try {
@@ -305,7 +276,7 @@ export async function runTauCodeMode(
   const rawOutput = orderedOutput.text;
   const output = appendTerminationNote(rawOutput, execution, timeoutMs);
   const projection = truncateForTokens(output, {
-    maxTokens: TAU_CODE_MODE_MAX_OUTPUT_TOKENS,
+    maxTokens: options.maxOutputTokens ?? TAU_CODE_MODE_DEFAULT_MAX_OUTPUT_TOKENS,
     strategy: "middle",
   });
 
@@ -367,6 +338,39 @@ function validateTimeout(timeoutMs: number | undefined): void {
   if (timeoutMs !== undefined && (!Number.isInteger(timeoutMs) || timeoutMs <= 0)) {
     throw new Error("code-mode timeoutMs must be a positive integer");
   }
+}
+
+function validateMaxOutputTokens(value: unknown): void {
+  if (
+    value !== undefined &&
+    (typeof value !== "number" ||
+      !Number.isInteger(value) ||
+      value < 1 ||
+      value > TAU_CODE_MODE_MAX_OUTPUT_TOKENS)
+  ) {
+    throw new Error(
+      `maxOutputTokens must be an integer from 1 to ${TAU_CODE_MODE_MAX_OUTPUT_TOKENS}`,
+    );
+  }
+}
+
+export function parseCodeModeArguments(value: unknown): {
+  code: string;
+  maxOutputTokens?: number;
+} {
+  if (!isPlainObject(value)) throw new Error("code-mode arguments must be an object");
+  const args = value as Record<string, unknown>;
+  if (
+    typeof args.code !== "string" ||
+    !args.code.trim() ||
+    Object.keys(args).some((key) => key !== "code" && key !== "maxOutputTokens")
+  ) {
+    throw new Error(
+      "code-mode arguments require a non-empty code string and optional maxOutputTokens",
+    );
+  }
+  validateMaxOutputTokens(args.maxOutputTokens);
+  return { code: args.code, maxOutputTokens: args.maxOutputTokens as number | undefined };
 }
 
 function registerMethods(api: TauCodeModeApi, apiName: string, firstId = 0): RegisteredMethod[] {
@@ -456,31 +460,24 @@ function serializeBridgeResult(value: unknown, name: string, path: string[]): st
   return json;
 }
 
-function buildRuntimeDocumentation(
-  name: string,
-  documentation: string,
-  timeoutMs: number,
-  hasFiles: boolean,
-): string {
+function buildRuntimeDocumentation(name: string, documentation: string, timeoutMs: number): string {
   return [
     "# Code-mode runtime",
     "",
     "## Available globals",
     "",
     `- \`${name}\`: the explicitly exposed API documented below.`,
-    ...(hasFiles
-      ? ["- `files`: shared UTF-8 scratch files for this agent, documented below."]
-      : []),
-    "- `docs`: this document.",
-    "- `console`: text output through `debug`, `error`, `info`, `log`, and `warn`.",
-    "- `await image(block)`: explicitly forwards an image block to the model, documented below.",
+    "- `printText(text)`: emits a string to the model.",
+    "- `await printImage(block)`: emits a validated base64 image to the model.",
+    "- `truncate(text, { maxChars, position? })`: bounds Unicode characters, including an omission marker.",
+    "- `truncateLines(text, { maxLines, position? })`: bounds lines, including an omission marker.",
+    "Truncation position is `middle` (default), `start` (keep the start), or `end` (keep the end). Limits must be positive integers.",
     "- `Date`: standard date handling with live current-time access.",
     "- `Math`: standard math operations, including `Math.random()`.",
     "",
-    "Top-level `await` is supported. The program return value is ignored; console output and explicitly forwarded images are returned.",
-    hasFiles
-      ? "Generated code has no direct process, environment, network, credential, import, timer, or `fetch` access. Filesystem access is limited to the `files` scratch API."
-      : "Generated code has no direct filesystem, process, environment, network, credential, import, timer, or `fetch` access.",
+    "Top-level `await` is supported. Methods on the exposed API return promises; await them before using their results. TypeScript blocks in capability references describe signatures and data shapes; write programs in JavaScript.",
+    "Each tool call starts a fresh program. Variables do not persist between calls; supply required values again. The program return value is ignored; printed text and explicitly forwarded images are returned.",
+    "Generated code has no direct filesystem, process, environment, network, credential, import, timer, or fetch access. Use explicitly exposed capabilities.",
     "",
     "## API limits",
     "",
@@ -488,51 +485,36 @@ function buildRuntimeDocumentation(
     "Undefined object properties are omitted from API arguments. Undefined arguments and array entries remain invalid.",
     `A program may make at most ${CODE_MODE_MAX_BRIDGE_REQUESTS} API calls, with at most ${CODE_MODE_MAX_CONCURRENT_BRIDGE_REQUESTS} unresolved calls concurrently. Exceeding these limits fails the program.`,
     `The program must finish within ${formatDuration(timeoutMs)}.`,
-    ...(hasFiles
-      ? [
-          "",
-          "## Scratch files",
-          "",
-          "Scratch files are temporary files shared by every code-mode tool for this agent. Returned absolute paths can be used by Bash and other tools. Do not rely on scratch files for durable storage.",
-          "",
-          "- `await files.write(name, content)` atomically writes UTF-8 text and returns `{ path, bytes }`.",
-          "- `await files.read(name)` reads the current file as UTF-8 text.",
-          "- `await files.list()` returns `{ files, totalFiles, totalBytes }`; each file has `{ name, path, bytes }`.",
-          "- `await files.remove(name)` removes a file and returns `{ path }`.",
-          "",
-          `Names must be single UTF-8 basenames of at most 255 bytes. \`files.write()\` rejects changes above ${TAU_CODE_MODE_MAX_FILES} regular files or ${TAU_CODE_MODE_MAX_TOTAL_FILE_BYTES / (1024 * 1024)} MiB total; Bash-created over-limit contents remain visible and removable.`,
-        ]
-      : []),
     "",
     "## Output",
     "",
-    `Output is middle-truncated above roughly ${TAU_CODE_MODE_MAX_OUTPUT_TOKENS.toLocaleString("en-US")} tokens. Print only information needed for the task.`,
+    CODE_MODE_MAX_OUTPUT_TOKENS_DESCRIPTION,
     "",
-    "Print only relevant parts of API responses, not entire objects or large collections. Filter, select, or summarize before printing. Prefer concise, readable plain text over JSON unless the structure itself matters. Keep identifiers and other fields needed for follow-up actions. Printed output consumes conversation context.",
+    "Print only relevant parts of API responses, not entire objects or large collections. Filter, select, or summarize before printing. Prefer concise, readable plain text: labels, lines, and selected fields usually use fewer tokens than JSON envelopes and metadata. Use JSON when the structure itself matters or machine-readable output is requested. Keep identifiers and other fields needed for follow-up actions. Printed output consumes conversation context.",
     "",
     "For example, print selected fields rather than whole objects:",
     "",
     "```js",
-    'console.log(items.map(item => item.id + ": " + item.title).join("\\n"));',
+    'printText(items.map(item => item.id + ": " + item.title).join("\\n"));',
     "```",
     "",
     "When a response contains text blocks, print their text rather than serializing the surrounding objects:",
     "",
     "```js",
-    "console.log(blocks",
+    "printText(blocks",
     '  .filter(block => block.type === "text")',
     "  .map(block => block.text)",
     '  .join("\\n\\n"));',
     "```",
     "",
-    "These examples illustrate output formatting, not API signatures. Use the documented response shape. Forward relevant images with `await image(block)`; never print their base64 data.",
+    "These examples illustrate output formatting, not API signatures. Use the documented response shape. Forward relevant images with `await printImage(block)`; never print their base64 data.",
     "",
     "## Images",
     "",
-    'Use `await image({ type: "image", data, mimeType })` to forward a base64-encoded image block returned by any API. Images are never forwarded automatically. Do not print base64 data.',
+    'Use `await printImage({ type: "image", data, mimeType })` to forward a base64-encoded image block returned by any API. Images are never forwarded automatically. Do not print base64 data.',
     "Await each call so validation and preparation finish before the program exits. Invalid blocks reject and can be caught. No files are created.",
     `Supported MIME types are image/jpeg, image/png, and image/webp. Each image block, including its base64 data, must fit within ${formatBytes(CODE_MODE_MAX_BRIDGE_PAYLOAD_BYTES)}, and source images cannot exceed ${CODE_MODE_MAX_IMAGE_PIXELS / 1_000_000} megapixels. At most ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_IMAGES} images can be forwarded per program. Images are validated against their actual bytes and resized or re-encoded to fit the model's image limits.`,
-    "Console text and images are returned as ordered content blocks. Adjacent console writes form one text block; each awaited image stays between the text printed before and after it. Text truncation keeps images in their original positions. Complete the program successfully to ensure all outputs are returned.",
+    "Printed text and images are returned as ordered content blocks. Adjacent text writes form one text block; each awaited image stays between the text printed before and after it. Text truncation keeps images in their original positions. Complete the program successfully to ensure all outputs are returned.",
     "",
     documentation.trim(),
   ].join("\n");

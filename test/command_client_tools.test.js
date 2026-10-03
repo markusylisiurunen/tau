@@ -1,12 +1,8 @@
-import { createHash, randomUUID } from "node:crypto";
-import { rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { PassThrough } from "node:stream";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { createCommandClientTools } from "../dist/core/client_tools/command_client_tools.js";
-import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
 import {
   TAU_CLIENT_TOOL_COMMAND_MAX_PROTOCOL_FRAME_BYTES,
   TAU_CLIENT_TOOL_COMMAND_MAX_PROTOCOL_FRAMES,
@@ -146,7 +142,7 @@ describe("command client tools", () => {
       }),
     ]);
     const code =
-      'console.log("1"); for (let i = 0; i < 16; i++) await image(await screenshots.take()); console.error("2")';
+      'printText("1"); for (let i = 0; i < 16; i++) await printImage(await screenshots.take()); printText("2")';
     const result = await executeClientTool(tool, { code }, createContext());
     expect(result).toEqual({
       content: [{ type: "text", text: "1" }, ...Array(16).fill(block), { type: "text", text: "2" }],
@@ -222,66 +218,6 @@ describe("command client tools", () => {
         details: [{ text: "Desktop notifications are disabled", tone: "removed" }],
       },
     });
-  });
-
-  it("carries large scratch-file operations outside the stderr capture budget", async () => {
-    const script = [
-      `import { runTauCodeModeCommand } from ${JSON.stringify(codeModeModuleUrl)};`,
-      "await runTauCodeModeCommand({",
-      '  name: "linear",',
-      '  documentation: "# Linear API",',
-      "  api: { echo: async ([value]) => value },",
-      "});",
-    ].join("\n");
-    const [tool] = createCommandClientTools([
-      createConfig({
-        name: "linear",
-        parameters: {
-          type: "object",
-          properties: { code: { type: "string" } },
-          required: ["code"],
-          additionalProperties: false,
-        },
-        command: process.execPath,
-        args: ["--input-type=module", "--eval", script],
-        executionTimeoutMs: 15_000,
-      }),
-    ]);
-    const backend = createLocalToolExecutionBackend();
-    const executionEnvironment = {
-      exec: (command, options) => backend.runBash(command, options),
-    };
-    const agentId = `test-${randomUUID()}`;
-    const scope = createHash("sha256").update(agentId).digest("hex").slice(0, 32);
-    const root = join(tmpdir(), `tau-code-mode-files-${scope}`);
-
-    try {
-      const result = await executeClientTool(
-        tool,
-        {
-          code: [
-            'const first = await files.write("first.txt", "x".repeat(900 * 1024));',
-            'const second = await files.write("second.txt", "y".repeat(900 * 1024));',
-            'const content = await files.read("first.txt");',
-            "console.log({ first, second, length: content.length });",
-          ].join("\n"),
-        },
-        createContext({ agentId, executionEnvironment }),
-      );
-      const output = JSON.parse(result.content[0].text);
-
-      expect(dirname(output.first.path)).toBe(root);
-      expect(output).toMatchObject({
-        first: { bytes: 900 * 1024 },
-        second: { bytes: 900 * 1024 },
-        length: 900 * 1024,
-      });
-      expect(output.first.path).not.toBe(output.second.path);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-      rmSync(`${root}-staging`, { recursive: true, force: true });
-      await backend.dispose();
-    }
   });
 
   it("inherits the TUI process cwd and environment unchanged", async () => {

@@ -308,8 +308,16 @@ Ship &lt;all&gt; requirements
       config: { nook: { domain: "nook.example.com" } },
     });
 
+    expect(configuredWithoutPersona.agent.spec.tools.get("code").schema.description).not.toContain(
+      "tau.nook",
+    );
+    expect(personaWithoutConfig.agent.spec.tools.get("code").schema.description).not.toContain(
+      "tau.nook",
+    );
+    expect(enabled.agent.spec.tools.get("code").schema.description).toContain("tau.nook");
     expect(configuredWithoutPersona.agent.spec.tools.schemas.map((tool) => tool.name)).toEqual([
       "bash",
+      "code",
       "list_bash_jobs",
       "read_bash_job",
       "stop_bash_job",
@@ -321,6 +329,7 @@ Ship &lt;all&gt; requirements
     ]);
     expect(personaWithoutConfig.agent.spec.tools.schemas.map((tool) => tool.name)).toEqual([
       "bash",
+      "code",
       "list_bash_jobs",
       "read_bash_job",
       "stop_bash_job",
@@ -332,7 +341,7 @@ Ship &lt;all&gt; requirements
     ]);
     expect(enabled.agent.spec.tools.schemas.map((tool) => tool.name)).toEqual([
       "bash",
-      "nook",
+      "code",
       "list_bash_jobs",
       "read_bash_job",
       "stop_bash_job",

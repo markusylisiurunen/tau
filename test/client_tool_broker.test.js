@@ -34,8 +34,8 @@ async function runTool(tool, toolCall, signal = new AbortController().signal, em
 }
 
 describe("ClientToolBroker", () => {
-  it("reserves history and tau_docs for the host", () => {
-    expect(HOST_TOOL_NAMES).toEqual(expect.arrayContaining(["history", "tau_docs"]));
+  it("reserves code and tau_docs for the host", () => {
+    expect(HOST_TOOL_NAMES).toEqual(expect.arrayContaining(["code", "tau_docs"]));
   });
 
   it.each(HOST_TOOL_NAMES)("rejects client tools that duplicate the %s host tool", (name) => {

@@ -79,7 +79,7 @@ it.each([
       },
     };
     try {
-      const id = jobId(await jobs.start(backend, "ServerCommand", "/Workspace", context().signal));
+      const id = await jobs.start(backend, "ServerCommand", "/Workspace", context().signal);
       await jobs.waitForIdle();
       for (const tool of createBashJobToolDefinitions(jobs)) {
         const name = tool.schema.name;
@@ -150,7 +150,7 @@ it.each([
     },
   };
   try {
-    const id = jobId(await jobs.start(backend, "command", "/Workspace", context().signal));
+    const id = await jobs.start(backend, "command", "/Workspace", context().signal);
     await jobs.waitForIdle();
     const expectedText = `\`${id}\` · command\nsucceeded\ncwd /Workspace\nexit 0\n\n${output}`;
     for (const tool of createBashJobToolDefinitions(jobs)) {
@@ -213,9 +213,7 @@ for (const kind of ["local", "Sprite"]) {
         const waiting = jobs.wait([id], 60_000, wait.signal, true);
         wait.abort();
         await expect(waiting).rejects.toBeDefined();
-        const second = jobId(
-          await other.start(backend, "sleep 100", process.cwd(), context().signal),
-        );
+        const second = await other.start(backend, "sleep 100", process.cwd(), context().signal);
         const stopTool = createBashJobToolDefinitions(jobs).find(
           (tool) => tool.schema.name === "stop_bash_job",
         );
@@ -227,13 +225,11 @@ for (const kind of ["local", "Sprite"]) {
         expect(stopped.content[0].text).toContain("Command was cancelled.");
         expect(stopped.content[0].text).not.toContain("\nready");
         expect(other.format([second])).toContain("running");
-        const output = jobId(
-          await jobs.start(
-            backend,
-            'node -e \'process.stdout.write("x".repeat(100000) + "TAIL")\'',
-            process.cwd(),
-            context().signal,
-          ),
+        const output = await jobs.start(
+          backend,
+          'node -e \'process.stdout.write("x".repeat(100000) + "TAIL")\'',
+          process.cwd(),
+          context().signal,
         );
         const result = await jobs.wait([output], 5000, context().signal, true);
         expect(result).toContain("TAIL");
@@ -251,13 +247,11 @@ for (const kind of ["local", "Sprite"]) {
       const backend = createBackend();
       const jobs = new BashJobRegistry();
       try {
-        const id = jobId(
-          await jobs.start(
-            backend,
-            "bash -c 'trap \"\" TERM; echo $$; exec sleep 100' & wait",
-            process.cwd(),
-            context().signal,
-          ),
+        const id = await jobs.start(
+          backend,
+          "bash -c 'trap \"\" TERM; echo $$; exec sleep 100' & wait",
+          process.cwd(),
+          context().signal,
         );
         let pid;
         await vi.waitFor(() => {
@@ -285,9 +279,7 @@ for (const kind of ["local", "Sprite"]) {
 it("defaults waits to 60 seconds, validates the cap, and retains a running job on expiry", async () => {
   const jobs = new BashJobRegistry();
   const backend = createLocalToolExecutionBackend();
-  const id = jobId(
-    await jobs.start(backend, "printf ready; sleep 100", process.cwd(), context().signal),
-  );
+  const id = await jobs.start(backend, "printf ready; sleep 100", process.cwd(), context().signal);
   try {
     await vi.waitFor(() => expect(jobs.format([id])).toContain("\nready"));
     const tool = createBashJobToolDefinitions(jobs).find(
@@ -369,7 +361,7 @@ it("presents bounded cleanup diagnostics without changing backend text casing", 
       }),
   };
   try {
-    const id = jobId(await jobs.start(backend, "ServerCommand", "/Workspace", context().signal));
+    const id = await jobs.start(backend, "ServerCommand", "/Workspace", context().signal);
     const tool = createBashJobToolDefinitions(jobs).find(
       (tool) => tool.schema.name === "stop_bash_job",
     );

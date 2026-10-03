@@ -13,6 +13,8 @@ export const TOOL_NAME_WEB = "web";
 export const TOOL_NAME_NOOK = "nook";
 export const TOOL_NAME_HISTORY = "history";
 export const TOOL_NAME_MCP = "mcp";
+export const TOOL_NAME_MODELS = "models";
+export const TOOL_NAME_CODE = "code";
 export const TOOL_NAME_TAU_DOCS = "tau_docs";
 export const TOOL_NAME_GET_GOAL = "get_goal";
 export const TOOL_NAME_CREATE_GOAL = "create_goal";
@@ -32,16 +34,18 @@ export const TOOL_NAMES = [
   TOOL_NAME_NOOK,
   TOOL_NAME_HISTORY,
   TOOL_NAME_MCP,
+  TOOL_NAME_MODELS,
 ] as const;
 
 export type ToolName = (typeof TOOL_NAMES)[number];
 
 export const HOST_TOOL_NAMES = [
+  TOOL_NAME_CODE,
   "list_bash_jobs",
   "read_bash_job",
   "stop_bash_job",
   "wait_for_bash_jobs",
-  ...TOOL_NAMES,
+  ...TOOL_NAMES.filter((name) => !["web", "history", "nook", "mcp", "models"].includes(name)),
   TOOL_NAME_TAU_DOCS,
   TOOL_NAME_GET_GOAL,
   TOOL_NAME_CREATE_GOAL,

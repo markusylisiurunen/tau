@@ -3,14 +3,13 @@ import { open, rename, stat, writeFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import { z } from "zod";
 import { getElevenLabsApiKey } from "../config/schema.js";
+import { mediaValidationConstraint, parseMediaJson } from "../utils/media_validation.js";
 import type { RunToolCommandOptions } from "./cli.js";
 import { ToolCliError } from "./errors.js";
 import {
   describeMediaError,
   mediaRequest,
-  mediaValidationConstraint,
   parseMediaArgs,
-  parseMediaJson,
   prepareMediaOutput,
   publishMediaArtifact,
   readMediaInput,

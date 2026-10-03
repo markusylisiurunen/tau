@@ -1,6 +1,4 @@
 import { readFileSync } from "node:fs";
-import type { Tool } from "@earendil-works/pi-ai";
-import { Type } from "typebox";
 import { z } from "zod";
 import type { TauCodeModeHandler } from "../../code_mode/runtime.js";
 import type { Config } from "../config/index.js";
@@ -10,61 +8,22 @@ import {
   buildNookTemplateManifestFromBackend,
 } from "../nook/deploy.js";
 import { validateNookSiteSlug, validateNookTemplateName } from "../nook/validation.js";
+import type { ToolExecutionBackend } from "../tools/execution_backend.js";
 import { formatZodError } from "../utils/zod.js";
-import {
-  buildCodeModeToolDescription,
-  type CodeModeToolImplementation,
-  createCodeModeToolDefinition,
-  executeInternalCodeMode,
-  type ParsedCodeModeArguments,
-} from "./code_mode.js";
-import type { ToolExecutionBackend } from "./execution_backend.js";
-import type { AgentTool } from "./registry.js";
-import { TOOL_NAME_NOOK } from "./tool_names.js";
+import type { CodeModeCapability } from "./capability.js";
 
-const NOOK_CODE_MODE_TIMEOUT_MS = 60_000;
 const MAX_KV_KEY_LENGTH = 256;
 const MAX_KV_VALUE_BYTES = 64 * 1024;
 
-const NOOK_DESCRIPTION = buildCodeModeToolDescription({
-  sdkGlobal: "nook",
-  introduction: [
-    "Run a one-shot JavaScript program to operate the configured Nook platform: Tau's Cloudflare-backed static mini-app host for publishing built front-end artifacts with optional per-site same-origin JSON KV.",
-    "Do not use this tool autonomously; use it only when the user asks to manage Nook, deploy/publish/host an app or artifact, inspect Nook state, or manage Nook KV.",
-    "If the user asks to deploy a static artifact or mini-app, this is usually the right deployment target.",
-  ],
-  additionalDocumentation: [
-    "When app-authoring guidance is needed, treat nook.skill() as a second documentation step: after reading docs, run a separate documentation-only call that does nothing except console.log(await nook.skill()). Read the returned guide before authoring or modifying the app in later calls.",
-  ],
-});
-
-export const NOOK_TOOL: Tool = {
-  name: TOOL_NAME_NOOK,
-  description: NOOK_DESCRIPTION,
-  parameters: Type.Object(
-    {
-      code: Type.String({
-        description:
-          "JavaScript source to execute. Use console output for text and await image(block) to return images.",
-      }),
-    },
-    { additionalProperties: false },
-  ),
-};
-
-const nookArgsSchema = z
-  .object({
-    code: z.string().trim().min(1, "must not be empty."),
-  })
-  .strict();
-
-type NookArgs = z.infer<typeof nookArgsSchema>;
+const description = [
+  "Publish static apps and artifacts, inspect hosted sites, and manage their JSON KV on Nook.",
+  "Use tau.nook only when the user asks for deployment, hosting, or Nook management. Nook is the usual target for static mini-app publishing.",
+].join(" ");
 
 type NookClient = ReturnType<typeof createNookClientFromConfig>;
 
 type NookToolDeps = {
   createClient(args: { config: Config; signal: AbortSignal }): NookClient;
-  timeoutMs?: number;
 };
 
 const nonEmptyStringSchema = z.string().trim().min(1);
@@ -100,37 +59,11 @@ const documentation = readFileSync(
   new URL("../static/code_mode/nook/documentation.md", import.meta.url),
   "utf8",
 );
-function parseNookArguments(raw: unknown): ParsedCodeModeArguments<NookArgs> {
-  const rawCode =
-    typeof raw === "object" && raw !== null && typeof (raw as { code?: unknown }).code === "string"
-      ? (raw as { code: string }).code
-      : "";
-  const subject =
-    rawCode
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .find(Boolean) ?? "(invalid code)";
-  const parsed = nookArgsSchema.safeParse(raw);
-  if (!parsed.success) {
-    return {
-      ok: false,
-      error: formatZodError(parsed.error),
-      code: rawCode,
-      subject,
-    };
-  }
-  return {
-    ok: true,
-    args: parsed.data,
-    code: parsed.data.code,
-    subject,
-  };
-}
 
 function parseMethodArguments<T>(method: string, args: unknown, schema: z.ZodType<T>): T {
   const parsed = schema.safeParse(args);
   if (!parsed.success) {
-    throw new Error(`Invalid nook.${method} arguments: ${formatZodError(parsed.error)}`);
+    throw new Error(`Invalid tau.nook.${method} arguments: ${formatZodError(parsed.error)}`);
   }
   return parsed.data;
 }
@@ -214,7 +147,7 @@ async function writeKvToFile(
   signal.throwIfAborted();
   const content = JSON.stringify(value);
   if (content === undefined) {
-    throw new Error(`nook.kv.getToFile received a non-JSON value for ${site}/${key}`);
+    throw new Error(`tau.nook.kv.getToFile received a non-JSON value for ${site}/${key}`);
   }
   const result = await backend.writeFile(file, content);
   signal.throwIfAborted();
@@ -359,21 +292,21 @@ async function handleNookRequest(
   }
 }
 
-function executeNookProgram(
-  code: string,
-  deps: NookToolDeps,
-  config: Config,
+const defaultDeps: NookToolDeps = { createClient: createNookClientFromConfig };
+
+export function createNookCapability(
   backend: ToolExecutionBackend,
-  agentId: string,
-  signal: AbortSignal,
-  timeoutMs: number,
-) {
+  config: Config,
+  deps: NookToolDeps = defaultDeps,
+): CodeModeCapability {
+  if (!config.nook) throw new Error("nook is not configured");
   const method =
     (name: string): TauCodeModeHandler =>
     async (args, context) =>
       await handleNookRequest(name, args, deps, config, backend, context.signal);
-  return executeInternalCodeMode({
-    name: TOOL_NAME_NOOK,
+  return {
+    name: "nook",
+    description,
     documentation,
     api: {
       skill: method("skill"),
@@ -398,32 +331,5 @@ function executeNookProgram(
         list: method("kv.list"),
       },
     },
-    code,
-    agentId,
-    backend,
-    signal,
-    timeoutMs,
-  });
-}
-
-const defaultDeps: NookToolDeps = {
-  createClient: createNookClientFromConfig,
-};
-
-export function createNookToolDefinition(
-  backend: ToolExecutionBackend,
-  config: Config,
-  deps: NookToolDeps = defaultDeps,
-): AgentTool {
-  const timeoutMs = deps.timeoutMs ?? NOOK_CODE_MODE_TIMEOUT_MS;
-  const implementation: CodeModeToolImplementation<NookArgs> = {
-    schema: NOOK_TOOL,
-    timeoutMs,
-    parseArguments: parseNookArguments,
-    getBlockedReason: () => (config.nook ? undefined : "nook is not configured"),
-    execute: async ({ code, agentId, signal, backend: executionBackend }) =>
-      executeNookProgram(code, deps, config, executionBackend, agentId, signal, timeoutMs),
   };
-
-  return createCodeModeToolDefinition(backend, implementation);
 }

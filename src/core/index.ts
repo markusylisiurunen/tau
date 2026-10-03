@@ -95,11 +95,11 @@ export {
 } from "./tool/index.js";
 export { createBashToolDefinition } from "./tools/bash.js";
 export { ToolCatalog } from "./tools/catalog.js";
+export { createCodeToolDefinition } from "./tools/code.js";
 export { createEditToolDefinition } from "./tools/edit.js";
 export { createLocalToolExecutionBackend } from "./tools/execution_backend.js";
 export { createInterruptAgentToolDefinition } from "./tools/interrupt_agent.js";
 export { createListAgentsToolDefinition } from "./tools/list_agents.js";
-export { createNookToolDefinition } from "./tools/nook.js";
 export { ToolRegistry } from "./tools/registry.js";
 export { createSendInputToAgentToolDefinition } from "./tools/send_input_to_agent.js";
 export { createSpawnAgentToolDefinition } from "./tools/spawn_agent.js";

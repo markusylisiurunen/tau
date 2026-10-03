@@ -1,6 +1,5 @@
 import type { Tool, ToolCall } from "@earendil-works/pi-ai";
 import {
-  buildTauCodeModeToolDescription,
   runTauCodeMode,
   type TauCodeModeApi,
   type TauCodeModeRuntimeResult,
@@ -18,38 +17,18 @@ import {
   type ToolImplementationOutcome,
 } from "./registry.js";
 
-export type ParsedCodeModeArguments<TArgs> =
-  | { ok: true; args: TArgs; code: string; subject: string }
+export type ParsedCodeModeArguments =
+  | { ok: true; code: string; maxOutputTokens: number; timeoutMs: number; subject: string }
   | { ok: false; error: string; code: string; subject: string };
 
-type CodeModeToolDescriptionOptions = {
-  sdkGlobal: string;
-  introduction: string[];
-  additionalDocumentation?: string[];
-};
-
-export function buildCodeModeToolDescription({
-  sdkGlobal,
-  introduction,
-  additionalDocumentation = [],
-}: CodeModeToolDescriptionOptions): string {
-  return buildTauCodeModeToolDescription({
-    name: sdkGlobal,
-    description: [...introduction, ...additionalDocumentation].join(" "),
-  });
-}
-
-export type CodeModeToolImplementation<TArgs> = {
+export type CodeModeToolImplementation = {
   schema: Tool;
-  timeoutMs?: number;
-  parseArguments(raw: unknown): ParsedCodeModeArguments<TArgs>;
-  getBlockedReason?(args: TArgs): string | undefined;
+  parseArguments(raw: unknown): ParsedCodeModeArguments;
   execute(input: {
-    args: TArgs;
+    context: ToolExecutionContext;
     code: string;
-    agentId: string;
-    backend: ToolExecutionBackend;
-    signal: AbortSignal;
+    maxOutputTokens: number;
+    timeoutMs: number;
   }): Promise<TauCodeModeRuntimeResult>;
 };
 
@@ -58,29 +37,19 @@ export function executeInternalCodeMode(options: {
   documentation: string;
   api: TauCodeModeApi;
   code: string;
-  agentId: string;
+  maxOutputTokens: number;
   backend: ToolExecutionBackend;
   signal: AbortSignal;
-  timeoutMs?: number;
+  timeoutMs: number;
 }): Promise<TauCodeModeRuntimeResult> {
   return runTauCodeMode({
     name: options.name,
     documentation: options.documentation,
     api: options.api,
     code: options.code,
+    maxOutputTokens: options.maxOutputTokens,
     signal: options.signal,
-    ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
-    files: {
-      agentId: options.agentId,
-      adapter: {
-        runNodeScript: async (script, fileOptions) =>
-          await options.backend.runNodeScript(script, [], {
-            signal: fileOptions.signal,
-            stdin: Buffer.from(fileOptions.input),
-            maxCaptureBytes: fileOptions.maxCaptureBytes,
-          }),
-      },
-    },
+    timeoutMs: options.timeoutMs,
     persistOutput: async (output) => {
       if (!output.contextTruncated) return undefined;
       const path = await writeBashTempFile(options.backend, output.content);
@@ -91,10 +60,10 @@ export function executeInternalCodeMode(options: {
 
 function getCodeModeTerminationNote(
   runtime: TauCodeModeRuntimeResult,
-  timeoutMs: number | undefined,
+  timeoutMs: number,
 ): string | undefined {
   if (runtime.status === "timed-out") {
-    return `Program timed out${timeoutMs === undefined ? "" : ` after ${timeoutMs}ms`}.`;
+    return `Program timed out after ${timeoutMs}ms.`;
   }
   if (runtime.status === "cancelled") return "Program was cancelled.";
   if (runtime.execution.closeSignal) {
@@ -103,9 +72,8 @@ function getCodeModeTerminationNote(
   return undefined;
 }
 
-export function createCodeModeToolDefinition<TArgs>(
-  backend: ToolExecutionBackend,
-  implementation: CodeModeToolImplementation<TArgs>,
+export function createCodeModeToolDefinition(
+  implementation: CodeModeToolImplementation,
 ): AgentTool {
   return {
     schema: implementation.schema,
@@ -123,7 +91,6 @@ export function createCodeModeToolDefinition<TArgs>(
       toolCall: ToolCall,
       context: ToolExecutionContext,
     ): Promise<ToolExecutionOutcome> {
-      const { signal } = context;
       const parsed = implementation.parseArguments(toolCall.arguments);
       const subject = parsed.subject;
 
@@ -150,24 +117,19 @@ export function createCodeModeToolDefinition<TArgs>(
       if (!parsed.ok) {
         return executeTool(context, () => blocked(`Invalid arguments: ${parsed.error}`));
       }
-      const blockedReason = implementation.getBlockedReason?.(parsed.args);
-      if (blockedReason) {
-        return executeTool(context, () => blocked(blockedReason));
-      }
 
       return executeTool(
         context,
         async () => {
           try {
             const runtime = await implementation.execute({
-              args: parsed.args,
+              context,
               code: parsed.code,
-              agentId: context.agentId,
-              backend,
-              signal,
+              maxOutputTokens: parsed.maxOutputTokens,
+              timeoutMs: parsed.timeoutMs,
             });
             const execution = runtime.execution;
-            const terminationNote = getCodeModeTerminationNote(runtime, implementation.timeoutMs);
+            const terminationNote = getCodeModeTerminationNote(runtime, parsed.timeoutMs);
             const isError = runtime.status !== "succeeded";
             const semanticOutcome =
               runtime.status === "cancelled" || runtime.status === "timed-out"

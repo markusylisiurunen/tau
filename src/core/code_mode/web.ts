@@ -1,58 +1,22 @@
 import { readFileSync } from "node:fs";
-import type { Tool } from "@earendil-works/pi-ai";
-import { Type } from "typebox";
 import { z } from "zod";
 import { type Config, getExaApiKey } from "../config/index.js";
+import type { ToolExecutionBackend } from "../tools/execution_backend.js";
+import { discoverAgentContent } from "../tools/web_discovery.js";
 import { formatZodError } from "../utils/zod.js";
-import {
-  buildCodeModeToolDescription,
-  type CodeModeToolImplementation,
-  createCodeModeToolDefinition,
-  executeInternalCodeMode,
-  type ParsedCodeModeArguments,
-} from "./code_mode.js";
-import type { ToolExecutionBackend } from "./execution_backend.js";
-import type { AgentTool } from "./registry.js";
-import { TOOL_NAME_WEB } from "./tool_names.js";
-import { discoverAgentContent } from "./web_discovery.js";
+import type { CodeModeCapability } from "./capability.js";
 
-const WEB_CODE_MODE_TIMEOUT_MS = 60_000;
 const EXA_API_BASE_URL = "https://api.exa.ai";
 const EXA_MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 
-const WEB_DESCRIPTION = buildCodeModeToolDescription({
-  sdkGlobal: "web",
-  introduction: [
-    "Run a one-shot JavaScript program to search the web and retrieve page content.",
-    "Use this tool only when the task requires open-web search or webpage extraction and no more direct or structured source can answer it.",
-    "Before using it, prefer local files and repository data, purpose-built CLIs, first-party APIs and SDKs, and direct structured endpoints.",
-    "A URL alone does not justify using this tool.",
-    "For any GitHub URL, prefer gh for pull requests, issues, releases, repository metadata, and authenticated GitHub access; prefer git for source, diffs, status, and history available from a repository checkout.",
-    "Use this tool only if those options cannot provide the needed information or the user explicitly asks to search the open web or inspect a webpage as a webpage.",
-  ],
-});
-
-export const WEB_TOOL: Tool = {
-  name: TOOL_NAME_WEB,
-  description: WEB_DESCRIPTION,
-  parameters: Type.Object(
-    {
-      code: Type.String({
-        description:
-          "JavaScript source to execute. Use console output for text and await image(block) to return images.",
-      }),
-    },
-    { additionalProperties: false },
-  ),
-};
-
-const webArgsSchema = z
-  .object({
-    code: z.string().trim().min(1, "must not be empty."),
-  })
-  .strict();
-
-type WebArgs = z.infer<typeof webArgsSchema>;
+const description = [
+  "Search the web, discover agent-friendly resources, and retrieve page content.",
+  "Use tau.web only when the task requires open-web search or webpage extraction and no more direct or structured source can answer it.",
+  "Before using tau.web, prefer local files and repository data, purpose-built CLIs, first-party APIs and SDKs, and direct structured endpoints.",
+  "A URL alone does not justify using tau.web.",
+  "For any GitHub URL, prefer gh for pull requests, issues, releases, repository metadata, and authenticated GitHub access; prefer git for source, diffs, status, and history available from a repository checkout.",
+  "Use tau.web only if those options cannot provide the needed information or the user explicitly asks to search the open web or inspect a webpage as a webpage.",
+].join(" ");
 
 type ExaClient = {
   search(query: string, options: Record<string, unknown>, signal: AbortSignal): Promise<unknown>;
@@ -66,7 +30,6 @@ type ExaClient = {
 type WebToolDeps = {
   createExaClient(apiKey: string): ExaClient;
   discover(backend: ToolExecutionBackend, value: string, signal: AbortSignal): Promise<unknown>;
-  timeoutMs?: number;
 };
 
 const nonEmptyStringSchema = z.string().trim().min(1);
@@ -219,33 +182,6 @@ function createExaClient(apiKey: string): ExaClient {
   };
 }
 
-function parseWebArguments(raw: unknown): ParsedCodeModeArguments<WebArgs> {
-  const rawCode =
-    typeof raw === "object" && raw !== null && typeof (raw as { code?: unknown }).code === "string"
-      ? (raw as { code: string }).code
-      : "";
-  const subject =
-    rawCode
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .find(Boolean) ?? "(invalid code)";
-  const parsed = webArgsSchema.safeParse(raw);
-  if (!parsed.success) {
-    return {
-      ok: false,
-      error: formatZodError(parsed.error),
-      code: rawCode,
-      subject,
-    };
-  }
-  return {
-    ok: true,
-    args: parsed.data,
-    code: parsed.data.code,
-    subject,
-  };
-}
-
 function requireString(value: unknown, name: string): string {
   const parsed = nonEmptyStringSchema.safeParse(value);
   if (!parsed.success) {
@@ -261,16 +197,16 @@ function parseMethodOptions<T>(
 ): T {
   const parsed = schema.safeParse(value ?? {});
   if (!parsed.success) {
-    throw new Error(`Invalid web.${method} options: ${formatZodError(parsed.error)}`);
+    throw new Error(`Invalid tau.web.${method} options: ${formatZodError(parsed.error)}`);
   }
   return parsed.data;
 }
 
 function normalizeSearchArguments(args: unknown): [string, Record<string, unknown>] {
   if (!Array.isArray(args) || args.length < 1 || args.length > 2) {
-    throw new Error("web.search expects query and optional options");
+    throw new Error("tau.web.search expects query and optional options");
   }
-  const query = requireString(args[0], "web.search query");
+  const query = requireString(args[0], "tau.web.search query");
   const options = parseMethodOptions(args[1], searchOptionsSchema, "search");
 
   return [
@@ -294,11 +230,11 @@ function normalizeSearchArguments(args: unknown): [string, Record<string, unknow
 
 function normalizeFetchArguments(args: unknown): [string[], Record<string, unknown>] {
   if (!Array.isArray(args) || args.length < 1 || args.length > 2) {
-    throw new Error("web.fetch expects urls and optional options");
+    throw new Error("tau.web.fetch expects urls and optional options");
   }
   const parsedUrls = fetchUrlsSchema.safeParse(args[0]);
   if (!parsedUrls.success) {
-    throw new Error(`Invalid web.fetch urls: ${formatZodError(parsedUrls.error)}`);
+    throw new Error(`Invalid tau.web.fetch urls: ${formatZodError(parsedUrls.error)}`);
   }
   const options = parseMethodOptions(args[1], fetchOptionsSchema, "fetch");
   const contentOptions =
@@ -436,9 +372,9 @@ async function handleWebRequest(
   switch (method) {
     case "discover": {
       if (!Array.isArray(args) || args.length !== 1) {
-        throw new Error("web.discover expects one URL");
+        throw new Error("tau.web.discover expects one URL");
       }
-      return await deps.discover(backend, requireString(args[0], "web.discover url"), signal);
+      return await deps.discover(backend, requireString(args[0], "tau.web.discover url"), signal);
     }
     case "search": {
       if (!exa) throw new Error("Missing Exa API key.");
@@ -455,54 +391,30 @@ async function handleWebRequest(
   }
 }
 
-function executeWebProgram(
-  code: string,
-  exa: ExaClient | undefined,
-  deps: WebToolDeps,
-  backend: ToolExecutionBackend,
-  agentId: string,
-  signal: AbortSignal,
-  timeoutMs: number,
-) {
-  return executeInternalCodeMode({
-    name: TOOL_NAME_WEB,
-    documentation,
-    api: {
-      discover: (args, context) =>
-        handleWebRequest("discover", args, exa, deps, backend, context.signal),
-      search: (args, context) =>
-        handleWebRequest("search", args, exa, deps, backend, context.signal),
-      fetch: (args, context) => handleWebRequest("fetch", args, exa, deps, backend, context.signal),
-    },
-    code,
-    agentId,
-    backend,
-    signal,
-    timeoutMs,
-  });
-}
+const defaultDeps: WebToolDeps = { createExaClient, discover: discoverAgentContent };
 
-const defaultDeps: WebToolDeps = {
-  createExaClient,
-  discover: discoverAgentContent,
-};
-
-export function createWebToolDefinition(
+export function createWebCapability(
   backend: ToolExecutionBackend,
   config: Config,
   deps: WebToolDeps = defaultDeps,
-): AgentTool {
-  const timeoutMs = deps.timeoutMs ?? WEB_CODE_MODE_TIMEOUT_MS;
-  const implementation: CodeModeToolImplementation<WebArgs> = {
-    schema: WEB_TOOL,
-    timeoutMs,
-    parseArguments: parseWebArguments,
-    execute: async ({ code, agentId, signal, backend: executionBackend }) => {
-      const apiKey = getExaApiKey(config);
-      const exa = apiKey ? deps.createExaClient(apiKey) : undefined;
-      return executeWebProgram(code, exa, deps, executionBackend, agentId, signal, timeoutMs);
+): CodeModeCapability {
+  let exa: ExaClient | undefined;
+  const client = () => {
+    const apiKey = getExaApiKey(config);
+    if (apiKey && !exa) exa = deps.createExaClient(apiKey);
+    return exa;
+  };
+  return {
+    name: "web",
+    description,
+    documentation,
+    api: {
+      discover: (args, context) =>
+        handleWebRequest("discover", args, undefined, deps, backend, context.signal),
+      search: (args, context) =>
+        handleWebRequest("search", args, client(), deps, backend, context.signal),
+      fetch: (args, context) =>
+        handleWebRequest("fetch", args, client(), deps, backend, context.signal),
     },
   };
-
-  return createCodeModeToolDefinition(backend, implementation);
 }

@@ -562,7 +562,8 @@ export function createBashToolDefinition(
         async () => {
           try {
             if (parsedArgs.data.background) {
-              const text = await jobs.start(backend, command, effectiveWorkingDirectory, signal);
+              const id = await jobs.start(backend, command, effectiveWorkingDirectory, signal);
+              const text = `${jobs.format([id], false)}\nApplication readiness has not been checked.`;
               const outcome = createTextToolOutcome(text, "succeeded");
               const uiEvent: ToolActivity = {
                 type: "bash_execution",

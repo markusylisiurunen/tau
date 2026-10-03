@@ -1,5 +1,10 @@
 import { Type } from "typebox";
 import { z } from "zod";
+import {
+  CODE_MODE_MAX_OUTPUT_TOKENS_DESCRIPTION,
+  TAU_CODE_MODE_DEFAULT_MAX_OUTPUT_TOKENS,
+  TAU_CODE_MODE_MAX_OUTPUT_TOKENS,
+} from "../../code_mode/runtime.js";
 import { createBashCapability } from "../code_mode/bash.js";
 import type { CodeModeCapability } from "../code_mode/capability.js";
 import { createHistoryCapability } from "../code_mode/history.js";
@@ -18,8 +23,13 @@ import type { ToolExecutionBackend } from "./execution_backend.js";
 import type { AgentTool } from "./registry.js";
 import { TOOL_NAME_CODE } from "./tool_names.js";
 
-const CODE_TIMEOUT_MS = 15 * 60 * 1000;
-const argsSchema = z.strictObject({ code: z.string().trim().min(1) });
+const CODE_DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
+const CODE_MAX_TIMEOUT_MS = 15 * 60 * 1000;
+const argsSchema = z.strictObject({
+  code: z.string().trim().min(1),
+  timeout: z.number().int().positive().max(CODE_MAX_TIMEOUT_MS).optional(),
+  maxOutputTokens: z.number().int().min(1).max(TAU_CODE_MODE_MAX_OUTPUT_TOKENS).optional(),
+});
 
 export function createCodeToolDefinition(options: {
   backend: ToolExecutionBackend;
@@ -59,6 +69,21 @@ export function createCodeToolDefinition(options: {
       ].join("\n\n"),
       parameters: Type.Object(
         {
+          timeout: Type.Optional(
+            Type.Integer({
+              description:
+                "Program timeout in milliseconds. Defaults to 300000 (5 minutes). Extend only when the work needs it, up to 900000 (15 minutes). The deadline covers the whole program, including API calls.",
+              minimum: 1,
+              maximum: CODE_MAX_TIMEOUT_MS,
+            }),
+          ),
+          maxOutputTokens: Type.Optional(
+            Type.Integer({
+              description: CODE_MODE_MAX_OUTPUT_TOKENS_DESCRIPTION,
+              minimum: 1,
+              maximum: TAU_CODE_MODE_MAX_OUTPUT_TOKENS,
+            }),
+          ),
           code: Type.String({
             description:
               "JavaScript source. Print relevant text with printText and forward images with awaited printImage.",
@@ -67,7 +92,6 @@ export function createCodeToolDefinition(options: {
         { additionalProperties: false },
       ),
     },
-    timeoutMs: CODE_TIMEOUT_MS,
     parseArguments(raw) {
       const code =
         typeof raw === "object" && raw !== null && "code" in raw && typeof raw.code === "string"
@@ -80,17 +104,24 @@ export function createCodeToolDefinition(options: {
           .find(Boolean) ?? "(invalid code)";
       const parsed = argsSchema.safeParse(raw);
       return parsed.success
-        ? { ok: true, code: parsed.data.code, subject }
+        ? {
+            ok: true,
+            code: parsed.data.code,
+            timeoutMs: parsed.data.timeout ?? CODE_DEFAULT_TIMEOUT_MS,
+            maxOutputTokens: parsed.data.maxOutputTokens ?? TAU_CODE_MODE_DEFAULT_MAX_OUTPUT_TOKENS,
+            subject,
+          }
         : { ok: false, error: formatZodError(parsed.error), code, subject };
     },
-    execute: async ({ code, context }) => {
+    execute: async ({ code, maxOutputTokens, timeoutMs, context }) => {
       return await executeInternalCodeMode({
         name: "tau",
         ...sdk,
         code,
+        maxOutputTokens,
         backend: options.backend,
         signal: context.signal,
-        timeoutMs: CODE_TIMEOUT_MS,
+        timeoutMs,
       });
     },
   });

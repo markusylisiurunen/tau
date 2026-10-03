@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -10,6 +10,7 @@ import { requestOpenRouterChat } from "../dist/core/models/openrouter.js";
 import { BashJobRegistry } from "../dist/core/tools/bash_jobs.js";
 import { ToolCatalog } from "../dist/core/tools/catalog.js";
 import { createCodeToolDefinition } from "../dist/core/tools/code.js";
+import * as codeMode from "../dist/core/tools/code_mode.js";
 import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
 import { SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES } from "../dist/protocol/session_protocol.js";
 import { createProtocolImage } from "./helpers/session_protocol_fixtures.js";
@@ -42,6 +43,162 @@ function chatReply() {
 }
 
 describe("code composition", () => {
+  it.each([
+    { timeout: undefined, expected: 300_000 },
+    { timeout: 900_000, expected: 900_000 },
+  ])("uses the selected program timeout $expected", async ({ timeout, expected }) => {
+    const run = vi.spyOn(codeMode, "executeInternalCodeMode");
+    try {
+      const tool = createCodeToolDefinition({
+        backend: createLocalToolExecutionBackend(),
+        cwd: process.cwd(),
+        allowedTools: ["bash"],
+        config: {},
+        bashJobs: new BashJobRegistry(),
+      });
+      expect(tool.schema.parameters.properties.timeout).toMatchObject({
+        type: "integer",
+        minimum: 1,
+        maximum: 900_000,
+      });
+      const result = await tool.execute(
+        { id: "timeout", name: "code", arguments: { code: 'printText("done")', timeout } },
+        context(),
+      );
+      expect(result.outcome).toBe("succeeded");
+      expect(run).toHaveBeenCalledWith(expect.objectContaining({ timeoutMs: expected }));
+    } finally {
+      run.mockRestore();
+    }
+  });
+
+  it.each([0, -1, 1.5, 900_001, "300000", null])(
+    "rejects an invalid program timeout %s before execution",
+    async (timeout) => {
+      const history = { search: vi.fn() };
+      const tool = createCodeToolDefinition({
+        backend: createLocalToolExecutionBackend(),
+        cwd: process.cwd(),
+        allowedTools: ["history"],
+        history,
+        config: {},
+        bashJobs: new BashJobRegistry(),
+      });
+      const result = await tool.execute(
+        {
+          id: "invalid",
+          name: "code",
+          arguments: { code: "await tau.history.search({})", timeout },
+        },
+        context(),
+      );
+      expect(result.outcome).toBe("blocked");
+      expect(history.search).not.toHaveBeenCalled();
+    },
+  );
+
+  it("cancels a running program at its requested deadline", async () => {
+    const tool = createCodeToolDefinition({
+      backend: createLocalToolExecutionBackend(),
+      cwd: process.cwd(),
+      allowedTools: ["bash"],
+      config: {},
+      bashJobs: new BashJobRegistry(),
+    });
+    const executionContext = context();
+    const result = await tool.execute(
+      {
+        id: "deadline",
+        name: "code",
+        arguments: { code: 'printText("before"); while (true) {}', timeout: 500 },
+      },
+      executionContext,
+    );
+    expect(result.outcome).toBe("cancelled");
+    expect(text(result)).toContain("before");
+    expect(executionContext.emitActivity).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "code_mode_finished", status: "error" }),
+    );
+  });
+
+  it("forwards bounded foreground Bash timeouts and rejects invalid ones before launch", async () => {
+    const runBash = vi.fn(async () => ({}));
+    const capability = createBashCapability({ runBash }, process.cwd(), new BashJobRegistry());
+    await capability.api.run([{ command: "true" }], context());
+    expect(runBash).toHaveBeenLastCalledWith(
+      "true",
+      expect.objectContaining({ timeoutMs: 60_000 }),
+    );
+    await capability.api.run([{ command: "true", timeout: 300_000 }], context());
+    expect(runBash).toHaveBeenLastCalledWith(
+      "true",
+      expect.objectContaining({ timeoutMs: 300_000 }),
+    );
+    runBash.mockClear();
+    for (const timeout of [0, -1, 1.5, 300_001, "60000", null]) {
+      await expect(capability.api.run([{ command: "true", timeout }], context())).rejects.toThrow();
+    }
+    expect(runBash).not.toHaveBeenCalled();
+  });
+
+  it("uses the requested output budget and saves context-truncated output", async () => {
+    const backend = createLocalToolExecutionBackend();
+    const write = vi.spyOn(backend, "writeFile");
+    const tool = createCodeToolDefinition({
+      backend,
+      cwd: process.cwd(),
+      allowedTools: ["bash"],
+      config: {},
+      bashJobs: new BashJobRegistry(),
+    });
+    const code = 'printText("x".repeat(60_000))';
+    let path;
+    try {
+      const result = await execute(tool, code);
+      expect(result.outcome).toBe("succeeded");
+      expect(write).toHaveBeenCalledOnce();
+      path = write.mock.calls[0][0];
+      expect(await readFile(path, "utf8")).toBe(`${"x".repeat(60_000)}\n`);
+      expect(text(result)).toContain(path);
+      expect(text(result).length).toBeLessThan(60_000);
+      write.mockClear();
+      const expanded = await tool.execute(
+        { id: "expanded", name: "code", arguments: { code, maxOutputTokens: 16_384 } },
+        context(),
+      );
+      expect(expanded.outcome).toBe("succeeded");
+      expect(text(expanded)).toBe("x".repeat(60_000));
+      expect(write).not.toHaveBeenCalled();
+    } finally {
+      if (path) await rm(path, { force: true });
+    }
+  });
+
+  it.each([0, -1, 1.5, 65_537, "16384", null])(
+    "rejects an invalid output budget %s before execution",
+    async (maxOutputTokens) => {
+      const history = { search: vi.fn() };
+      const tool = createCodeToolDefinition({
+        backend: createLocalToolExecutionBackend(),
+        cwd: process.cwd(),
+        allowedTools: ["history"],
+        history,
+        config: {},
+        bashJobs: new BashJobRegistry(),
+      });
+      const result = await tool.execute(
+        {
+          id: "invalid",
+          name: "code",
+          arguments: { code: "await tau.history.search({})", maxOutputTokens },
+        },
+        context(),
+      );
+      expect(result.outcome).toBe("blocked");
+      expect(history.search).not.toHaveBeenCalled();
+    },
+  );
+
   it("scopes default capability policies without restricting the composition tool", () => {
     const tool = createCodeToolDefinition({
       backend: createLocalToolExecutionBackend(),

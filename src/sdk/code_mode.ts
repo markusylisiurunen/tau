@@ -1,5 +1,8 @@
 import {
+  CODE_MODE_MAX_OUTPUT_TOKENS_DESCRIPTION,
   executeTauCodeMode,
+  parseCodeModeArguments,
+  TAU_CODE_MODE_MAX_OUTPUT_TOKENS,
   type TauCodeModeDefinition,
   validateTauCodeModeDefinition,
 } from "../code_mode/runtime.js";
@@ -32,6 +35,12 @@ export function createTauCodeModeClientTool(
       parameters: {
         type: "object",
         properties: {
+          maxOutputTokens: {
+            type: "integer",
+            minimum: 1,
+            maximum: TAU_CODE_MODE_MAX_OUTPUT_TOKENS,
+            description: CODE_MODE_MAX_OUTPUT_TOKENS_DESCRIPTION,
+          },
           code: {
             type: "string",
             description:
@@ -43,12 +52,13 @@ export function createTauCodeModeClientTool(
       },
       ...(options.timeoutMs === undefined ? {} : { executionTimeoutMs: options.timeoutMs }),
     },
-    describe: (args) => createCodeModePresentation(parseCodeArguments(args)),
+    describe: (args) => createCodeModePresentation(parseCodeModeArguments(args).code),
     execute: async (args, context) => {
-      const code = parseCodeArguments(args);
+      const { code, maxOutputTokens } = parseCodeModeArguments(args);
       const result = await executeTauCodeMode({
         ...definition,
         code,
+        maxOutputTokens,
         signal: context.signal,
         invocation: {
           sessionId: context.sessionId,
@@ -67,21 +77,4 @@ function createCodeModePresentation(code: string) {
     subject: truncateTauClientToolText(code),
     subjectWrap: "character" as const,
   };
-}
-
-function parseCodeArguments(value: unknown): string {
-  if (typeof value !== "object" || value === null) {
-    throw new Error("code-mode client tool arguments must be an object");
-  }
-  const args = value as Record<string, unknown>;
-  if (
-    typeof args.code !== "string" ||
-    !args.code.trim() ||
-    Object.keys(args).some((key) => key !== "code")
-  ) {
-    throw new Error(
-      "code-mode client tool arguments must contain exactly one non-empty 'code' string",
-    );
-  }
-  return args.code;
 }

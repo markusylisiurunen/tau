@@ -13,6 +13,8 @@ import {
 } from "../tools/execution_backend.js";
 import type { CodeModeCapability } from "./capability.js";
 
+const BASH_RUN_MAX_TIMEOUT_MS = 5 * 60 * 1000;
+
 const commandOptions = {
   command: z
     .string()
@@ -33,7 +35,7 @@ const runOptions = z.strictObject({
       "stdin exceeds its UTF-8 byte limit",
     )
     .optional(),
-  timeout: z.number().int().positive().optional(),
+  timeout: z.number().int().positive().max(BASH_RUN_MAX_TIMEOUT_MS).optional(),
 });
 const startOptions = z.strictObject(commandOptions);
 const idOptions = z.strictObject({ id: z.string().min(1) });
@@ -92,7 +94,7 @@ type RunOptions = {
 - \`command\`: required, nonblank Bash source.
 - \`stdin\`: optional UTF-8 text, at most ${SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES / 1024 / 1024} MiB. Written once, then closed so the command receives EOF. Omit for no stdin; an empty string supplies an empty stream. No interactive input or TTY is available. Pass data through stdin rather than interpolating it into command source.
 - \`workingDirectory\`: optional, nonempty path without line breaks.
-- \`timeout\`: optional positive integer in milliseconds, default ${BASH_DEFAULT_TIMEOUT_MS}. The enclosing program's time limit still applies.
+- \`timeout\`: optional positive integer in milliseconds, default ${BASH_DEFAULT_TIMEOUT_MS}, maximum ${BASH_RUN_MAX_TIMEOUT_MS}. The enclosing program's time limit still applies.
 
 ### Result
 

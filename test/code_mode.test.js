@@ -37,6 +37,49 @@ function getTextContent(result) {
 }
 
 describe("public code-mode runtime", () => {
+  it.each([1, 16_384, 65_536])("applies an output budget of %s", async (maxOutputTokens) => {
+    const runtime = await runTauCodeMode({
+      ...createDefinition(),
+      code: 'printText("x".repeat(60_000))',
+      maxOutputTokens,
+    });
+    expect(runtime.status).toBe("succeeded");
+    expect(runtime.projection.maxTokens).toBe(maxOutputTokens);
+    expect(runtime.projection.truncated).toBe(maxOutputTokens === 1);
+  });
+
+  it.each([0, -1, 1.5, 65_537, "16384", null, NaN, Infinity])(
+    "rejects an invalid runtime output budget %s before side effects",
+    async (maxOutputTokens) => {
+      const get = vi.fn();
+      await expect(
+        runTauCodeMode({
+          ...createDefinition({ api: { get } }),
+          code: "await linear.get()",
+          maxOutputTokens,
+        }),
+      ).rejects.toThrow();
+      expect(get).not.toHaveBeenCalled();
+    },
+  );
+
+  it("passes SDK output budgets to the runtime", async () => {
+    const tool = createTauCodeModeClientTool({
+      ...createDefinition(),
+      description: "Read issues.",
+    });
+    const executionContext = {
+      ...invocation,
+      signal: new AbortController().signal,
+      executionEnvironment: null,
+    };
+    const args = { code: 'printText("x".repeat(60_000))', maxOutputTokens: 16_384 };
+    expect(getTextContent(await tool.execute(args, executionContext))).toBe("x".repeat(60_000));
+    await expect(
+      tool.execute({ ...args, maxOutputTokens: 65_537 }, executionContext),
+    ).rejects.toThrow();
+  });
+
   it("executes a nested API through the JSON bridge", async () => {
     const result = await executeTauCodeMode({
       ...createDefinition(),
@@ -583,6 +626,7 @@ describe("code-mode command adapter", () => {
       toolName: "linear",
       arguments: {
         code: 'printText(JSON.stringify(await linear.echo("hello")))',
+        maxOutputTokens: 16_384,
       },
     };
     const result = await runCommandWithOpenStdin(script, request);

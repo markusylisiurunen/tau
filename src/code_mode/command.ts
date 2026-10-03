@@ -2,6 +2,7 @@ import { runTauClientToolCommand } from "../sdk/client_tool_command.js";
 import { truncateTauClientToolText } from "../sdk/client_tool_presentation.js";
 import {
   executeTauCodeMode,
+  parseCodeModeArguments,
   type TauCodeModeDefinition,
   validateTauCodeModeDefinition,
 } from "./runtime.js";
@@ -10,12 +11,13 @@ export async function runTauCodeModeCommand(definition: TauCodeModeDefinition): 
   validateTauCodeModeDefinition(definition);
   await runTauClientToolCommand({
     name: definition.name,
-    describe: (args) => createCodeModePresentation(parseCodeArguments(args)),
+    describe: (args) => createCodeModePresentation(parseCodeModeArguments(args).code),
     execute: async (args, context) => {
-      const code = parseCodeArguments(args);
+      const { code, maxOutputTokens } = parseCodeModeArguments(args);
       const result = await executeTauCodeMode({
         ...definition,
         code,
+        maxOutputTokens,
         signal: context.signal,
         invocation: {
           sessionId: context.sessionId,
@@ -34,19 +36,4 @@ function createCodeModePresentation(code: string) {
     subject: truncateTauClientToolText(code),
     subjectWrap: "character" as const,
   };
-}
-
-function parseCodeArguments(value: unknown): string {
-  if (typeof value !== "object" || value === null) {
-    throw new Error("code-mode command arguments must be an object");
-  }
-  const args = value as Record<string, unknown>;
-  if (
-    typeof args.code !== "string" ||
-    !args.code.trim() ||
-    Object.keys(args).some((key) => key !== "code")
-  ) {
-    throw new Error("code-mode command arguments must contain exactly one non-empty 'code' string");
-  }
-  return args.code;
 }

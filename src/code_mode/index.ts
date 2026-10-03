@@ -27,6 +27,7 @@ export type {
 export {
   buildTauCodeModeToolDescription,
   executeTauCodeMode,
+  TAU_CODE_MODE_DEFAULT_MAX_OUTPUT_TOKENS,
   TAU_CODE_MODE_DEFAULT_TIMEOUT_MS,
   TAU_CODE_MODE_MAX_OUTPUT_TOKENS,
 } from "./runtime.js";

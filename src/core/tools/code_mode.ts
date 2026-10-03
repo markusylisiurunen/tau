@@ -18,16 +18,17 @@ import {
 } from "./registry.js";
 
 export type ParsedCodeModeArguments =
-  | { ok: true; code: string; subject: string }
+  | { ok: true; code: string; maxOutputTokens: number; timeoutMs: number; subject: string }
   | { ok: false; error: string; code: string; subject: string };
 
 export type CodeModeToolImplementation = {
   schema: Tool;
-  timeoutMs: number;
   parseArguments(raw: unknown): ParsedCodeModeArguments;
   execute(input: {
     context: ToolExecutionContext;
     code: string;
+    maxOutputTokens: number;
+    timeoutMs: number;
   }): Promise<TauCodeModeRuntimeResult>;
 };
 
@@ -36,6 +37,7 @@ export function executeInternalCodeMode(options: {
   documentation: string;
   api: TauCodeModeApi;
   code: string;
+  maxOutputTokens: number;
   backend: ToolExecutionBackend;
   signal: AbortSignal;
   timeoutMs: number;
@@ -45,6 +47,7 @@ export function executeInternalCodeMode(options: {
     documentation: options.documentation,
     api: options.api,
     code: options.code,
+    maxOutputTokens: options.maxOutputTokens,
     signal: options.signal,
     timeoutMs: options.timeoutMs,
     persistOutput: async (output) => {
@@ -122,9 +125,11 @@ export function createCodeModeToolDefinition(
             const runtime = await implementation.execute({
               context,
               code: parsed.code,
+              maxOutputTokens: parsed.maxOutputTokens,
+              timeoutMs: parsed.timeoutMs,
             });
             const execution = runtime.execution;
-            const terminationNote = getCodeModeTerminationNote(runtime, implementation.timeoutMs);
+            const terminationNote = getCodeModeTerminationNote(runtime, parsed.timeoutMs);
             const isError = runtime.status !== "succeeded";
             const semanticOutcome =
               runtime.status === "cancelled" || runtime.status === "timed-out"

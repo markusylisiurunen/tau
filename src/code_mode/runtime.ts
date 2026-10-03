@@ -13,7 +13,10 @@ import { CODE_MODE_MAX_IMAGE_PIXELS, prepareCodeModeImage } from "./images.js";
 import { CodeModeOutput } from "./output.js";
 
 export const TAU_CODE_MODE_DEFAULT_TIMEOUT_MS = 60_000;
-export const TAU_CODE_MODE_MAX_OUTPUT_TOKENS = 8_192;
+export const TAU_CODE_MODE_DEFAULT_MAX_OUTPUT_TOKENS = 8_192;
+export const TAU_CODE_MODE_MAX_OUTPUT_TOKENS = 65_536;
+export const CODE_MODE_MAX_OUTPUT_TOKENS_DESCRIPTION =
+  "Optional maximum number of estimated output tokens to return. Defaults to 8192. Leave unset unless more output is genuinely needed; prefer printing selected results. Do not set speculatively or just in case. When needed, request 8192 through 16384 tokens. Only exceed 16384 when the user explicitly requests more output, up to 65536. Output exceeding the limit is middle-truncated. Side effects have already happened; read saved output rather than rerunning operations with side effects.";
 
 const sandboxRunnerUrl = new URL("../core/static/code_mode/sandbox_runner.mjs", import.meta.url);
 const javascriptIdentifierPattern = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
@@ -101,6 +104,7 @@ export type TauCodeModeDefinition = {
 
 export type ExecuteTauCodeModeOptions = TauCodeModeDefinition & {
   code: string;
+  maxOutputTokens?: number;
   signal?: AbortSignal;
   invocation?: TauCodeModeInvocation | null;
   executionEnvironment?: TauSdkClientToolExecutionEnvironment | null;
@@ -185,6 +189,7 @@ export async function runTauCodeMode(
     throw new Error("code-mode documentation must not be empty");
   }
   validateTimeout(options.timeoutMs);
+  validateMaxOutputTokens(options.maxOutputTokens);
 
   const apiMethods = registerMethods(options.api, options.name);
   const apis: RegisteredApi[] = [{ name: options.name, methods: apiMethods }];
@@ -271,7 +276,7 @@ export async function runTauCodeMode(
   const rawOutput = orderedOutput.text;
   const output = appendTerminationNote(rawOutput, execution, timeoutMs);
   const projection = truncateForTokens(output, {
-    maxTokens: TAU_CODE_MODE_MAX_OUTPUT_TOKENS,
+    maxTokens: options.maxOutputTokens ?? TAU_CODE_MODE_DEFAULT_MAX_OUTPUT_TOKENS,
     strategy: "middle",
   });
 
@@ -333,6 +338,39 @@ function validateTimeout(timeoutMs: number | undefined): void {
   if (timeoutMs !== undefined && (!Number.isInteger(timeoutMs) || timeoutMs <= 0)) {
     throw new Error("code-mode timeoutMs must be a positive integer");
   }
+}
+
+function validateMaxOutputTokens(value: unknown): void {
+  if (
+    value !== undefined &&
+    (typeof value !== "number" ||
+      !Number.isInteger(value) ||
+      value < 1 ||
+      value > TAU_CODE_MODE_MAX_OUTPUT_TOKENS)
+  ) {
+    throw new Error(
+      `maxOutputTokens must be an integer from 1 to ${TAU_CODE_MODE_MAX_OUTPUT_TOKENS}`,
+    );
+  }
+}
+
+export function parseCodeModeArguments(value: unknown): {
+  code: string;
+  maxOutputTokens?: number;
+} {
+  if (!isPlainObject(value)) throw new Error("code-mode arguments must be an object");
+  const args = value as Record<string, unknown>;
+  if (
+    typeof args.code !== "string" ||
+    !args.code.trim() ||
+    Object.keys(args).some((key) => key !== "code" && key !== "maxOutputTokens")
+  ) {
+    throw new Error(
+      "code-mode arguments require a non-empty code string and optional maxOutputTokens",
+    );
+  }
+  validateMaxOutputTokens(args.maxOutputTokens);
+  return { code: args.code, maxOutputTokens: args.maxOutputTokens as number | undefined };
 }
 
 function registerMethods(api: TauCodeModeApi, apiName: string, firstId = 0): RegisteredMethod[] {
@@ -450,7 +488,7 @@ function buildRuntimeDocumentation(name: string, documentation: string, timeoutM
     "",
     "## Output",
     "",
-    `Output is middle-truncated above roughly ${TAU_CODE_MODE_MAX_OUTPUT_TOKENS.toLocaleString("en-US")} tokens. Print only information needed for the task.`,
+    CODE_MODE_MAX_OUTPUT_TOKENS_DESCRIPTION,
     "",
     "Print only relevant parts of API responses, not entire objects or large collections. Filter, select, or summarize before printing. Prefer concise, readable plain text: labels, lines, and selected fields usually use fewer tokens than JSON envelopes and metadata. Use JSON when the structure itself matters or machine-readable output is requested. Keep identifiers and other fields needed for follow-up actions. Printed output consumes conversation context.",
     "",

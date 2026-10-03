@@ -162,15 +162,17 @@ When the runtime guide is not already visible, the agent first runs a documentat
 printText(docs);
 ```
 
-The guide covers runtime rules, enabled capabilities, and composition with examples of chaining, bounded concurrency, and partial failure. Before using a capability whose API reference is not visible, the agent retrieves it in a separate documentation-only call:
+The guide covers runtime rules, capabilities, and composition examples. The agent retrieves any unseen capability reference in a separate documentation-only call:
 
 ```js
 printText(await tau.docs("web"));
 ```
 
-Visible documentation is reused. MCP tool descriptions and Nook's authoring guide have their own discovery steps. Programs may compose operations after the relevant documentation has been read; they do not need to return intermediate data to the conversation.
+The agent reuses visible documentation. MCP descriptions and Nook's authoring guide have separate discovery steps. Programs need not print intermediate results.
 
-Only `printText(string)` and awaited `printImage({ data, mimeType })` emit output. Return values are ignored. Programs explicitly format objects and decide which progress, results, or side effects to report. Text and images remain in emission order; printed text is middle-truncated above roughly 8,192 estimated tokens. JPEG, PNG, and WebP images are validated outside the sandbox and prepared within 4,096 pixels per dimension and 3.5 MiB each. Source images are limited to 40 megapixels and 16 images per program. Valid images are retained even if a built-in program later fails.
+Only `printText(string)` and awaited `printImage({ data, mimeType })` emit output, in emission order; return values are ignored. Text is middle-truncated to `maxOutputTokens` (default 8,192; range 1–65,536). The agent leaves it unset unless needed, requesting up to 16,384 autonomously; higher budgets require an explicit user request. Truncated built-in text is saved to a temporary execution-environment file when possible, with its path reported. Read it rather than repeat side effects. Files exclude images and text lost to capture limits.
+
+JPEG, PNG, and WebP images are validated outside the sandbox and prepared within 4,096 pixels per dimension and 3.5 MiB each. Sources are limited to 40 megapixels and 16 images per program. Valid images survive built-in program failure.
 
 The pure globals `truncate(text, { maxChars, position? })` and `truncateLines(text, { maxLines, position? })` return bounded strings with omission markers. Position defaults to `middle`; `start` and `end` retain the corresponding edge. They do not print automatically.
 
@@ -181,9 +183,9 @@ printText(truncate(result.stdout, { maxChars: 4000 }));
 
 ### Execution and limits
 
-Programs have no ambient filesystem, process, environment, credential, import, timer, network, or fetch access. Explicit capabilities supply their own authority. JavaScript variables hold intermediate data; file operations use Bash when enabled. There is no scratch-file API.
+Programs have no ambient filesystem, process, environment, credential, import, timer, network, or fetch access. Capabilities supply authority; variables hold data and Bash handles files. No scratch-file API.
 
-Built-in programs have a 15-minute deadline, at most 128 API requests, and eight unresolved requests at once. Each serialized request or response is limited to 64 MiB. Undefined object properties are omitted from arguments; undefined arguments and array entries are rejected. Programs are not automatically retried. Failure, interruption, or timeout does not undo completed actions.
+`code` defaults to 5 minutes; `timeout` accepts 1–900,000 ms (15 minutes). `tau.bash.run` defaults to 60 seconds, capped at 5 minutes and the enclosing deadline. Programs allow 128 API requests, eight concurrent. Serialized requests and responses are capped at 64 MiB. Undefined object properties are omitted; undefined arguments and array entries are rejected. Programs are not retried; failure or cancellation does not undo actions.
 
 ### Capabilities
 

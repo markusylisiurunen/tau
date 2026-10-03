@@ -378,11 +378,11 @@ Tau exports two higher-level helpers for client tools that expose a bounded Java
 - `createTauCodeModeClientTool` creates an in-process `TauSdkClientTool` for an SDK client.
 - `runTauCodeModeCommand` runs a code-mode definition as a command client-tool executable.
 
-For an executable configured through `clientTools`, keep the exact parameters schema to one required `code` string with no additional properties, then call `runTauCodeModeCommand` in the executable. For SDK clients, pass the returned tool from `createTauCodeModeClientTool` in the client's `clientTools` array.
+Command tools need a parameters schema with required `code` string, optional `maxOutputTokens` integer (1–65,536), and no additional properties. SDK clients pass the helper's returned tool in `clientTools`.
 
-Both helpers supply invocation identities, cancellation, the execution-environment facade, `docs`, the API bridge, and shared output and truncation functions. Code is the truncated, character-wrapped subject for both card phases. Descriptions are caller input; the shared builder is optional.
+Both helpers supply invocation identities, cancellation, the execution-environment facade, `docs`, the API bridge, and output/truncation functions. Code is the truncated, character-wrapped card subject. Descriptions are caller input; the shared builder is optional.
 
-`await printImage(block)` emits ordered text/image blocks in `content`; see [tools](tools.md) for limits.
+`await printImage(block)` emits ordered text/image blocks in `content`; see [tools](tools.md) for limits. `maxOutputTokens` defaults to 8,192 estimated tokens. Saving output requires a `persistOutput` callback.
 
 Disclose any additional process or network authority in the tool description.
 

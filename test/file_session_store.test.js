@@ -2,6 +2,7 @@ import { access, chmod, mkdir, readFile, rm, stat, writeFile } from "node:fs/pro
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { splitTauUserText } from "../dist/core/utils/user_metadata.js";
 import { FileSessionStore } from "../dist/store/file_session_store.js";
 import {
   LEGACY_SESSION_MODEL_CONTEXT_KEY,
@@ -56,6 +57,39 @@ async function withTempStore(test) {
 }
 
 describe("FileSessionStore", () => {
+  it.each([true, false])(
+    "preserves compacted goal history and unrelated metadata from version 10 (marker: %s)",
+    async (withMarker) => {
+      await withTempStore(async (store, directory) => {
+        const summary = "The earlier objective was shipped using update_goal.";
+        const metadata = [
+          { type: "compaction", version: 1, summary },
+          ...(withMarker ? [{ type: "goal-turn", version: 1 }] : []),
+        ];
+        const encoded = Buffer.from(JSON.stringify(metadata)).toString("base64url");
+        const text = `\u001eTAU_METADATA_V1:${encoded}\u001e${summary}`;
+        const snapshot = createSnapshot("old-compacted-goal", text);
+        snapshot.goal = null;
+        await mkdir(directory, { recursive: true });
+        await writeFile(
+          join(directory, `${Buffer.from(snapshot.sessionId).toString("base64url")}.json`),
+          JSON.stringify({ format: STORED_SESSION_DOCUMENT_FORMAT, version: 10, snapshot }),
+        );
+        const loaded = await store.loadSession(snapshot.sessionId);
+        expect(loaded).not.toHaveProperty("goal");
+        const entry = loaded.messages.find((message) => message.id === "entry-1");
+        const projected = splitTauUserText(entry.message.content[0].text);
+        expect(projected.metadata).toEqual([{ type: "compaction", version: 1, summary }]);
+        expect(projected.modelText).toBe(summary);
+        expect(loaded.messages.at(-1).message).toMatchObject({
+          role: "system",
+          metadata: { type: "instruction", version: 1 },
+        });
+        expect(loaded.timeline).toEqual(snapshot.timeline);
+      });
+    },
+  );
+
   it("normalizes obsolete Fly selection and presentation metadata from version 9", async () => {
     await withTempStore(async (store, directory) => {
       await mkdir(directory, { recursive: true });
@@ -207,10 +241,10 @@ describe("FileSessionStore", () => {
     });
   });
 
-  it("adds the required null goal when migrating version 2 sessions", async () => {
+  it("loads version 2 sessions", async () => {
     await withTempStore(async (store, directory) => {
       const snapshot = createSnapshot("session-1", "hello");
-      const { goal: _goal, ...versionTwoSnapshot } = createVersionFiveSnapshot(snapshot);
+      const versionTwoSnapshot = createVersionFiveSnapshot(snapshot);
       await mkdir(directory, { recursive: true });
       await writeFile(
         join(directory, "c2Vzc2lvbi0x.json"),

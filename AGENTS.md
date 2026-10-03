@@ -95,7 +95,7 @@ When a subagent uses an alternate working directory, rebuild only target-depende
 
 ### Snapshot and timeline
 
-The session snapshot is the recoverable source of truth. It owns immutable creation attributes and timestamp, goal, independent agent state, settings, cumulative cost, bootstrap/catalog metadata, execution-environment identity, complete synchronized messages and turn receipts, the active timeline, semantic tools/operations/agents, and client-facing facets.
+The session snapshot is the recoverable source of truth. It owns immutable creation attributes and timestamp, independent agent state, settings, cumulative cost, bootstrap/catalog metadata, execution-environment identity, complete synchronized messages and turn receipts, the active timeline, semantic tools/operations/agents, and client-facing facets.
 
 Do not conflate protocol snapshot revision, agent revision, model context key, timeline epoch, pending-message revision, or subagent-activity revision.
 
@@ -135,7 +135,7 @@ Keep exact activity and payload bounds in `src/protocol/session_protocol.ts`; te
 
 ### Recovery, user text, and history
 
-Recovery discards supervised agents and agent-owned presentation because child processes do not survive restart. It normalizes unrecoverable tool state, aborts running turn receipts, cancels running maintenance operations with reason `session-recovered` while preserving their timeline placement, and blocks active goals until explicitly resumed.
+Recovery discards supervised agents and agent-owned presentation because child processes do not survive restart. It normalizes unrecoverable tool state, aborts running turn receipts, and cancels running maintenance operations with reason `session-recovered` while preserving their timeline placement.
 
 Effective system instructions are the first committed message. Snapshot user text is raw recoverable Tau session text. Strip Tau metadata before model calls and display, and hide leading exact `<system>...</system>\n` blocks only in user-message display projection. Do not apply user projection to assistant, tool-result, or protocol system messages.
 
@@ -149,7 +149,7 @@ Themes are client-local, selected from the fixed built-in catalog, and never bel
 
 Host tools, client tools, and execution-environment operations have different owners. Read `docs/tools.md`, `docs/client-tools.md`, and `docs/security.md` before changing their contracts.
 
-- `ToolCatalog` builds dependency-bound host registries. The intrinsic `tau_docs` tool is present for main and child agents, and main-session goal tools are independent of persona allowlists. Treat `src/core/tools/catalog.ts`, `src/core/tools/registry.ts`, and `src/core/tools/tool_names.ts` as the volatile inventory.
+- `ToolCatalog` builds dependency-bound host registries. The intrinsic `tau_docs` tool is present for main and child agents. Treat `src/core/tools/catalog.ts`, `src/core/tools/registry.ts`, and `src/core/tools/tool_names.ts` as the volatile inventory.
 - MCP connections are owned by `src/core/mcp/manager.ts`, bound once per host and shared with main-session and supervised-subagent registries. Resolve `mcpServers` from the host launch-directory config layers at startup, merging by server name with whole-entry replacement; never derive them from execution-environment runtime config. Stdio servers intentionally run on the host with host authority. Keep calls bounded and cancellable, do not retry mutations, and await connection cleanup at host shutdown. The `mcp` tool uses the existing code-mode runtime, not a second agent execution path.
 - Client-provided tools are advertised capabilities of attached clients, not host registry entries. Their commands execute on the client machine; their execution-environment facade crosses the session protocol. Keep tool-name ownership unique among observers, validate arguments against the configured object schema, honor cancellation, and terminate active process groups on detach or terminal transport failure.
 - Keep immediate tool-call schemas strict. For code-mode tools, generated code receives only the declared bounded API. Credentials and service clients stay in the trusted parent, and agent-visible target file or process access crosses the execution backend. Only text explicitly printed with `printText` and images explicitly forwarded with `await printImage(block)` enter the code-mode result. Image validation and preparation run outside the sandbox. `src/code_mode/` owns the shared sandbox and output contract; `src/core/code_mode/` owns validated capability APIs and progressive documentation; `src/core/tools/code.ts` binds the single composition tool from persona-selected capabilities. Keep direct and composed operations on shared services. Standalone model usage is an awaited semantic `tool_usage` event, persisted independently of program success. Printed text and image emissions share one ordered worker channel; keep image positions fixed at emission, not at preparation completion, through tool results and client protocols.

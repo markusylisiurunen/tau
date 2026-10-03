@@ -124,7 +124,7 @@ For a subagent, check these three gates:
 
 An already spawned thread keeps its captured model, tools, and working directory after reload. Recovery does not restore subagent threads, so old agent IDs cannot receive follow-ups after a host restart. Use `list_agents` to inspect live records. See [subagents](subagents.md).
 
-For `tau_docs` or main-session goal tools, absence indicates a host runtime or version problem, not a persona list. Confirm the host package and restart it.
+For `tau_docs`, absence indicates a host runtime or version problem, not a persona list. Confirm the host package and restart it.
 
 ## A command client tool is missing or fails
 
@@ -219,7 +219,7 @@ Without `--session` or `--new`, attach needs a TTY for its selector. In automati
 
 A selector shows only sessions this host can load and restore. Confirm its machine, OS user, home, Tau version, resolver configuration, and target still match the creator. Another user's `~/.config/tau/sessions` is a different store. Restore missing API definitions, credentials, local directory, or Sprite. Never edit session JSON to substitute a target or `cwd`.
 
-Recovery returns idle, aborts unfinished turns, cancels running maintenance, removes live subagents, and blocks an active goal. Review the last assistant and tools, then safely check `!!pwd` and `!!git status --short`. Resume a goal only after understanding the stop. Retry continues current history without rerunning completed tools automatically.
+Recovery returns idle, aborts unfinished turns, cancels running maintenance, and removes live subagents. Review the last assistant and tools, then safely check `!!pwd` and `!!git status --short`. Retry continues current history without rerunning completed tools automatically.
 
 A WebSocket client disconnect does not interrupt the long-running host; server shutdown does. Closing a local TUI shuts down its owned host, so interrupted recovery is expected.
 

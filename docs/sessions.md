@@ -29,7 +29,7 @@ Session-owned [background Bash jobs](tools.md#bash) survive turns, interruption,
 
 ## Submit, queue, and steer
 
-A normal submission is accepted and persisted before model work begins. Tau then runs model and tool subturns until the turn completes, fails, is blocked, or is interrupted.
+A normal submission is accepted and persisted before model work begins. Tau then runs model and tool subturns until the turn completes, fails, is blocked, or is interrupted. The model decides when its response is complete; Tau does not automatically start another turn after a final response. Automatic compaction can continue an unfinished turn within a new context window.
 
 Only one logical turn runs at a time. Input sent during active work has two useful delivery modes:
 
@@ -48,7 +48,7 @@ Ordinary session interruption is cooperative. It requests cancellation of the ma
 
 Retry runs another assistant turn from the current session history. It does not remove the interrupted or failed result, rewind context, or submit the previous user text again. This lets Tau continue from completed tool results without automatically rerunning them. In the TUI, press Enter twice on an empty editor while idle.
 
-Retry is unavailable when there is no prior user turn. It is also unavailable for goal-controlled turns because a blocked goal has an explicit resume operation.
+Retry is unavailable when there is no prior user turn.
 
 Detaching is not the same as interrupting. Closing one observer of a long-running host leaves the hosted turn running. By contrast, a local TUI owns its in-process host, so closing it causes that host to shut down and interrupt active work. See [remote sessions](remote-sessions.md).
 
@@ -71,35 +71,14 @@ Recovery preserves user-visible durable state including:
 - committed conversation messages and terminal tool results
 - current persona and reasoning settings
 - cumulative usage cost and context accounting needed for continuation
-- persistent goal state
 - execution-environment identity, cwd, and creation attributes
 - compaction and rewind results
 
-Recovery intentionally does not recreate every live process. It returns the session idle, settles any accepted but unfinished turn as aborted, cancels running maintenance operations, and normalizes tools whose completion cannot be proven. Supervised subagents and their live activity do not survive restart. An active persistent goal becomes blocked rather than continuing autonomously without an explicit resume.
+Recovery intentionally does not recreate every live process. It returns the session idle, settles any accepted but unfinished turn as aborted, cancels running maintenance operations, and normalizes tools whose completion cannot be proven. Supervised subagents and their live activity do not survive restart.
 
 A stored session is listed or recovered only when the current host has a resolver capable of restoring its execution-environment kind and named target. Recovery can therefore fail even when the session document is valid, for example when a Cloudflare bridge was removed, a Fly API target is no longer configured, or the underlying sandbox, Sprite, directory, or credentials are unavailable.
 
 Newer Tau versions preserve the openability of supported stored sessions through storage migrations and recovery normalization. This promises access to recoverable semantic data, not byte-for-byte files or identical historical presentation. A genuinely newer unsupported storage version or corrupted document can still be rejected.
-
-## Use persistent goals
-
-A persistent goal lets Tau continue across repeated model turns until the agent marks the objective complete or blocked. Start one from the TUI:
-
-```text
-/goal prepare the release and verify the package
-```
-
-Tau stores the objective before running it. While the goal remains active, the host creates continuation turns automatically. The agent’s goal tools can refine the objective, block it when human input is needed, or complete and clear it.
-
-Use the controls deliberately:
-
-- `/goal` shows the current objective and status.
-- `/goal resume` resumes a blocked goal.
-- `/goal clear` clears the goal. If work is active, clearing interrupts it and cancels pending input associated with the old flow.
-
-Only one goal can exist at a time. Clear it before starting another. Interruption, provider failure, blocked execution, or host recovery changes an active goal to `blocked`. Tau never silently resumes autonomous goal work after recovery. Goal-controlled turns cannot use ordinary retry; use `/goal resume` after resolving the blocker.
-
-A goal survives client detach and host restart because its objective and status are session state. The process doing the work does not survive restart.
 
 ## Compact model context
 
@@ -216,7 +195,7 @@ Use normal Tau operations rather than opening or editing session files.
 1. Wait for active work to finish or interrupt it intentionally.
 2. Note the session id shown in the TUI startup block.
 3. Exit cleanly and reattach through the same host.
-4. Confirm the expected messages, persona, reasoning level, and `/goal` status.
+4. Confirm the expected messages, persona, and reasoning level.
 5. Run non-contextual environment checks with `!!`, for example `!!pwd` and `!!git status --short`.
 6. Submit a small read-only request before resuming destructive work.
 

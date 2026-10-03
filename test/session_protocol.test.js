@@ -41,6 +41,25 @@ const bootstrap = createProtocolBootstrap();
 const catalog = createProtocolCatalog();
 
 describe("session_protocol", () => {
+  it.each(["session.startGoal", "session.resumeGoal", "session.clearGoal"])(
+    "rejects removed goal method %s",
+    (method) => {
+      const parsed = parseSessionProtocolRequestLine(
+        JSON.stringify({
+          version: SESSION_PROTOCOL_VERSION,
+          type: "request",
+          id: "obsolete",
+          method,
+          params: { sessionId: "session-1", objective: "Ship it" },
+        }),
+      );
+      expect(parsed).toMatchObject({
+        ok: false,
+        error: { code: SESSION_PROTOCOL_ERROR_CODES.methodNotFound },
+      });
+    },
+  );
+
   it("requires configured MCP names and preserves them through catalog deltas", () => {
     const snapshot = createProtocolSnapshot();
     const next = structuredClone(snapshot);
@@ -2133,26 +2152,6 @@ describe("session_protocol", () => {
     expect(settingsPatchedSnapshot.settings).not.toBe(settingsSnapshot.settings);
     expect(settingsPatchedSnapshot.messages).toBe(settingsSnapshot.messages);
     expect(settingsPatchedSnapshot.timeline).toBe(settingsSnapshot.timeline);
-
-    const goalDelta = createSessionProtocolDeltaMessage({
-      sessionId: "session-1",
-      fromRevision: 3,
-      toRevision: 4,
-      cause: { type: "goal" },
-      delta: {
-        type: "snapshot.patch",
-        changes: [
-          {
-            type: "goal.set",
-            goal: { objective: "Ship it", status: "active" },
-          },
-        ],
-      },
-    });
-    expect(applySessionProtocolDelta(settingsPatchedSnapshot, goalDelta).goal).toEqual({
-      objective: "Ship it",
-      status: "active",
-    });
 
     const invalidAgentStateDelta = createSessionProtocolDeltaMessage({
       sessionId: "session-1",

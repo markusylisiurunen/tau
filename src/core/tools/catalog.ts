@@ -10,7 +10,6 @@ import { BashJobRegistry, createBashJobToolDefinitions } from "./bash_jobs.js";
 import { createCodeToolDefinition } from "./code.js";
 import { createEditToolDefinition } from "./edit.js";
 import { scopeToolExecutionBackend, type ToolExecutionBackend } from "./execution_backend.js";
-import { createGoalToolDefinitions, type GoalManager } from "./goal.js";
 import { createInterruptAgentToolDefinition } from "./interrupt_agent.js";
 import { createListAgentsToolDefinition } from "./list_agents.js";
 import { ToolRegistry } from "./registry.js";
@@ -40,15 +39,6 @@ export const ToolCatalog = {
       ...options,
       mcp: new McpManager(options.config.mcpServers),
       bashJobs: new BashJobRegistry(),
-      goalManager: {
-        getGoal: () => null,
-        createGoal: async () => {
-          throw new Error("goal mutations are unavailable in the debug registry");
-        },
-        updateGoal: async () => {
-          throw new Error("goal mutations are unavailable in the debug registry");
-        },
-      },
       subagentSystemPrompt: undefined,
       supervisor: new AgentSupervisor({ onEvent: () => {} }),
     });
@@ -62,7 +52,6 @@ export const ToolCatalog = {
     subagentSystemPrompt: string | undefined;
     modelResolver: ModelResolver;
     supervisor: AgentSupervisor;
-    goalManager: GoalManager;
     bashJobs: BashJobRegistry;
     history: HistoryQuery;
     mcp?: McpManager;
@@ -102,7 +91,6 @@ export const ToolCatalog = {
         ? createBashJobToolDefinitions(options.bashJobs)
         : []),
       createTauDocsToolDefinition(),
-      ...createGoalToolDefinitions(options.goalManager),
     ]);
   },
 

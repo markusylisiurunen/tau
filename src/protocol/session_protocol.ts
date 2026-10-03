@@ -11,7 +11,7 @@ import { type ZodError, z } from "zod";
 import { MODEL_IMAGE_MAX_BYTES, SUPPORTED_IMAGE_TYPES } from "../core/utils/model_image.js";
 import { type IntermediateSystemMessage, isIntermediateSystemMessage } from "./system_message.js";
 
-export const SESSION_PROTOCOL_VERSION = 16 as const;
+export const SESSION_PROTOCOL_VERSION = 17 as const;
 export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_IMAGES = 16;
 export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_CONTENT_BLOCKS = 1024;
 export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_IMAGE_BYTES = MODEL_IMAGE_MAX_BYTES;
@@ -55,9 +55,6 @@ export const SESSION_PROTOCOL_METHODS = [
   "session.sample",
   "session.interrupt",
   "session.snapshot",
-  "session.startGoal",
-  "session.resumeGoal",
-  "session.clearGoal",
   "session.setReasoning",
   "session.setPersona",
   "session.resolvePrompt",
@@ -169,11 +166,6 @@ export type SessionProtocolRecordParams = SessionProtocolSessionIdParams & {
   historyEntryId?: string;
 };
 export type SessionProtocolRetryParams = SessionProtocolSessionIdParams;
-export type SessionProtocolStartGoalParams = SessionProtocolSessionIdParams & {
-  objective: string;
-};
-export type SessionProtocolResumeGoalParams = SessionProtocolSessionIdParams;
-export type SessionProtocolClearGoalParams = SessionProtocolSessionIdParams;
 export type SessionProtocolExecParams = SessionProtocolSessionIdParams & {
   execId: string;
   command: string;
@@ -291,9 +283,6 @@ export type SessionProtocolParamsByMethod = {
   "session.sample": SessionProtocolSampleParams;
   "session.interrupt": SessionProtocolSessionIdParams;
   "session.snapshot": SessionProtocolSessionIdParams;
-  "session.startGoal": SessionProtocolStartGoalParams;
-  "session.resumeGoal": SessionProtocolResumeGoalParams;
-  "session.clearGoal": SessionProtocolClearGoalParams;
   "session.setReasoning": SessionProtocolSetReasoningParams;
   "session.setPersona": SessionProtocolSetPersonaParams;
   "session.resolvePrompt": SessionProtocolResolvePromptParams;
@@ -415,10 +404,6 @@ export type SessionProtocolSubagentActivitiesChange =
 export type SessionProtocolCreateResult = {
   sessionId: string;
 };
-
-export type SessionProtocolStartGoalResult = SessionProtocolSubmitResult;
-export type SessionProtocolResumeGoalResult = SessionProtocolTurnResult;
-export type SessionProtocolClearGoalResult = SessionProtocolSnapshot;
 
 export type SessionProtocolObserveResult = {
   snapshot: SessionProtocolSnapshot;
@@ -921,11 +906,6 @@ export type SessionProtocolAgentStateSnapshot = {
   };
 };
 
-export type SessionProtocolGoal = {
-  objective: string;
-  status: "active" | "blocked";
-};
-
 export type SessionProtocolSnapshot = {
   sessionId: string;
   attributes: Record<string, string>;
@@ -933,7 +913,6 @@ export type SessionProtocolSnapshot = {
   revision: number;
   agentState: SessionProtocolAgentStateSnapshot;
   lifecycle: SessionProtocolSessionLifecycle;
-  goal: SessionProtocolGoal | null;
   costTotal: number;
   settings: SessionProtocolSettingsSnapshot;
   bootstrap: SessionProtocolBootstrapSnapshot;
@@ -1134,9 +1113,6 @@ export type SessionProtocolResultByMethod = {
   "session.sample": SessionProtocolSampleResult;
   "session.interrupt": SessionProtocolInterruptResult;
   "session.snapshot": SessionProtocolSnapshot;
-  "session.startGoal": SessionProtocolStartGoalResult;
-  "session.resumeGoal": SessionProtocolResumeGoalResult;
-  "session.clearGoal": SessionProtocolClearGoalResult;
   "session.setReasoning": SessionProtocolSettingsUpdateResult;
   "session.setPersona": SessionProtocolSnapshot;
   "session.resolvePrompt": SessionProtocolResolvePromptResult;
@@ -1211,8 +1187,7 @@ export type SessionProtocolDeltaCause =
         | "notice"
         | "agent-run"
         | "maintenance"
-        | "configuration"
-        | "goal";
+        | "configuration";
     }
   | {
       type: "compaction";
@@ -1228,7 +1203,6 @@ export type SessionProtocolDeltaCause =
 export type SessionProtocolChange =
   | { type: "agent-state.set"; agentState: SessionProtocolAgentStateSnapshot }
   | { type: "lifecycle.set"; lifecycle: SessionProtocolSessionLifecycle }
-  | { type: "goal.set"; goal: SessionProtocolGoal | null }
   | { type: "cost.set"; costTotal: number }
   | { type: "settings.set"; settings: SessionProtocolSettingsSnapshot }
   | { type: "turn.set"; turn: SessionProtocolTurnRecord }
@@ -1742,13 +1716,6 @@ const sessionProtocolUserMessageParamsSchema = z
     sessionId: nonEmptyStringSchema,
     text: nonEmptyStringSchema,
     historyEntryId: historyEntryIdSchema.optional(),
-  })
-  .strip();
-
-const sessionProtocolStartGoalParamsSchema = z
-  .object({
-    sessionId: nonEmptyStringSchema,
-    objective: nonEmptyStringSchema,
   })
   .strip();
 
@@ -2536,13 +2503,6 @@ const sessionProtocolFacetSchema = z
   })
   .strip();
 
-const sessionProtocolGoalSchema = z
-  .object({
-    objective: nonEmptyStringSchema,
-    status: z.enum(["active", "blocked"]),
-  })
-  .strip();
-
 const sessionProtocolAgentStateSnapshotSchema = z
   .object({
     revision: z.number().int().nonnegative(),
@@ -2577,7 +2537,6 @@ const sessionProtocolSnapshotSchema = z
     revision: z.number().int().positive(),
     agentState: sessionProtocolAgentStateSnapshotSchema,
     lifecycle: sessionProtocolSessionLifecycleSchema,
-    goal: sessionProtocolGoalSchema.nullable(),
     costTotal: z.number().nonnegative(),
     settings: sessionProtocolSettingsSnapshotSchema,
     bootstrap: sessionProtocolBootstrapSnapshotSchema,
@@ -2891,7 +2850,6 @@ const sessionProtocolDeltaCauseSchema = z.union([
         "agent-run",
         "maintenance",
         "configuration",
-        "goal",
       ]),
     })
     .strip(),
@@ -2926,12 +2884,6 @@ const sessionProtocolChangeSchema = z.discriminatedUnion("type", [
     .object({
       type: z.literal("lifecycle.set"),
       lifecycle: sessionProtocolSessionLifecycleSchema,
-    })
-    .strip(),
-  z
-    .object({
-      type: z.literal("goal.set"),
-      goal: sessionProtocolGoalSchema.nullable(),
     })
     .strip(),
   z
@@ -3390,14 +3342,12 @@ const sessionProtocolSubmitResultSchema = z
 const sessionProtocolTurnResultSchema = sessionProtocolSubmitResultSchema;
 
 const sessionProtocolRetryResultSchema = sessionProtocolTurnResultSchema;
-const sessionProtocolResumeGoalResultSchema = sessionProtocolTurnResultSchema;
 
 const sessionProtocolSubmitWithUserResultSchema = sessionProtocolTurnResultSchema
   .extend({
     userHistoryEntryId: nonEmptyStringSchema,
   })
   .strip();
-const sessionProtocolStartGoalResultSchema = sessionProtocolSubmitWithUserResultSchema;
 
 const sessionProtocolCancelPendingMessagesResultSchema = z
   .object({
@@ -3782,9 +3732,6 @@ export function applySessionProtocolDelta(
       case "lifecycle.set":
         next.lifecycle = change.lifecycle;
         break;
-      case "goal.set":
-        next.goal = structuredClone(change.goal);
-        break;
       case "cost.set":
         next.costTotal = change.costTotal;
         break;
@@ -3884,7 +3831,6 @@ function changeCanInvalidateSnapshot(
 ): boolean {
   switch (change.type) {
     case "lifecycle.set":
-    case "goal.set":
     case "cost.set":
     case "settings.set":
     case "turn.set":
@@ -3978,7 +3924,7 @@ function applyStructurallySharedPatch(
   }
 
   const topLevelChanges: Partial<
-    Pick<SessionProtocolSnapshot, "agentState" | "lifecycle" | "goal" | "costTotal" | "settings">
+    Pick<SessionProtocolSnapshot, "agentState" | "lifecycle" | "costTotal" | "settings">
   > = {};
   let nextMessages: SessionProtocolSnapshot["messages"] | undefined;
   let nextTimeline: SessionProtocolSnapshot["timeline"] | undefined;
@@ -4024,9 +3970,6 @@ function applyStructurallySharedPatch(
         break;
       case "lifecycle.set":
         topLevelChanges.lifecycle = change.lifecycle;
-        break;
-      case "goal.set":
-        topLevelChanges.goal = structuredClone(change.goal);
         break;
       case "cost.set":
         topLevelChanges.costTotal = change.costTotal;
@@ -4585,18 +4528,6 @@ export function validateSessionProtocolParams(
   params: unknown,
 ): SessionProtocolParamsValidationResult<SessionProtocolSessionIdParams>;
 export function validateSessionProtocolParams(
-  method: "session.startGoal",
-  params: unknown,
-): SessionProtocolParamsValidationResult<SessionProtocolStartGoalParams>;
-export function validateSessionProtocolParams(
-  method: "session.resumeGoal",
-  params: unknown,
-): SessionProtocolParamsValidationResult<SessionProtocolResumeGoalParams>;
-export function validateSessionProtocolParams(
-  method: "session.clearGoal",
-  params: unknown,
-): SessionProtocolParamsValidationResult<SessionProtocolClearGoalParams>;
-export function validateSessionProtocolParams(
   method: "session.reload",
   params: unknown,
 ): SessionProtocolParamsValidationResult<SessionProtocolReloadParams>;
@@ -4684,12 +4615,8 @@ export function validateSessionProtocolParams(
     case "session.retry":
     case "session.interrupt":
     case "session.snapshot":
-    case "session.resumeGoal":
-    case "session.clearGoal":
     case "session.reload":
       return validateSessionIdParams(method, params);
-    case "session.startGoal":
-      return validateStartGoalParams(params);
     case "session.setReasoning":
       return validateSetReasoningParams(params);
     case "session.setPersona":
@@ -4733,7 +4660,6 @@ export function validateSessionProtocolResult(
     case "session.observe":
       return validateResult(method, result, sessionProtocolObserveResultSchema);
     case "session.snapshot":
-    case "session.clearGoal":
     case "session.setPersona":
       return validateResult(method, result, sessionProtocolSnapshotSchema);
     case "session.setReasoning":
@@ -4768,10 +4694,6 @@ export function validateSessionProtocolResult(
     case "session.queue":
     case "session.steer":
       return validateResult(method, result, sessionProtocolSubmitWithUserResultSchema);
-    case "session.startGoal":
-      return validateResult(method, result, sessionProtocolStartGoalResultSchema);
-    case "session.resumeGoal":
-      return validateResult(method, result, sessionProtocolResumeGoalResultSchema);
     case "session.cancelPendingMessages":
       return validateResult(method, result, sessionProtocolCancelPendingMessagesResultSchema);
     case "session.record":
@@ -4797,8 +4719,6 @@ function validateSessionIdParams<
     | "session.retry"
     | "session.interrupt"
     | "session.snapshot"
-    | "session.resumeGoal"
-    | "session.clearGoal"
     | "session.reload",
 >(
   method: T,
@@ -4879,23 +4799,6 @@ function validateUserMessageParams(
         : {}),
     },
   };
-}
-
-function validateStartGoalParams(
-  params: unknown,
-): SessionProtocolParamsValidationResult<SessionProtocolStartGoalParams> {
-  const parsed = sessionProtocolStartGoalParamsSchema.safeParse(params);
-  if (!parsed.success) {
-    const message = hasIssue(parsed.error, [], "invalid_type")
-      ? "session.startGoal params must be an object"
-      : hasIssue(parsed.error, ["sessionId"])
-        ? "session.startGoal params.sessionId must be a non-empty string"
-        : hasIssue(parsed.error, ["objective"])
-          ? "session.startGoal params.objective must be a non-empty string"
-          : `session.startGoal params are invalid: ${formatZodError(parsed.error)}`;
-    return invalidParams(message);
-  }
-  return { ok: true, value: parsed.data };
 }
 
 function validateSteerParams(

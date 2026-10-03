@@ -68,6 +68,73 @@ function getCall(fetchMock, suffix) {
 }
 
 describe("gemini transcription", () => {
+  it.each(["complete", "abort", "timeout"])(
+    "waits for Gemini completion after activity end (%s)",
+    async (outcome) => {
+      vi.useFakeTimers();
+      const socket = new EventEmitter();
+      const sent = [];
+      socket.send = (data, callback) => {
+        sent.push(JSON.parse(data));
+        callback?.();
+      };
+      socket.close = vi.fn(() => socket.emit("close", 1000, Buffer.alloc(0)));
+      socket.terminate = vi.fn();
+      const onProgress = vi.fn();
+      const transcription = startGeminiTranscription({
+        apiKey: "key",
+        webSocketFactory: () => socket,
+        onProgress,
+      });
+      try {
+        socket.emit("open");
+        await vi.advanceTimersByTimeAsync(0);
+        socket.emit("message", JSON.stringify({ setupComplete: {} }));
+        transcription.appendAudio(Buffer.alloc(32000));
+        const completion = transcription.finish();
+        const settled = vi.fn();
+        void completion.then(settled, settled);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(sent.at(-1)).toEqual({ realtimeInput: { activityEnd: {} } });
+        socket.emit(
+          "message",
+          JSON.stringify({
+            serverContent: {},
+            voiceActivity: { type: "ACTIVITY_END", audioOffset: "1s" },
+          }),
+        );
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(settled).not.toHaveBeenCalled();
+        if (outcome === "complete") {
+          socket.emit("message", JSON.stringify({ serverContent: { generationComplete: true } }));
+          await expect(completion).resolves.toBe("");
+          await expect(transcription.finish()).resolves.toBe("");
+          socket.emit(
+            "message",
+            JSON.stringify({ serverContent: { inputTranscription: { text: "late" } } }),
+          );
+          expect(onProgress).not.toHaveBeenCalled();
+          expect(socket.terminate).not.toHaveBeenCalled();
+        } else {
+          if (outcome === "abort") transcription.abort();
+          else await vi.advanceTimersByTimeAsync(29000);
+          await expect(completion).rejects.toThrow();
+        }
+      } finally {
+        transcription.abort();
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("accepts an explicitly empty file transcript and deletes the upload", async () => {
+    const fetchImpl = createGeminiFetchMock({ transcript: "" });
+    await expect(
+      transcribeGeminiAudio({ apiKey: "key", audio: Buffer.alloc(2048), fetchImpl }),
+    ).resolves.toBe("");
+    expect(getCall(fetchImpl, "/v1beta/files/audio-1")[1].method).toBe("DELETE");
+  });
+
   it.each(["missing key", "provider error", "incomplete", "refusal", "malformed"])(
     "transcribes without hints after keyword extraction %s",
     async (outcome) => {

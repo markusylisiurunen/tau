@@ -6060,6 +6060,8 @@ describe("SessionChatController", () => {
     ["steer", "steer"],
     ["failure", "steer"],
     ["disposed", "steer"],
+    ["cancelled", "steer"],
+    ["cancelled failure", "queue"],
     ["empty", "steer"],
   ])("finalizes recording without submitting the preview (%s via %s)", async (outcome, mode) => {
     const audioPath = join(tmpdir(), `tau-session-listen-enter-${outcome}-${Date.now()}.wav`);
@@ -6112,7 +6114,14 @@ describe("SessionChatController", () => {
       expect(editor.getText()).toBe("typed provisional suffix");
 
       const disposal = outcome === "disposed" ? controller.dispose() : undefined;
-      if (outcome === "failure") finalTranscript.reject(new Error("transcription failed"));
+      if (outcome.startsWith("cancelled")) {
+        await controller.interrupt();
+        await controller.interrupt();
+        expect(editor.getText()).toBe("typed suffix");
+        expect(transcription.abort).toHaveBeenCalled();
+      }
+      if (outcome === "failure" || outcome === "cancelled failure")
+        finalTranscript.reject(new Error("transcription failed"));
       else finalTranscript.resolve(outcome === "empty" ? "" : "finalized ");
       await controller.listenTransition;
       await disposal;
@@ -6315,7 +6324,13 @@ describe("SessionChatController", () => {
         expect(editor.getText()).toBe("ennen jälkeen");
         editor.handleInput("x");
         expect(editor.getText()).toBe("ennen xjälkeen");
-        expect(controller.retainedListenAudio?.audioPath).toBe(audioPath);
+        if (outcome === "failure") {
+          expect(controller.retainedListenAudio?.audioPath).toBe(audioPath);
+        } else {
+          expect(controller.retainedListenAudio).toBeUndefined();
+          expect(view.transcriptNotices).toEqual([]);
+          await expect(readFile(audioPath)).rejects.toMatchObject({ code: "ENOENT" });
+        }
       } finally {
         await controller.dispose();
         await rm(audioPath, { force: true });
@@ -6356,7 +6371,7 @@ describe("SessionChatController", () => {
 
   it.each([
     ["failure", "service unavailable"],
-    ["empty transcript", "transcription result was empty or malformed"],
+    ["malformed transcript", "transcription result was malformed"],
   ])("retains voice input after %s and retries it into the editor", async (outcome, error) => {
     const audioPath = join(tmpdir(), `tau-session-listen-${outcome}-${Date.now()}.wav`);
     await writeFile(audioPath, Buffer.alloc(2048, 1));
@@ -6386,7 +6401,7 @@ describe("SessionChatController", () => {
                 content: [
                   {
                     type: "text",
-                    text: interactionCount === 1 ? "" : "recovered transcript",
+                    text: interactionCount === 1 ? null : "recovered transcript",
                   },
                 ],
               },
@@ -6508,6 +6523,7 @@ describe("SessionChatController", () => {
     ["failure", "ffmpeg failed to start recording: audio device unavailable"],
     ["timeout", "timed out waiting for microphone audio"],
     ["shutdown", undefined],
+    ["cancelled", undefined],
   ])("keeps retained voice input after recording startup %s", async (outcome, error) => {
     const retainedPath = join(tmpdir(), `tau-session-listen-${outcome}-retained-${Date.now()}.wav`);
     const nextPath = join(tmpdir(), `tau-session-listen-${outcome}-next-${Date.now()}.wav`);
@@ -6543,9 +6559,10 @@ describe("SessionChatController", () => {
       if (outcome === "timeout") {
         await vi.advanceTimersByTimeAsync(0);
         await vi.advanceTimersByTimeAsync(LISTEN_CAPTURE_START_TIMEOUT_MS);
-      } else if (outcome === "shutdown") {
+      } else if (outcome === "shutdown" || outcome === "cancelled") {
         await waitUntil(() => captureSignal !== undefined);
-        await controller.dispose();
+        if (outcome === "shutdown") await controller.dispose();
+        else await controller.interrupt();
         expect(captureSignal.aborted).toBe(true);
       }
       await start;
@@ -6572,65 +6589,209 @@ describe("SessionChatController", () => {
     }
   });
 
-  it.each(["capture shutdown", "audio read"])(
-    "deletes stopped voice input when disposed during %s",
-    async (phase) => {
-      const audioPath = join(tmpdir(), `tau-session-listen-stopping-${Date.now()}.wav`);
-      const audio = Buffer.alloc(2048, 1);
-      await writeFile(audioPath, audio);
-      const session = new FakeSession();
-      const view = new FakeView();
-      view.editorText = "draft ";
-      const { controller } = await createControllerHarness({
-        view,
-        session,
-        targetLabel: "in-process",
-      });
-      const capture = Promise.withResolvers();
-      const read = Promise.withResolvers();
-      const readSpy =
-        phase === "audio read"
-          ? vi.spyOn(listenCapture, "readListenAudio").mockReturnValueOnce(read.promise)
-          : undefined;
-      const transcription = { finish: vi.fn(), abort: vi.fn() };
-      const abortController = new AbortController();
-      controller.beginListenPreview();
-      controller.listenPreview.update("provisional");
-      controller.listenRecording = {
-        audioPath,
-        startedAt: Date.now(),
-        stopRequested: false,
-        abortController,
-        completion: capture.promise,
-        transcription,
-      };
+  it.each([
+    ["capture shutdown", "dispose"],
+    ["audio read", "dispose"],
+    ["capture shutdown", "interrupt"],
+    ["audio read", "interrupt"],
+  ])("deletes stopped voice input during %s on %s", async (phase, action) => {
+    const audioPath = join(tmpdir(), `tau-session-listen-stopping-${Date.now()}.wav`);
+    const audio = Buffer.alloc(2048, 1);
+    await writeFile(audioPath, audio);
+    const session = new FakeSession();
+    const view = new FakeView();
+    view.editorText = "draft ";
+    const { controller } = await createControllerHarness({
+      view,
+      session,
+      targetLabel: "in-process",
+    });
+    const capture = Promise.withResolvers();
+    const read = Promise.withResolvers();
+    const readSpy =
+      phase === "audio read"
+        ? vi.spyOn(listenCapture, "readListenAudio").mockReturnValueOnce(read.promise)
+        : undefined;
+    const transcription = { finish: vi.fn(), abort: vi.fn() };
+    const abortController = new AbortController();
+    controller.beginListenPreview();
+    controller.listenPreview.update("provisional");
+    controller.listenRecording = {
+      audioPath,
+      startedAt: Date.now(),
+      stopRequested: false,
+      abortController,
+      completion: capture.promise,
+      transcription,
+    };
 
-      try {
-        const stop = controller.runListenTransition(() => controller.stopListenCapture());
-        expect(abortController.signal.aborted).toBe(true);
-        expect(controller.listenRecording).toBeUndefined();
-        if (readSpy) {
-          capture.resolve();
-          await waitUntil(() => readSpy.mock.calls.length > 0);
-        }
-        const disposal = controller.dispose();
-        expect(view.editorText).toBe("draft ");
+    try {
+      const stop = controller.runListenTransition(() => controller.stopListenCapture());
+      expect(abortController.signal.aborted).toBe(true);
+      expect(controller.listenRecording).toBeUndefined();
+      if (readSpy) {
         capture.resolve();
-        read.resolve(audio);
-        await Promise.all([stop, disposal]);
+        await waitUntil(() => readSpy.mock.calls.length > 0);
+      }
+      const disposal = controller[action]();
+      expect(view.editorText).toBe("draft ");
+      capture.resolve();
+      read.resolve(audio);
+      await Promise.all([stop, disposal]);
 
-        await expect(readFile(audioPath)).rejects.toMatchObject({ code: "ENOENT" });
-        expect(transcription.abort).toHaveBeenCalled();
-        expect(transcription.finish).not.toHaveBeenCalled();
+      await expect(readFile(audioPath)).rejects.toMatchObject({ code: "ENOENT" });
+      expect(transcription.abort).toHaveBeenCalled();
+      expect(transcription.finish).not.toHaveBeenCalled();
+      expect(controller.retainedListenAudio).toBeUndefined();
+      expect(view.transcriptNotices).toEqual([]);
+      expect(view.editorText).toBe("draft ");
+      expect(view.editorEnabledUpdates.at(-1)).toBe(true);
+      expect(session.submit).not.toHaveBeenCalled();
+    } finally {
+      capture.resolve();
+      read.resolve(audio);
+      readSpy?.mockRestore();
+      await controller.dispose();
+      await rm(audioPath, { force: true });
+    }
+  });
+
+  it("restores the draft and guidance when Escape cancels during audio cleanup", async () => {
+    const audioPath = join(tmpdir(), `tau-session-listen-cleanup-cancel-${Date.now()}.wav`);
+    await writeFile(audioPath, Buffer.alloc(2048, 1));
+    const { view, session, controller } = await createControllerHarness({});
+    view.submitEditor = vi.fn();
+    view.editorText = "draft ";
+    controller.editorHiddenSystemMessages = ["draft guidance"];
+    const deletion = Promise.withResolvers();
+    const deleteSpy = vi
+      .spyOn(listenCapture, "deleteListenTempFile")
+      .mockReturnValueOnce(deletion.promise);
+    const transcription = { finish: vi.fn(async () => "dictated"), abort: vi.fn() };
+    controller.beginListenPreview();
+    controller.listenPreview.update("provisional");
+    controller.listenRecording = {
+      audioPath,
+      startedAt: Date.now(),
+      stopRequested: false,
+      abortController: new AbortController(),
+      completion: Promise.resolve(),
+      transcription,
+    };
+
+    try {
+      const stop = controller.runListenTransition(() => controller.stopListenCapture("submit"));
+      await waitUntil(() => deleteSpy.mock.calls.length > 0);
+      controller.getInputHandlers().onEscape();
+      expect(view.editorText).toBe("draft ");
+      expect(controller.editorHiddenSystemMessages).toEqual(["draft guidance"]);
+      expect(view.editorEnabledUpdates.at(-1)).toBe(true);
+      deletion.resolve();
+      await stop;
+
+      expect(view.editorText).toBe("draft ");
+      expect(controller.editorHiddenSystemMessages).toEqual(["draft guidance"]);
+      expect(view.submitEditor).not.toHaveBeenCalled();
+      expect(session.submit).not.toHaveBeenCalled();
+      expect(controller.retainedListenAudio).toBeUndefined();
+      await expect(readFile(audioPath)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      deletion.resolve();
+      await controller.listenTransition;
+      deleteSpy.mockRestore();
+      await controller.dispose();
+      await rm(audioPath, { force: true });
+    }
+  });
+
+  it("cancels before the microphone starts when temporary file creation is pending", async () => {
+    const audioPath = join(tmpdir(), `tau-session-listen-start-cancel-${Date.now()}.wav`);
+    await writeFile(audioPath, Buffer.alloc(0));
+    const created = Promise.withResolvers();
+    const spawn = vi.fn(() => created.promise);
+    const { view, controller } = await createControllerHarness({
+      deps: createMockDeps(spawn),
+      config: { apiKeys: { google: "key" } },
+    });
+    view.editorText = "draft";
+    try {
+      const start = controller.onUserInput("/listen");
+      await waitUntil(() => spawn.mock.calls.length === 1);
+      await controller.interrupt();
+      await controller.interrupt();
+      expect(view.editorText).toBe("draft");
+      expect(view.editorEnabledUpdates.at(-1)).toBe(true);
+      created.resolve(createSpawnResult({ stdout: `${audioPath}\n` }));
+      await start;
+      expect(spawn).toHaveBeenCalledOnce();
+      expect(view.transcriptNotices).toEqual([]);
+      await expect(readFile(audioPath)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      created.resolve(createSpawnResult({ stdout: `${audioPath}\n` }));
+      await controller.dispose();
+      await rm(audioPath, { force: true });
+    }
+  });
+
+  it.each(["recording", "retry"])(
+    "cancels %s without retaining or submitting audio",
+    async (phase) => {
+      const audioPath = join(tmpdir(), `tau-session-listen-cancel-${phase}-${Date.now()}.wav`);
+      await writeFile(audioPath, Buffer.alloc(2048));
+      let requestSignal;
+      const fetchImpl = vi.fn((_input, options) => {
+        requestSignal = options.signal;
+        return new Promise((_resolve, reject) => {
+          options.signal.addEventListener("abort", () => reject(options.signal.reason), {
+            once: true,
+          });
+        });
+      });
+      const { view, session, controller } = await createControllerHarness({
+        deps: createMockDeps(),
+        config: { apiKeys: { google: "key" } },
+        speechToTextDeps: { fetchImpl },
+      });
+      view.editorText = "draft";
+      const transcription = { abort: vi.fn(), finish: vi.fn() };
+      const capture = Promise.withResolvers();
+      const abortController = new AbortController();
+      abortController.signal.addEventListener("abort", () => capture.resolve());
+      try {
+        let retry;
+        if (phase === "recording") {
+          controller.beginListenPreview();
+          controller.listenPreview.update("partial");
+          controller.listenRecording = {
+            audioPath,
+            startedAt: Date.now(),
+            stopRequested: false,
+            abortController,
+            completion: capture.promise,
+            transcription,
+          };
+        } else {
+          controller.retainedListenAudio = { audioPath, durationMs: 1000 };
+          retry = controller.onUserInput("/listen retry");
+          await waitUntil(() => requestSignal !== undefined);
+        }
+        await controller.interrupt();
+        await controller.interrupt();
+        expect(view.editorText).toBe("draft");
+        expect(view.editorEnabledUpdates.at(-1)).toBe(true);
+        await retry;
+        await controller.listenTransition;
+        if (phase === "recording") {
+          expect(abortController.signal.aborted).toBe(true);
+          expect(transcription.abort).toHaveBeenCalled();
+          expect(transcription.finish).not.toHaveBeenCalled();
+        } else expect(requestSignal.aborted).toBe(true);
         expect(controller.retainedListenAudio).toBeUndefined();
         expect(view.transcriptNotices).toEqual([]);
-        expect(view.editorText).toBe("draft ");
-        expect(view.editorEnabledUpdates.at(-1)).toBe(true);
         expect(session.submit).not.toHaveBeenCalled();
+        await expect(readFile(audioPath)).rejects.toMatchObject({ code: "ENOENT" });
       } finally {
         capture.resolve();
-        read.resolve(audio);
-        readSpy?.mockRestore();
         await controller.dispose();
         await rm(audioPath, { force: true });
       }

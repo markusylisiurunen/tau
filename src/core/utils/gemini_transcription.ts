@@ -13,6 +13,7 @@ const GEMINI_TRANSCRIPTION_MODEL = "gemini-3.5-transcribe";
 const GEMINI_LIVE_TRANSCRIPTION_MODEL = "gemini-3.5-transcribe-live";
 const GEMINI_TRANSCRIPTION_CONNECT_TIMEOUT_MS = 15_000;
 const GEMINI_TRANSCRIPTION_COMPLETION_TIMEOUT_MS = 30_000;
+const GEMINI_TRANSCRIPTION_QUIET_WINDOW_MS = 3_000;
 const GEMINI_FILE_DELETE_TIMEOUT_MS = 5_000;
 const DEFAULT_GEMINI_AUDIO_MIME_TYPE = "audio/wav";
 
@@ -40,17 +41,25 @@ const interactionTextSchema = z.object({
   type: z.literal("text"),
   text: z.string(),
 });
+const emptyInteractionSchema = z.object({
+  status: z.literal("completed"),
+  usage: z.object({ total_output_tokens: z.literal(0) }),
+  steps: z.array(z.never()).optional(),
+});
 const liveMessageSchema = z
   .object({
     setupComplete: z.object({}).optional(),
     serverContent: z
       .object({
         generationComplete: z.boolean().optional(),
+        turnComplete: z.boolean().optional(),
+        interactionStatus: z.string().optional(),
         interimInputTranscription: z.object({ text: z.string() }).optional(),
         inputTranscription: z.object({ text: z.string() }).optional(),
       })
       .passthrough()
       .optional(),
+    voiceActivity: z.object({ type: z.string() }).optional(),
     error: z
       .object({
         message: z.string().trim().min(1),
@@ -95,6 +104,8 @@ class GeminiStreamingTranscriptionImpl implements GeminiStreamingTranscription {
   private readonly keywordsPromise: Promise<string[]>;
   private readonly onProgress?: (text: string) => void;
   private finalizedText = "";
+  private interimText = "";
+  private speechPending = false;
   private finishing = false;
   private ready = false;
   private aborted = false;
@@ -104,9 +115,11 @@ class GeminiStreamingTranscriptionImpl implements GeminiStreamingTranscription {
   private pendingAudio: Buffer[] = [];
   private readyTimeout?: ReturnType<typeof setTimeout>;
   private completionTimeout?: ReturnType<typeof setTimeout>;
+  private quietTimeout?: ReturnType<typeof setTimeout>;
   private resolveReady?: () => void;
   private rejectReady?: (error: Error) => void;
-  private resolveCompletion?: (transcript: string) => void;
+  private completion?: Promise<string>;
+  private resolveCompletion?: (text: string) => void;
   private rejectCompletion?: (error: Error) => void;
   readonly readyPromise: Promise<void>;
 
@@ -161,13 +174,7 @@ class GeminiStreamingTranscriptionImpl implements GeminiStreamingTranscription {
   }
 
   appendAudio(audio: Buffer): void {
-    if (
-      audio.length === 0 ||
-      this.aborted ||
-      this.failure ||
-      this.completedTranscript !== undefined
-    )
-      return;
+    if (audio.length === 0 || this.aborted || this.failure || this.finishing) return;
     this.hasAudio = true;
     if (!this.ready) {
       this.pendingAudio.push(audio);
@@ -177,7 +184,12 @@ class GeminiStreamingTranscriptionImpl implements GeminiStreamingTranscription {
     this.sendAudio(audio);
   }
 
-  async finish(options: { signal?: AbortSignal } = {}): Promise<string> {
+  finish(options: { signal?: AbortSignal } = {}): Promise<string> {
+    this.completion ??= this.finishStream(options);
+    return this.completion;
+  }
+
+  private async finishStream(options: { signal?: AbortSignal }): Promise<string> {
     const abortListener = () => this.abort();
     if (options.signal?.aborted) {
       abortListener();
@@ -189,24 +201,38 @@ class GeminiStreamingTranscriptionImpl implements GeminiStreamingTranscription {
       await this.readyPromise;
       if (this.failure) throw this.failure;
       if (this.aborted) throw new Error("Gemini transcription was aborted");
-      if (this.completedTranscript !== undefined) return this.completedTranscript;
       if (!this.hasAudio) throw new Error("Gemini transcription received no audio");
-
       const completion = new Promise<string>((resolve, reject) => {
         this.resolveCompletion = resolve;
         this.rejectCompletion = reject;
       });
+      this.finishing = true;
       this.completionTimeout = setTimeout(() => {
         this.fail(new Error("timed out waiting for Gemini transcription"));
-        this.socket.terminate();
       }, GEMINI_TRANSCRIPTION_COMPLETION_TIMEOUT_MS);
       this.completionTimeout.unref?.();
-      this.finishing = true;
-      this.send({ realtimeInput: { activityEnd: {} } });
+      this.scheduleCompletion();
+      this.send({ realtimeInput: { audioStreamEnd: true } });
       return await completion;
     } finally {
       options.signal?.removeEventListener("abort", abortListener);
     }
+  }
+
+  private scheduleCompletion(): void {
+    if (this.quietTimeout) clearTimeout(this.quietTimeout);
+    this.quietTimeout = undefined;
+    if (!this.finishing || this.speechPending || this.aborted || this.failure) return;
+    // Segment completion is not a stream acknowledgement; drain trailing events before closing.
+    this.quietTimeout = setTimeout(() => {
+      const text = this.finalizedText.trim();
+      this.completedTranscript = text;
+      this.clearTimers();
+      this.resolveCompletion?.(text);
+      this.clearWaiters();
+      this.socket.close();
+    }, GEMINI_TRANSCRIPTION_QUIET_WINDOW_MS);
+    this.quietTimeout.unref?.();
   }
 
   abort(): void {
@@ -242,11 +268,6 @@ class GeminiStreamingTranscriptionImpl implements GeminiStreamingTranscription {
           ...(keywords.length > 0 ? { customVocabulary: keywords } : {}),
           mode: "VERBATIM",
         },
-        realtimeInputConfig: {
-          automaticActivityDetection: {
-            disabled: true,
-          },
-        },
       },
     });
   }
@@ -276,7 +297,6 @@ class GeminiStreamingTranscriptionImpl implements GeminiStreamingTranscription {
       this.ready = true;
       if (this.readyTimeout) clearTimeout(this.readyTimeout);
       this.readyTimeout = undefined;
-      this.send({ realtimeInput: { activityStart: {} } });
       const pendingAudio = this.pendingAudio;
       this.pendingAudio = [];
       for (const audio of pendingAudio) {
@@ -290,20 +310,31 @@ class GeminiStreamingTranscriptionImpl implements GeminiStreamingTranscription {
     }
 
     const content = event.data.serverContent;
-    const transcript = content?.inputTranscription?.text;
-    if (transcript) {
-      this.finalizedText += transcript;
+    const activity = event.data.voiceActivity;
+    if (activity?.type === "ACTIVITY_START") {
+      this.speechPending = true;
+      if (this.finishing) this.send({ realtimeInput: { audioStreamEnd: true } });
+    }
+    if (content?.inputTranscription) {
+      this.finalizedText = joinTranscriptText(this.finalizedText, content.inputTranscription.text);
+      this.interimText = "";
+      this.speechPending = false;
       this.onProgress?.(this.finalizedText);
     } else if (content?.interimInputTranscription) {
-      this.onProgress?.(this.finalizedText + content.interimInputTranscription.text);
+      this.interimText = content.interimInputTranscription.text;
+      this.speechPending = true;
+      this.onProgress?.(joinTranscriptText(this.finalizedText, this.interimText));
     }
-    if (content?.generationComplete && this.finishing) {
-      const text = this.finalizedText.trim();
-      this.completedTranscript = text;
-      this.clearTimers();
-      this.resolveCompletion?.(text);
-      this.clearWaiters();
-      this.socket.close();
+    if (content?.generationComplete && !this.interimText) this.speechPending = false;
+    if (
+      activity ||
+      content?.inputTranscription ||
+      content?.interimInputTranscription ||
+      content?.generationComplete ||
+      content?.turnComplete ||
+      content?.interactionStatus
+    ) {
+      this.scheduleCompletion();
     }
   }
 
@@ -348,8 +379,10 @@ class GeminiStreamingTranscriptionImpl implements GeminiStreamingTranscription {
   private clearTimers(): void {
     if (this.readyTimeout) clearTimeout(this.readyTimeout);
     if (this.completionTimeout) clearTimeout(this.completionTimeout);
+    if (this.quietTimeout) clearTimeout(this.quietTimeout);
     this.readyTimeout = undefined;
     this.completionTimeout = undefined;
+    this.quietTimeout = undefined;
   }
 
   private clearWaiters(): void {
@@ -506,6 +539,13 @@ async function deleteGeminiFile(args: {
   }
 }
 
+function joinTranscriptText(committed: string, next: string): string {
+  if (!committed || !next || /\s$/.test(committed) || /^\s|^[.,!?;:]/.test(next)) {
+    return committed + next;
+  }
+  return `${committed} ${next}`;
+}
+
 function extractInteractionText(payload: unknown): string | undefined {
   const parsed = interactionSchema.safeParse(payload);
   if (!parsed.success) return undefined;
@@ -519,7 +559,8 @@ function extractInteractionText(payload: unknown): string | undefined {
       const text = interactionTextSchema.safeParse(content);
       return text.success ? [text.data.text] : [];
     });
-  return texts.length > 0 ? texts.join("") : undefined;
+  if (texts.length > 0) return texts.join("");
+  return emptyInteractionSchema.safeParse(payload).success ? "" : undefined;
 }
 
 async function readResponsePayload(

@@ -15,6 +15,7 @@ function createJsonResponse(payload, status = 200, headers = {}) {
 function createGeminiFetchMock({
   transcript = "ship the fix",
   interactionStatus = 200,
+  interactionPayload,
   keywords = ["Acme SSO", "OAuth", "oauth", "bad\nterm"],
 } = {}) {
   return vi.fn(async (input, options = {}) => {
@@ -46,14 +47,16 @@ function createGeminiFetchMock({
     }
     if (url === "https://generativelanguage.googleapis.com/v1beta/interactions") {
       return interactionStatus === 200
-        ? createJsonResponse({
-            steps: [
-              {
-                type: "model_output",
-                content: [{ type: "text", text: transcript }],
-              },
-            ],
-          })
+        ? createJsonResponse(
+            interactionPayload ?? {
+              steps: [
+                {
+                  type: "model_output",
+                  content: [{ type: "text", text: transcript }],
+                },
+              ],
+            },
+          )
         : createJsonResponse({ error: { message: transcript } }, interactionStatus);
     }
     if (url.endsWith("/v1beta/files/audio-1") && options.method === "DELETE") {
@@ -68,9 +71,9 @@ function getCall(fetchMock, suffix) {
 }
 
 describe("gemini transcription", () => {
-  it.each(["complete", "abort", "timeout"])(
-    "waits for Gemini completion after activity end (%s)",
-    async (outcome) => {
+  it.each(["mid-speech", "paused", "silent", "late-activity"])(
+    "drains the live transcript after stopping %s without a second transcription request",
+    async (state) => {
       vi.useFakeTimers();
       const socket = new EventEmitter();
       const sent = [];
@@ -80,52 +83,147 @@ describe("gemini transcription", () => {
       };
       socket.close = vi.fn(() => socket.emit("close", 1000, Buffer.alloc(0)));
       socket.terminate = vi.fn();
+      const fetchImpl = vi.fn();
       const onProgress = vi.fn();
       const transcription = startGeminiTranscription({
         apiKey: "key",
+        fetchImpl,
         webSocketFactory: () => socket,
         onProgress,
       });
+      const emit = (event) => socket.emit("message", JSON.stringify(event));
       try {
         socket.emit("open");
         await vi.advanceTimersByTimeAsync(0);
-        socket.emit("message", JSON.stringify({ setupComplete: {} }));
-        transcription.appendAudio(Buffer.alloc(32000));
-        const completion = transcription.finish();
-        const settled = vi.fn();
-        void completion.then(settled, settled);
-        await vi.advanceTimersByTimeAsync(0);
-        expect(sent.at(-1)).toEqual({ realtimeInput: { activityEnd: {} } });
-        socket.emit(
-          "message",
-          JSON.stringify({
-            serverContent: {},
-            voiceActivity: { type: "ACTIVITY_END", audioOffset: "1s" },
-          }),
-        );
-        await vi.advanceTimersByTimeAsync(1000);
-        expect(settled).not.toHaveBeenCalled();
-        if (outcome === "complete") {
-          socket.emit("message", JSON.stringify({ serverContent: { generationComplete: true } }));
-          await expect(completion).resolves.toBe("");
-          await expect(transcription.finish()).resolves.toBe("");
-          socket.emit(
-            "message",
-            JSON.stringify({ serverContent: { inputTranscription: { text: "late" } } }),
-          );
-          expect(onProgress).not.toHaveBeenCalled();
-          expect(socket.terminate).not.toHaveBeenCalled();
-        } else {
-          if (outcome === "abort") transcription.abort();
-          else await vi.advanceTimersByTimeAsync(29000);
-          await expect(completion).rejects.toThrow();
+        emit({ setupComplete: {} });
+        transcription.appendAudio(Buffer.alloc(3200));
+        if (state === "paused" || state === "late-activity") {
+          emit({
+            serverContent: {
+              inputTranscription: { text: "first segment" },
+              generationComplete: true,
+            },
+          });
         }
+        if (state === "mid-speech")
+          emit({ serverContent: { interimInputTranscription: { text: "partial" } } });
+        const completion = transcription.finish();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(sent.at(-1)).toEqual({ realtimeInput: { audioStreamEnd: true } });
+        await vi.advanceTimersByTimeAsync(2999);
+        expect(socket.close).not.toHaveBeenCalled();
+        if (state === "late-activity") {
+          emit({ voiceActivity: { type: "ACTIVITY_START", audioOffset: "1s" } });
+          expect(sent.filter((event) => event.realtimeInput?.audioStreamEnd)).toHaveLength(2);
+          emit({ serverContent: { interimInputTranscription: { text: "next" } } });
+        }
+        if (state === "mid-speech" || state === "late-activity") {
+          await vi.advanceTimersByTimeAsync(3000);
+          expect(socket.close).not.toHaveBeenCalled();
+          emit({ serverContent: { generationComplete: true } });
+          await vi.advanceTimersByTimeAsync(1000);
+          expect(socket.close).not.toHaveBeenCalled();
+          emit({ serverContent: { inputTranscription: { text: "final segment" } } });
+          await vi.advanceTimersByTimeAsync(2999);
+          expect(socket.close).not.toHaveBeenCalled();
+        }
+        await vi.advanceTimersByTimeAsync(1);
+        const expected =
+          state === "silent"
+            ? ""
+            : state === "paused"
+              ? "first segment"
+              : state === "late-activity"
+                ? "first segment final segment"
+                : "final segment";
+        await expect(completion).resolves.toBe(expected);
+        await expect(transcription.finish()).resolves.toBe(expected);
+        expect(fetchImpl).not.toHaveBeenCalled();
+        const progressCount = onProgress.mock.calls.length;
+        emit({ serverContent: { inputTranscription: { text: "late" } } });
+        expect(onProgress).toHaveBeenCalledTimes(progressCount);
+        expect(socket.close).toHaveBeenCalledTimes(1);
+        expect(socket.terminate).not.toHaveBeenCalled();
       } finally {
         transcription.abort();
         vi.useRealTimers();
       }
     },
   );
+
+  it.each(["abort", "signal", "timeout", "error", "close"])(
+    "rejects live finalization on %s",
+    async (outcome) => {
+      vi.useFakeTimers();
+      const socket = new EventEmitter();
+      socket.send = vi.fn((_data, callback) => callback?.());
+      socket.close = vi.fn();
+      socket.terminate = vi.fn();
+      const transcription = startGeminiTranscription({
+        apiKey: "key",
+        webSocketFactory: () => socket,
+      });
+      try {
+        socket.emit("open");
+        await vi.advanceTimersByTimeAsync(0);
+        socket.emit("message", JSON.stringify({ setupComplete: {} }));
+        transcription.appendAudio(Buffer.alloc(3200));
+        socket.emit(
+          "message",
+          JSON.stringify({ serverContent: { interimInputTranscription: { text: "unfinished" } } }),
+        );
+        const controller = new AbortController();
+        const completion = transcription.finish({ signal: controller.signal });
+        void completion.catch(() => {});
+        await vi.advanceTimersByTimeAsync(0);
+        if (outcome === "timeout") await vi.advanceTimersByTimeAsync(30000);
+        else if (outcome === "signal") controller.abort();
+        else if (outcome === "error") socket.emit("error", new Error("disconnected"));
+        else if (outcome === "close") socket.emit("close", 1006, Buffer.alloc(0));
+        else transcription.abort();
+        await expect(completion).rejects.toThrow();
+        await vi.advanceTimersByTimeAsync(30000);
+      } finally {
+        transcription.abort();
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("restarts the quiet window for trailing segments without extending the completion deadline", async () => {
+    vi.useFakeTimers();
+    const socket = new EventEmitter();
+    socket.send = vi.fn((_data, callback) => callback?.());
+    socket.close = vi.fn();
+    socket.terminate = vi.fn();
+    const transcription = startGeminiTranscription({
+      apiKey: "key",
+      webSocketFactory: () => socket,
+    });
+    try {
+      socket.emit("open");
+      await vi.advanceTimersByTimeAsync(0);
+      socket.emit("message", JSON.stringify({ setupComplete: {} }));
+      transcription.appendAudio(Buffer.alloc(3200));
+      const completion = transcription.finish();
+      void completion.catch(() => {});
+      await vi.advanceTimersByTimeAsync(0);
+      for (let i = 0; i < 14; i++) {
+        await vi.advanceTimersByTimeAsync(2000);
+        socket.emit(
+          "message",
+          JSON.stringify({ serverContent: { inputTranscription: { text: "segment" } } }),
+        );
+        expect(socket.close).not.toHaveBeenCalled();
+      }
+      await vi.advanceTimersByTimeAsync(2000);
+      await expect(completion).rejects.toThrow();
+      expect(socket.terminate).toHaveBeenCalled();
+    } finally {
+      transcription.abort();
+      vi.useRealTimers();
+    }
+  });
 
   it("accepts an explicitly empty file transcript and deletes the upload", async () => {
     const fetchImpl = createGeminiFetchMock({ transcript: "" });
@@ -134,6 +232,26 @@ describe("gemini transcription", () => {
     ).resolves.toBe("");
     expect(getCall(fetchImpl, "/v1beta/files/audio-1")[1].method).toBe("DELETE");
   });
+
+  it.each([
+    {},
+    { status: "in_progress", usage: { total_output_tokens: 0 } },
+    { status: "completed", usage: { total_output_tokens: 1 } },
+    {
+      status: "completed",
+      usage: { total_output_tokens: 0 },
+      steps: [{ type: "model_output", content: [{ type: "text", text: null }] }],
+    },
+  ])(
+    "rejects a missing transcript without an explicit completed empty result (%j)",
+    async (interactionPayload) => {
+      const fetchImpl = createGeminiFetchMock({ interactionPayload });
+      await expect(
+        transcribeGeminiAudio({ apiKey: "key", audio: Buffer.alloc(2048), fetchImpl }),
+      ).rejects.toThrow();
+      expect(getCall(fetchImpl, "/v1beta/files/audio-1")[1].method).toBe("DELETE");
+    },
+  );
 
   it.each(["missing key", "provider error", "incomplete", "refusal", "malformed"])(
     "transcribes without hints after keyword extraction %s",
@@ -292,16 +410,12 @@ describe("gemini transcription", () => {
           customVocabulary: ["Acme SSO", "OAuth"],
           mode: "VERBATIM",
         },
-        realtimeInputConfig: {
-          automaticActivityDetection: { disabled: true },
-        },
       },
     });
 
     socket.emit("message", JSON.stringify({ setupComplete: {} }));
-    await vi.waitFor(() => expect(sent).toHaveLength(3));
-    expect(sent[1]).toEqual({ realtimeInput: { activityStart: {} } });
-    expect(sent[2]).toEqual({
+    await vi.waitFor(() => expect(sent).toHaveLength(2));
+    expect(sent[1]).toEqual({
       realtimeInput: {
         audio: {
           data: audio.toString("base64"),
@@ -323,33 +437,39 @@ describe("gemini transcription", () => {
       "Hey, um this is",
     ]);
     socket.emit("message", JSON.stringify({ setupComplete: {} }));
-    expect(sent.filter((event) => event.realtimeInput?.activityStart)).toHaveLength(1);
+    expect(sent).toHaveLength(2);
+    for (const text of ["first segment", "second segment"]) {
+      socket.emit("message", JSON.stringify({ serverContent: { inputTranscription: { text } } }));
+      socket.emit("message", JSON.stringify({ serverContent: { generationComplete: true } }));
+    }
+    expect(onProgress).toHaveBeenLastCalledWith("first segment second segment");
+    socket.emit(
+      "message",
+      JSON.stringify({ serverContent: { interimInputTranscription: { text: "third" } } }),
+    );
+    expect(onProgress).toHaveBeenLastCalledWith("first segment second segment third");
+    transcription.appendAudio(audio);
+    expect(sent).toHaveLength(3);
+    expect(socket.close).not.toHaveBeenCalled();
     const completion = transcription.finish();
     await vi.waitFor(() => expect(sent).toHaveLength(4));
-    expect(sent[3]).toEqual({ realtimeInput: { activityEnd: {} } });
+    expect(sent[3]).toEqual({ realtimeInput: { audioStreamEnd: true } });
     socket.emit(
       "message",
       JSON.stringify({
-        serverContent: {
-          inputTranscription: { text: "live " },
-        },
+        serverContent: { inputTranscription: { text: "third segment" }, generationComplete: true },
       }),
     );
-
-    expect(onProgress).toHaveBeenLastCalledWith("live ");
-    socket.emit(
-      "message",
-      JSON.stringify({ serverContent: { inputTranscription: { text: "transcript" } } }),
+    await expect(completion).resolves.toBe("first segment second segment third segment");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/responses"))).toHaveLength(
+      1,
     );
-    expect(onProgress).toHaveBeenLastCalledWith("live transcript");
-    expect(socket.close).not.toHaveBeenCalled();
-    socket.emit("message", JSON.stringify({ serverContent: { generationComplete: true } }));
-    await expect(completion).resolves.toBe("live transcript");
     socket.emit(
       "message",
       JSON.stringify({ serverContent: { interimInputTranscription: { text: "late" } } }),
     );
-    expect(onProgress).toHaveBeenLastCalledWith("live transcript");
+    expect(onProgress).toHaveBeenLastCalledWith("first segment second segment third segment");
     expect(socket.close).toHaveBeenCalledTimes(1);
   });
 

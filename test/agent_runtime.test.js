@@ -1169,6 +1169,53 @@ describe("AgentRuntime", () => {
     expect(runtime.snapshot()).toEqual(before);
   });
 
+  it.each(["manual", "automatic"])(
+    "uses provider usage instead of a larger history estimate for %s compaction",
+    async (mode) => {
+      const persona = createPersona({ model: { ...personas[0].model, contextWindow: 100_000 } });
+      const { runtime, events } = createRuntime({ persona });
+      const first = createAssistant(persona, "first response", {
+        usage: {
+          input: 90_000,
+          output: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 90_001,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+      });
+      const stream = setStreams(runtime, [
+        createStream([], first),
+        createStream([], createAssistant(persona, "checkpoint")),
+        createStream([], createAssistant(persona, "continued")),
+      ]);
+      await runtime.submit("x".repeat(720_000));
+      if (mode === "manual") {
+        await runtime.compact({ mode: "summary-only" });
+      } else {
+        await runtime.submit("second request");
+      }
+      expect(stream).toHaveBeenCalledTimes(mode === "manual" ? 2 : 3);
+      expect(events).toContainEqual(
+        expect.objectContaining({ type: "compaction_end", outcome: "compacted" }),
+      );
+    },
+  );
+
+  it("includes new content in the compaction fit check after a provider checkpoint", async () => {
+    const persona = createPersona({ model: { ...personas[0].model, contextWindow: 20_000 } });
+    const { runtime } = createRuntime({ persona });
+    const stream = setStreams(runtime, [
+      createStream([], createAssistant(persona, "first response")),
+    ]);
+    await runtime.submit("first request");
+    await runtime.commitUserText("x".repeat(180_000));
+    const before = runtime.snapshot();
+    await expect(runtime.compact({ mode: "summary-only" })).rejects.toThrow();
+    expect(stream).toHaveBeenCalledOnce();
+    expect(runtime.snapshot()).toEqual(before);
+  });
+
   it("compacts near the context limit without imposing an output limit", async () => {
     const persona = createPersona({
       model: {

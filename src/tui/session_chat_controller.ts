@@ -2584,7 +2584,6 @@ export class SessionChatController {
             contextUsage: this.getContextUsageString(),
             sessionCost: this.getSessionCostString(),
             duration: this.getTurnDurationString(),
-            autoSpeak: this.autoSpeak,
           },
       editor: {
         mode: this.getInputMode(),

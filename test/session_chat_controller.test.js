@@ -6922,11 +6922,13 @@ describe("SessionChatController", () => {
   );
 
   it("auto-speaks local submissions and retries without speaking on enable", async () => {
-    const { controller } = await createControllerHarness({ deps: createMockDeps() });
+    const { controller, view } = await createControllerHarness({ deps: createMockDeps() });
     const speak = vi.spyOn(controller, "speakLastAssistantMessage").mockResolvedValue();
     controller.start();
     await controller.onUserInput("old question");
+    const footer = view.status.footer;
     await controller.onUserInput("/auto-speak on");
+    expect(view.status.footer).toEqual(footer);
     expect(speak).not.toHaveBeenCalled();
     await controller.retryTurn();
     expect(speak).toHaveBeenCalledTimes(1);

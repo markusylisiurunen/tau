@@ -10,7 +10,6 @@ export type FooterStatus =
       contextUsage: string;
       sessionCost: string;
       duration: string;
-      autoSpeak: boolean;
     }
   | {
       type: "activity";
@@ -237,11 +236,9 @@ export class FooterComponent implements Component {
   private buildStatusLine(availableWidth: number): string {
     if (this.status?.type !== "regular") return "";
 
-    const { duration, cwdLabel, contextUsage, sessionCost, autoSpeak } = this.status;
+    const { duration, cwdLabel, contextUsage, sessionCost } = this.status;
     const build = (cwd: string) =>
-      [duration, cwd, contextUsage, sessionCost, autoSpeak ? "auto-speak on" : ""]
-        .filter(Boolean)
-        .join(" · ");
+      [duration, cwd, contextUsage, sessionCost].filter(Boolean).join(" · ");
     const full = build(cwdLabel);
     if (visibleWidth(full) <= availableWidth) {
       return full;

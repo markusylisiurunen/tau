@@ -5849,7 +5849,7 @@ describe("SessionChatController", () => {
     },
   );
 
-  it("replaces Gemini previews and keeps editing locked until generation completes", async () => {
+  it("replaces Gemini previews and keeps editing locked until the live transcript finishes draining", async () => {
     const audioPath = join(tmpdir(), `tau-session-listen-gemini-${Date.now()}.wav`);
     const pcm = Buffer.from([1, 2, 3, 4]);
     const socket = new EventEmitter();
@@ -5861,22 +5861,11 @@ describe("SessionChatController", () => {
       if (event.setup) {
         queueMicrotask(() => socket.emit("message", JSON.stringify({ setupComplete: {} })));
       }
-      if (event.realtimeInput?.activityEnd) {
-        queueMicrotask(() =>
-          socket.emit(
-            "message",
-            JSON.stringify({
-              serverContent: {
-                inputTranscription: { text: "session transcript" },
-              },
-            }),
-          ),
-        );
-      }
     });
     socket.close = vi.fn();
     socket.terminate = vi.fn();
     const webSocketFactory = vi.fn(() => socket);
+    const fetchImpl = vi.fn();
     const spawn = vi.fn(async (command, _args, options = {}) => {
       if (command === "mktemp") {
         return createSpawnResult({ stdout: `${audioPath}\n` });
@@ -5917,7 +5906,7 @@ describe("SessionChatController", () => {
       config: {
         apiKeys: { google: "gemini-key" },
       },
-      speechToTextDeps: { webSocketFactory },
+      speechToTextDeps: { webSocketFactory, fetchImpl },
     });
 
     try {
@@ -5927,7 +5916,7 @@ describe("SessionChatController", () => {
       await writeFile(audioPath, Buffer.alloc(2048, 1));
 
       socket.emit("open");
-      await waitUntil(() => socketEvents.length === 3);
+      await waitUntil(() => socketEvents.length === 2);
       for (const text of [
         "English",
         "English.\nSuomeksi myös.",
@@ -5945,16 +5934,20 @@ describe("SessionChatController", () => {
         expect(editor.getCursor()).toEqual(previewCursor);
       }
       controller.getInputHandlers().onToggleRecording();
-      for (
-        let i = 0;
-        i < 50 && editor.getText() !== `${prefix}session transcript${suffix}`;
-        i += 1
-      ) {
-        await flush();
-        await waitMs(1);
-      }
+      await waitUntil(() => socketEvents.some((event) => event.realtimeInput?.audioStreamEnd));
       expect(view.editorEnabledUpdates.at(-1)).toBe(false);
-      socket.emit("message", JSON.stringify({ serverContent: { generationComplete: true } }));
+      expect(editor.getText()).toBe(`${prefix}Revised English.\nSuomeksi myös.${suffix}`);
+      socket.emit(
+        "message",
+        JSON.stringify({
+          serverContent: {
+            inputTranscription: { text: "session transcript" },
+            generationComplete: true,
+          },
+        }),
+      );
+      expect(editor.getText()).toBe(`${prefix}session transcript${suffix}`);
+      expect(view.editorEnabledUpdates.at(-1)).toBe(false);
       await controller.listenTransition;
       expect(view.editorEnabledUpdates.at(-1)).toBe(true);
     } finally {
@@ -5968,8 +5961,8 @@ describe("SessionChatController", () => {
     editor.handleInput("\x1b[45;5u");
     expect(editor.getText()).toBe(prefix + suffix);
     expect(editor.getCursor()).toEqual(cursor);
-    expect(socketEvents).toHaveLength(5);
-    expect(socketEvents[3]).toEqual({
+    expect(socketEvents).toHaveLength(4);
+    expect(socketEvents[2]).toEqual({
       realtimeInput: {
         audio: {
           data: Buffer.from([5, 6]).toString("base64"),
@@ -5977,9 +5970,9 @@ describe("SessionChatController", () => {
         },
       },
     });
-    expect(socketEvents[4]).toEqual({ realtimeInput: { activityEnd: {} } });
+    expect(socketEvents[3]).toEqual({ realtimeInput: { audioStreamEnd: true } });
     expect(socketEvents[0].setup.inputAudioTranscription.mode).toBe("VERBATIM");
-    expect(socketEvents[2].realtimeInput.audio).toEqual({
+    expect(socketEvents[1].realtimeInput.audio).toEqual({
       data: pcm.toString("base64"),
       mimeType: "audio/pcm;rate=16000",
     });
@@ -5995,6 +5988,7 @@ describe("SessionChatController", () => {
       }),
     );
     expect(session.submit).not.toHaveBeenCalled();
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it.each([

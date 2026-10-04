@@ -1393,11 +1393,14 @@ describe("LocalSessionHost", () => {
     );
   });
 
-  it("persists runtime turn failures at the terminal timeline position", async () => {
+  it("settles accepted steering and persists runtime failures at the terminal timeline position", async () => {
     const store = new MemorySessionStore();
     const host = createHost(store);
     const hostedSession = await host.createSession(localCreateInput);
-    await hostedSession.snapshot();
+    let projected = await hostedSession.snapshot();
+    hostedSession.onDelta((delta) => {
+      projected = applySessionProtocolDelta(projected, delta);
+    });
     const persistenceReached = deferred();
     const releasePersistence = deferred();
     const finalText = "after steering";
@@ -1444,7 +1447,7 @@ describe("LocalSessionHost", () => {
     await persistenceReached.promise;
     releasePersistence.resolve();
 
-    await steering.applied;
+    const association = await steering.applied;
     const [runResult] = await Promise.all([
       run,
       expect(steering.result).rejects.toBeInstanceOf(Error),
@@ -1455,6 +1458,18 @@ describe("LocalSessionHost", () => {
       errorMessage: "steering event sink failed",
     });
     const snapshot = await hostedSession.snapshot();
+    for (const userHistoryEntryId of [
+      accepted.userHistoryEntryId,
+      association.userHistoryEntryId,
+    ]) {
+      expect(snapshot.turns[userHistoryEntryId]).toEqual({
+        userHistoryEntryId,
+        state: "settled",
+        outcome: runResult.turn,
+      });
+    }
+    expect(projected).toEqual(snapshot);
+    await expect(store.loadSession(hostedSession.sessionId)).resolves.toEqual(snapshot);
     expect(snapshot.timeline.items.at(-1)).toMatchObject({
       type: "notice",
       notice: {

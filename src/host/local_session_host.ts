@@ -1057,11 +1057,22 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         applied: submission.applied.then((association) => ({
           userHistoryEntryId: association.historyEntryId,
         })),
-        result: submission.result.then(async (association) => {
-          const turn = turnOutcomeFromResult(association.result, association.result.finalMessage);
-          await this.settleTurn(association.historyEntryId, turn);
-          return { userHistoryEntryId: association.historyEntryId, turn };
-        }),
+        result: submission.result.then(
+          async (association) => {
+            const turn = turnOutcomeFromResult(association.result, association.result.finalMessage);
+            await this.settleTurn(association.historyEntryId, turn);
+            return { userHistoryEntryId: association.historyEntryId, turn };
+          },
+          async (error) => {
+            const association = await submission.applied;
+            await this.settleTurn(association.historyEntryId, {
+              status: "failed",
+              stopReason: "error",
+              errorMessage: formatErrorDiagnostic(error),
+            });
+            throw error;
+          },
+        ),
       };
     }
 

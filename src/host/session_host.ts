@@ -2,7 +2,6 @@ import type { CancelledSteeringSubmission } from "../core/agent/agent_runtime.js
 import type {
   SessionProtocolAutocompletePathsParams,
   SessionProtocolAutocompletePathsResult,
-  SessionProtocolClearGoalResult,
   SessionProtocolClientToolCallMessage,
   SessionProtocolClientToolCancelMessage,
   SessionProtocolClientToolDefinition,
@@ -21,14 +20,12 @@ import type {
   SessionProtocolEphemeralSubmitResult,
   SessionProtocolExecParams,
   SessionProtocolExecResult,
-  SessionProtocolGoal,
   SessionProtocolInterruptSubagentResult,
   SessionProtocolRecordParams,
   SessionProtocolRecordResult,
   SessionProtocolReloadResult,
   SessionProtocolResolvePromptParams,
   SessionProtocolResolvePromptResult,
-  SessionProtocolResumeGoalResult,
   SessionProtocolRewindParams,
   SessionProtocolRewindResult,
   SessionProtocolSampleParams,
@@ -38,8 +35,6 @@ import type {
   SessionProtocolSetReasoningParams,
   SessionProtocolSettingsUpdateResult,
   SessionProtocolSnapshot,
-  SessionProtocolStartGoalParams,
-  SessionProtocolStartGoalResult,
   SessionProtocolSubagentActivitiesMessage,
   SessionProtocolSubagentActivitiesState,
   SessionProtocolTurnOutcome,
@@ -61,7 +56,6 @@ export type TauHostedSession = {
   readonly isDisposed?: boolean;
   readonly isTurnRunning: boolean;
   readonly canAcceptSteering: boolean;
-  getGoal(): SessionProtocolGoal | null;
   onDelta(handler: (delta: SessionProtocolDeltaMessage) => void): () => void;
   onEphemeral(handler: (message: SessionProtocolEphemeralMessage) => void): () => void;
   subagentActivities(): SessionProtocolSubagentActivitiesState;
@@ -102,11 +96,6 @@ export type TauHostedSession = {
       signal?: AbortSignal;
     },
   ): Promise<SessionProtocolSampleResult>;
-  startGoal(
-    objective: SessionProtocolStartGoalParams["objective"],
-  ): Promise<SessionProtocolStartGoalResult>;
-  resumeGoal(): Promise<SessionProtocolResumeGoalResult>;
-  clearGoal(): Promise<SessionProtocolClearGoalResult>;
   setReasoning(
     reasoning: SessionProtocolSetReasoningParams["reasoning"],
   ): Promise<SessionProtocolSettingsUpdateResult>;

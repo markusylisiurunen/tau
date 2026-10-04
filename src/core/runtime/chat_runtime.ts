@@ -18,13 +18,11 @@ import type { HistoryQuery } from "../history/types.js";
 import type { McpManager } from "../mcp/manager.js";
 import type { ModelResolver } from "../models/catalog.js";
 import { createAutoCompactionArchiver } from "../session/auto_compaction_archive.js";
-import { buildGoalPolicy, GOAL_TURN_USER_METADATA } from "../session/goal.js";
 import { AgentSupervisor } from "../subagents/agent_supervisor.js";
 import type { SubagentEvent } from "../subagents/types.js";
 import { BashJobRegistry } from "../tools/bash_jobs.js";
 import { ToolCatalog } from "../tools/catalog.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
-import type { GoalManager } from "../tools/goal.js";
 import { ToolRegistry } from "../tools/registry.js";
 import type { ResolveSubagentPrompt } from "../tools/spawn_agent.js";
 import type { Persona, ReasoningEffort } from "../types.js";
@@ -58,7 +56,6 @@ export type CreateChatRuntimeOptions = {
   promptContext: ChatRuntimePromptContext;
   eventSink: AgentEventSink;
   subagentEventSink: (event: SubagentEvent) => void | Promise<void>;
-  goalManager: GoalManager;
   history: HistoryQuery;
   mcp?: McpManager;
   recordUsage?: UsageRecorder;
@@ -83,7 +80,6 @@ export class ChatRuntime {
   private resolvedModel: ResolvedAgentModel;
   private readonly clientTools?: CreateChatRuntimeOptions["clientTools"];
   private readonly resolveSubagentPrompt?: ResolveSubagentPrompt;
-  private readonly goalManager: GoalManager;
   private readonly historyQuery: HistoryQuery;
   private readonly mcp?: McpManager;
   private latestPromptComposition: SessionPromptComposition;
@@ -121,7 +117,6 @@ export class ChatRuntime {
     });
     this.clientTools = options.clientTools;
     this.resolveSubagentPrompt = options.resolveSubagentPrompt;
-    this.goalManager = options.goalManager;
     this.historyQuery = options.history;
     this.mcp = options.mcp;
     this.latestPromptComposition = composition;
@@ -150,11 +145,7 @@ export class ChatRuntime {
       archiveAutoCompaction: createAutoCompactionArchiver(this.backend),
       getCompactionContinuationSystemMessages: () => {
         const context = this.supervisor.getActiveCompactionContext();
-        const goal = this.goalManager.getGoal();
-        return [
-          ...(context ? [context] : []),
-          ...(goal?.status === "active" ? [buildGoalPolicy(goal)] : []),
-        ];
+        return context ? [context] : [];
       },
     });
   }
@@ -216,10 +207,7 @@ export class ChatRuntime {
   }
 
   steer(text: string): SteeringSubmission {
-    const goal = this.goalManager.getGoal();
-    return this.agent.steer(text, {
-      metadata: goal?.status === "active" ? [GOAL_TURN_USER_METADATA] : [],
-    });
+    return this.agent.steer(text);
   }
 
   cancelSteering(): CancelledSteeringSubmission[] {
@@ -344,7 +332,6 @@ export class ChatRuntime {
       subagentSystemPrompt: composition.subagentSystemPrompt,
       modelResolver: this.currentModelResolver,
       supervisor: this.supervisor,
-      goalManager: this.goalManager,
       bashJobs: this.bashJobs,
       history: this.historyQuery,
       mcp: this.mcp,

@@ -1,3 +1,4 @@
+import { formatTauHiddenSystemBlock } from "../core/utils/user_metadata.js";
 import type { SessionProtocolSnapshot } from "../protocol/session_protocol.js";
 import {
   projectSessionProtocolNoticePresentation,
@@ -5,7 +6,7 @@ import {
 } from "../protocol/session_protocol.js";
 
 export const STORED_SESSION_DOCUMENT_FORMAT = "tau-session" as const;
-export const STORED_SESSION_DOCUMENT_VERSION = 10 as const;
+export const STORED_SESSION_DOCUMENT_VERSION = 11 as const;
 export const LEGACY_SESSION_MODEL_CONTEXT_KEY = "legacy-v3";
 
 export type StoredSessionDocument = {
@@ -27,6 +28,7 @@ const storedSessionMigrations = new Map<number, StoredSessionMigration>([
   [7, migrateStoredSessionV7ToV8],
   [8, migrateStoredSessionV8ToV9],
   [9, migrateStoredSessionV9ToV10],
+  [10, migrateStoredSessionV10ToV11],
 ]);
 
 export class UnsupportedStoredSessionVersionError extends Error {
@@ -93,6 +95,70 @@ function decodeStoredSessionDocument(value: unknown): {
     version: value.version as number,
     snapshot: value.snapshot,
   };
+}
+
+function migrateStoredSessionV10ToV11(value: unknown): unknown {
+  if (!isRecord(value)) throw new Error("stored session snapshot must be an object");
+  const snapshot = structuredClone(value);
+  let hadGoals = snapshot.goal != null;
+  delete snapshot.goal;
+  if (!Array.isArray(snapshot.messages)) return snapshot;
+
+  const prefix = "\u001eTAU_METADATA_V1:";
+  const retireMetadata = (text: string): string => {
+    if (!text.startsWith(prefix)) return text;
+    const end = text.indexOf("\u001e", prefix.length);
+    if (end < 0) return text;
+    const metadata: unknown = JSON.parse(
+      Buffer.from(text.slice(prefix.length, end), "base64url").toString("utf8"),
+    );
+    if (!Array.isArray(metadata)) return text;
+    const retained = metadata.filter((entry) => !isRecord(entry) || entry.type !== "goal-turn");
+    if (retained.length === metadata.length) return text;
+    hadGoals = true;
+    const body = text.slice(end + 1);
+    return retained.length === 0
+      ? body
+      : `${prefix}${Buffer.from(JSON.stringify(retained)).toString("base64url")}\u001e${body}`;
+  };
+  for (const entry of snapshot.messages) {
+    if (!isRecord(entry) || !isRecord(entry.message)) continue;
+    const message = entry.message;
+    if (/\b(?:get_goal|create_goal|update_goal)\b/.test(JSON.stringify(message))) {
+      hadGoals = true;
+    }
+    if (message.role !== "user") continue;
+    if (typeof message.content === "string") message.content = retireMetadata(message.content);
+    else if (Array.isArray(message.content)) {
+      const first = message.content[0];
+      if (isRecord(first) && first.type === "text" && typeof first.text === "string") {
+        first.text = retireMetadata(first.text);
+      }
+    }
+  }
+  if (!hadGoals) return snapshot;
+
+  const ids = new Set(snapshot.messages.map((entry) => (isRecord(entry) ? entry.id : undefined)));
+  if (isRecord(snapshot.timeline) && Array.isArray(snapshot.timeline.items)) {
+    for (const item of snapshot.timeline.items) {
+      if (isRecord(item)) ids.add(item.id);
+    }
+  }
+  let id = "recovered-goal-retirement";
+  for (let suffix = 2; ids.has(id); suffix += 1) id = `recovered-goal-retirement-${suffix}`;
+  snapshot.messages.push({
+    id,
+    state: "committed",
+    modelVisible: true,
+    message: {
+      role: "user",
+      content: formatTauHiddenSystemBlock(
+        "Persistent session goals are no longer supported. All earlier Tau-generated goal policies and automatic goal continuation directives are retired, including directives in tool results and compaction summaries. The get_goal, create_goal, and update_goal tools are unavailable. Continue only in response to current user requests.",
+      ),
+      timestamp: earliestSnapshotTimestamp(snapshot),
+    },
+  });
+  return snapshot;
 }
 
 function migrateStoredSessionV9ToV10(value: unknown): unknown {

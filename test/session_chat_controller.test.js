@@ -3,7 +3,7 @@ import { readFile, rm, writeFile } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import { HistoryManager } from "../dist/core/history/history_manager.js";
 import { LocalHistoryStore } from "../dist/core/history/local_history_store.js";
@@ -99,7 +99,6 @@ function updateSnapshot(snapshot, overrides = {}) {
     sessionId: snapshot.sessionId,
     revision: overrides.revision ?? snapshot.revision,
     lifecycle: overrides.lifecycle ?? snapshot.lifecycle,
-    goal: "goal" in overrides ? overrides.goal : snapshot.goal,
     costTotal: overrides.costTotal ?? snapshot.costTotal,
     catalog: overrides.catalog ?? snapshot.catalog,
     executionEnvironment: snapshot.executionEnvironment,
@@ -357,26 +356,6 @@ class FakeSession {
   }));
   cancelPendingMessages = vi.fn(async () => ({ cancelled: [] }));
   interrupt = vi.fn(async () => ({ interrupted: true, isTurnRunning: false }));
-  startGoal = vi.fn(async (objective) => {
-    this.snapshotValue = updateSnapshot(this.snapshotValue, {
-      revision: this.snapshotValue.revision + 1,
-      goal: { objective, status: "active" },
-    });
-    return {
-      userHistoryEntryId: "goal-user",
-      turn: { status: "completed", stopReason: "stop" },
-    };
-  });
-  resumeGoal = vi.fn(async () => ({
-    turn: { status: "completed", stopReason: "stop" },
-  }));
-  clearGoal = vi.fn(async () => {
-    this.snapshotValue = updateSnapshot(this.snapshotValue, {
-      revision: this.snapshotValue.revision + 1,
-      goal: null,
-    });
-    return this.snapshotValue;
-  });
   setReasoning = vi.fn(async (reasoning) => {
     this.snapshotValue = updateSnapshot(this.snapshotValue, {
       revision: this.snapshotValue.revision + 1,
@@ -5109,41 +5088,6 @@ describe("SessionChatController", () => {
     expect(view.status.footer.type).toBe("regular");
   });
 
-  it("routes goal controls through the session protocol and reflects goal status", async () => {
-    const { session, view, controller } = await createControllerHarness();
-    controller.start();
-
-    controller.getInputHandlers().onSubmit("/goal Ship the feature");
-    await flush();
-
-    expect(session.startGoal).toHaveBeenCalledWith("Ship the feature");
-    expect(view.status.footer.pursuingGoal).toBe(true);
-
-    controller.isStreaming = true;
-    controller.getInputHandlers().onSubmit("/goal");
-    await flush();
-    expect(view.feedback).toContainEqual(
-      expect.objectContaining({ text: "goal active", content: ["Ship the feature"] }),
-    );
-
-    controller.getInputHandlers().onSubmit("/goal clear");
-    await flush();
-    expect(session.clearGoal).toHaveBeenCalledOnce();
-    expect(view.status.footer.pursuingGoal).toBe(false);
-
-    controller.getInputHandlers().onSubmit("/goal Start another");
-    controller.getInputHandlers().onSubmit("/goal resume");
-    await flush();
-    expect(session.startGoal).toHaveBeenCalledOnce();
-    expect(session.resumeGoal).not.toHaveBeenCalled();
-    expect(view.feedback).toContainEqual(
-      expect.objectContaining({
-        tone: "default",
-        text: "wait for tau to become idle before running commands",
-      }),
-    );
-  });
-
   it("interrupts manual compaction with Escape and allows later compactions to be interrupted", async () => {
     const session = new FakeSession();
     let pendingCompact;
@@ -6874,7 +6818,7 @@ describe("SessionChatController", () => {
     },
   );
 
-  it.each(["goal", "goal-resume", "retry", "error", "aborted"])(
+  it.each(["retry", "error", "aborted"])(
     "handles real host speech completion for %s",
     async (mode) => {
       const environment = {
@@ -6915,61 +6859,30 @@ describe("SessionChatController", () => {
         session.id = hosted.sessionId;
         session.snapshot = () => hosted.snapshot();
         session.onDelta = (listener) => hosted.onDelta(listener);
-        session.startGoal = (objective) => hosted.startGoal(objective);
-        session.resumeGoal = () => hosted.resumeGoal();
         ({ controller } = await createControllerHarness({ session, deps: createMockDeps() }));
         const speak = vi.spyOn(controller, "speakLastAssistantMessage").mockResolvedValue();
         controller.start();
         await controller.onUserInput("/auto-speak on");
-        const completeCall = fauxToolCall("update_goal", { status: "complete" });
-        const responses = mode.startsWith("goal")
-          ? [
-              fauxAssistantMessage([completeCall], { stopReason: "toolUse" }),
-              fauxAssistantMessage("done"),
-            ]
-          : [
-              fauxAssistantMessage("first"),
-              fauxAssistantMessage("retry", {
-                stopReason: mode === "retry" ? "stop" : mode,
-              }),
-            ];
+        const responses = [
+          fauxAssistantMessage("first"),
+          fauxAssistantMessage("retry", {
+            stopReason: mode === "retry" ? "stop" : mode,
+          }),
+        ];
         hosted.runtime.agent.spec.model.stream = () => {
           const response = responses.shift();
           return {
-            async *[Symbol.asyncIterator]() {
-              if (response.stopReason === "toolUse") {
-                yield { type: "toolcall_start", contentIndex: 0, partial: response };
-                yield {
-                  type: "toolcall_end",
-                  contentIndex: 0,
-                  toolCall: completeCall,
-                  partial: response,
-                };
-              }
-            },
+            async *[Symbol.asyncIterator]() {},
             async result() {
               return response;
             },
           };
         };
-        if (mode.startsWith("goal")) {
-          if (mode === "goal-resume") {
-            responses.unshift(fauxAssistantMessage("interrupted", { stopReason: "aborted" }));
-            await controller.onUserInput("/goal finish");
-            expect(speak).not.toHaveBeenCalled();
-            await controller.onUserInput("/goal resume");
-          } else {
-            await controller.onUserInput("/goal finish");
-          }
-          expect(speak).toHaveBeenCalledTimes(1);
-          expect(speak.mock.calls[0][0].content).toEqual([{ type: "text", text: "done" }]);
-        } else {
-          const accepted = await hosted.acceptTurn({ text: "question" });
-          await hosted.runAcceptedTurn(accepted.userHistoryEntryId);
-          expect(speak).toHaveBeenCalledTimes(1);
-          await hosted.retryTurn();
-          expect(speak).toHaveBeenCalledTimes(mode === "retry" ? 2 : 1);
-        }
+        const accepted = await hosted.acceptTurn({ text: "question" });
+        await hosted.runAcceptedTurn(accepted.userHistoryEntryId);
+        expect(speak).toHaveBeenCalledTimes(1);
+        await hosted.retryTurn();
+        expect(speak).toHaveBeenCalledTimes(mode === "retry" ? 2 : 1);
       } finally {
         await controller?.dispose();
         await host.shutdown();

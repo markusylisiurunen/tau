@@ -100,7 +100,7 @@ The persona-controlled tool names are:
 - `bash`, `write`, `edit`, `view_image`, `web`, `nook`, `history`, `mcp`, and `models`;
 - `spawn_agent`, `send_input_to_agent`, `wait_for_agents`, `list_agents`, and `interrupt_agent`.
 
-The service selectors enable capabilities within `code`; `bash` also enables `tau.bash`. The `code` tool is assembled automatically from selected eligible capabilities. An explicit `tools` array replaces defaults. Names are normalized to lowercase, duplicates are removed, and unknown names reject the persona. `tools: []` leaves the persona without these persona-controlled tools. Some host capabilities, such as goal management, are supplied independently of this list. Listing `nook` does not make it usable without effective Nook configuration. Listing `mcp` requires enabled MCP servers configured on the host. [Tools](tools.md) explains eligibility and ownership.
+The service selectors enable capabilities within `code`; `bash` also enables `tau.bash`. The `code` tool is assembled automatically from selected eligible capabilities. An explicit `tools` array replaces defaults. Names are normalized to lowercase, duplicates are removed, and unknown names reject the persona. `tools: []` leaves the persona without these persona-controlled tools. Intrinsic `tau_docs` is supplied independently of this list. Listing `nook` does not make it usable without effective Nook configuration. Listing `mcp` requires enabled MCP servers configured on the host. [Tools](tools.md) explains eligibility and ownership.
 
 ## Selecting a persona
 

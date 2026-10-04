@@ -185,9 +185,6 @@ Each subscription returns an unsubscribe function.
 | `sample({ context, options })` | Run isolated inference without mutating the session. |
 | `interrupt()` | Request cancellation of active session work. |
 | `snapshot()` | Read the complete authoritative snapshot. |
-| `startGoal(objective)` | Create and run a persistent autonomous goal. |
-| `resumeGoal()` | Continue a blocked goal. |
-| `clearGoal()` | Clear the current goal and return the updated snapshot. |
 | `setReasoning(reasoning)` | Set reasoning for the next independently started turn. |
 | `setPersona(personaId)` | Change persona and return the updated snapshot. |
 | `resolvePrompt(promptId)` | Load a current prompt body from the execution environment. |
@@ -256,7 +253,7 @@ The SDK exposes connection-wide subscriptions on `TauSdkClient` and session-filt
 
 `session.onDelta(listener)` receives only that session's `TauSdkDelta` messages. The facade buffers deltas received before its first local delta listener and replays them when that listener is attached. Use `applySessionProtocolDelta` against an installed snapshot. On any revision gap or invalid transition, refresh with `session.snapshot()`.
 
-A method that returns an authoritative snapshot, such as reload, compact, rewind, persona change, or goal clearing, lets the facade discard buffered deltas through that revision. Do not also replay stale presentation transitions from those discarded deltas.
+A method that returns an authoritative snapshot, such as reload, compact, rewind, or persona change, lets the facade discard buffered deltas through that revision. Do not also replay stale presentation transitions from those discarded deltas.
 
 ### Pending input
 

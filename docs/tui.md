@@ -54,7 +54,7 @@ Pending input is session state shared by attached clients while the host remains
 
 Escape interrupts foreground client work or the main session’s active work. If a local diff review, voice input, or speech playback task owns the foreground, Escape stops that task first; otherwise it requests main-session interruption from the host, including cancellation of a running manual compaction. Once compaction has replaced model context, a late interruption does not undo it or turn successful persistence into a failure. It does not stop independently running supervised subagents; select one with Alt+Down and use Ctrl+G. Press Escape twice to clear the current editor text.
 
-Press Enter twice on an empty editor to retry from the current session history. Retry does not rewind or duplicate the last user message. Goal-controlled turns cannot be retried; resume a blocked goal instead.
+Press Enter twice on an empty editor to retry from the current session history. Retry does not rewind or duplicate the last user message.
 
 ## Choose persona, reasoning, and thought visibility
 
@@ -88,7 +88,6 @@ Then use Shift+Tab to select an allowed reasoning level. Newly added personas do
 | `/exit` | Close this TUI. It detaches from a long-running remote host rather than deleting the session. |
 | `/rewind` | Pick an earlier user message, remove it and everything after it, and return its text to the editor. |
 | `/diff [git diff args...]` | Open the client-local diff review tool for a snapshot captured from the execution environment. |
-| `/goal [objective\|resume\|clear]` | Show, start, resume, or clear the persistent session goal. |
 | `/compact-all [guidance]` | Replace model context with a generated summary. |
 | `/compact-keep-last [guidance]` | Generate a summary that also includes the previous last assistant response when available. |
 | `/reload` | Reload session-owned configuration and content from the execution environment. |
@@ -101,9 +100,9 @@ Then use Shift+Tab to select an allowed reasoning level. Newly added personas do
 | `/prompt:<id>` | Resolve a prompt from the execution environment and place it in the editor without submitting it. |
 | `/theme:<id>` | Switch this TUI’s theme for the current run. |
 
-Commands that mutate context, such as persona changes, compaction, rewind, and reload, should be run while idle. `/goal` display and clear, `/auto-speak`, `/listen`, `/prompt:<id>`, and `/exit` have limited useful behavior during a running turn. Ordinary command submissions are otherwise held back until Tau is idle.
+Commands that mutate context, such as persona changes, compaction, rewind, and reload, should be run while idle. `/auto-speak`, `/listen`, `/prompt:<id>`, and `/exit` have limited useful behavior during a running turn. Ordinary command submissions are otherwise held back until Tau is idle.
 
-Compaction, rewind, goals, recovery, and retry are described in [sessions](sessions.md). Prompt discovery and insertion are covered in [prompts and project context](prompts-and-project-context.md).
+Compaction, rewind, recovery, and retry are described in [sessions](sessions.md). Prompt discovery and insertion are covered in [prompts and project context](prompts-and-project-context.md).
 
 ## Keyboard shortcuts
 

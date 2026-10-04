@@ -16,9 +16,6 @@ export const TOOL_NAME_MCP = "mcp";
 export const TOOL_NAME_MODELS = "models";
 export const TOOL_NAME_CODE = "code";
 export const TOOL_NAME_TAU_DOCS = "tau_docs";
-export const TOOL_NAME_GET_GOAL = "get_goal";
-export const TOOL_NAME_CREATE_GOAL = "create_goal";
-export const TOOL_NAME_UPDATE_GOAL = "update_goal";
 
 export const TOOL_NAMES = [
   TOOL_NAME_BASH,
@@ -47,7 +44,4 @@ export const HOST_TOOL_NAMES = [
   "wait_for_bash_jobs",
   ...TOOL_NAMES.filter((name) => !["web", "history", "nook", "mcp", "models"].includes(name)),
   TOOL_NAME_TAU_DOCS,
-  TOOL_NAME_GET_GOAL,
-  TOOL_NAME_CREATE_GOAL,
-  TOOL_NAME_UPDATE_GOAL,
 ] as const;

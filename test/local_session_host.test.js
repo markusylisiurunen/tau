@@ -15,7 +15,7 @@ import {
   TOOL_UI_FACET_VERSION,
 } from "../dist/core/tools/presentation.js";
 import {
-  hasGoalTurnMetadata,
+  isTauUserMessageHidden,
   prependTauUserMetadata,
   stripTauUserDisplayText,
 } from "../dist/core/utils/user_metadata.js";
@@ -1393,391 +1393,14 @@ describe("LocalSessionHost", () => {
     );
   });
 
-  it("continues an active goal until the model completes it", async () => {
+  it("settles accepted steering and persists runtime failures at the terminal timeline position", async () => {
     const store = new MemorySessionStore();
     const host = createHost(store);
     const hostedSession = await host.createSession(localCreateInput);
-    await hostedSession.snapshot();
-    const deltas = [];
-    hostedSession.onDelta((delta) => deltas.push(delta));
-    const completeCall = fauxToolCall(
-      "update_goal",
-      { status: "complete" },
-      { id: "complete-goal" },
-    );
-    const toolMessage = fauxAssistantMessage([completeCall], { stopReason: "toolUse" });
-    const responses = [
-      fauxAssistantMessage("I stopped too soon"),
-      toolMessage,
-      fauxAssistantMessage("Goal complete"),
-    ];
-    const contexts = [];
-    hostedSession.runtime.agent.spec.model.stream = (context) => {
-      contexts.push(context);
-      const response = responses.shift();
-      return {
-        async *[Symbol.asyncIterator]() {
-          if (response === toolMessage) {
-            yield { type: "toolcall_start", contentIndex: 0, partial: toolMessage };
-            yield {
-              type: "toolcall_end",
-              contentIndex: 0,
-              toolCall: completeCall,
-              partial: toolMessage,
-            };
-          }
-        },
-        async result() {
-          return response;
-        },
-      };
-    };
-
-    await expect(hostedSession.startGoal("Ship the feature")).resolves.toMatchObject({
-      turn: { status: "completed" },
+    let projected = await hostedSession.snapshot();
+    hostedSession.onDelta((delta) => {
+      projected = applySessionProtocolDelta(projected, delta);
     });
-
-    const snapshot = await hostedSession.snapshot();
-    expect(snapshot.goal).toBeNull();
-    const startDelta = deltas.find(
-      (delta) =>
-        delta.cause.type === "user-message" &&
-        delta.delta.type === "snapshot.patch" &&
-        delta.delta.changes.some((change) => change.type === "goal.set"),
-    );
-    expect(startDelta?.delta.changes).toEqual(
-      expect.arrayContaining([
-        { type: "goal.set", goal: { objective: "Ship the feature", status: "active" } },
-        expect.objectContaining({ type: "message.append" }),
-      ]),
-    );
-    expect(contexts).toHaveLength(3);
-    expect(
-      contexts[0].messages.some(
-        (message) =>
-          message.role === "user" &&
-          JSON.stringify(message.content).includes("<goal-objective>\\nShip the feature"),
-      ),
-    ).toBe(true);
-    const hiddenContinuation = snapshot.messages.find(
-      (message) =>
-        message.message.role === "user" &&
-        stripTauUserDisplayText(message.message.content[0].text) === "",
-    );
-    expect(hiddenContinuation?.modelVisible).toBe(true);
-    expect(snapshot.tools[completeCall.id]).toMatchObject({ status: "succeeded" });
-    await host.shutdown();
-  });
-
-  it("cancels an active goal while the runtime is idle between continuations", async () => {
-    const store = new MemorySessionStore();
-    const host = createHost(store);
-    const hostedSession = await host.createSession(localCreateInput);
-    await hostedSession.snapshot();
-    const persistenceReached = deferred();
-    const releasePersistence = deferred();
-    const commitSessionSnapshot = store.commitSessionSnapshot.bind(store);
-    let paused = false;
-    store.commitSessionSnapshot = vi.fn(async (snapshot, options) => {
-      if (!paused && snapshotUserMessageCount(snapshot) >= 2) {
-        paused = true;
-        persistenceReached.resolve();
-        await releasePersistence.promise;
-      }
-      return await commitSessionSnapshot(snapshot, options);
-    });
-    const streamModel = vi.fn(() => ({
-      async *[Symbol.asyncIterator]() {},
-      async result() {
-        return fauxAssistantMessage("more work remains");
-      },
-    }));
-    hostedSession.runtime.agent.spec.model.stream = streamModel;
-
-    const run = hostedSession.startGoal("Finish across turns");
-    await persistenceReached.promise;
-
-    expect(hostedSession.runtime.isTurnRunning).toBe(false);
-    expect(hostedSession.interruptActiveWork()).toBe(true);
-    releasePersistence.resolve();
-
-    const result = await run;
-    expect(result.turn).toEqual({ status: "aborted", stopReason: "aborted" });
-    expect(streamModel).toHaveBeenCalledOnce();
-    const snapshot = await hostedSession.snapshot();
-    expect(snapshot.goal).toEqual({ objective: "Finish across turns", status: "blocked" });
-    await host.shutdown();
-  });
-
-  it("cancels goal startup while the objective message is still persisting", async () => {
-    const store = new MemorySessionStore();
-    const host = createHost(store);
-    const hostedSession = await host.createSession(localCreateInput);
-    await hostedSession.snapshot();
-    const persistenceReached = deferred();
-    const releasePersistence = deferred();
-    const commitSessionSnapshot = store.commitSessionSnapshot.bind(store);
-    let paused = false;
-    store.commitSessionSnapshot = vi.fn(async (snapshot, options) => {
-      if (
-        !paused &&
-        snapshot.goal?.status === "active" &&
-        snapshot.messages.some((message) => message.message.role === "user")
-      ) {
-        paused = true;
-        persistenceReached.resolve();
-        await releasePersistence.promise;
-      }
-      return await commitSessionSnapshot(snapshot, options);
-    });
-    const streamModel = vi.fn();
-    hostedSession.runtime.agent.spec.model.stream = streamModel;
-
-    const run = hostedSession.startGoal("Start safely");
-    await persistenceReached.promise;
-
-    expect(hostedSession.runtime.isTurnRunning).toBe(false);
-    expect(hostedSession.interruptActiveWork()).toBe(true);
-    releasePersistence.resolve();
-
-    await expect(run).resolves.toMatchObject({ turn: { status: "aborted" } });
-    expect(streamModel).not.toHaveBeenCalled();
-    await expect(hostedSession.snapshot()).resolves.toMatchObject({
-      goal: { objective: "Start safely", status: "blocked" },
-    });
-    await host.shutdown();
-  });
-
-  it("cancels goal resume before recording its continuation", async () => {
-    const store = new MemorySessionStore();
-    const host = createHost(store);
-    const hostedSession = await host.createSession(localCreateInput);
-    await hostedSession.snapshot();
-    await hostedSession.createGoal("Resume safely");
-    await hostedSession.updateGoal({ status: "blocked" });
-    const userMessageCount = hostedSession.runtime.rawHistory.filter(
-      (message) => message.role === "user",
-    ).length;
-    const persistenceReached = deferred();
-    const releasePersistence = deferred();
-    const commitSessionSnapshot = store.commitSessionSnapshot.bind(store);
-    let paused = false;
-    store.commitSessionSnapshot = vi.fn(async (snapshot, options) => {
-      if (!paused && snapshot.goal?.status === "active") {
-        paused = true;
-        persistenceReached.resolve();
-        await releasePersistence.promise;
-      }
-      return await commitSessionSnapshot(snapshot, options);
-    });
-    const streamModel = vi.fn();
-    hostedSession.runtime.agent.spec.model.stream = streamModel;
-
-    const run = hostedSession.resumeGoal();
-    await persistenceReached.promise;
-
-    expect(hostedSession.interruptActiveWork()).toBe(true);
-    releasePersistence.resolve();
-
-    await expect(run).resolves.toEqual({
-      turn: { status: "aborted", stopReason: "aborted" },
-    });
-    expect(streamModel).not.toHaveBeenCalled();
-    expect(
-      hostedSession.runtime.rawHistory.filter((message) => message.role === "user"),
-    ).toHaveLength(userMessageCount);
-    await expect(hostedSession.snapshot()).resolves.toMatchObject({
-      goal: { objective: "Resume safely", status: "blocked" },
-    });
-    await host.shutdown();
-  });
-
-  it("keeps automatic goal continuations within the root turn receipt", async () => {
-    const host = createHost(new MemorySessionStore());
-    const hostedSession = await host.createSession(localCreateInput);
-    const responses = [
-      fauxAssistantMessage("more work remains"),
-      fauxAssistantMessage("", { stopReason: "aborted" }),
-    ];
-    hostedSession.runtime.agent.spec.model.stream = () => {
-      const response = responses.shift();
-      if (!response) throw new Error("unexpected model call");
-      return {
-        async *[Symbol.asyncIterator]() {},
-        async result() {
-          return response;
-        },
-      };
-    };
-
-    const result = await hostedSession.startGoal("Continue under one root");
-    const snapshot = await hostedSession.snapshot();
-
-    expect(
-      hostedSession.runtime.rawHistoryEntries.filter((entry) => entry.message.role === "user"),
-    ).toHaveLength(2);
-    expect(snapshot.turns).toEqual({
-      [result.userHistoryEntryId]: {
-        userHistoryEntryId: result.userHistoryEntryId,
-        state: "settled",
-        outcome: result.turn,
-      },
-    });
-    expect(result.turn).toEqual({ status: "aborted", stopReason: "aborted" });
-    await host.shutdown();
-  });
-
-  it("applies steering received between active goal continuations", async () => {
-    const store = new MemorySessionStore();
-    const host = createHost(store);
-    const hostedSession = await host.createSession(localCreateInput);
-    await hostedSession.snapshot();
-    const persistenceReached = deferred();
-    const releasePersistence = deferred();
-    const commitSessionSnapshot = store.commitSessionSnapshot.bind(store);
-    let paused = false;
-    store.commitSessionSnapshot = vi.fn(async (snapshot, options) => {
-      if (!paused && snapshotUserMessageCount(snapshot) >= 2) {
-        paused = true;
-        persistenceReached.resolve();
-        await releasePersistence.promise;
-      }
-      return await commitSessionSnapshot(snapshot, options);
-    });
-    const streamModel = vi
-      .fn()
-      .mockImplementationOnce(() => ({
-        async *[Symbol.asyncIterator]() {},
-        async result() {
-          return fauxAssistantMessage("more work remains");
-        },
-      }))
-      .mockImplementationOnce(() => ({
-        async *[Symbol.asyncIterator]() {},
-        async result() {
-          return fauxAssistantMessage("", { stopReason: "aborted" });
-        },
-      }));
-    hostedSession.runtime.agent.spec.model.stream = streamModel;
-
-    const run = hostedSession.startGoal("Accept steering");
-    await persistenceReached.promise;
-    expect(hostedSession.canAcceptSteering).toBe(true);
-    const steering = hostedSession.steer("change the implementation");
-    releasePersistence.resolve();
-
-    const applied = await steering.applied;
-    await expect(steering.result).resolves.toMatchObject({
-      userHistoryEntryId: applied.userHistoryEntryId,
-      turn: { status: "aborted" },
-    });
-    await expect(run).resolves.toMatchObject({ turn: { status: "aborted" } });
-    expect(streamModel).toHaveBeenCalledTimes(2);
-    const steeringMessage = hostedSession.runtime.rawHistoryEntries.find(
-      (entry) => entry.id === applied.userHistoryEntryId,
-    )?.message;
-    expect(steeringMessage?.role).toBe("user");
-    expect(hasGoalTurnMetadata(steeringMessage)).toBe(true);
-    expect(stripTauUserDisplayText(steeringMessage.content[0].text)).toBe(
-      "change the implementation",
-    );
-    await host.shutdown();
-  });
-
-  it("rejects retry for a goal-controlled continuation", async () => {
-    const host = createHost(new MemorySessionStore());
-    const hostedSession = await host.createSession(localCreateInput);
-    const streamModel = vi
-      .fn()
-      .mockImplementationOnce(() => ({
-        async *[Symbol.asyncIterator]() {},
-        async result() {
-          return fauxAssistantMessage("more work remains");
-        },
-      }))
-      .mockImplementationOnce(() => ({
-        async *[Symbol.asyncIterator]() {},
-        async result() {
-          return fauxAssistantMessage("", { stopReason: "aborted" });
-        },
-      }));
-    hostedSession.runtime.agent.spec.model.stream = streamModel;
-
-    await hostedSession.startGoal("Do not retry stale policy");
-
-    const latestUserMessage = hostedSession.runtime.rawHistory.findLast(
-      (message) => message.role === "user",
-    );
-    expect(hasGoalTurnMetadata(latestUserMessage)).toBe(true);
-    await expect(hostedSession.retryTurn()).rejects.toThrow(
-      "goal-controlled turns cannot be retried",
-    );
-    expect(streamModel).toHaveBeenCalledTimes(2);
-    await host.shutdown();
-  });
-
-  it("uses a steering continuation's terminal outcome for an active goal", async () => {
-    const host = createHost(new MemorySessionStore());
-    const hostedSession = await host.createSession(localCreateInput);
-    const firstRun = deferred();
-    const streamModel = vi
-      .fn()
-      .mockImplementationOnce(() => ({
-        async *[Symbol.asyncIterator]() {
-          await firstRun.promise;
-          yield* [];
-        },
-        async result() {
-          return fauxAssistantMessage("initial response");
-        },
-      }))
-      .mockImplementationOnce(() => ({
-        async *[Symbol.asyncIterator]() {},
-        async result() {
-          return fauxAssistantMessage("", { stopReason: "aborted" });
-        },
-      }))
-      .mockImplementation(() => {
-        throw new Error("goal continued after terminal steering outcome");
-      });
-    hostedSession.runtime.agent.spec.model.stream = streamModel;
-
-    const run = hostedSession.startGoal("Follow steering safely");
-    await vi.waitFor(() => expect(hostedSession.runtime.isTurnRunning).toBe(true));
-    const steering = hostedSession.steer("change direction");
-    firstRun.resolve();
-
-    const steeringResult = await steering.result;
-    expect(steeringResult).toMatchObject({
-      turn: { status: "aborted" },
-    });
-    const steeringMessage = hostedSession.runtime.rawHistoryEntries.find(
-      (entry) => entry.id === steeringResult.userHistoryEntryId,
-    )?.message;
-    expect(hasGoalTurnMetadata(steeringMessage)).toBe(true);
-    const result = await run;
-    expect(result.turn).toEqual({ status: "aborted", stopReason: "aborted" });
-    expect(streamModel).toHaveBeenCalledTimes(2);
-    const snapshot = await hostedSession.snapshot();
-    expect(snapshot.goal).toEqual({ objective: "Follow steering safely", status: "blocked" });
-    expect(snapshot.turns[steeringResult.userHistoryEntryId]).toEqual({
-      userHistoryEntryId: steeringResult.userHistoryEntryId,
-      state: "settled",
-      outcome: steeringResult.turn,
-    });
-    expect(snapshot.turns[result.userHistoryEntryId]).toEqual({
-      userHistoryEntryId: result.userHistoryEntryId,
-      state: "settled",
-      outcome: result.turn,
-    });
-    await host.shutdown();
-  });
-
-  it("persists runtime turn failures at the terminal timeline position", async () => {
-    const store = new MemorySessionStore();
-    const host = createHost(store);
-    const hostedSession = await host.createSession(localCreateInput);
-    await hostedSession.snapshot();
     const persistenceReached = deferred();
     const releasePersistence = deferred();
     const finalText = "after steering";
@@ -1818,20 +1441,35 @@ describe("LocalSessionHost", () => {
         },
       }));
 
-    const run = hostedSession.startGoal("Fail after steering");
-    await persistenceReached.promise;
+    const accepted = await hostedSession.acceptTurn({ text: "Fail after steering" });
+    const run = hostedSession.runAcceptedTurn(accepted.userHistoryEntryId);
     const steering = hostedSession.steer("change direction");
+    await persistenceReached.promise;
     releasePersistence.resolve();
 
-    await steering.applied;
-    const [runResult, steeringResult] = await Promise.all([run, steering.result]);
+    const association = await steering.applied;
+    const [runResult] = await Promise.all([
+      run,
+      expect(steering.result).rejects.toBeInstanceOf(Error),
+    ]);
     expect(runResult.turn).toEqual({
       status: "failed",
       stopReason: "error",
       errorMessage: "steering event sink failed",
     });
-    expect(steeringResult.turn).toEqual(runResult.turn);
     const snapshot = await hostedSession.snapshot();
+    for (const userHistoryEntryId of [
+      accepted.userHistoryEntryId,
+      association.userHistoryEntryId,
+    ]) {
+      expect(snapshot.turns[userHistoryEntryId]).toEqual({
+        userHistoryEntryId,
+        state: "settled",
+        outcome: runResult.turn,
+      });
+    }
+    expect(projected).toEqual(snapshot);
+    await expect(store.loadSession(hostedSession.sessionId)).resolves.toEqual(snapshot);
     expect(snapshot.timeline.items.at(-1)).toMatchObject({
       type: "notice",
       notice: {
@@ -1843,71 +1481,6 @@ describe("LocalSessionHost", () => {
         },
         data: { reason: "runtime-error" },
       },
-    });
-    await host.shutdown();
-  });
-
-  it("rolls back goal mutations when persistence fails", async () => {
-    const store = new MemorySessionStore();
-    const host = createHost(store);
-    const hostedSession = await host.createSession(localCreateInput);
-    await hostedSession.snapshot();
-    const commitSessionSnapshot = vi.spyOn(store, "commitSessionSnapshot");
-
-    commitSessionSnapshot.mockRejectedValueOnce(new Error("create failed"));
-    await expect(hostedSession.createGoal("Persist safely")).rejects.toThrow("create failed");
-    expect(hostedSession.getGoal()).toBeNull();
-
-    await expect(hostedSession.createGoal("Persist safely")).resolves.toEqual({
-      objective: "Persist safely",
-      status: "active",
-    });
-    commitSessionSnapshot.mockRejectedValueOnce(new Error("update failed"));
-    await expect(hostedSession.updateGoal({ objective: "Rejected update" })).rejects.toThrow(
-      "update failed",
-    );
-    expect(hostedSession.getGoal()).toEqual({ objective: "Persist safely", status: "active" });
-
-    commitSessionSnapshot.mockRejectedValueOnce(new Error("clear failed"));
-    await expect(hostedSession.updateGoal({ status: "complete" })).rejects.toThrow("clear failed");
-    expect(hostedSession.getGoal()).toEqual({ objective: "Persist safely", status: "active" });
-    await host.shutdown();
-  });
-
-  it("updates goal objectives without weakening completion semantics", async () => {
-    const host = createHost(new MemorySessionStore());
-    const hostedSession = await host.createSession(localCreateInput);
-
-    await hostedSession.createGoal("Initial objective");
-    await expect(
-      hostedSession.updateGoal({ objective: "Refined objective", status: "blocked" }),
-    ).resolves.toEqual({ objective: "Refined objective", status: "blocked" });
-    await expect(
-      hostedSession.updateGoal({ objective: "Discarded objective", status: "complete" }),
-    ).rejects.toThrow("cannot be updated while completing");
-    await expect(hostedSession.snapshot()).resolves.toMatchObject({
-      goal: { objective: "Refined objective", status: "blocked" },
-    });
-    await expect(hostedSession.updateGoal({ status: "complete" })).resolves.toBeNull();
-    await expect(hostedSession.snapshot()).resolves.toMatchObject({ goal: null });
-    await host.shutdown();
-  });
-
-  it("blocks active goals when a turn is interrupted", async () => {
-    const host = createHost(new MemorySessionStore());
-    const hostedSession = await host.createSession(localCreateInput);
-    hostedSession.runtime.agent.spec.model.stream = () => ({
-      async *[Symbol.asyncIterator]() {},
-      async result() {
-        return fauxAssistantMessage("", { stopReason: "aborted" });
-      },
-    });
-
-    await expect(hostedSession.startGoal("Finish safely")).resolves.toMatchObject({
-      turn: { status: "aborted" },
-    });
-    await expect(hostedSession.snapshot()).resolves.toMatchObject({
-      goal: { objective: "Finish safely", status: "blocked" },
     });
     await host.shutdown();
   });
@@ -1944,22 +1517,6 @@ describe("LocalSessionHost", () => {
       timeline: {
         items: [expect.objectContaining({ type: "operation", operationId: "operation-1" })],
       },
-    });
-    await host.shutdown();
-  });
-
-  it("normalizes recovered active goals to blocked", async () => {
-    const store = new MemorySessionStore();
-    const snapshot = createStoredSnapshot({
-      goal: { objective: "Resume deliberately", status: "active" },
-    });
-    await store.commitSessionSnapshot(snapshot);
-
-    const host = createHost(store);
-    const recovered = await host.observeSession(snapshot.sessionId);
-    await expect(recovered?.snapshot()).resolves.toMatchObject({
-      lifecycle: "idle",
-      goal: { objective: "Resume deliberately", status: "blocked" },
     });
     await host.shutdown();
   });
@@ -2063,6 +1620,89 @@ describe("LocalSessionHost", () => {
       } finally {
         fetchImpl.mockRestore();
         await host.shutdown();
+      }
+    },
+  );
+
+  it.each(["active", "blocked", null])(
+    "recovers version 10 goal history without autonomous continuation (%s)",
+    async (status) => {
+      const directory = mkdtempSync(join(tmpdir(), "tau-old-goal-session-"));
+      const store = new FileSessionStore({ directory });
+      const objective = "Ship <all> requirements";
+      const policy =
+        "<system>An active session goal is in effect. Call update_goal when complete.</system>\n";
+      const metadata = Buffer.from(JSON.stringify([{ type: "goal-turn", version: 1 }])).toString(
+        "base64url",
+      );
+      const snapshot = createStoredSnapshot({
+        sessionId: "old-goals",
+        historyEntries: [
+          {
+            id: "objective",
+            message: {
+              role: "user",
+              content: `\u001eTAU_METADATA_V1:${metadata}\u001e${policy}${objective}`,
+            },
+          },
+          {
+            id: "continuation",
+            message: {
+              role: "user",
+              content: [{ type: "text", text: `\u001eTAU_METADATA_V1:${metadata}\u001e${policy}` }],
+            },
+          },
+        ],
+      });
+      snapshot.goal = status ? { objective, status } : null;
+      const path = join(directory, `${Buffer.from(snapshot.sessionId).toString("base64url")}.json`);
+      writeFileSync(
+        path,
+        JSON.stringify({ format: STORED_SESSION_DOCUMENT_FORMAT, version: 10, snapshot }),
+      );
+      const host = createHost(store);
+      try {
+        const loaded = await store.loadSession(snapshot.sessionId);
+        expect(loaded).not.toHaveProperty("goal");
+        expect(loaded.messages.find((entry) => entry.id === "objective").message.content).toBe(
+          `${policy}${objective}`,
+        );
+        const session = await host.observeSession(snapshot.sessionId);
+        const recovered = await session.snapshot();
+        expect(recovered.lifecycle).toBe("idle");
+        expect(recovered).not.toHaveProperty("goal");
+        expect(recovered.messages).toHaveLength(snapshot.messages.length + 1);
+        expect(recovered.timeline).toEqual(snapshot.timeline);
+        const retirement = recovered.messages.at(-1).message;
+        expect(retirement.role).toBe("user");
+        expect(isTauUserMessageHidden(retirement)).toBe(true);
+        expect(
+          stripTauUserDisplayText(
+            recovered.messages.find((entry) => entry.id === "objective").message.content,
+          ),
+        ).toBe(objective);
+        for (const name of ["get_goal", "create_goal", "update_goal"]) {
+          expect(session.runtime.agent.spec.tools.get(name)).toBeUndefined();
+        }
+        const stream = vi.fn(() => ({
+          async *[Symbol.asyncIterator]() {},
+          async result() {
+            return fauxAssistantMessage("More work remains.");
+          },
+        }));
+        session.runtime.agent.spec.model.stream = stream;
+        await expect(session.retryTurn()).resolves.toMatchObject({ status: "completed" });
+        expect(stream).toHaveBeenCalledTimes(1);
+        expect(stream.mock.calls[0][0].messages).toContainEqual(retirement);
+        const persisted = JSON.parse(readFileSync(path, "utf8"));
+        expect(persisted.version).toBe(STORED_SESSION_DOCUMENT_VERSION);
+        expect(persisted.snapshot).not.toHaveProperty("goal");
+        expect((await store.loadSession(snapshot.sessionId)).messages).toEqual(
+          persisted.snapshot.messages,
+        );
+      } finally {
+        await host.shutdown();
+        rmSync(directory, { recursive: true, force: true });
       }
     },
   );
@@ -2871,7 +2511,7 @@ describe("LocalSessionHost", () => {
     expect(store.commitSessionSnapshot).toHaveBeenCalledTimes(2);
   });
 
-  it("serializes durable goal writes with later transient tool projections", async () => {
+  it("serializes durable user writes with later transient tool projections", async () => {
     const store = new MemorySessionStore();
     const host = createHost(store);
     const hostedSession = await host.createSession(localCreateInput);
@@ -2881,7 +2521,7 @@ describe("LocalSessionHost", () => {
     const releasePersistence = deferred();
     const commitSessionSnapshot = store.commitSessionSnapshot.bind(store);
     store.commitSessionSnapshot = vi.fn(async (snapshot, options) => {
-      if (snapshot.goal?.objective === "Persist in order") {
+      if (snapshot.messages.some((entry) => entry.message.role === "user")) {
         persistenceReached.resolve();
         await releasePersistence.promise;
       }
@@ -2890,7 +2530,7 @@ describe("LocalSessionHost", () => {
 
     const deltas = [];
     hostedSession.onDelta((delta) => deltas.push(delta));
-    const goal = hostedSession.createGoal("Persist in order");
+    const record = hostedSession.record({ text: "Persist in order" });
     await persistenceReached.promise;
 
     const toolCall = fauxToolCall("bash", { command: "pwd" }, { id: "ordered-tool" });
@@ -2913,7 +2553,7 @@ describe("LocalSessionHost", () => {
     await Promise.resolve();
     expect(deltas).toEqual([]);
     releasePersistence.resolve();
-    await Promise.all([goal, assistantStart, assistantPartial]);
+    await Promise.all([record, assistantStart, assistantPartial]);
 
     expect(deltas.map((delta) => [delta.fromRevision, delta.toRevision])).toEqual([
       [1, 2],
@@ -2921,9 +2561,9 @@ describe("LocalSessionHost", () => {
       [3, 4],
     ]);
     await expect(hostedSession.snapshot()).resolves.toMatchObject({
-      goal: { objective: "Persist in order", status: "active" },
       messages: [
         expect.anything(),
+        expect.objectContaining({ message: expect.objectContaining({ role: "user" }) }),
         expect.objectContaining({ id: "assistant-ordered", state: "draft" }),
       ],
       tools: {
@@ -2936,41 +2576,22 @@ describe("LocalSessionHost", () => {
     await host.shutdown();
   });
 
-  it("reconciles tools, goals, and failure context after a runtime event sink failure", async () => {
+  it("reconciles tools and failure context after a runtime event sink failure", async () => {
     const store = new MemorySessionStore();
     const host = createHost(store);
     const hostedSession = await host.createSession(localCreateInput);
     await hostedSession.snapshot();
 
-    const goalCall = fauxToolCall(
-      "create_goal",
-      { objective: "Finish safely" },
-      { id: "failure-goal" },
-    );
     const bashCall = fauxToolCall("bash", { command: "printf never" }, { id: "failure-bash" });
-    const toolMessage = fauxAssistantMessage([goalCall, bashCall], {
+    const toolMessage = fauxAssistantMessage([bashCall], {
       stopReason: "toolUse",
     });
     hostedSession.runtime.agent.spec.model.stream = () => ({
       async *[Symbol.asyncIterator]() {
-        const goalPartial = { ...toolMessage, content: [goalCall] };
-        yield { type: "toolcall_start", contentIndex: 0, partial: goalPartial };
+        yield { type: "toolcall_start", contentIndex: 0, partial: toolMessage };
         yield {
           type: "toolcall_end",
           contentIndex: 0,
-          toolCall: goalCall,
-          partial: goalPartial,
-        };
-        await vi.waitFor(() =>
-          expect(hostedSession.getGoal()).toEqual({
-            objective: "Finish safely",
-            status: "active",
-          }),
-        );
-        yield { type: "toolcall_start", contentIndex: 1, partial: toolMessage };
-        yield {
-          type: "toolcall_end",
-          contentIndex: 1,
           toolCall: bashCall,
           partial: toolMessage,
         };
@@ -3002,10 +2623,6 @@ describe("LocalSessionHost", () => {
     });
 
     const snapshot = await hostedSession.snapshot();
-    expect(snapshot.goal).toEqual({
-      objective: "Finish safely",
-      status: "blocked",
-    });
     expect(snapshot.timeline.items.at(-1)).toMatchObject({
       type: "notice",
       notice: {
@@ -3019,7 +2636,7 @@ describe("LocalSessionHost", () => {
       },
     });
     expect(
-      [goalCall.id, bashCall.id].every(
+      [bashCall.id].every(
         (id) => snapshot.tools[id].status !== "queued" && snapshot.tools[id].status !== "running",
       ),
     ).toBe(true);

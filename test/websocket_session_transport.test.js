@@ -69,9 +69,6 @@ function createHostedSession(sessionId, sessions, options = {}) {
     get canAcceptSteering() {
       return running;
     },
-    getGoal() {
-      return null;
-    },
     get sessionId() {
       return sessionId;
     },

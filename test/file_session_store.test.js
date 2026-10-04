@@ -81,10 +81,12 @@ describe("FileSessionStore", () => {
         const projected = splitTauUserText(entry.message.content[0].text);
         expect(projected.metadata).toEqual([{ type: "compaction", version: 1, summary }]);
         expect(projected.modelText).toBe(summary);
-        expect(loaded.messages.at(-1).message).toMatchObject({
-          role: "system",
-          metadata: { type: "instruction", version: 1 },
-        });
+        const retirement = loaded.messages.at(-1).message;
+        expect(retirement.role).toBe("user");
+        const instruction = splitTauUserText(retirement.content);
+        expect(instruction.hiddenSystemBlocks).toHaveLength(1);
+        expect(instruction.displayText).toBe("");
+        expect(loaded.messages).toHaveLength(snapshot.messages.length + 1);
         expect(loaded.timeline).toEqual(snapshot.timeline);
       });
     },

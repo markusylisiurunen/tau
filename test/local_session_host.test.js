@@ -15,6 +15,7 @@ import {
   TOOL_UI_FACET_VERSION,
 } from "../dist/core/tools/presentation.js";
 import {
+  isTauUserMessageHidden,
   prependTauUserMetadata,
   stripTauUserDisplayText,
 } from "../dist/core/utils/user_metadata.js";
@@ -1655,23 +1656,16 @@ describe("LocalSessionHost", () => {
         const recovered = await session.snapshot();
         expect(recovered.lifecycle).toBe("idle");
         expect(recovered).not.toHaveProperty("goal");
-        expect(
-          recovered.messages.some((entry) => entry.message.metadata?.type === "instruction"),
-        ).toBe(true);
+        expect(recovered.messages).toHaveLength(snapshot.messages.length + 1);
+        expect(recovered.timeline).toEqual(snapshot.timeline);
+        const retirement = recovered.messages.at(-1).message;
+        expect(retirement.role).toBe("user");
+        expect(isTauUserMessageHidden(retirement)).toBe(true);
         expect(
           stripTauUserDisplayText(
             recovered.messages.find((entry) => entry.id === "objective").message.content,
           ),
         ).toBe(objective);
-        if (status) {
-          const preserved = recovered.messages.find(
-            (entry) => entry.id === "recovered-goal-objective",
-          );
-          expect(preserved.message.content).toContain(objective);
-          expect(recovered.timeline.items.some((item) => item.messageId === preserved.id)).toBe(
-            true,
-          );
-        }
         for (const name of ["get_goal", "create_goal", "update_goal"]) {
           expect(session.runtime.agent.spec.tools.get(name)).toBeUndefined();
         }
@@ -1684,11 +1678,7 @@ describe("LocalSessionHost", () => {
         session.runtime.agent.spec.model.stream = stream;
         await expect(session.retryTurn()).resolves.toMatchObject({ status: "completed" });
         expect(stream).toHaveBeenCalledTimes(1);
-        const retirement = recovered.messages.find(
-          (entry) => entry.id === "recovered-goal-retirement",
-        ).message;
-        const { metadata: _metadata, ...nativeInstruction } = retirement;
-        expect(stream.mock.calls[0][0].messages).toContainEqual(nativeInstruction);
+        expect(stream.mock.calls[0][0].messages).toContainEqual(retirement);
         const persisted = JSON.parse(readFileSync(path, "utf8"));
         expect(persisted.version).toBe(STORED_SESSION_DOCUMENT_VERSION);
         expect(persisted.snapshot).not.toHaveProperty("goal");

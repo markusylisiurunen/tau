@@ -518,7 +518,6 @@ test("FooterComponent renders dense session status", () => {
     contextUsage: "↑578k ↓87k r58M w0 · 76.9%/372k",
     sessionCost: "$63.52",
     duration: "1m 1s",
-    autoSpeak: false,
   });
   const line = renderLines(footer, 120)[0];
   expect(line).toContain(
@@ -566,7 +565,6 @@ test("FooterComponent renders activity instead of regular status", () => {
       contextUsage: "ctx 10/100",
       sessionCost: "$0.01",
       duration: "12s",
-      autoSpeak: false,
     });
     const regularText = renderText(footer, 120);
     expect(regularText).toContain("<textDim>○</textDim>");
@@ -610,7 +608,6 @@ test("FooterComponent temporarily replaces regular status with a notice", () => 
     contextUsage: "ctx 10/100",
     sessionCost: "$0.01",
     duration: "12s",
-    autoSpeak: false,
   });
 
   try {
@@ -641,7 +638,6 @@ test("FooterComponent animates active work and settles after completion", () => 
     contextUsage: "ctx 10/100",
     sessionCost: "$0.01",
     duration: "24s",
-    autoSpeak: false,
   });
 
   try {
@@ -727,7 +723,6 @@ test("FooterComponent compacts cwd before truncating the complete status", () =>
     contextUsage: "ctx",
     sessionCost: "$0.01",
     duration: "12s",
-    autoSpeak: false,
   });
 
   const compactLine = renderLines(footer, 42)[0];
@@ -740,7 +735,6 @@ test("FooterComponent compacts cwd before truncating the complete status", () =>
     contextUsage: "this is a very long context usage string",
     sessionCost: "$0.01",
     duration: "12s",
-    autoSpeak: false,
   });
 
   const truncatedLine = renderLines(footer, 40)[0];

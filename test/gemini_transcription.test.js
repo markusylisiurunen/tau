@@ -110,7 +110,7 @@ describe("gemini transcription", () => {
         const completion = transcription.finish();
         await vi.advanceTimersByTimeAsync(0);
         expect(sent.at(-1)).toEqual({ realtimeInput: { audioStreamEnd: true } });
-        await vi.advanceTimersByTimeAsync(2999);
+        await vi.advanceTimersByTimeAsync(1999);
         expect(socket.close).not.toHaveBeenCalled();
         if (state === "late-activity") {
           emit({ voiceActivity: { type: "ACTIVITY_START", audioOffset: "1s" } });
@@ -124,7 +124,7 @@ describe("gemini transcription", () => {
           await vi.advanceTimersByTimeAsync(1000);
           expect(socket.close).not.toHaveBeenCalled();
           emit({ serverContent: { inputTranscription: { text: "final segment" } } });
-          await vi.advanceTimersByTimeAsync(2999);
+          await vi.advanceTimersByTimeAsync(1999);
           expect(socket.close).not.toHaveBeenCalled();
         }
         await vi.advanceTimersByTimeAsync(1);
@@ -144,6 +144,95 @@ describe("gemini transcription", () => {
         expect(onProgress).toHaveBeenCalledTimes(progressCount);
         expect(socket.close).toHaveBeenCalledTimes(1);
         expect(socket.terminate).not.toHaveBeenCalled();
+      } finally {
+        transcription.abort();
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it.each([
+    ["transcript", "generation", "activity"],
+    ["transcript", "activity", "generation"],
+    ["generation", "transcript", "activity"],
+    ["generation", "activity", "transcript"],
+    ["activity", "transcript", "generation"],
+    ["activity", "generation", "transcript"],
+  ])("finishes covered audio after %s, %s, %s", async (...order) => {
+    vi.useFakeTimers();
+    const socket = new EventEmitter();
+    socket.send = vi.fn((_data, callback) => callback?.());
+    socket.close = vi.fn();
+    socket.terminate = vi.fn();
+    const transcription = startGeminiTranscription({
+      apiKey: "key",
+      webSocketFactory: () => socket,
+    });
+    const emit = (event) => socket.emit("message", JSON.stringify(event));
+    try {
+      // Include buffered audio and a previous finalized segment in the stream offset.
+      transcription.appendAudio(Buffer.alloc(160000));
+      socket.emit("open");
+      await vi.advanceTimersByTimeAsync(0);
+      emit({ setupComplete: {} });
+      emit({ serverContent: { inputTranscription: { text: "first" }, generationComplete: true } });
+      transcription.appendAudio(Buffer.alloc(154710));
+      emit({ voiceActivity: { type: "ACTIVITY_START" } });
+      emit({ serverContent: { interimInputTranscription: { text: "sec" } } });
+      const completion = transcription.finish();
+      await vi.advanceTimersByTimeAsync(0);
+      const events = {
+        transcript: { serverContent: { inputTranscription: { text: "second" } } },
+        generation: { serverContent: { generationComplete: true } },
+        activity: { voiceActivity: { type: "ACTIVITY_END", audioOffset: "9.834687500s" } },
+      };
+      for (const name of order) {
+        expect(socket.close).not.toHaveBeenCalled();
+        emit(events[name]);
+      }
+      expect(socket.close).toHaveBeenCalledTimes(1);
+      await expect(completion).resolves.toBe("first second");
+      await vi.advanceTimersByTimeAsync(30000);
+      expect(socket.terminate).not.toHaveBeenCalled();
+    } finally {
+      transcription.abort();
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([undefined, "0.099937500s", "0.100062500s", "invalid", "-0.1s", "0.1000000001s"])(
+    "uses the quiet window for an uncovered or unusable offset %s",
+    async (audioOffset) => {
+      vi.useFakeTimers();
+      const socket = new EventEmitter();
+      socket.send = vi.fn((_data, callback) => callback?.());
+      socket.close = vi.fn();
+      socket.terminate = vi.fn();
+      const transcription = startGeminiTranscription({
+        apiKey: "key",
+        webSocketFactory: () => socket,
+      });
+      const emit = (event) => socket.emit("message", JSON.stringify(event));
+      try {
+        socket.emit("open");
+        await vi.advanceTimersByTimeAsync(0);
+        emit({ setupComplete: {} });
+        transcription.appendAudio(Buffer.alloc(3200));
+        const completion = transcription.finish();
+        await vi.advanceTimersByTimeAsync(0);
+        emit({
+          serverContent: { inputTranscription: { text: "first" }, generationComplete: true },
+        });
+        emit({ voiceActivity: { type: "ACTIVITY_END", audioOffset } });
+        await vi.advanceTimersByTimeAsync(1999);
+        expect(socket.close).not.toHaveBeenCalled();
+        emit({ voiceActivity: { type: "ACTIVITY_START" } });
+        emit({ voiceActivity: { type: "ACTIVITY_END", audioOffset: "0.1s" } });
+        emit({ serverContent: { generationComplete: true } });
+        expect(socket.close).not.toHaveBeenCalled();
+        emit({ serverContent: { inputTranscription: { text: "last words" } } });
+        await expect(completion).resolves.toBe("first last words");
+        expect(socket.close).toHaveBeenCalledTimes(1);
       } finally {
         transcription.abort();
         vi.useRealTimers();
@@ -208,15 +297,15 @@ describe("gemini transcription", () => {
       const completion = transcription.finish();
       void completion.catch(() => {});
       await vi.advanceTimersByTimeAsync(0);
-      for (let i = 0; i < 14; i++) {
-        await vi.advanceTimersByTimeAsync(2000);
+      for (let i = 0; i < 29; i++) {
+        await vi.advanceTimersByTimeAsync(1000);
         socket.emit(
           "message",
           JSON.stringify({ serverContent: { inputTranscription: { text: "segment" } } }),
         );
         expect(socket.close).not.toHaveBeenCalled();
       }
-      await vi.advanceTimersByTimeAsync(2000);
+      await vi.advanceTimersByTimeAsync(1000);
       await expect(completion).rejects.toThrow();
       expect(socket.terminate).toHaveBeenCalled();
     } finally {

@@ -13,7 +13,7 @@ const GEMINI_TRANSCRIPTION_MODEL = "gemini-3.5-transcribe";
 const GEMINI_LIVE_TRANSCRIPTION_MODEL = "gemini-3.5-transcribe-live";
 const GEMINI_TRANSCRIPTION_CONNECT_TIMEOUT_MS = 15_000;
 const GEMINI_TRANSCRIPTION_COMPLETION_TIMEOUT_MS = 30_000;
-const GEMINI_TRANSCRIPTION_QUIET_WINDOW_MS = 3_000;
+const GEMINI_TRANSCRIPTION_QUIET_WINDOW_MS = 2_000;
 const GEMINI_FILE_DELETE_TIMEOUT_MS = 5_000;
 const DEFAULT_GEMINI_AUDIO_MIME_TYPE = "audio/wav";
 
@@ -59,7 +59,7 @@ const liveMessageSchema = z
       })
       .passthrough()
       .optional(),
-    voiceActivity: z.object({ type: z.string() }).optional(),
+    voiceActivity: z.object({ type: z.string(), audioOffset: z.string().optional() }).optional(),
     error: z
       .object({
         message: z.string().trim().min(1),
@@ -106,6 +106,10 @@ class GeminiStreamingTranscriptionImpl implements GeminiStreamingTranscription {
   private finalizedText = "";
   private interimText = "";
   private speechPending = false;
+  private segmentFinalized = false;
+  private segmentComplete = false;
+  private activityCoversAudio = false;
+  private sentAudioBytes = 0;
   private finishing = false;
   private ready = false;
   private aborted = false;
@@ -223,16 +227,22 @@ class GeminiStreamingTranscriptionImpl implements GeminiStreamingTranscription {
     if (this.quietTimeout) clearTimeout(this.quietTimeout);
     this.quietTimeout = undefined;
     if (!this.finishing || this.speechPending || this.aborted || this.failure) return;
-    // Segment completion is not a stream acknowledgement; drain trailing events before closing.
-    this.quietTimeout = setTimeout(() => {
-      const text = this.finalizedText.trim();
-      this.completedTranscript = text;
-      this.clearTimers();
-      this.resolveCompletion?.(text);
-      this.clearWaiters();
-      this.socket.close();
-    }, GEMINI_TRANSCRIPTION_QUIET_WINDOW_MS);
+    if (this.activityCoversAudio && this.segmentFinalized && this.segmentComplete) {
+      this.complete();
+      return;
+    }
+    // Earlier segment endings do not cover trailing audio; allow delayed events to drain.
+    this.quietTimeout = setTimeout(() => this.complete(), GEMINI_TRANSCRIPTION_QUIET_WINDOW_MS);
     this.quietTimeout.unref?.();
+  }
+
+  private complete(): void {
+    const text = this.finalizedText.trim();
+    this.completedTranscript = text;
+    this.clearTimers();
+    this.resolveCompletion?.(text);
+    this.clearWaiters();
+    this.socket.close();
   }
 
   abort(): void {
@@ -313,19 +323,38 @@ class GeminiStreamingTranscriptionImpl implements GeminiStreamingTranscription {
     const activity = event.data.voiceActivity;
     if (activity?.type === "ACTIVITY_START") {
       this.speechPending = true;
+      this.segmentFinalized = false;
+      this.segmentComplete = false;
+      this.activityCoversAudio = false;
       if (this.finishing) this.send({ realtimeInput: { audioStreamEnd: true } });
     }
     if (content?.inputTranscription) {
       this.finalizedText = joinTranscriptText(this.finalizedText, content.inputTranscription.text);
       this.interimText = "";
+      this.segmentFinalized = true;
       this.speechPending = false;
       this.onProgress?.(this.finalizedText);
     } else if (content?.interimInputTranscription) {
+      this.segmentFinalized = false;
+      this.segmentComplete = false;
+      this.activityCoversAudio = false;
       this.interimText = content.interimInputTranscription.text;
       this.speechPending = true;
       this.onProgress?.(joinTranscriptText(this.finalizedText, this.interimText));
     }
-    if (content?.generationComplete && !this.interimText) this.speechPending = false;
+    if (content?.generationComplete) {
+      this.segmentComplete = true;
+      if (!this.interimText) this.speechPending = false;
+    }
+    if (this.finishing && activity?.type === "ACTIVITY_END") {
+      // 16 kHz mono PCM16: each byte represents exactly 31,250 nanoseconds.
+      const offset = activity.audioOffset?.match(/^(\d{1,12})(?:\.(\d{1,9}))?s$/);
+      this.activityCoversAudio =
+        offset !== undefined &&
+        offset !== null &&
+        BigInt(offset[1]!) * 1_000_000_000n + BigInt((offset[2] ?? "").padEnd(9, "0")) ===
+          BigInt(this.sentAudioBytes) * 31_250n;
+    }
     if (
       activity ||
       content?.inputTranscription ||
@@ -339,6 +368,8 @@ class GeminiStreamingTranscriptionImpl implements GeminiStreamingTranscription {
   }
 
   private sendAudio(audio: Buffer): void {
+    this.sentAudioBytes += audio.length;
+    this.activityCoversAudio = false;
     this.send({
       realtimeInput: {
         audio: {

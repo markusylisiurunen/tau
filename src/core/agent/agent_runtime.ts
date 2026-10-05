@@ -1051,13 +1051,12 @@ export class AgentRuntime {
     };
     const instructionTokens = estimateMessageTokens(instruction);
     const inputTokens =
-      Math.max(
+      (options.contextTokens ??
         bytesToTokens(Buffer.byteLength(options.systemPrompt, "utf8")) +
           context.messages
             .slice(0, -1)
-            .reduce((total, message) => total + estimateMessageTokens(message), 0),
-        options.contextTokens ?? 0,
-      ) + instructionTokens;
+            .reduce((total, message) => total + estimateMessageTokens(message), 0)) +
+      instructionTokens;
     if (inputTokens >= model.model.contextWindow) {
       throw new Error("native compaction context exceeds the model context budget");
     }

@@ -129,7 +129,7 @@ An attached session involves three separate parts, even when two of them run on 
 - terminal rendering, editor drafts, clipboard operations, and local notifications
 - loaded themes and `defaultTheme`
 - `/listen`, `/speak`, and their local credentials and OS commands
-- the built-in or configured diff-tool process
+- the built-in diff tool process
 - configured command-backed client-tool processes
 - the client’s Tau binary and TUI behavior
 

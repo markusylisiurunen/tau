@@ -251,7 +251,7 @@ See [`speech` configuration](config-reference.md#speech) for the default Maisie 
 
 Run `/reload` while idle after changing configuration, personas, prompts, skills, or `AGENTS.md` content in the execution environment. The host reads them again from the session's working directory, keeps the current persona if it still exists, and otherwise selects the first available persona. Warnings appear in the transcript.
 
-Restart the TUI instead after changing themes, the diff tool, speech settings, or configured client tools. Codex auth storage is read again on every new request. Restart the host after changing its Tau version, environment variables, `apiKeys`, WebSocket listener, or hosted execution environment settings. [Credentials](credentials.md) and [remote sessions](remote-sessions.md) explain which process owns what.
+Restart the TUI instead after changing themes, speech settings, or configured client tools. Codex auth storage is read again on every new request. Restart the host after changing its Tau version, environment variables, `apiKeys`, WebSocket listener, or hosted execution environment settings. [Credentials](credentials.md) and [remote sessions](remote-sessions.md) explain which process owns what.
 
 ## Common mistakes
 

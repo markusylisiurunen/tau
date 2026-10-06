@@ -145,7 +145,7 @@ Compaction keeps searchable history, while rewind cuts it back to the rewind poi
 
 Run `/reload` in the TUI while the session is idle. The host reads configuration, personas, prompts, skills, and `AGENTS.md` context again from the session's working directory. It keeps the current persona if its ID still exists, and otherwise selects the first available persona. Warnings appear in the transcript.
 
-Reload affects later turns. It never changes the saved conversation or the execution environment. It does not reload anything owned by the client, such as themes, the diff tool, speech settings, or client tools; restart the TUI for those. Codex auth storage is read again on every new request. Restart the host after changing its environment variables, `apiKeys`, listener settings, hosted environment settings, or the Tau version. [Credentials](credentials.md) and [remote sessions](remote-sessions.md) describe where each setting belongs.
+Reload affects later turns. It never changes the saved conversation or the execution environment. It does not reload anything owned by the client, such as themes, speech settings, or client tools; restart the TUI for those. Codex auth storage is read again on every new request. Restart the host after changing its environment variables, `apiKeys`, listener settings, hosted environment settings, or the Tau version. [Credentials](credentials.md) and [remote sessions](remote-sessions.md) describe where each setting belongs.
 
 Protocol clients can request changes directly, but should still wait for an idle session. Some changes interrupt running work and reject pending messages, so the session ends up with one consistent configuration.
 

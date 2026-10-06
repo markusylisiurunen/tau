@@ -82,7 +82,7 @@ Use both lists for a private bot. `allowedUserIds` decides who can start work, b
 
 A bot sees only its `allowedProjectIds`, or every project if the field is missing. If only one project is allowed, it is selected automatically. Otherwise a chat needs `defaultProjectId` or a `/use_<project>` choice before `/new`.
 
-Telegram allows 100 commands per bot: eleven built-ins and up to 89 `/use_<projectId>` commands.
+Telegram allows 100 commands per bot: twelve built-ins and up to 88 `/use_<projectId>` commands.
 
 ## Projects
 

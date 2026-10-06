@@ -6,16 +6,13 @@ Read [configuration](configuration.md) first for discovery and precedence. In th
 
 ## Shipped defaults
 
-These defaults are built into this Tau version. Your configuration can override them:
+These are the defaults for fields you leave unset in this Tau version:
 
-| Behavior                               | Shipped default      |
-| -------------------------------------- | -------------------- |
-| Default persona                        | `sonnet-5.5-coder`   |
-| Default TUI theme                      | `gold`               |
-| Built-in personas                      | Enabled              |
-| Speech-to-text provider                | Gemini               |
-| Built-in diff tool code theme          | `github-dark-dimmed` |
-| Command client tool timeout when unset | `60000` ms           |
+| Field                              | Default            |
+| ---------------------------------- | ------------------ |
+| `defaultPersona`                   | `sonnet-5.5-coder` |
+| `defaultTheme`                     | `gold`             |
+| `clientTools[].executionTimeoutMs` | `60000` ms         |
 
 Project and global content can change which persona ids exist. A configured default must match an available persona or built-in theme. Otherwise Tau reports a warning.
 

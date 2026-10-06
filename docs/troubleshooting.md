@@ -32,7 +32,7 @@ Inside the TUI, `/help` shows the commands, loaded skills, and context file path
 
 ## A configuration change has no effect
 
-Find what reads the setting, using [ownership and scope](ownership-and-scope.md). Session content and host tools come from the execution environment and the host. Themes, speech, the diff tool, and TUI client tools come from the client. History and hosted environment connections belong to the host. Telegram routing and workspaces come from the runner's own configuration.
+Find what reads the setting, using [ownership and scope](ownership-and-scope.md). Session content and host tools come from the execution environment and the host. Themes, speech, and TUI client tools come from the client. History and hosted environment connections belong to the host. Telegram routing and workspaces come from the runner's own configuration.
 
 Confirm that part's machine, `cwd`, home, and tool paths. In an attached session, these checks report the execution environment, not the laptop:
 
@@ -62,7 +62,7 @@ Run `tau --debug` from the intended directory for a new local startup. For a run
 | Change | How to apply |
 | --- | --- |
 | Session configuration and content | `/reload` while idle |
-| Theme, diff, speech, or TUI client tools | Restart `tau` or `tau attach` |
+| Theme, speech, or TUI client tools | Restart `tau` or `tau attach` |
 | Host environment, `apiKeys`, history, hosted environments, listener, or Tau version | Restart the host |
 | Default persona or execution environment | Create a new session if it must change |
 | Telegram config, routing, speech, or workspaces | Restart the runner |
@@ -74,7 +74,7 @@ Run `tau --debug` from the intended directory for a new local startup. For a run
 Reload updates configuration, personas, prompts, skills, `AGENTS.md` context, and host tools for later turns. It does not:
 
 - change the execution environment, its `cwd`, or its home;
-- reload an attached client's themes, diff tool, speech settings, or tools;
+- reload an attached client's themes, speech settings, or tools;
 - read environment variables again in a running process;
 - reload the host's history service or hosted environment settings;
 - update Tau's code or built-in documentation; or

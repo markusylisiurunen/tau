@@ -68,7 +68,7 @@ A Fly Sprite puts the execution environment on another machine while the host st
 Start from the behavior that consumes the setting:
 
 1. If it changes what the agent sees or can do in the project, edit configuration or content in the execution environment's discovery path.
-2. If it changes terminal rendering, `/diff`, `/listen`, or a command client tool, edit the TUI client's configuration and restart that client.
+2. If it changes the TUI's theme, speech, or command client tools, edit the TUI client's configuration and restart that client.
 3. If it changes credentials, session storage, remote history, or hosted execution environment connections, set it for the host process and restart the host when required.
 4. If it changes Telegram routing or workspace preparation, edit the runner's `--config-file` on the runner machine.
 

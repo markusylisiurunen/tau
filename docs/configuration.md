@@ -158,7 +158,7 @@ Restart the host process to apply settings that the host reads once at startup, 
 
 - `flySprites`
 - `history`
-- host environment variables and Codex account forcing
+- host environment variables
 
 For `tau serve`, make the changes on the host machine and restart the server. Restarting an attached TUI does not restart the host.
 

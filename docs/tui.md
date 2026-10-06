@@ -169,17 +169,9 @@ Theme IDs are exact and case-sensitive. `/theme` does not save the choice. Resta
 
 A snapshot's patch can be at most 16 MiB. Narrow the Git arguments if a larger diff is rejected. A plain working-tree snapshot includes non-binary untracked files of up to 4 MiB each, within that total.
 
-The tool has two views:
+The tool opens in **Guide** mode and starts preparing an orientation, focused topics, and likely reviewer questions as soon as the review context is ready. You can comment on the guide, ask for another topic or question, or switch to **Diff** mode for review threads on files and lines.
 
-- **Guide** explains the change through an orientation and focused topics. The tool starts preparing it as soon as the review context is ready.
-- **Diff** shows the files and lines.
-
-Feedback comes in two forms, and both can be attached to a diff line, a guide section, or the whole change:
-
-- **Comments** are notes for the author and are always part of the returned review.
-- **Conversations** are questions to a review agent. They stay private unless you include them, in which case their transcript is returned as context.
-
-The review panel lists all comments and conversations in either view and jumps to where each was left. **Finish review** shows what will be returned and can display the full Markdown before you submit. Finishing with no comments or included conversations approves the change. The returned Markdown stands on its own: it names the reviewed scope and quotes the guide content each guide comment refers to.
+Guide comments and unresolved diff threads go into the returned Markdown, which stands on its own: it names the reviewed scope, gives change-level comments their context, and explains who took part in each discussion and in what role. **Submit** first opens a preview of the exact text to be returned, where you can exclude feedback and copy the full review before submitting. **Approve** returns right away when no feedback remains. If feedback appears while approval is being checked, the preview opens instead.
 
 The session host provides temporary review agents, and the local tool runs the browser interface. The returned review is added to the session as a user message, but Tau does not start an assistant turn when the tool closes. Send a follow-up message when the review should lead to more work.
 

@@ -33,7 +33,7 @@ The HTTP server has no authentication. The default loopback address suits a prox
 
 Always call `close()` when the review should no longer be available. It cancels the review if needed, closes the review agent context, and stops the HTTP server.
 
-In the UI, finishing a review first shows what will be returned, including the full Markdown. Comments are always returned. Conversations with the review agent are returned as context only if the reviewer includes them. With neither, finishing approves the change. The returned Markdown stands on its own: it names the reviewed scope, quotes the guide content each guide comment refers to, and marks included conversations as context.
+In the UI, **Submit** first opens a preview of the exact text to be returned, where the reviewer can exclude feedback and copy the full review. **Approve** returns right away when no feedback remains; if feedback appears while approval is being checked, the preview opens instead. The returned Markdown stands on its own: it names the reviewed scope, gives change-level comments their context, and explains who took part in each unresolved discussion and in what role.
 
 `result` resolves once, with the outcome or the reason for cancellation. An approval and a review with comments are separate outcomes, so you never need to check for placeholder text:
 
@@ -48,7 +48,7 @@ if (result.status === "returned" && result.outcome === "approved") {
 
 ## Durable review state
 
-By default, comments, conversation transcripts, guide content, and UI preferences are kept only in memory. Pass a `storage` adapter to save them:
+By default, review annotations, transcripts, guide content and comments, and UI preferences are kept only in memory. Pass a `storage` adapter to save them:
 
 ```ts
 const review = await startTauSdkDiffReview({

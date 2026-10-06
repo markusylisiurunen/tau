@@ -1,16 +1,14 @@
 # Credentials
 
-Tau can read secrets from configuration, process environments, and managed OAuth storage. The correct location depends on which process performs the authenticated operation. In a remote session, the attached terminal is usually not that process.
+Tau reads secrets from configuration, environment variables, and its own OAuth storage. Put each secret on the process that makes the authenticated request. In a remote session, that is usually not the attached terminal.
 
-Treat credentials separately from model definitions. [Models](models.md) describes providers and model metadata; this page describes how authenticated requests obtain secrets.
+This page covers where secrets come from. [Models](models.md) covers providers and model metadata.
 
 ## Credential ownership
 
-The host performs model calls and runs host-owned services such as web search and remote history. Its home and process environment therefore own most credentials. The execution environment still owns the `config.json` files used by a session, so a provider key loaded from project configuration crosses into the host for use in model calls.
+The host makes model calls and runs services such as web search and remote history, so most credentials belong in the host's environment or the host user's global configuration. Common cases:
 
-Common cases are:
-
-| Operation | Credential owner |
+| Operation | Where the credential belongs |
 | --- | --- |
 | Main-agent, subagent, sampling, and maintenance model calls | Session host |
 | OpenAI Codex OAuth accounts | Session host home |
@@ -22,11 +20,11 @@ Common cases are:
 | Telegram transcription and voice responses | Telegram runner |
 | Standalone `tau tool` commands | The process running that command |
 
-With local `tau`, these roles normally share one machine. With `tau attach`, setting a key only in the attached client's shell does not authenticate the remote host. Run `tau auth` on the host machine and set host-owned environment variables where `tau serve` or the SDK host actually runs. See [ownership and scope](ownership-and-scope.md) for the full boundary.
+With local `tau`, all of these are usually one machine. With `tau attach`, a key set only in the attached client's shell does not reach the remote host. Run `tau auth` on the host machine, and set host environment variables where `tau serve` or the SDK host runs. See [ownership and scope](ownership-and-scope.md) for the full boundary.
 
 ## Provider API keys
 
-Tau accepts provider API keys in private global configuration:
+Tau accepts provider API keys in global configuration:
 
 ```json
 {
@@ -38,15 +36,15 @@ Tau accepts provider API keys in private global configuration:
 }
 ```
 
-Keys are provider IDs, not model IDs. `apiKeys` is global-only, in the owning process's `~/.config/tau/config.json`; project values are rejected. Configuration strings are literal and do not expand environment variables.
+The keys of the map are provider IDs, such as `openai`, not model IDs. `apiKeys` is allowed only in the global `~/.config/tau/config.json` of the process that uses it. Project values are rejected. Values are literal strings and do not expand environment variables.
 
-For model API-key authentication, provider-supported environment credentials take precedence over global `apiKeys`. Supported cloud and workload identity authentication remains available. OpenAI uses `OPENAI_API_KEY`; Anthropic also supports `ANTHROPIC_AUTH_TOKEN` and `ANTHROPIC_OAUTH_TOKEN` according to its provider contract. Managed Codex OAuth is separate and always uses the explicitly active stored account.
+For model requests, a provider's environment variable wins over its entry in `apiKeys`. Cloud and workload identity authentication that the provider supports still works. OpenAI uses `OPENAI_API_KEY`. Anthropic also accepts `ANTHROPIC_AUTH_TOKEN` and `ANTHROPIC_OAUTH_TOKEN`. Codex OAuth is separate and always uses the active stored account.
 
-Set model credentials where the host runs. Restart the owning process after changing environment variables or its global API-key configuration.
+Set model credentials where the host runs. Restart that process after changing its environment variables or its `apiKeys`.
 
 ## Feature-specific keys
 
-Feature helpers use environment variables first, then global configuration:
+Features check the environment variable first, then global configuration:
 
 | Feature | Resolution order |
 | --- | --- |
@@ -59,9 +57,9 @@ Feature helpers use environment variables first, then global configuration:
 
 `web.discover` does not require Exa. `web.search` and `web.fetch` do. `/speak` and Telegram `/tts_on` voice responses require OpenAI for text rewriting and ElevenLabs for synthesis. `/listen` and incoming Telegram voice notes use Google, with optional OpenAI spelling hints. PDF OCR through `tau tool pdf-unpack` uses Mistral.
 
-Set these variables on the process that owns the feature. For example, a remote TUI's `/speak` reads the attached client's `OPENAI_API_KEY` and `ELEVENLABS_API_KEY`, while a Google model selected by the session reads credentials at the host.
+Set these on the process that runs the feature. For example, `/speak` in an attached TUI reads `OPENAI_API_KEY` and `ELEVENLABS_API_KEY` on the client machine, while a session that uses a Google model reads its key on the host.
 
-For `tau tool` commands, credentials and configuration belong to the machine running the command. Tau's agent Bash removes inherited API-key environment variables, so commands invoked through it may need keys in private configuration on that machine. See [configuration](configuration.md) for configuration file locations and [security](security.md) for command environment handling.
+For `tau tool` commands, credentials and configuration belong to the machine that runs the command. The agent's Bash tool removes inherited API-key environment variables, so a command the agent runs may need its key in global configuration on that machine. See [configuration](configuration.md) for configuration file locations and [security](security.md) for command environment handling.
 
 ## OpenAI Codex OAuth
 
@@ -71,9 +69,9 @@ The `openai-codex` provider uses ChatGPT Plus or Pro OAuth accounts managed by T
 tau auth login codex
 ```
 
-The flow opens or prints a browser URL and may fall back to a device code or pasted redirect. Tau stores the result under the host user's `~/.config/tau/auth.json` with private file permissions. Do not edit this file directly. The auth commands coordinate concurrent access, refresh tokens when needed, and preserve account state safely.
+The flow opens or prints a browser URL. It may instead ask for a device code or a pasted redirect URL. Tau stores the result in the host user's `~/.config/tau/auth.json` with private file permissions. Do not edit this file directly. The auth commands handle concurrent access and token refresh.
 
-Multiple Codex accounts may be stored, with at most one active account. `tau auth list` displays identities, marks the active account, and shows informational usage windows without revealing tokens.
+Tau can store several Codex accounts, and at most one is active. `tau auth list` shows each identity, marks the active one, and shows usage windows for information, without revealing tokens.
 
 ```sh
 tau auth login codex
@@ -82,11 +80,14 @@ tau auth use codex --account developer@example.com
 tau auth logout codex --account developer@example.com
 ```
 
-First login activates the account only when no accounts are stored. Later logins add or refresh an account without changing the active selection. If stored accounts remain but none is active, use `tau auth use` explicitly. Account IDs and email matching are case-insensitive.
+- A login activates the account only when no other accounts are stored. Later logins add or refresh an account without changing which one is active.
+- `auth use` makes an account active and deactivates the previous one.
+- Logout removes the account. Logging out the active account leaves no account active, even if others remain. Choose one with `tau auth use`.
+- With no active account, requests fail with instructions to log in or select an account.
+- Tau never switches accounts automatically, whether an account fails or runs out of usage. Usage never affects selection.
+- Account IDs and emails match case-insensitively.
 
-`auth use` replaces the previous active account. Logout removes the account; logging out the active account leaves no account active even if others remain. With no active account, requests fail with instructions to log in or select one. Failed or exhausted accounts surface failures without automatic switching. Usage never determines selection.
-
-Auth storage is reloaded for later requests across sessions. Switching accounts does not alter a request already in flight and needs no host restart.
+Every new request reads the current auth storage, in every session. Switching accounts takes effect without a host restart and does not affect a request already in progress.
 
 ## History and Nook indirection
 
@@ -109,7 +110,7 @@ History resolves its API key in this order:
 2. The host environment variable named by `history.apiKeyEnv`
 3. Inline `history.apiKey`
 
-If `history` is configured but none resolves, host setup fails for the remote target. Without `history` configuration, transcripts remain machine-local. See [history](history.md) for service behavior.
+If `history` is configured but no key is found, the host fails to start. Without `history`, history stays on the host machine. See [history](history.md) for service behavior.
 
 A Nook Access service token uses an ID plus a secret:
 
@@ -123,11 +124,11 @@ A Nook Access service token uses an ID plus a secret:
 }
 ```
 
-If the named `accessClientSecretEnv` has a non-empty value, it wins over inline `accessClientSecret`; otherwise Tau falls back to the inline value. The process performing the Nook operation resolves it. For a session tool that is the host, while `tau nook` commands use the invoking CLI process. Nook setup and destruction also accept their documented command flags and environment variables. See [Nook](nook.md).
+If the variable named by `accessClientSecretEnv` has a non-empty value, it wins over inline `accessClientSecret`. Otherwise Tau uses the inline value. The process that performs the Nook operation reads the secret: the host for the session tool, and the CLI process for `tau nook` commands. Nook setup and destroy also accept the command flags and environment variables listed in [Nook](nook.md). See [Nook](nook.md).
 
 ## Hosted execution credentials
 
-The Fly Sprite connection is host-owned configuration. They must be available when the host starts, before a client asks it to create a Sprite session. The connection requires a token:
+The Fly Sprite connection is host configuration. It must be in place when the host starts, before a client asks for a Sprite session. The connection needs a token:
 
 ```json
 {
@@ -138,18 +139,18 @@ The Fly Sprite connection is host-owned configuration. They must be available wh
 }
 ```
 
-For Fly, inline `token` wins when present; `tokenEnv` is the fallback. Session creation fails if neither resolves.
+An inline `token` wins when present. Otherwise Tau reads the variable named by `tokenEnv`. Session creation fails if neither gives a token.
 
-These target definitions are read from the host's startup configuration, not from an attached client. `/reload` refreshes session runtime content but does not rebuild the host's execution-environment resolvers. Restart the host after changing Sprite connection settings or their environment.
+The host reads these settings from its own startup configuration, never from an attached client. `/reload` does not reload them. Restart the host after changing the Sprite connection or its environment variables.
 
 ## Safe verification
 
-Verify credentials through the operation that owns them, without printing secret values:
+Check a credential by using it, without printing its value:
 
-- Run `tau auth list` to check Codex identities, active selection, refresh health, and informational usage windows.
-- Restart the owning process after changing global `apiKeys`.
+- Run `tau auth list` to check Codex identities, the active account, refresh status, and usage windows.
+- Restart the process that uses `apiKeys` after changing them.
 - Make a small request with the intended persona to verify model authentication and endpoint access.
-- Exercise the specific feature after setting Exa, speech, History, Nook or Fly credentials. Their missing-credential errors name the accepted source.
-- For remote sessions, first confirm which machine is the host and which process owns the feature.
+- After setting Exa, speech, history, Nook, or Fly credentials, use that feature. If a credential is missing, the error names where Tau looks for it.
+- For remote sessions, first confirm which machine is the host and which process runs the feature.
 
-Do not verify by printing the process environment, dumping `config.json`, or reading `auth.json` into a transcript. If a secret was exposed in shell history, logs, a session, or version control, rotate it at the provider and replace the compromised value. Broader handling guidance is in [security](security.md) and failure checks are in [troubleshooting](troubleshooting.md).
+Do not check by printing the environment, `config.json`, or `auth.json` into a transcript. If a secret ends up in shell history, logs, a session, or version control, rotate it at the provider and replace it. Broader handling guidance is in [security](security.md) and failure checks are in [troubleshooting](troubleshooting.md).

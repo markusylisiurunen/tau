@@ -1,12 +1,12 @@
 # Personas
 
-A persona is Tau's complete model-facing working profile. It chooses a provider and model, supplies the base system prompt, sets reasoning and service behavior, and selects tools. Changing persona changes how future turns run without creating a new session.
+A persona defines how the agent works. It chooses a provider and model, supplies the base system prompt, sets reasoning and service tier, and selects tools. Switching persona changes how later turns run, in the same session.
 
-Tau ships generated built-in personas and discovers custom persona Markdown from the execution environment. The effective list is version-specific and scope-specific, so inspect the current catalog rather than relying on a memorized list of names.
+Tau ships built-in personas and loads custom persona files from the execution environment. The available list depends on the Tau version and on where the session runs, so check the current list instead of relying on remembered names.
 
 ## Built-in and effective personas
 
-Built-in personas are generated from Tau's current model catalog. Most model families have separate chat and coder variants; some families expose only the variants Tau supports. Built-ins carry Tau-maintained prompts, defaults, tool selections and subagent supervision tools.
+Built-in personas are generated from Tau's current model catalog. Most model families have separate chat and coder variants, and some have only the variants Tau supports. Built-ins come with Tau's own prompts, defaults, tool selections, and subagent tools.
 
 The Opus 5.5 chat and coder personas are available only when `anthropic/claude-opus-5-5` is present in the effective model catalog. The Sonnet 5.5 variants (`sonnet-5.5-chat` and `sonnet-5.5-coder`) likewise require `anthropic/claude-sonnet-5-5`.
 
@@ -16,18 +16,18 @@ All built-in personas default to medium reasoning. The startup default is `sonne
 
 After a remote catalog refresh, `/reload` adopts the updated catalog for an existing session.
 
-Built-in personas are always included in the catalog. Custom personas can replace a built-in by using the same ID.
+Built-in personas are always included. A custom persona replaces a built-in by using the same ID.
 
-Use one of these to inspect the current effective list:
+To see the current list:
 
 ```sh
 tau --help
 tau --debug
 ```
 
-`tau --debug` also prints full effective prompts and project context. Use it only where that output is appropriate.
+`tau --debug` also prints the full prompts and project context, so be careful where you share its output.
 
-If no personas remain, session creation fails. Reload also fails rather than leaving a running session without a persona.
+If no personas are left, session creation fails. Reload also fails, so a running session never ends up without a persona.
 
 ## Discovery and precedence
 
@@ -36,15 +36,15 @@ Custom persona files are loaded from:
 - `~/.config/tau/personas/<id>.md` when the session `cwd` is inside the execution environment's home;
 - every ancestor `.tau/personas/<id>.md` from the broadest project level to the nearest.
 
-Personas are keyed case-insensitively for overlay precedence. Built-ins form the base, global custom personas override them, and the nearest project definition wins. The `id` inside each file must still exactly match its case-sensitive filename without `.md`.
+Built-ins come first, global custom personas override them, and the nearest project definition wins. IDs are compared case-insensitively when deciding which definition overrides which. The `id` inside a file must still match its filename without `.md` exactly, including case.
 
 For a session in `~/code/ledger/apps/api`, a project file at `~/code/ledger/apps/.tau/personas/release-coder.md` overrides the same ID from `~/code/ledger/.tau/personas/` or `~/.config/tau/personas/`.
 
-These locations belong to the execution environment. An attached TUI does not contribute persona files to a remote session. See [configuration](configuration.md) and [ownership and scope](ownership-and-scope.md).
+These locations are on the execution environment. An attached TUI does not add persona files to a remote session. See [configuration](configuration.md) and [ownership and scope](ownership-and-scope.md).
 
 ## Persona file contract
 
-A persona is Markdown with YAML frontmatter. `id`, `provider`, and `model` are required. A non-empty Markdown body is required and supplies the persona's own base system prompt.
+A persona is a Markdown file with YAML frontmatter. `id`, `provider`, and `model` are required. The Markdown body is required, must not be empty, and becomes the persona's base system prompt.
 
 ```markdown
 ---
@@ -70,7 +70,7 @@ tools:
 Work as a release engineer. Inspect repository policy before changing release state.
 ```
 
-The frontmatter must be a YAML object between valid delimiters. Unknown fields are discarded.
+The frontmatter must be a YAML object between `---` lines. Unknown fields are ignored.
 
 ### Required fields
 
@@ -78,9 +78,9 @@ The frontmatter must be a YAML object between valid delimiters. Unknown fields a
 | --- | --- |
 | `id` | Non-empty persona ID. It must exactly match the filename without `.md`. |
 | `provider` | Non-empty provider ID from the installed [model catalog](models.md). |
-| `model` | Non-empty model ID for that provider. The ID may be unbundled when the provider is known. |
+| `model` | Non-empty model ID for that provider. It may be an ID missing from the catalog, as long as the provider is known. |
 
-Each custom persona is self-contained: it supplies its provider, model, prompt, and optional settings.
+Each custom persona is complete on its own. It does not inherit a provider, model, prompt, or settings from another persona.
 
 ### Optional fields
 
@@ -89,18 +89,20 @@ Each custom persona is self-contained: it supplies its provider, model, prompt, 
 | `label` | Display label. A blank or omitted label falls back to `custom`. |
 | `description` | Short catalog description. |
 | `reasoning` | Default effort: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. |
-| `serviceTier` | `priority` or `flex`. Currently meaningful for `openai` and `openai-codex`. |
+| `serviceTier` | `priority` or `flex`. Used only by `openai` and `openai-codex`. |
 | `allowedReasoningLevels` | Array of reasoning efforts offered by the TUI selector. |
-| `tools` | Explicit list of persona-controlled tools. |
+| `tools` | List of persona-selectable tools. |
 
-Every persona exposes all discovered skills. If a custom persona omits `tools`, Tau enables the ordinary host tools plus subagent supervision tools. An explicit `tools` list without `spawn_agent` prevents subagent launches. See [skills](skills.md) and [subagents](subagents.md) for those contracts.
+Every persona can use all discovered skills. If a custom persona omits `tools`, Tau enables the standard tools and the subagent tools. A `tools` list without `spawn_agent` prevents the agent from starting subagents. See [skills](skills.md) and [subagents](subagents.md) for those contracts.
 
-The persona-controlled tool names are:
+The selectable tool names are:
 
 - `bash`, `write`, `edit`, `view_image`, `web`, `nook`, `history`, `mcp`, and `models`;
 - `spawn_agent`, `send_input_to_agent`, `wait_for_agents`, `list_agents`, and `interrupt_agent`.
 
-The service selectors enable capabilities within `code`; `bash` also enables `tau.bash`. The `code` tool is assembled automatically from selected eligible capabilities. An explicit `tools` array replaces defaults. Names are normalized to lowercase, duplicates are removed, and unknown names reject the persona. `tools: []` leaves the persona without these persona-controlled tools. Intrinsic `tau_docs` is supplied independently of this list. Listing `nook` does not make it usable without effective Nook configuration. Listing `mcp` requires enabled MCP servers configured on the host. [Tools](tools.md) explains eligibility and ownership.
+Names such as `web`, `nook`, `history`, `mcp`, and `models` enable capabilities inside the `code` tool, and `bash` also enables `tau.bash`. Tau builds the `code` tool from whichever of these capabilities are selected and usable.
+
+A `tools` list replaces the defaults. Names are lowercased and duplicates removed. An unknown name makes the persona invalid. `tools: []` gives the persona none of these tools. The built-in `tau_docs` tool is always available, independent of this list. `nook` works only when Nook is configured, and `mcp` only when the host has enabled MCP servers. [Tools](tools.md) explains eligibility and ownership.
 
 ## Selecting a persona
 
@@ -112,7 +114,7 @@ The service selectors enable capabilities within `code`; `bash` also enables `ta
 }
 ```
 
-The most specific configured `defaultPersona` wins. Startup references are exact and case-sensitive. An unknown configured default produces a warning and Tau falls back to the first effective persona.
+The most specific `defaultPersona` wins. The ID must match exactly, including case. An unknown default produces a warning, and Tau uses the first available persona.
 
 Override the default for one TUI launch:
 
@@ -128,25 +130,25 @@ Inside the TUI, switch while idle with:
 /persona:release-coder
 ```
 
-The TUI resolves that command against the session catalog case-insensitively. `Ctrl+P` cycles effective personas. A persona switch reloads runtime content from the execution environment, selects the requested definition, rebuilds project and skill context, updates the tool registry, and persists the new session settings. The TUI refuses to switch while a turn is running.
+This command matches the ID case-insensitively. `Ctrl+P` cycles through the available personas. A switch reloads configuration and content from the execution environment, applies the new persona, rebuilds project and skill context and the tool set, and saves the new session settings. The TUI refuses to switch while a turn is running.
 
 ## Reasoning and service tier
 
-`reasoning` is the persona's default effort. A startup suffix, the session reasoning command, or `Shift+Tab` can override it. Reasoning changes are allowed while a turn is running, but the active logical turn keeps the complete model and tool specification captured when it began. The new effort applies to the next independently submitted or queued turn.
+`reasoning` is the persona's default effort. A startup suffix, the session reasoning command, or `Shift+Tab` can override it. You can change reasoning while a turn is running, but the running turn keeps the model and tool settings it started with. The new effort applies from the next submitted or queued turn.
 
-`allowedReasoningLevels` controls which values the TUI cycles for that persona. It is a presentation allowlist, not a protocol-level prohibition. When omitted, the TUI offers the standard reasoning enum for a reasoning-capable model. For a model whose catalog entry says `reasoning: false`, the selector resolves to `none`.
+`allowedReasoningLevels` sets which values the TUI cycles through for the persona. It limits only the TUI selector; protocol clients can still set other levels. When it is omitted, the TUI offers all standard levels for a model that supports reasoning. For a model whose catalog entry says `reasoning: false`, the selector shows only `none`.
 
 An empty `allowedReasoningLevels` does not create an empty selector. The TUI uses its normal model-aware choices.
 
-`serviceTier` is passed with supported OpenAI and OpenAI Codex requests. `priority` requests the provider's priority service and `flex` requests flex service. Availability, billing, and rejection behavior remain provider-account concerns. Other providers do not currently use this setting.
+`serviceTier` is sent with OpenAI and OpenAI Codex requests. `priority` requests the provider's priority service, and `flex` requests flex service. Whether the tier is available, how it is billed, and whether requests are rejected depend on your provider account. Other providers ignore this setting.
 
 ## Reloading changes
 
-Run `/reload` while the TUI session is idle after editing personas, skills, or project context. Reload re-discovers the effective catalog and rebuilds the current session prompt and tools.
+After editing personas, skills, or project context, run `/reload` while the session is idle. Reload finds personas again and rebuilds the session's prompt and tools.
 
-If the current persona ID still exists, Tau applies its newly loaded definition. This can reset runtime settings such as reasoning or service tier to the definition's values. If the ID disappeared, Tau selects the first effective persona. Existing session messages remain; changing a persona does not rewrite prior model-facing history.
+If the current persona ID still exists, Tau applies its newly loaded definition. This can reset settings such as reasoning or service tier to the definition's values. If the ID is gone, Tau selects the first available persona. Existing messages stay as they are; a persona change never rewrites earlier history.
 
-A reload does not alter a turn already in progress, and the TUI refuses the operation while one is running. Existing live subagent threads retain the runtime with which they were created; newly spawned subagents inherit the reloaded persona. See [subagents](subagents.md).
+The TUI refuses to reload while a turn is running. Subagents that are already running keep the setup they started with. Subagents started after the reload use the reloaded persona. See [subagents](subagents.md).
 
 ## Validation and common mistakes
 
@@ -159,4 +161,4 @@ An invalid persona is skipped and reported as a configuration warning. Other val
 - an invalid reasoning effort or service tier;
 - an unknown persona tool.
 
-`/reload` surfaces warning paths directly in the transcript. For a new local TUI session, `tau --debug --persona <id>` shows the selected model, settings, skills, subagents, tools, and complete effective prompt. If a remote edit appears to have no effect, confirm the session execution environment and `cwd` before changing another copy of the file. [Troubleshooting](troubleshooting.md) covers that check in more detail.
+`/reload` shows warnings, with file paths, in the transcript. For a new local session, `tau --debug --persona <id>` shows the selected model, settings, skills, subagents, tools, and the complete prompt. If an edit seems to have no effect in a remote session, confirm the session's execution environment and `cwd` before editing another copy of the file. [Troubleshooting](troubleshooting.md) covers that check in more detail.

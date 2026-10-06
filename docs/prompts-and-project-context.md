@@ -1,12 +1,16 @@
 # Prompts and project context
 
-Tau has several ways to provide instructions or reusable text, and they enter a session at different points. Prompt templates fill the editor on demand. `AGENTS.md` files provide standing project instructions. Leading hidden system blocks attach model-facing instructions to one user message.
+Tau has three ways to add instructions or reusable text to a session, and each enters at a different point:
 
-These mechanisms do not choose models or tool access. [Personas](personas.md) own the base system prompt, model settings and tool allowlist. Model-specific system notices are configured separately in the [configuration reference](config-reference.md).
+- Prompt templates fill the editor when you ask for them.
+- `AGENTS.md` files give standing project instructions.
+- Hidden system blocks at the start of a user message add instructions for that one message.
+
+None of these choose models or tools. [Personas](personas.md) set the base system prompt, model settings, and tools. Model-specific system notices are configured separately in the [configuration reference](config-reference.md).
 
 ## Prompt templates fill the editor
 
-A prompt template is saved Markdown that Tau inserts into the TUI editor for review and submission. It is not added to the system prompt and does not run automatically.
+A prompt template is saved Markdown that Tau inserts into the TUI editor, where you can review and send it. It is never added to the system prompt and never runs by itself.
 
 Tau discovers prompt files from:
 
@@ -15,9 +19,9 @@ Tau discovers prompt files from:
 | Global  | `~/.config/tau/prompts/<id>.md` |
 | Project | `<level>/.tau/prompts/<id>.md`  |
 
-The global location is in scope only when the execution-environment working directory is inside its home directory. Tau walks project levels from the working directory toward home, or toward the filesystem root when outside home. The nearest project definition wins over parent and global definitions. Prompt IDs are compared case-insensitively for precedence and lookup.
+The global location applies only when the session's working directory is inside the execution environment's home directory. Tau searches project levels from the working directory up to home, or up to the filesystem root when outside home. The nearest project definition wins over parent and global ones. Prompt IDs are compared case-insensitively, both for precedence and for lookup.
 
-A prompt's ID is its filename without `.md`. Each file requires YAML frontmatter with a non-empty display `label`. For example, `release-summary.md`:
+A prompt's ID is its filename without `.md`. Each file needs YAML frontmatter with a non-empty `label`. For example, `release-summary.md`:
 
 ```markdown
 ---
@@ -27,9 +31,9 @@ label: release summary
 Summarize the changes since the previous release. Separate user-visible changes from internal maintenance, and call out any migration steps.
 ```
 
-The required `label` appears in TUI autocomplete and the Telegram prompt picker. Unknown frontmatter fields are discarded. The Markdown body is the text inserted into the editor.
+The `label` appears in TUI autocomplete and in the Telegram prompt picker. Unknown frontmatter fields are ignored. The Markdown body is the text inserted into the editor.
 
-Only files ending in lowercase `.md` are discovered. Invalid YAML, non-object frontmatter, or a missing or invalid label causes Tau to skip the file and report a warning.
+Only files ending in lowercase `.md` are found. Tau skips a file with a warning if its YAML is invalid, its frontmatter is not an object, or its label is missing or invalid.
 
 ### Invoke a prompt
 
@@ -39,42 +43,42 @@ In the TUI, invoke a prompt by ID:
 /prompt:release-summary
 ```
 
-Tau replaces the current editor text with the template body. It does not submit the text, so it can be edited before sending. Prompt lookup is case-insensitive.
+Tau replaces the editor text with the template body. It does not send the text, so you can edit it first. Lookup is case-insensitive.
 
-The session catalog stores only prompt metadata. Tau loads the body lazily from the execution environment when `/prompt:<id>` runs. This has two practical effects:
+The session stores only each prompt's ID and label. Tau reads the body from the execution environment each time `/prompt:<id>` runs. As a result:
 
-- Editing the body of an already-cataloged prompt can affect its next invocation without embedding that body in the session snapshot.
-- Adding, removing, renaming, or changing the metadata of a prompt requires `/reload` before the TUI catalog and autocomplete reflect it.
+- An edit to the body of a known prompt takes effect on its next use, without `/reload`.
+- After adding, removing, or renaming a prompt, or changing its label, run `/reload` before autocomplete shows the change.
 
-If the file is missing or invalid when Tau resolves it, invocation fails instead of using a stale body. Remote clients ask the host to resolve the prompt from the session's execution environment; they do not read a same-named file on the client machine.
+If the file is missing or invalid when Tau reads it, the command fails. Tau never falls back to an older copy of the body. An attached client always gets the prompt from the session's execution environment, never from a file with the same name on the client machine.
 
 ### Telegram prompt picker
 
-In [Telegram](telegram.md), `/prompt` lists the active session’s saved prompts, with pages for larger catalogs. Selecting a prompt resolves its current body through the session and records it as a committed user message. Selection is allowed only while the session is idle; otherwise wait for Tau to finish or use `/interrupt` first.
+In [Telegram](telegram.md), `/prompt` lists the active session's saved prompts, split into pages when there are many. Selecting one reads its current body and adds it to the session as a user message, without starting a turn. You can select a prompt only while the session is idle. Otherwise, wait for Tau to finish or use `/interrupt` first.
 
-After recording succeeds, the picker becomes non-actionable and shows the prompt text, continued in additional messages when needed. Send a normal message (for example, details or “go”) to start the next turn with the prompt in context. In groups, that message must mention the bot as usual. Selecting another prompt appends another message rather than replacing the previous one. Recorded prompts survive session recovery.
+After a prompt is added, the picker's buttons stop working and it shows the prompt text, split across more messages if needed. Send a normal message, such as details or “go”, to start the next turn with the prompt in context. In groups, that message must mention the bot as usual. Selecting another prompt adds another message; it does not replace the first. Added prompts survive session recovery.
 
-Only the newest picker in a chat is active. Pickers are bound to the session that opened them and expire after selection, session replacement, or runner restart. Duplicate taps do not record the same picker twice. Prompt selection does not consume pending attachments or group context.
+Only the newest picker in a chat works. A picker belongs to the session that opened it and expires after a selection, when the session is replaced, or when the runner restarts. Tapping twice does not add the prompt twice. Selecting a prompt does not use up pending attachments or group context.
 
 ## `AGENTS.md` provides standing context
 
-`AGENTS.md` is project context injected into the effective system prompt. It is suitable for repository conventions, architectural boundaries, verification commands, and instructions that should apply to every relevant request.
+`AGENTS.md` files are added to the system prompt as project context. Use them for repository conventions, architecture boundaries, verification commands, and other instructions that apply to every request in the project.
 
-Tau resolves `AGENTS.md` through the execution environment. Client and host filesystem access is not used as a shortcut, even for a local session.
+Tau always reads `AGENTS.md` from the execution environment, also in a local session.
 
 ### Ancestor files are included in full
 
 Starting at the session working directory, Tau checks each ancestor for `AGENTS.md`. When the working directory is inside home, the walk stops at home and includes home itself. Otherwise it stops at the filesystem root.
 
-Existing eligible files are included in full. The nearest file is injected first, followed by its ancestors. This lets the agent see both local and broader instructions; when instructions conflict, the active instruction hierarchy and the more specific project guidance determine behavior.
+Each file found is included in full, nearest first, followed by those in parent directories. The agent sees both local and broader instructions. When they conflict, the more specific project guidance takes priority, within the agent's overall instruction hierarchy.
 
-A candidate must resolve to a real file whose basename is exactly `AGENTS.md`. Its directory must be either an ancestor or a descendant of the current working directory. When the working directory is inside home, the canonical file must also remain inside home. These checks prevent a symlink from silently importing unrelated context outside the session's path boundary.
+A file is included only if it resolves to a real file named exactly `AGENTS.md`, in a directory that is a parent or a subdirectory of the working directory. When the working directory is inside home, the resolved file must also be inside home. These checks stop a symlink from pulling in unrelated instructions from outside the session's directories.
 
 ### Descendant files are listed by path
 
-Tau also scans below the current working directory for nested `AGENTS.md` files. Their contents are not injected automatically. Tau includes only their paths so the agent knows that more specific instructions exist and can read the relevant file before working in that subtree.
+Tau also looks below the working directory for nested `AGENTS.md` files. Their contents are not added automatically. Tau lists only their paths, so the agent knows more specific instructions exist and can read the right file before working in that subdirectory.
 
-The scan is breadth-first, visits at most 8,192 directories, and descends at most 16 levels below the working directory. It follows only directory paths that canonically remain under that directory and avoids symlink cycles.
+The scan is breadth-first, visits at most 8,192 directories, and goes at most 16 levels deep. It follows only directories whose resolved path stays under the working directory, and it does not loop on symlink cycles.
 
 Tau skips these directory names at every level:
 
@@ -84,14 +88,14 @@ Tau skips these directory names at every level:
 target  vendor  venv
 ```
 
-When scanning directly from the execution home, Tau also skips direct children managed by common tools:
+When the scan starts at the home directory itself, Tau also skips these tool-managed directories directly under home:
 
 ```text
 .bun  .cargo  .config  .deno  .gradle  .local  .m2  .npm  .nvm
 .pnpm-store  .rustup  .sdkman  .yarn
 ```
 
-It additionally skips the direct `Library` child on macOS and `snap` on Linux. A project directory with one of these names is still scanned when it is not a direct child of home.
+It also skips `Library` directly under home on macOS, and `snap` on Linux. A directory with one of these names elsewhere is still scanned.
 
 ## Disable project context
 
@@ -101,45 +105,43 @@ Start Tau with:
 tau --no-agent-context-files
 ```
 
-This disables ancestor `AGENTS.md` injection and the descendant paths-only scan. It does not disable personas, prompt templates, or [skills](skills.md).
+This turns off both the included `AGENTS.md` files and the list of nested ones. Personas, prompt templates, and [skills](skills.md) still work.
 
-The option applies to local TUI sessions and to hosts started with `tau serve`. For the Node SDK, `noAgentContextFiles: true` provides the same host-level behavior. An attached client cannot retroactively change how an existing remote host session was created.
+The option works for local TUI sessions and for hosts started with `tau serve`. In the Node SDK, `noAgentContextFiles: true` does the same for the host. An attached client cannot change this for a session that already exists on a remote host.
 
 ## Alternate subagent working directories
 
-A subagent normally inherits the parent session's working directory and composed context. When `spawn_agent` specifies a different `workingDirectory`, Tau rebuilds the subagent's target-dependent context from that directory.
+A subagent normally uses the parent session's working directory and context. When `spawn_agent` sets a different `workingDirectory`, Tau rebuilds the parts of the context that depend on the directory:
 
-The alternate directory controls:
+- environment and repository details
+- the applicable `AGENTS.md` files
+- the skills found from that directory
 
-- target environment and repository metadata,
-- target applicable `AGENTS.md`,
-- all target-discovered skills.
-
-The parent session remains the source of truth for the selected persona, model catalog, model settings, and tool policy. It does not replace the source persona with a persona found in the target directory. See [subagents](subagents.md) for the full launch contract.
+The persona, model catalog, model settings, and tool policy still come from the parent session. A persona file in the other directory is not used. See [subagents](subagents.md) for details.
 
 ## Leading hidden system blocks
 
-Tau recognizes one or more exact `<system>...</system>` blocks only when they begin a user message and each closing tag is followed by a newline:
+Tau recognizes one or more `<system>...</system>` blocks only when they start a user message and each closing tag is followed by a newline:
 
 ```text
 <system>Use the deployment checklist for this response.</system>
 Prepare the staging release.
 ```
 
-The complete raw message is persisted and remains model-visible, while Tau's user-message display omits the recognized leading blocks and shows the remaining text. A block elsewhere in the message, a malformed block, or a closing tag without the required newline is ordinary visible text.
+The whole message is saved and sent to the model. When Tau displays the message, it hides the recognized blocks and shows the rest. A block anywhere else in the message, a malformed block, or a closing tag without the newline is shown as ordinary text.
 
-This mechanism is useful for integrations that need per-message model instructions without presenting them as user prose. It is not a secret channel or a substitute for access control: the content is durable session data and is sent to the model. Project-wide guidance belongs in `AGENTS.md`; stable persona behavior belongs in the persona system prompt.
+Integrations can use this to give the model instructions for one message without showing them as the user's words. The blocks are not secret and do not control access: they are saved in the session and sent to the model. Put project-wide guidance in `AGENTS.md` and lasting persona behavior in the persona's system prompt.
 
 ## Reload and verify context
 
-Run `/reload` in an idle TUI session after changing prompts, skills, personas, configuration, or project context files. Reload re-resolves content and rebuilds the active persona's system context. It reports configuration warnings and the resulting counts. Reload is refused while a session turn is active.
+Run `/reload` in an idle session after changing prompts, skills, personas, configuration, or project context files. Reload reads everything again and rebuilds the system prompt for the active persona. It reports configuration warnings and how much content it loaded. Reload is refused while a turn is running.
 
-For a new local TUI session, debug mode prints discovered content, loaded context-file paths, tool schemas, and the effective system prompt, then exits:
+For a new local session, debug mode prints the discovered content, the paths of loaded context files, tool schemas, and the system prompt, then exits:
 
 ```bash
 tau --debug --persona release-coder
 ```
 
-Add `--no-agent-context-files` to verify the context-free variant. Debug mode is TUI startup functionality and is not available with `tau serve`.
+Add `--no-agent-context-files` to see the result without project context. Debug mode works only for TUI startup, not with `tau serve`.
 
-If expected context is missing, verify the execution-environment `cwd` and `home`, not just the attached client's current directory. Then check exact filenames, canonical path eligibility, scan exclusions, and reload warnings. See [troubleshooting](troubleshooting.md) for broader diagnostics.
+If expected context is missing, check the `cwd` and `home` of the execution environment, not the attached client's current directory. Then check exact filenames, the path rules above, scan exclusions, and reload warnings. See [troubleshooting](troubleshooting.md) for broader diagnostics.

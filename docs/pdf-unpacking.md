@@ -15,24 +15,24 @@ The command requires `pdftoppm` from Poppler on `PATH`. On macOS, install it wit
 
 ## Input and examples
 
-Supply one readable local PDF path, resolved from the command's current working directory. Quote paths containing spaces:
+Give one local PDF path, relative to the current directory. Quote paths containing spaces:
 
 ```bash
 tau tool pdf-unpack './docs/design review.pdf'
 ```
 
-The command uploads the PDF to Mistral for OCR and renders page-image patches locally. Do not use it for a sensitive document unless sending it to Mistral and retaining derived local artifacts are both permitted.
+The command uploads the PDF to Mistral for OCR and renders page images locally. Use it for a sensitive document only if you may send it to Mistral and keep the extracted files locally.
 
 ## Outputs and recovery
 
-On success, stdout reports the persistent temporary output directory and a complete artifact list. The directory contains:
+On success, stdout prints the output directory, which is temporary but not deleted automatically, and lists every file. The directory contains:
 
 - `document.md`: the complete OCR document with recognized tables inlined.
 - `pages/page-0001.md` and later numbered files: one Markdown file per PDF page.
 - `images/page-0001/patch-0001.png` and later numbered patches: images for visual verification.
 
-OCR text can contain recognition mistakes. Embedded visuals that are not represented in Markdown are marked with placeholders pointing to the corresponding page patches. Read `document.md` for the whole document, use `pages/` for page-level work, and inspect `images/` before trusting or correcting uncertain OCR.
+OCR text can contain mistakes. Images and figures that are not captured in Markdown are marked with placeholders that point to the matching page patches. Read `document.md` for the whole document, use `pages/` for page-level work, and inspect `images/` before trusting or correcting uncertain OCR.
 
-The command attempts to delete the remote upload after OCR. A deletion failure is reported in the command output. Successful local artifacts remain on disk for follow-up use; delete them when they are no longer needed. If processing fails, Tau attempts to remove the partial local output directory. The error identifies the failed stage and reports whether partial output was removed or cleanup failed. Partial output is not a complete result. Failures after the OCR request starts warn that another OCR request may incur another charge.
+After OCR, the command tries to delete the uploaded file from Mistral and reports if that fails. The local output stays on disk; delete it when you no longer need it. If processing fails, Tau tries to remove the partial output directory. The error names the step that failed and says whether the partial output was removed. Partial output is never a complete result. If the failure happens after the OCR request started, the error warns that running the command again may be charged again.
 
-See [command-line tools](tools.md) for command discovery and execution ownership.
+See [command-line tools](tools.md) for the other tools and where commands run.

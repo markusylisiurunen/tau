@@ -1,12 +1,12 @@
 # Configuration reference
 
-`config.json` controls Tau defaults and integrations. The same schema is available at global and project levels, but a few fields are restricted to one scope and different components consume different results. This reference lists the current fields only.
+`config.json` sets Tau defaults and integrations. Global and project levels use the same schema, but a few fields are allowed at only one level, and different parts of Tau read different fields.
 
-Read [configuration](configuration.md) first for discovery and precedence. In the tables below, **global** means `~/.config/tau/config.json` when that level is eligible, and **project** means an ancestor `.tau/config.json` discovered from the relevant `cwd`.
+Read [configuration](configuration.md) first for discovery and precedence. In the tables below, **global** means `~/.config/tau/config.json` when that level applies, and **project** means a `.tau/config.json` found from the relevant `cwd` upward.
 
 ## Shipped defaults
 
-These are defaults built into this Tau version, not a dump of the effective configuration:
+These defaults are built into this Tau version. Your configuration can override them:
 
 | Behavior                               | Shipped default      |
 | -------------------------------------- | -------------------- |
@@ -17,11 +17,11 @@ These are defaults built into this Tau version, not a dump of the effective conf
 | Built-in diff tool code theme          | `github-dark-dimmed` |
 | Command client tool timeout when unset | `60000` ms           |
 
-Project and global content can change which persona ids are available. A configured default must match an available persona or built-in theme; otherwise Tau reports a warning.
+Project and global content can change which persona ids exist. A configured default must match an available persona or built-in theme. Otherwise Tau reports a warning.
 
 ## Field summary
 
-| Field | Type | Scope | Combination | Primary owner and apply boundary |
+| Field | Type | Scope | Combination | Read by; when changes apply |
 | --- | --- | --- | --- | --- |
 | `apiKeys` | Object of string values | Global only | Provider-keyed map | Owning host or feature process; restart after changes |
 | `defaultPersona` | Non-empty string | Global, project | Most-specific wins | Session host; new session |
@@ -29,14 +29,14 @@ Project and global content can change which persona ids are available. A configu
 | `defaultTheme` | Non-empty string | Global, project | Most-specific wins | TUI client; client restart |
 | `clientTools` | Array of objects | Global only | One global definition list | Owning client; TUI restart or new Telegram session client |
 | `enabledClientTools` | String array | Project only | Most-specific project list | Owning client; TUI restart or new Telegram session client |
-| `subagents` | Object | Global, project | Field-wise, currently one selectable list | Session runtime; `/reload` or new session |
+| `subagents` | Object | Global, project | Most-specific `launchModels` list | Session runtime; `/reload` or new session |
 | `modelSystemNotices` | String map | Global, project | Merge by model target | Session runtime; `/reload`, affects later inputs |
 | `flySprites` | Object | Global, project | Merge connection fields | Host startup; host restart |
 | `nook` | Object | Global, project | Most-specific complete object | Host tool runtime; `/reload` or new session |
 | `history` | Object | Global only | One global object | Host startup; host restart |
 | `mcpServers` | Object keyed by server name | Global and project | Merge names; nearer entry replaces | Host startup; host restart |
 
-Unknown fields are stripped without warnings. Wrong types and invalid known values produce warnings, and Tau continues with valid fields. A field at a forbidden scope is rejected.
+Unknown fields are removed without a warning. Wrong types and invalid values produce warnings, and Tau continues with the valid fields. A field at a level where it is not allowed is rejected.
 
 ## Persona, model behavior, and context
 
@@ -50,17 +50,17 @@ A persona id, optionally followed by `:` and a reasoning level:
 }
 ```
 
-Allowed reasoning suffixes are `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. The persona id is matched exactly and case-sensitively during startup selection. The id must exist after built-in, global, and project personas are loaded.
+Allowed reasoning suffixes are `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. The persona id must match exactly, including case, a persona that exists after built-in, global, and project personas are loaded.
 
-`defaultPersona` selects a new session when no CLI or session-creation override is supplied. Reloading an existing session retains its current persona id when possible. See [personas](personas.md).
+`defaultPersona` sets the persona of a new session unless a CLI flag or creation request chooses another. Reloading an existing session keeps its current persona when it still exists. See [personas](personas.md).
 
 ### `subagents`
 
-The top-level subagent configuration currently accepts one optional field:
+`subagents` accepts one optional field:
 
-| Nested field   | Type         | Contract                                     |
-| -------------- | ------------ | -------------------------------------------- |
-| `launchModels` | String array | Allowlist for launch overrides for subagents |
+| Nested field | Type | Contract |
+| --- | --- | --- |
+| `launchModels` | String array | Models an agent may choose when it starts a subagent |
 
 Each entry must use `<provider>/<model>:<effort>` and resolve against the merged model catalog:
 
@@ -75,7 +75,7 @@ Each entry must use `<provider>/<model>:<effort>` and resolve against the merged
 }
 ```
 
-A more-specific list replaces the broader list. The worker’s instructions and tools are inherited from the main persona; custom worker definitions are not supported. See [subagents](subagents.md).
+A more specific list replaces the broader one. Subagents inherit instructions and tools from the main persona. Custom subagent definitions are not supported. See [subagents](subagents.md).
 
 ### `modelSystemNotices`
 
@@ -89,9 +89,9 @@ A map from exact `<provider>/<model>` targets to non-empty notice text:
 }
 ```
 
-Provider ids must be known, and model ids must resolve against the bundled and refreshed model catalog. Entries merge by normalized target, with the more-specific value winning. Tau prepends the matching notice to later committed main-session and subagent user input. Ephemeral agents and maintenance model calls do not receive a newly resolved notice.
+Provider ids must be known, and model ids must exist in the model catalog. Entries merge by normalized target, and the more specific value wins. Tau adds the matching notice to the start of later user input in the main session and in subagents. Ephemeral agents and maintenance model calls do not receive a newly resolved notice.
 
-Use this for model-specific operational guidance, not for persona behavior that belongs in a persona file. See [models](models.md) and [personas](personas.md).
+Use notices for guidance that applies to one model. Behavior that belongs to a persona goes in the persona file. See [models](models.md) and [personas](personas.md).
 
 ## Credentials and service selection
 
@@ -111,9 +111,9 @@ A map from provider or feature id to a string credential:
 }
 ```
 
-The global map accepts arbitrary non-empty provider names and string values. Values are trimmed when consumed; an empty string is not a usable credential.
+The map accepts any non-empty provider name with a string value. Values are trimmed when used, and an empty string does not count as a credential.
 
-For model requests and feature helpers, provider-supported environment credentials take precedence over global `apiKeys`. Provider-supported ambient authentication remains available. Project `apiKeys` values are rejected. Codex managed OAuth uses the explicitly active account separately. See [credentials](credentials.md).
+For model requests and features, a provider's environment variable wins over the same provider's entry in `apiKeys`. Other authentication a provider supports without a key still works. `apiKeys` in a project file is rejected. Codex OAuth does not use this map; it uses the active stored account. See [credentials](credentials.md).
 
 ### `speech`
 
@@ -137,15 +137,15 @@ For terminal recording, `recordingShortcut` replaces Ctrl+Y. Its required `key` 
 }
 ```
 
-A double tap must arrive within 300 ms. For printable double-tap bindings, an unmatched first tap inserts the character after that delay; another key inserts it immediately before processing the new input. Single-press bindings reserve the character. Bracketed paste never triggers recording. Keyboard auto-repeat can count as repeated taps. Recording shortcuts apply only to the TUI, not Telegram.
+A double tap must arrive within 300 ms. For printable double-tap bindings, an unmatched first tap inserts the character after that delay; another key inserts it immediately before processing the new input. A single-press binding reserves its character, so it can no longer be typed. Bracketed paste never triggers recording. Keyboard auto-repeat can count as repeated taps. Recording shortcuts apply only to the TUI, not Telegram.
 
-Without an override, Tau looks up Maisie (`QtY3JBOUKEB5xzrRfOKc`) before synthesis and tries Caleb (`AaOhDHYJ1XLZk74lXhdE`) only if ElevenLabs reports that Maisie was not found. If neither is available, speech fails. A configured voice is used exclusively: an unavailable custom voice is an error, not a request to use a default.
+Without an override, Tau looks up Maisie (`QtY3JBOUKEB5xzrRfOKc`) before synthesis and tries Caleb (`AaOhDHYJ1XLZk74lXhdE`) only if ElevenLabs reports that Maisie was not found. If neither is available, speech fails. A configured voice is the only voice Tau tries. If it is unavailable, speech fails without falling back to a default.
 
-Voice lookup authentication, permission, rate-limit, and network errors do not trigger fallback. Successful metadata lookup fixes the voice for the entire reply; it does not guarantee synthesis permission. Synthesis failures never switch voices or automatically retry a potentially billable request.
+Authentication, permission, rate-limit, and network errors during voice lookup do not trigger the fallback. Once lookup succeeds, that voice is used for the whole reply, although synthesis can still be refused. Synthesis failures never switch voices, and Tau never retries synthesis automatically because each request may be billed.
 
 Speech uses Eleven v4 Turbo, the delivery note `[Brisk but relaxed, speaking naturally to a colleague]`, and a 1.15× tempo adjustment. GPT-6 Luna rewrites the text with reasoning disabled before ElevenLabs synthesis, so both OpenAI and ElevenLabs credentials are required. Voice Library API access may require a paid ElevenLabs plan, and shared voices can become unavailable.
 
-The TUI reads this setting from its client-side configuration, including during remote attachment. Telegram reads it from the runner's startup configuration, not individual session workspaces. Restart the respective process after changes. This setting does not affect the explicit voices supplied to `tau tool speech-generate`.
+The TUI reads this setting from its own client configuration, also when attached to a remote host. Telegram reads it from the runner's startup configuration, not from session workspaces. Restart the respective process after changes. This setting does not affect the explicit voices supplied to `tau tool speech-generate`.
 
 ### `nook`
 
@@ -168,7 +168,7 @@ Connection details for one existing Nook deployment:
 }
 ```
 
-Tau normalizes the domain to a lowercase hostname. A non-empty value from `accessClientSecretEnv` takes precedence over `accessClientSecret`. The `nook` tool is available only when both the active persona allows it and effective configuration contains this object. See [Nook](nook.md).
+Tau normalizes the domain to a lowercase hostname. A non-empty value from `accessClientSecretEnv` wins over `accessClientSecret`. The `nook` tool is available only when the active persona allows it and the effective configuration contains this object. See [Nook](nook.md).
 
 ### `history`
 
@@ -189,11 +189,17 @@ A global-only remote history target:
 }
 ```
 
-Credential precedence is `TAU_HISTORY_API_KEY`, then the variable named by `apiKeyEnv`, then `apiKey`. Configuring an endpoint without an available key prevents the host service from starting. Without `history`, transcript storage and queries remain machine-local. See [history](history.md).
+Tau uses the first key it finds: `TAU_HISTORY_API_KEY`, then the variable named by `apiKeyEnv`, then `apiKey`. If `history` is configured but no key is available, the host fails to start. Without `history`, history is stored and searched only on the host machine. See [history](history.md).
 
 ### `mcpServers`
 
-MCP servers are resolved at host startup from the global `~/.config/tau/config.json` and ancestor/project `.tau/config.json` layers for the host's launch directory. Server names accumulate across layers; a nearer definition replaces the entire same-named entry, including credentials. Use `enabled: false` to disable an inherited server. All sessions on that host share the resolved definitions, and subagents inherit their parent's access even in another working directory. Session execution-environment configuration does not contribute servers. Restart the host after changing definitions or credentials; `/reload` does not reload servers.
+The host reads MCP servers once at startup, from the global config and the project levels of the directory where the host was launched.
+
+- Server names add up across levels. A nearer definition replaces the whole entry with the same name, including credentials.
+- Set `enabled: false` to turn off an inherited server.
+- All sessions on the host share the same servers. Subagents have their parent's access, even in another working directory.
+- Configuration in a session's execution environment never adds servers.
+- Restart the host after changing definitions or credentials. `/reload` does not reload servers.
 
 ```json
 {
@@ -219,11 +225,11 @@ Server names use letters, digits, `_`, and `-`. Every entry requires an explicit
 - `http`: requires an HTTP(S) `url` without embedded username/password; accepts optional string-valued `headers`. This is streamable HTTP, not the legacy SSE transport.
 - Both accept `enabled` (default `true`), `timeoutMs` for tool calls and resource reads (integer from 1 to 900,000, default 300,000), and `discoveryTimeoutMs` for connection startup and discovery requests (integer from 1 to 60,000, default 30,000). The outer MCP code-mode program has a 15-minute deadline. All calls remain interruptible.
 
-Stdio executables run directly without a shell. Bare commands resolve through the host's `PATH`. Commands containing `/` and relative `cwd` values resolve from the directory owning the defining config layer; `~/` resolves from host home. An omitted `cwd` defaults to the defining layer's directory. Arguments are literal: Tau does not interpolate them or expand shell syntax.
+Stdio executables run directly, without a shell. Bare commands resolve through the host's `PATH`. Commands that contain `/`, and relative `cwd` values, resolve from the directory of the config level that defines the server. `~/` resolves from the host user's home. Without `cwd`, the server starts in the defining level's directory. Arguments are passed literally, with no interpolation or shell expansion.
 
-Values in `env` and `headers` can reference host environment variables with `${NAME}`. Missing variables fail connection setup. Command substitution is not supported. Stdio servers inherit the host environment, with `env` overriding matching names. Keep secrets in the host environment rather than committing them to JSON.
+Values in `env` and `headers` can reference host environment variables as `${NAME}`. A missing variable makes the connection fail. Command substitution is not supported. Stdio servers inherit the host environment, and `env` overrides matching names. Keep secrets in the host environment instead of committing them to JSON.
 
-Invalid entries are skipped with diagnostics while valid siblings remain configured. OAuth sign-in, MCP prompts, subscriptions, elicitation, sampling, execution-environment servers, and user approval dialogs are not supported. See [tools](tools.md#mcp) for discovery, calls, and result handling.
+An invalid entry is skipped with a diagnostic, and the other servers stay configured. OAuth sign-in, MCP prompts, subscriptions, elicitation, sampling, execution-environment servers, and user approval dialogs are not supported. See [tools](tools.md#capabilities) for discovery, calls, and result handling.
 
 ## TUI presentation and diff review
 
@@ -237,7 +243,7 @@ The exact, case-sensitive id of a built-in theme. The shipped default is `gold`:
 }
 ```
 
-The attached TUI uses its client-local configuration. `/theme:<id>` changes the current client only and is not persisted into the session. See [TUI](tui.md).
+An attached TUI uses its own client configuration. `/theme:<id>` changes only the current client and is not saved in the session. See [TUI](tui.md).
 
 ## Command client tools
 
@@ -276,9 +282,9 @@ A global-only array of commands exposed as client-provided tools:
 }
 ```
 
-Unknown properties inside `parameters` are preserved as part of the configured schema; unknown fields elsewhere in each tool object are stripped. A command containing `/` resolves from home because definitions are global. The command executes directly on the owning client without a shell and participates in Tau's bounded client-tool protocol.
+Unknown properties inside `parameters` are kept as part of the schema. Unknown fields elsewhere in a tool object are removed. Because definitions are global, a command that contains `/` resolves from home. The command runs directly on the client, without a shell.
 
-TUI startup flag `--no-client-tools` disables both configured command tools and built-in TUI client tools. See [client tools](client-tools.md).
+The TUI flag `--no-client-tools` disables both configured command tools and the TUI's built-in client tools. See [client tools](client-tools.md).
 
 ### `enabledClientTools`
 
@@ -290,13 +296,13 @@ A project-only exact allowlist of names from global `clientTools`:
 }
 ```
 
-Names are trimmed and duplicates removed. Unknown names are silently ignored. An empty list selects none. If the field is absent at every project level, Tau selects tools with `defaultEnabled: true`.
+Names are trimmed and duplicates removed. Unknown names are ignored without a warning. An empty list selects no tools. If no project level sets the field, Tau selects the tools with `defaultEnabled: true`.
 
-The most-specific project list replaces broader project lists. Project configuration cannot define executable client tool commands.
+The most specific project list replaces broader ones. Project configuration cannot define client tool commands.
 
 ## Hosted execution environments
 
-These fields configure resolvers owned by a host process. They do not provision Sprites. A client creating a session supplies an existing environment identity and `cwd` that references one of these host-known entries. See [remote sessions](remote-sessions.md).
+These fields tell a host how to reach hosted execution environments. They do not create Sprites. A client that creates a session names an existing environment and a `cwd` on it, and the host connects using these settings. See [remote sessions](remote-sessions.md).
 
 ### `flySprites`
 
@@ -318,4 +324,4 @@ One configured connection:
 | `tokenEnv` | Non-empty string | No | Host environment variable used when `token` is absent |
 | `home` | Non-empty string | No | Sprite home, default `/home/sprite` |
 
-A usable token is required when the host resolves a Sprite. Select an existing Sprite by name. More-specific connection fields replace broader values.
+The host needs a usable token when it connects to a Sprite. Sessions select an existing Sprite by name. More specific connection fields replace broader ones.

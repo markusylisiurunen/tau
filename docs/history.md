@@ -1,83 +1,83 @@
 # History
 
-Tau keeps transcript history so earlier work can be found without reopening every session. This store is separate from the resumable session snapshot: the snapshot is the host's recovery source of truth, while history is a flat, searchable record for discovery and reading.
+Tau keeps a searchable transcript history so you can find earlier work without reopening every session. History is separate from saved sessions. The host uses the saved session to continue and recover a conversation, while history is a flat record for searching and reading.
 
-That distinction matters when diagnosing recovery, compaction, or privacy. Deleting or losing history does not provide a way to reconstruct a session, and retaining history does not make a missing session snapshot resumable. See [sessions](sessions.md) for snapshot persistence and recovery.
+This matters for recovery, compaction, and privacy. History cannot rebuild a lost session, and keeping history does not make a missing session resumable. See [sessions](sessions.md) for saving and recovery.
 
 ## What local history records
 
-Every Tau host opens a machine-local SQLite database at:
+Every Tau host opens a SQLite database on its own machine:
 
 ```text
 ~/.config/tau/history.sqlite
 ```
 
-The path belongs to the **host home**. An attached TUI and a remote execution environment do not get separate history stores merely because they participate in the session. Local `tau`, `tau serve`, and the default SDK host all use the host machine's database.
+The file is in the **host user's home**. An attached TUI or a remote execution environment does not get its own history. Local `tau`, `tau serve`, and the default SDK host all use the host machine's database.
 
-For each session, history stores its immutable creation attributes and an ordered active transcript containing:
+For each session, history stores the creation attributes and the active transcript, in order:
 
-- committed user content as a string or an array of text and image blocks, after Tau's internal metadata is removed
-- committed intermediate system instructions as plain text, labeled as system entries, without Tau metadata (the initial persona/base prompt is excluded)
-- assistant text segments as strings, including committed preambles and responses, but not thinking
-- completed tool calls with the tool name, arguments, result, and terminal outcome
+- user messages, as text or as text and image blocks, with Tau's internal metadata removed
+- intermediate system instructions as plain text, marked as system entries, without Tau metadata (the persona's base prompt is not included)
+- assistant text, including preambles and responses, but not thinking
+- finished tool calls, with the tool name, arguments, result, and outcome
 
-Leading model-facing `<system>...</system>` blocks in user messages remain in history. Tool arguments and results can contain file contents, command output, or other sensitive data. Treat the database as private user data. Tau creates its history directory and database with private permissions, but the host user and machine administrators can still access them. Do not copy the database into a repository or expose it through a shared artifact.
+`<system>...</system>` blocks at the start of user messages stay in history. Tool arguments and results can contain file contents, command output, and other sensitive data, so treat the database as private. Tau creates its directory and file with private permissions, but the host user and the machine's administrators can still read them. Never copy the database into a repository or share it.
 
-History capture is best effort. If the local store cannot open or a later projection fails, Tau keeps the session running, adds one durable `history unavailable` warning to that session, and disables history for the rest of the host process. Restarting the host retries local initialization; it does not erase the earlier warning from the recovered session.
+Recording history is best effort. If the database cannot open, or a later write fails, the session keeps running. Tau adds one `history unavailable` warning to the session, which stays in the session, and turns history off until the host restarts. A restart tries to open the database again.
 
 ## How session operations affect history
 
-History represents the active flat transcript, not the session's current model-context shape.
+History follows the transcript, not the model's current context.
 
-**Rewind removes the superseded suffix.** When a session rewinds from a selected message, Tau truncates history from that source message onward. The same ordered truncation is queued for a configured remote collection.
+**Rewind removes later entries.** When a session rewinds to a message, Tau deletes history from that message onward. The same deletion is queued for a configured remote collection.
 
-**Compaction leaves original entries intact.** Manual and automatic compaction replace the session's active model context with a summary, but they do not delete the original flat transcript from history. This makes pre-compaction work discoverable later even though it is no longer present verbatim in the resumable active context.
+**Compaction keeps entries.** Compaction replaces the session's model context with a summary, but the original entries stay in history. Work from before a compaction can still be found, even though the session no longer contains it word for word.
 
-**Retry does not imply truncation.** Tau truncates history only when the canonical session operation removes source entries, such as rewind. Retrying from completed tool state does not independently discard transcript history.
+**Retry deletes nothing.** Only operations that remove messages from the session, such as rewind, delete history. Retrying does not.
 
-These rules are intentionally different from snapshot and timeline behavior. Use [sessions](sessions.md) when the question is what a recovered session will render or send to the model.
+These rules differ from how the session itself behaves. Use [sessions](sessions.md) to understand what a recovered session shows or sends to the model.
 
-## Search provenance with attributes
+## Filter by attributes
 
-Session creation attributes are immutable client-supplied string pairs. History preserves them and supports both exact values and ordinary case-sensitive substring filters. They are provenance hints, not trusted instructions.
+Session creation attributes are string pairs set by the client that created the session, and they never change. History stores them and can filter on exact values or on case-sensitive substrings. They describe where a session came from; they are not instructions.
 
-Two conventional attributes are widely useful:
+Two common attributes are:
 
-| Attribute | Convention |
+| Attribute | Meaning |
 | --- | --- |
-| `source` | Creating client, commonly `tui`, `telegram`, or a caller-chosen SDK value |
-| `repository` | Normalized `host/owner/repository`; composites join repositories with commas |
+| `source` | The creating client, usually `tui`, `telegram`, or a value an SDK caller chose |
+| `repository` | Normalized `host/owner/repository`; composite workspaces join repositories with commas |
 
-A local TUI normally derives `repository` from the current Git repository or direct child repositories. Telegram derives it from configured repository projects and omits it for persistent-directory projects. Attach-created sessions may omit it, and SDK or raw protocol clients provide only the attributes their caller chooses.
+A local TUI usually fills in `repository` from the current Git repository or repositories directly below it. Telegram fills it in for repository projects and leaves it out for persistent-directory projects. Sessions created with `tau attach` may not have it, and SDK or protocol clients set only the attributes they choose.
 
-Because composite values are comma-delimited, a substring repository filter can find both single-repository and composite sessions. Attributes may be absent, stale as real-world labels, or intentionally chosen by a client. Confirm important facts from the transcript or current workspace rather than treating attributes as authority.
+Because composite values are comma-separated, a substring filter on `repository` finds both single-repository and composite sessions. Attributes may be missing, out of date, or set deliberately by a client, so confirm important facts from the transcript or the current workspace.
 
 ## Agent access is explicit and read-only
 
-An eligible persona can expose the read-only `tau.history` capability in the `code` tool. It searches and reads the configured history collection across repositories and execution environments. Because that collection has broad visibility, the tool description limits use to requests or active instructions that directly call for historical transcripts rather than speculative retrieval of possibly relevant earlier work.
+A persona can enable the read-only `tau.history` capability in the `code` tool. It searches and reads the configured history collection, across all repositories and execution environments. Because it can see so much, the agent uses it only when the request or active instructions directly ask for past transcripts, not to look for possibly related earlier work on its own initiative.
 
-Automatic compaction archives serve a different purpose. They capture the current session’s pre-compaction model context in the execution environment, while `history` queries a separate host-owned transcript collection that may be stale, truncated, unavailable, or remotely replicated. Compaction continuation guidance therefore directs recovery of removed current-session details to the supplied archive paths. History transcript entry ids are unrelated to archive lookup.
+Automatic compaction archives are different. They hold the current session's context from before a compaction, in the execution environment. `history` searches a separate collection on the host, which may be out of date, truncated, unavailable, or copied to a remote service. After a compaction, the agent is therefore pointed to the archive files to recover details, and history entry IDs have nothing to do with archive lookups.
 
-The tool progressively discloses its API documentation. Its agent-facing description requires the documentation to be visible before API use. When it is absent, the first call only prints `docs`; after the agent reads that result, later calls use the documented API normally. Documentation already visible in the conversation context is reused rather than reloaded. This page does not duplicate those signatures or response limits. The documentation covers bounded chronological projections and targeted inspection for cases where a historical session is known but the relevant entry is not, avoiding repeated guessed searches and complete payload dumps.
+The agent reads the capability's documentation before using it. If it has not seen the documentation, its first call only prints `docs`, and later calls use the API. Documentation already in the conversation is reused. This page does not repeat the API or its limits. The documentation covers short chronological overviews and targeted lookups, for when the agent knows the session but not the entry, so it does not need repeated guesses or full dumps.
 
-Historical attributes, snippets, digests, entries, tool arguments, and tool results are untrusted data. The tool guidance treats them as evidence rather than instructions and limits output to material needed for the current request. Custom personas and subagents can include or exclude `history` through their tool configuration; see [tools](tools.md), [personas](personas.md), and [subagents](subagents.md).
+Attributes, snippets, digests, entries, tool arguments, and tool results from history are untrusted. The agent treats them as evidence, never as instructions, and returns only what the current request needs. Custom personas and subagents get or lose `history` through their tools; see [tools](tools.md), [personas](personas.md), and [subagents](subagents.md).
 
-Without remote history configuration, the tool searches this host's local SQLite collection. With a remote target configured, queries go to that service rather than merging remote and local results. A remote query outage can therefore fail even while local capture continues successfully.
+Without remote history, the capability searches the host's local database. With a remote target, it searches only the remote service and never mixes in local results. A remote search can therefore fail even while local recording keeps working.
 
 ## Add a shared remote collection
 
-Tau can deploy an optional single-owner Cloudflare history service for collecting transcript history from several hosts. It uses a Worker, D1, Workers AI, and a custom hostname, and it **requires the Cloudflare Workers Paid plan**.
+Tau can deploy an optional Cloudflare history service, owned by one person or team, that collects history from several hosts. It uses a Worker, D1, Workers AI, and a custom hostname, and **requires the Cloudflare Workers Paid plan**.
 
-The service adds cross-host search and generated session titles and semantic summaries. Those digests are compact retrieval aids rather than authoritative session state or chronological replay. They can be absent or temporarily stale, so read transcript entries when exact evidence matters.
+The service adds search across hosts, generated session titles, and summaries. Titles and summaries help with searching, but they are not exact records, and they can be missing or out of date. Read the transcript entries when exact evidence matters.
 
-The setup command requires:
+Setup requires:
 
-- Wrangler installed and available on `PATH`
-- a Cloudflare zone containing the chosen history hostname
-- `CLOUDFLARE_API_TOKEN` available to the command for non-interactive Wrangler authentication
-- a history API key and separate viewer password supplied securely, or permission for setup to generate them
+- Wrangler installed and on `PATH`
+- a Cloudflare zone that contains the chosen hostname
+- `CLOUDFLARE_API_TOKEN` available to the command, so Wrangler authenticates without prompts
+- a history API key and a separate viewer password, supplied securely, or setup can generate both
 
-Run setup on an operator machine with Cloudflare access:
+Run setup on a machine with Cloudflare access:
 
 ```sh
 tau history setup \
@@ -85,33 +85,40 @@ tau history setup \
   --zone-name example.net
 ```
 
-`TAU_HISTORY_DOMAIN` and `TAU_HISTORY_ZONE_NAME` can provide the two values instead. Setup creates or reuses the `tau-history` D1 database, applies the bundled migrations, deploys the `tau-history` Worker route, and installs the history API key and viewer password as separate Worker secrets.
+`TAU_HISTORY_DOMAIN` and `TAU_HISTORY_ZONE_NAME` can provide the two values instead. Setup creates or reuses the `tau-history` D1 database, applies its migrations, deploys the `tau-history` Worker route, and stores the API key and viewer password as separate Worker secrets.
 
-For the API key used during setup, `--api-key` takes precedence over `TAU_HISTORY_API_KEY`; otherwise setup generates a new key. For the viewer password, `--viewer-password` takes precedence over `TAU_HISTORY_VIEWER_PASSWORD`; otherwise setup generates one. The API key and viewer password must differ. Prefer a secret manager or protected process environment over command-line values, which may enter shell history. Do not paste either credential into a session transcript.
+For the API key, `--api-key` wins over `TAU_HISTORY_API_KEY`, and setup generates a key if neither is given. For the viewer password, `--viewer-password` wins over `TAU_HISTORY_VIEWER_PASSWORD`, and setup generates one if neither is given. The two must differ. Prefer a secret manager or a protected environment over command-line values, which can end up in shell history. Never paste either credential into a session.
 
 ## Browse remote conversations
 
-Open the configured service origin, for example `https://history.example.net/`, to browse the private read-only history collection. HTTP Basic authentication uses the fixed username `tau` and the viewer password installed by setup. Setup prints generated viewer passwords but does not echo supplied credentials. External HTTP viewer requests redirect to HTTPS before authentication; loopback HTTP remains available for local development. The credential is never placed in a URL, and browser responses are not cached. Keep the viewer password private because it grants read access to transcripts, attributes, tool arguments, and tool results across every host using that service.
+Open the service's address, for example `https://history.example.net/`, to browse the collection read-only. Sign in with HTTP Basic authentication, username `tau`, and the viewer password from setup.
 
-The index lists recently updated sessions with generated titles, summaries, timestamps, attributes, and a server-rendered search form. Repository and source inputs filter metadata by case-sensitive substring match; both filters combine with text search and remain active across pages. The Older sessions button loads the next index page; the index never advances automatically. A digest can be pending or stale while the underlying transcript is already available. Session pages initially show an empty transcript, then automatically fetch bounded batches and append them in chronological order without scrolling or pagination controls. The Copy conversation button at the top stays disabled until the full transcript has loaded. Failed loads show a retry button and keep copying disabled. The adjacent copy selector defaults to Messages only, which omits tool entries. Include tool calls adds tool names, arguments, and outcomes without results; Include everything includes results too. These options do not depend on whether tool cards are expanded. Individual entry Copy buttons still copy the complete entry. Omitting tools or results reduces noise, but does not sanitize sensitive content in messages or arguments. API reads remain paginated. Tool entries are collapsed by default. Text and metadata are escaped rather than interpreted as HTML or Markdown. Valid PNG, JPEG, GIF, and WebP content blocks render as inline images; other structured content falls back to escaped text.
+- Setup prints passwords it generates, but never prints ones you supplied.
+- Plain HTTP requests from outside are redirected to HTTPS before sign-in. HTTP on loopback works for local development.
+- The password never appears in a URL, and pages are not cached by the browser.
+- The password gives read access to transcripts, attributes, tool arguments, and tool results from every host that uses the service. Keep it private.
 
-Remote history search and read results include a stable `webUrl` for each session. The `tau.history` capability can return this URL when asked for a conversation link. The URL alone does not grant access; the browser still needs the viewer credential. Local-only history has no web URL.
+The index lists recently updated sessions with titles, summaries, times, and attributes, plus a search form.
 
-## Develop the browser view locally
+- Repository and source filters match case-sensitive substrings. They combine with text search and stay active across pages.
+- **Older sessions** loads the next page; pages never load by themselves.
+- A summary can be pending or out of date while the transcript is already available.
 
-From a source checkout with dependencies installed, run:
+A session page starts empty, then loads the transcript in batches and adds them in order, with no scrolling or page controls. Tool entries start collapsed. Text and metadata are shown as plain text, never as HTML or Markdown. Valid PNG, JPEG, GIF, and WebP blocks are shown as images, and other structured content as plain text.
 
-```sh
-npm run history:dev
-```
+**Copy conversation** at the top works once the whole transcript has loaded. If loading fails, a retry button appears and copying stays off. The selector next to it chooses what to copy:
 
-The command applies the canonical Worker migration to a local-only `tau-history-dev` D1 database, loads an idempotent fixture conversation, and starts the TypeScript Worker with Wrangler. Open the local URL printed by Wrangler and use username `tau` with password `tau-history-dev-password`. The local API key is `tau-history-dev-api-key`.
+- **Messages only** (the default) leaves out tool entries.
+- **Include tool calls** adds tool names, arguments, and outcomes, without results.
+- **Include everything** adds results too.
 
-The checked-in development configuration does not contain a production route or remote D1 database identifier. Wrangler keeps its local state under `src/history/worker/.wrangler/`; rerunning the command preserves that local database and safely reapplies the migration and fixture.
+These options do not depend on which tool cards are expanded. Each entry's own **Copy** button copies the complete entry. Leaving out tools or results reduces noise but does not remove sensitive content from messages or arguments. The API still returns results page by page.
+
+Remote search and read results include a stable `webUrl` for each session, which `tau.history` can return when asked for a link. The URL alone grants no access; the browser still needs the viewer password. Local-only history has no web URL.
 
 ## Configure hosts to replicate
 
-Remote history is accepted only in the host's eligible global Tau config, normally `~/.config/tau/config.json`:
+Remote history can be set only in the host's global Tau config, normally `~/.config/tau/config.json`:
 
 ```json
 {
@@ -122,69 +129,75 @@ Remote history is accepted only in the host's eligible global Tau config, normal
 }
 ```
 
-`endpoint` must be an HTTP or HTTPS URL without credentials, a query, or a hash. Tau removes trailing slashes. The API key resolves on the host in this order:
+`endpoint` must be an HTTP or HTTPS URL without credentials, query, or fragment. Tau removes trailing slashes. The host uses the first API key it finds:
 
 1. `TAU_HISTORY_API_KEY`
 2. the host environment variable named by `history.apiKeyEnv`
 3. inline `history.apiKey`
 
-If the block exists but no key resolves, host construction fails instead of silently using an unauthenticated or local-only target. The key remains host-owned and is not exposed to history code-mode programs. See [credentials](credentials.md) for safe placement.
+If `history` is set but no key is found, the host fails to start, instead of quietly running without remote history. The key stays on the host and is never visible to history code-mode programs. See [credentials](credentials.md) for where to put it.
 
-Restart the host after changing this block or its environment. `/reload` updates session runtime content but does not rebuild the host-wide history manager.
+Restart the host after changing this block or its environment variables. `/reload` does not reload it.
 
 ## Replication and outages
 
-Remote replication is local-first:
+Replication starts locally:
 
-1. Tau commits each history mutation to local SQLite.
-2. The same transaction appends an ordered operation to a durable local outbox.
-3. The host sends pending operations to the configured endpoint asynchronously.
-4. Successful acknowledgements remove those operations from the outbox.
+1. Tau writes each history change to local SQLite.
+2. In the same transaction, it adds the change to a local outbox on disk.
+3. The host sends pending changes to the endpoint in the background.
+4. Changes the service accepts are removed from the outbox.
 
-A service outage does not block session execution or local transcript capture. Pending operations remain durable and are retried when replication is scheduled again, including after host restart or later history activity. The remote service applies operations idempotently. Tau preserves operation order within each session while processing separate session lanes independently.
+A service outage does not block sessions or local recording. Pending changes stay on disk and are sent again later, including after a host restart or the next history activity. The service applies each change only once, even if it arrives twice. Changes for one session are sent in order, and each session is sent independently of the others.
 
-A permanent operation-domain rejection, such as conflicting immutable session metadata, quarantines only that session's replication lane. Its pending operations and diagnostic remain in local SQLite, later operations for that session stay blocked, and unrelated sessions continue replicating. Transient transport, authentication, rate-limit, and service failures do not quarantine a lane; they leave endpoint replication pending for a later retry. Both kinds of failure produce a structured `history_replication_failed` host diagnostic without exposing the API key. Headless Tau commands write that diagnostic to stderr, the TUI presents a concise nonfatal footer notice without writing through the active renderer, and an in-process SDK host delivers it only through `onDiagnostic` when configured.
+If the service permanently rejects a change, for example because the session's attributes conflict with what it already has, Tau stops sending changes for that session only. The pending changes and the error stay in local SQLite, later changes for that session wait, and other sessions keep replicating. Temporary network, authentication, rate-limit, and service errors do not stop a session's replication; the changes are retried later. Both kinds of failure produce a `history_replication_failed` host diagnostic, without the API key:
 
-Local entries retain their complete captured payloads. For remote replication, an entry larger than 1 MiB keeps its identity and metadata but middle-truncates oversized content, arguments, or results with an explicit marker. Remote history is therefore useful for retrieval, but the host's local entry can contain details that the shared copy intentionally omits.
+- Headless Tau commands print it to stderr.
+- The TUI shows a short notice in the footer.
+- An in-process SDK host delivers it only through `onDiagnostic`, when configured.
 
-Configuring a remote target changes history-tool queries to use that service. Tau does not fall back to local query results when the service is unreachable, because that would silently change collection scope. Existing histories that were never associated with the target should not be assumed to appear remotely merely because the config block was added later.
+Local entries keep everything recorded. For the remote copy, an entry larger than 1 MiB keeps its ID and metadata, but oversized content, arguments, or results are truncated in the middle with a marker. The host's local entry can therefore contain details the shared copy leaves out.
+
+With a remote target configured, history searches go only to the service. Tau never falls back to local results when the service is unreachable, because that would change which collection you are searching. Do not assume sessions recorded before you added the configuration appear remotely.
 
 ## Verify operation
 
-Verify the owning boundary rather than inspecting credentials or dumping transcripts:
+Check that each step works, without looking at credentials or dumping transcripts:
 
-1. Confirm setup completed its D1 migration and Worker deployment without errors.
-2. Add the global config and key environment to one host, then restart it.
-3. Create a small disposable session with distinctive, nonsensitive text.
-4. Explicitly ask the agent to search history for that session, following the history tool's `docs` step.
-5. If using several hosts, repeat from another host and allow for asynchronous replication and digest generation.
+1. Confirm setup finished the D1 migration and Worker deployment without errors.
+2. Add the global config and the key's environment variable on one host, then restart it.
+3. Create a small throwaway session with distinctive, non-sensitive text.
+4. Ask the agent explicitly to search history for that session. It reads the capability's `docs` first.
+5. With several hosts, repeat from another host, and allow time for replication and summaries.
 
-A transcript can become remotely searchable before its generated digest appears. Search results without a digest are not evidence of a failed import. Open the service URL and sign in to the browser view to confirm the session card and transcript are available.
+A transcript can become searchable before its summary appears, so a missing summary does not mean replication failed. Open the service in a browser and sign in to confirm the session and its transcript are there.
 
-Cloudflare operational failures are visible through normal Worker logs, Cron Events, and D1 diagnostics. The service has no separate Tau administration dashboard or status endpoint.
+Cloudflare problems show up in the normal Worker logs, Cron Events, and D1 diagnostics. The service has no separate admin dashboard or status endpoint.
 
 ## Troubleshooting
 
-**`history` is configured but no API key is available.** Set `TAU_HISTORY_API_KEY`, populate the environment variable named by `apiKeyEnv`, or use an inline key only when the config file is appropriately protected. Restart the host.
+**`history` is configured but no API key is available.** Set `TAU_HISTORY_API_KEY`, set the variable named by `apiKeyEnv`, or use an inline key only if the config file is well protected. Restart the host.
 
-**The history tool returns a service error while the session still works.** Remote queries and asynchronous replication can fail independently of session execution. Check endpoint reachability and Worker logs without printing the bearer key. Local capture should continue unless the session also contains a `history unavailable` warning.
+**The agent has no history capability.** The active persona must select `history`. Fix the persona and run `/reload` while idle.
 
-**The browser view repeatedly asks for credentials.** Use the fixed username `tau` and the viewer password installed by the latest setup. The history API key is a bearer credential for hosts and does not authenticate the browser.
+**The history capability returns a service error while the session works.** Remote searches and replication can fail without affecting the session. Check that the endpoint is reachable and read the Worker logs, without printing the key. Local recording continues unless the session also shows a `history unavailable` warning.
 
-**A session does not appear in remote search.** Confirm that the host was restarted with the global remote config, that the session was opened while that target was active, and that later history activity has had a chance to flush the durable outbox. Check host logs for `history_replication_failed`; a quarantined failure affects only the named session, while an unquarantined endpoint failure remains retryable. Do not assume remote digests are immediate.
+**The browser keeps asking for credentials.** Use username `tau` and the viewer password from the latest setup. The API key is for hosts and does not work in the browser.
 
-**Local history became unavailable.** Check host-side filesystem access, free space, and ownership for `~/.config/tau`. Restarting is required to reopen a manager disabled by an earlier local failure.
+**A session does not appear in remote search.** Confirm the host was restarted with the remote config, the session was used while the config was active, and enough history activity has happened to send the outbox. Check host logs for `history_replication_failed`. A permanent rejection affects only the named session, while other failures are retried. Summaries are not immediate.
 
-**Search finds material removed from model context.** This is expected after compaction. It is not expected after a successful rewind of that suffix; if the remote copy lags, wait for its truncation operation to replicate.
+**Local history became unavailable.** On the host, check that you are running as the expected user and home, and check file access, free space, and ownership of `~/.config/tau`, the Node version, and whether another process is using the database. A restart is needed to reopen history after a local failure. Do not open, edit, replace, or delete the SQLite files as a first repair, and do not inspect outbox rows or keys.
+
+**Search finds material removed from the model's context.** This is expected after compaction. After a rewind, the removed entries should disappear; if the remote copy still has them, wait for the deletion to replicate.
 
 ## Destroy the remote service
 
-`tau history destroy --yes` permanently deletes the bundled `tau-history` Worker and D1 database. This removes the shared remote transcripts and digests. It does not delete each host's local `history.sqlite` database, and it is not a substitute for a retention or export plan.
+`tau history destroy --yes` permanently deletes the `tau-history` Worker and D1 database, and with them the shared transcripts and summaries. It does not delete any host's local `history.sqlite`, and it is not a substitute for a retention or export plan.
 
-Run destruction only after confirming that the service and its data are no longer needed:
+Run it only once you are sure the service and its data are no longer needed:
 
 ```sh
 tau history destroy --yes
 ```
 
-The command requires `CLOUDFLARE_API_TOKEN`. It reports each resource separately and treats already-absent Tau history resources as absent. If one deletion fails, inspect the reported partial result before retrying. Remove obsolete host `history` config and restart those hosts afterward, otherwise their remote queries and replication attempts will continue to fail.
+The command needs `CLOUDFLARE_API_TOKEN`. It reports each resource separately and treats Tau history resources that are already gone as deleted. If one deletion fails, read the partial result before retrying. Afterward, remove the `history` config from your hosts and restart them; otherwise their remote searches and replication keep failing.

@@ -1,27 +1,27 @@
 # Client tools
 
-Client tools let an attached client contribute capabilities that the host does not own. A TUI can open a local review interface, a Telegram runner can invoke a workspace-specific command, and an SDK client can provide an in-process handler. The model sees an ordinary tool schema, but execution stays with the client that advertised it.
+Client tools are tools that an attached client adds to a session. A TUI can open a local review interface, a Telegram runner can run a workspace-specific command, and an SDK client can provide an in-process handler. The model sees an ordinary tool, but the tool runs in the client that offered it.
 
-This boundary matters in remote sessions. The client process, host, and execution environment may be three different machines. A command client tool starts on the client machine. If it needs to inspect or change the agent's workspace, it must use the provided execution-environment facade rather than assuming the same filesystem is locally mounted.
+In a remote session, the client, the host, and the execution environment may be three different machines. A command client tool starts on the client machine. To read or change the agent's workspace, it must use the execution-environment API that Tau provides. It cannot assume the workspace is on its own filesystem.
 
 ## Which client advertises which tools
 
 Tau's TUI advertises two built-in client tools:
 
-- `diff_review` runs the TUI-local diff review flow while capturing repository data through the session execution environment.
+- `diff_review` runs diff review on the TUI machine, reading repository data from the session's execution environment.
 - `prefill_input` puts a draft in an empty TUI editor for the user to edit and submit. It never submits the draft and does not replace existing editor text.
 
-The TUI also advertises the configured command client tools selected for its current client-side working directory. This is true for local `tau` and for `tau attach`. During remote attach, the command executable and its environment belong to the attaching machine, not the remote host.
+The TUI also offers the configured command client tools selected for its own working directory, both with local `tau` and with `tau attach`. When attached to a remote host, the command and its environment are on the attaching machine, not on the host.
 
-A Telegram runner advertises the built-in `send_photo_to_telegram`, `send_video_to_telegram`, `send_audio_to_telegram`, and `send_document_to_telegram` tools, plus the configured command client tools selected from each prepared workspace's Tau configuration. The built-in [file delivery tools](tools.md#sending-files-to-telegram) send files to the session's chat and are independent of `enabledClientTools`. It does not advertise TUI-only tools. Repository, persistent-directory, and composite workspace preparation determines the client-side configuration scope used for that Telegram session. See [Telegram](telegram.md) for workspace ownership.
+A Telegram runner offers the built-in `send_photo_to_telegram`, `send_video_to_telegram`, `send_audio_to_telegram`, and `send_document_to_telegram` tools, plus the command client tools selected by each prepared workspace's Tau configuration. The built-in [file delivery tools](tools.md#sending-files-to-telegram) send files to the session's chat and are not affected by `enabledClientTools`. The runner does not offer the TUI's tools. The session's workspace, whether repository, persistent directory, or composite, decides which configuration selects its tools. See [Telegram projects and workspaces](telegram-projects.md) for workspace types.
 
-Node SDK clients can supply `TauSdkClientTool` handlers directly when they initialize. The same session routing, cancellation, and execution-environment contracts apply.
+Node SDK clients can pass `TauSdkClientTool` handlers when they initialize. The same rules for routing, cancellation, and execution-environment access apply.
 
-Only an observing client can contribute tools to a session. The tools disappear when that client detaches or disconnects. If several clients observe one session, at most one may advertise a given client-tool name. Tau rejects the later attachment on a name collision. Client-tool names must also not collide with host or intrinsic tools.
+Only a client that is observing a session can add tools to it. The tools disappear when that client detaches or disconnects. When several clients observe one session, only one may offer a given tool name, and Tau rejects the later client if names collide. Client tool names also must not match host tools or built-in tools.
 
 ## Configure command client tools globally
 
-Executable client-tool definitions are accepted only from the global `~/.config/tau/config.json`, and that global level is in scope only when the client-side working directory is inside home. Project configuration cannot define executable commands. This prevents a checked-out repository from silently introducing a process that runs on the client machine.
+Client tool commands can be defined only in the global `~/.config/tau/config.json`, and only when the client's working directory is inside home. Project configuration cannot define commands, so a cloned repository can never add a process that runs on your machine.
 
 A definition requires `name`, `defaultEnabled`, `description`, `parameters`, and `command`:
 
@@ -56,20 +56,20 @@ The exact fields are:
 | `name` | Required non-empty string. Names must be unique within `clientTools` and must not collide with tools already bound to the session. |
 | `defaultEnabled` | Required boolean. Controls selection when no project level supplies `enabledClientTools`. |
 | `description` | Required non-empty model-facing description. State when the tool should be used and any important side effects. |
-| `parameters` | Required object JSON Schema whose root has `"type": "object"`. Tau passes the remaining schema through and validates each invocation against it. |
+| `parameters` | Required JSON Schema whose root has `"type": "object"`. Tau passes the rest of the schema through unchanged and validates every call against it. |
 | `command` | Required non-empty executable name or path. |
 | `args` | Optional array of literal string arguments. |
 | `executionTimeoutMs` | Optional positive integer. The default is 60,000 ms. |
 
-Unknown fields on a definition are discarded. Invalid entries are skipped with configuration diagnostics; valid siblings remain available. Duplicate names are exact and case-sensitive.
+Unknown fields on a definition are ignored. An invalid entry is skipped with a configuration warning, and the other entries stay available. Names are compared exactly, including case, when checking for duplicates.
 
 ### Command path resolution
 
-A `command` containing `/` is resolved as a path from home, the root of the global configuration level. For example, `./bin/tau-notify` resolves to `~/bin/tau-notify`. A bare command such as `tau-notify` is left unchanged and resolved through the client process's `PATH` when invoked.
+A `command` that contains `/` resolves from home, because the definition is global. For example, `./bin/tau-notify` resolves to `~/bin/tau-notify`. A bare command such as `tau-notify` resolves through the client process's `PATH` when the tool runs.
 
-Tau starts the executable directly with `args`. It does not use a shell, expand globs, interpolate variables, or process quoting syntax. If shell behavior is truly needed, configure an explicit shell executable and arguments, but a dedicated executable is easier to validate and cancel safely.
+Tau starts the executable directly with `args`. It does not use a shell, expand globs, substitute variables, or process quotes. If you really need a shell, configure the shell as the command with explicit arguments, but a dedicated executable is easier to validate and to cancel safely.
 
-The process inherits the owning client process's environment unchanged. Unlike execution-environment Bash, Tau does not remove credential-shaped variables from command client tools. Treat every configured executable as trusted local code and give it only the credentials it needs.
+The process inherits the client process's environment unchanged. The agent's Bash tool removes variables that look like credentials, but command client tools keep them. Treat every configured executable as trusted local code and give it only the credentials it needs.
 
 ## Select tools per project
 
@@ -81,17 +81,17 @@ Project `.tau/config.json` files may set `enabledClientTools` to an exact allowl
 }
 ```
 
-Tau uses the nearest project level that defines this field. It does not merge allowlists across project levels.
+Tau uses the nearest project level that sets this field. Lists from different levels are not combined.
 
-Selection has three distinct states:
+There are three cases:
 
 - If no project level defines `enabledClientTools`, Tau selects global definitions with `defaultEnabled: true`.
 - If the nearest definition is a non-empty array, Tau selects exactly the known names in that array, regardless of `defaultEnabled`.
 - If the nearest definition is `[]`, Tau disables every configured command client tool for that workspace.
 
-Unknown selected names are ignored without an error. Repeated names are deduplicated. Names are matched exactly and case-sensitively.
+Unknown names are ignored without an error. Repeated names are removed. Names match exactly, including case.
 
-`enabledClientTools` selects trusted global definitions; it cannot change their command, arguments, schema, description, or timeout. The field is valid only at project scope. Conversely, `clientTools` is valid only at global scope.
+`enabledClientTools` only selects global definitions. It cannot change their command, arguments, schema, description, or timeout. The field is allowed only in project configuration, and `clientTools` only in global configuration.
 
 For Telegram, `enabledClientTools: []` is the normal way to disable configured tools for a prepared workspace. For the TUI, the startup flag described below can disable all client tools at once.
 
@@ -109,9 +109,9 @@ For attach mode, place the flag with the attach options:
 tau attach --no-client-tools ws://host.example:8787
 ```
 
-This disables both configured command tools and the TUI's built-in `diff_review` and `prefill_input`. It does not disable host tools or intrinsic `tau_docs`.
+This disables the configured command tools and the TUI's built-in `diff_review` and `prefill_input`. Host tools and the built-in `tau_docs` tool are not affected.
 
-Client tools are selected and advertised when the owning client starts and connects. `/reload` refreshes host-side session configuration and content but does not recreate the TUI or Telegram client's advertised tool set. Restart or reconnect the owning client after changing `clientTools`, `enabledClientTools`, or `--no-client-tools` behavior.
+A client selects and offers its tools when it starts and connects. `/reload` does not change the tools a TUI or Telegram client offers. Restart or reconnect the client after changing `clientTools`, `enabledClientTools`, or `--no-client-tools`.
 
 Diff review uses Tau’s built-in browser tool on the TUI machine, separately from command client-tool definitions. See [TUI](tui.md).
 
@@ -148,9 +148,9 @@ await runTauClientToolCommand({
 });
 ```
 
-`describe` is optional. When present, it runs before acknowledgement and may return a partial running presentation containing `subject`, `subjectWrap`, `details`, or `metadata`. The execution result may independently include the same partial shape for the terminal card. Tau supplies every omitted field, owns lifecycle actions and the operation derived from the registered tool name, and renders a complete fallback when execution ends without a result.
+`describe` is optional. If present, it runs before the call is accepted and may return a partial presentation for the running tool card, with any of `subject`, `subjectWrap`, `details`, or `metadata`. The execution result may include the same partial shape for the finished card. Tau fills in every omitted field, controls the card's lifecycle and the operation label (derived from the tool name), and shows a complete default card if execution ends without a result.
 
-Tau preserves every explicit presentation field up to the protocol safety limits; it does not apply display truncation or normalize client text. `truncateTauClientToolText` provides optional caller-controlled `maxLines`, `maxLineChars`, and `head` or `middle` truncation. Its defaults match Tau's concise subject policy, but callers may select larger or smaller positive limits.
+Tau keeps every presentation field you set, up to the protocol limits. It does not truncate or normalize client text for display. `truncateTauClientToolText` truncates text for you, with optional `maxLines`, `maxLineChars`, and a `head` or `middle` strategy. Its defaults match the length Tau uses for its own subjects, and you can choose larger or smaller limits.
 
 For a subject, use the returned string directly. For a block of detail text, split the returned string on `\n` and map each line to one `details` entry:
 
@@ -164,27 +164,27 @@ const details = truncateTauClientToolText(output, {
   .map((text) => ({ text }));
 ```
 
-Each detail or metadata entry is a single protocol line, so use `maxLines: 1` when assigning the helper's result directly to one entry. The helper shapes text for presentation; the protocol byte and collection limits still apply. Empty detail or metadata arrays explicitly suppress that phase's defaults.
+Each detail or metadata entry is one line, so use `maxLines: 1` when putting the helper's result directly into one entry. The helper only shapes text; the protocol's byte and count limits still apply. An empty `details` or `metadata` array hides that phase's default content.
 
-`runTauClientToolCommand` reads the preparation, writes readiness and any running presentation, waits until the host accepts the call, then provides the standard execution context and writes the final result. It handles execution-environment request and cancellation framing and reacts to `SIGINT`, `SIGTERM`, and protocol input closure by aborting the handler.
+`runTauClientToolCommand` reads the `prepare` frame, writes `ready` with any running presentation, waits until the host accepts the call, then runs your handler and writes the final result. It also handles execution-environment requests and their cancellation. On `SIGINT`, `SIGTERM`, or closed stdin, it aborts the handler.
 
 Reserve stdout for the helper's protocol. Write diagnostics to stderr. Return a string or `{ content, presentation? }` for success. Return `{ ok: false, error, presentation? }` for a structured tool failure. `content` may be a string or ordered text/image blocks; the helper wraps strings in text blocks.
 
 ### Version 5 frame reference
 
-Write each frame as one JSON object and a newline; unknown fields are invalid.
+Write each frame as one JSON object followed by a newline. Unknown fields are invalid.
 
 Tau starts the exchange by writing:
 
-- `{ version: 5, type: "prepare", sessionId, agentId, callId, toolName, arguments }` exactly once. The identity fields are non-empty strings and `arguments` is the validated model input.
-- `{ version: 5, type: "execute" }` after accepting the command's ready frame. This authorizes execution.
+- `{ version: 5, type: "prepare", sessionId, agentId, callId, toolName, arguments }` exactly once. The ID fields are non-empty strings, and `arguments` is the model's input after validation.
+- `{ version: 5, type: "execute" }` after Tau accepts the command's `ready` frame. The command may not start work before this frame.
 
 The command writes:
 
 - `{ version: 5, type: "ready", presentation?: PresentationOverride }` exactly once after preparation.
-- `{ version: 5, type: "result", ok: true, content, presentation?: PresentationOverride }` or `{ version: 5, type: "result", ok: false, error, presentation?: PresentationOverride }` exactly once after authorization. `error` is a string. `content` is an ordered array of at most 1,024 text (`{ type: "text", text }`) or image (`{ type: "image", data, mimeType }`) blocks. At most 16 images are allowed: padded base64, at most 3.5 MiB decoded each, JPEG/PNG/WebP MIME types.
+- `{ version: 5, type: "result", ok: true, content, presentation?: PresentationOverride }` or `{ version: 5, type: "result", ok: false, error, presentation?: PresentationOverride }` exactly once, after `execute`. `error` is a string. `content` is an ordered array of at most 1,024 text (`{ type: "text", text }`) or image (`{ type: "image", data, mimeType }`) blocks. At most 16 images are allowed: padded base64, at most 3.5 MiB decoded each, JPEG/PNG/WebP MIME types.
 
-During authorized execution, the command may write `{ version: 5, type: "exec", requestId, command, options }`. The non-empty `command` string runs in the session execution environment. `options` is required and may contain `args: string[]`, `env: Record<string, string>`, base64-encoded string `stdinBase64`, string `cwd`, positive integer `timeoutMs`, and positive integer `maxCaptureBytes`.
+After `execute`, the command may write `{ version: 5, type: "exec", requestId, command, options }`. The non-empty `command` string runs in the session execution environment. `options` is required and may contain `args: string[]`, `env: Record<string, string>`, base64-encoded string `stdinBase64`, string `cwd`, positive integer `timeoutMs`, and positive integer `maxCaptureBytes`.
 
 Tau answers with the same `requestId` and either:
 
@@ -283,7 +283,7 @@ Make the file executable with `chmod +x`. Diagnostics and uncaught errors go to 
 
 ### Implement a simple command tool in Bash
 
-A small command that needs only client-machine authority can also implement the handshake in Bash. This example depends on `jq` for safe JSON parsing and encoding:
+A small command that only needs the client machine can also implement the handshake in Bash. This example depends on `jq` for safe JSON parsing and encoding:
 
 ```bash
 #!/usr/bin/env bash
@@ -332,7 +332,7 @@ Configure either executable as an argument-free command tool:
 }
 ```
 
-Both `ready.presentation` and `result.presentation` are optional partial objects with `subject`, `subjectWrap`, `details`, and `metadata`. The ready value applies while the call runs; the result value applies only to its terminal state. Omit either object, or any field within it, to use Tau's default for that phase. Empty `details` or `metadata` arrays suppress the corresponding default field. The script must emit `ready` before reading the authorization-bearing `execute` frame. Direct implementations can emit the same `exec` frames shown in the JavaScript example, but the TypeScript helper is preferable when the tool needs multiple target-environment requests, cancellation forwarding, or more involved protocol handling.
+`ready.presentation` and `result.presentation` are optional partial objects with `subject`, `subjectWrap`, `details`, and `metadata`. The `ready` value applies while the call runs, and the `result` value applies to the finished card. Omit either object, or any field in it, to use Tau's default. An empty `details` or `metadata` array hides that default. The script must write `ready` before it reads the `execute` frame. Direct implementations can send the same `exec` frames as the JavaScript example, but the TypeScript helper is the better choice when the tool makes several execution-environment requests, needs to forward cancellation, or handles the protocol in more complex ways.
 
 The handler receives:
 
@@ -348,13 +348,13 @@ The handler receives:
 }
 ```
 
-`sessionId` routes the owning session. `agentId` identifies the owning agent for scratch-space and attribution purposes. `callId` identifies this invocation. Do not substitute one identity for another or cache context across calls.
+`sessionId` identifies the session, `agentId` the agent that made the call (for scratch space and attribution), and `callId` this call. Never use one ID in place of another, and never reuse a context across calls.
 
-`signal` aborts when the assistant turn is interrupted, the host cancels or times out the tool, the owning client closes, the transport fails, or the protocol input closes. Pass it to all cancellable local work and to execution-environment calls.
+`signal` aborts when the turn is interrupted, the host cancels or times out the tool, the client closes, the connection fails, or stdin closes. Pass it to all local work that can be cancelled and to execution-environment calls.
 
-### Use the execution-environment facade
+### Run commands in the execution environment
 
-`context.executionEnvironment.exec()` runs a command in the session execution environment through the existing session execution boundary. It does not run on the client machine. Use it for agent-visible files, repository commands, and workspace state:
+`context.executionEnvironment.exec()` runs a command in the session's execution environment, not on the client machine. Use it for the agent's files, repository commands, and workspace state:
 
 ```ts
 const result = await context.executionEnvironment.exec("git status --short", {
@@ -367,28 +367,28 @@ const result = await context.executionEnvironment.exec("git status --short", {
 return { content: result.output || "Working tree is clean." };
 ```
 
-The optional execution settings are `args`, `env`, binary `stdin`, `cwd`, `timeoutMs`, `maxCaptureBytes`, and `signal`. The result reports combined and split output, exit status, truncation, timeout, cancellation, and closing signal. Commands use the execution environment's login Bash behavior, path resolution, environment, and authority. `HOME` belongs to that environment and cannot be overridden through the session execution request.
+The optional settings are `args`, `env`, binary `stdin`, `cwd`, `timeoutMs`, `maxCaptureBytes`, and `signal`. The result has combined and separate output, exit status, and whether output was truncated, timed out, or aborted, plus the closing signal. Commands run in the execution environment's login Bash, with its paths, environment, and permissions. `HOME` comes from that environment and cannot be overridden in the request.
 
-Up to eight execution requests may be active while their responses are being delivered. Each request ID is single-use. Cancelling one request does not cancel unrelated requests, although cancellation of the whole client-tool context aborts all of them.
+Up to eight requests may be unresolved at once. Each request ID can be used only once. Cancelling one request does not affect the others, but cancelling the whole tool call aborts all of them.
 
 ## Implement code-mode client tools
 
-Tau exports two higher-level helpers for client tools that expose a bounded JavaScript API:
+Tau exports two helpers for client tools that let the model run JavaScript against an API you define:
 
 - `createTauCodeModeClientTool` creates an in-process `TauSdkClientTool` for an SDK client.
 - `runTauCodeModeCommand` runs a code-mode definition as a command client-tool executable.
 
-Command tools need a parameters schema with required `code` string, optional `maxOutputTokens` integer (1–65,536), and no additional properties. SDK clients pass the helper's returned tool in `clientTools`.
+Command tools need a parameters schema with a required `code` string, an optional `maxOutputTokens` integer (1–65,536), and no other properties. SDK clients pass the tool returned by the helper in `clientTools`.
 
-Both helpers supply invocation identities, cancellation, the execution-environment facade, `docs`, the API bridge, and output/truncation functions. Code is the truncated, character-wrapped card subject. Descriptions are caller input; the shared builder is optional.
+Both helpers provide the call IDs, cancellation, the execution-environment API, `docs`, the bridge to your API, and output and truncation functions. The card subject is the submitted code, truncated and wrapped by character. You write the tool description; the shared description builder is optional.
 
 `await printImage(block)` emits ordered text/image blocks in `content`; see [tools](tools.md) for limits. `maxOutputTokens` defaults to 8,192 estimated tokens. Saving output requires a `persistOutput` callback.
 
-Disclose any additional process or network authority in the tool description.
+If the tool can start processes or reach the network, say so in its description.
 
 ## Limits and failure behavior
 
-The command protocol is intentionally bounded:
+The command protocol has fixed limits:
 
 - The command-to-client stdout NDJSON stream is limited to 512 frames and 192 MiB in total.
 - Each frame on that stdout stream is limited to 80 MiB.
@@ -396,35 +396,35 @@ The command protocol is intentionally bounded:
 - Captured stderr is limited to 1 MiB. Exceeding it terminates the command and fails the tool.
 - Execution-environment stdin is limited to 16 MiB decoded, and capture can be requested up to 24 MiB per execution.
 - At most eight execution requests may be unresolved concurrently.
-- Each client-tool presentation override is limited to 1 MiB in total. Its subject is limited to 256 KiB; metadata values to 16 KiB each; detail values to 256 KiB each; and detail and metadata collections to 1,024 entries each. These are safety limits, not recommended UI sizes. Tau preserves explicit values within those limits. Clients may use the exported helper when they want a concise preview.
+- Each presentation override is limited to 1 MiB in total: the subject to 256 KiB, each metadata value to 16 KiB, each detail value to 256 KiB, and `details` and `metadata` to 1,024 entries each. These are safety limits, not recommended display sizes. Tau keeps values within them unchanged. Use the exported helper for a short preview.
 
-The configured `executionTimeoutMs` covers preparation and execution and defaults to 60 seconds. The host also requires the owning client to prepare and acknowledge a dispatched call promptly. Command executables emit readiness and any bounded running presentation before acknowledgement, then wait for Tau to authorize execution.
+`executionTimeoutMs` covers both preparation and execution, and defaults to 60 seconds. The host also expects the client to prepare and accept each call promptly. A command writes `ready` and any running presentation first, then waits for Tau's `execute`.
 
-Tau starts each configured command in a detached process group. Cancellation sends termination to the group and escalates to `SIGKILL` after a short grace period, even if the original group leader exits first. The helper aborts pending execution-environment requests and stops accepting work when stdin closes.
+Tau starts each command in its own process group. Cancellation sends a termination signal to the group and follows with `SIGKILL` after a short grace period, even if the main process has already exited. When stdin closes, the helper aborts pending execution-environment requests and accepts no more work.
 
-A successful protocol exchange must emit one version 5 ready frame, wait for the execute frame, emit one final version 5 result with `ok: true` or `ok: false`, and exit with status zero. An `ok: false` frame is a communicated tool failure; process and framing failures still use stderr and a nonzero exit. Missing or duplicate readiness, execution data before authorization, missing results, malformed framing, data after the result, reused execution request IDs, timeout, cancellation, excessive output, and protocol-limit violations fail the call.
+A successful exchange writes one `ready` frame, waits for `execute`, writes one `result` frame with `ok: true` or `ok: false`, and exits with status zero. `ok: false` reports a tool failure the command handled. Process and framing failures still use stderr and a nonzero exit. The call fails on: a missing or repeated `ready`, output before `execute`, a missing result, malformed frames, output after the result, a reused request ID, timeout, cancellation, too much output, or any other limit violation.
 
 ## Disconnects, reconnects, and durability
 
-Client-tool execution is transient. Calls are not persisted for replay, and Tau does not move them to another client when the owner disappears.
+Client tool calls are not saved. Tau never replays them and never moves them to another client when the owning client goes away.
 
-When an observing owner detaches, Tau removes its schemas from subsequent turns and cancels its active calls. Client close and terminal transport failure abort local handlers and targeted execution-environment commands. The client waits for active handlers to settle before close completes, but it does not send late results after the transport is terminal.
+When the owning client detaches, Tau removes its tools from later turns and cancels its running calls. When the client closes or its connection fails for good, local handlers and the execution-environment commands they started are aborted. Closing waits for running handlers to finish, but no results are sent once the connection is gone.
 
-After reconnecting, the new client advertises its current tool definitions and must observe the session before they become available there. If another observer already owns one of those names, attachment fails on the collision. A reconnect does not resume a command process from the previous connection.
+After reconnecting, the client offers its current tools again, and they become available once it observes the session. If another client already offers one of those names, the attachment fails. A reconnect never resumes a command process from the earlier connection.
 
 ## Security and troubleshooting
 
-Command client tools are trusted executables with the full environment and operating-system authority of the client process. Keep definitions in the user-owned global configuration, use narrow JSON Schemas, avoid shell interpolation, bound local work, honor cancellation, and return only data the model needs. A project allowlist is permission to select a global definition, not permission to provide executable code.
+Command client tools are trusted executables with the client process's full environment and operating-system permissions. Keep definitions in your global configuration, use narrow JSON Schemas, avoid shell interpolation, limit local work, honor cancellation, and return only data the model needs. A project's `enabledClientTools` can only select global definitions; it can never supply code to run.
 
-The execution-environment facade is powerful in a different place. Validate every model-supplied argument before building commands, prefer fixed command names and argument arrays, avoid concatenating untrusted text into shell source, and use the context signal and bounded capture options.
+The execution-environment API is just as powerful, on the session machine. Validate every argument from the model before building a command, prefer fixed command names and argument arrays, never concatenate untrusted text into shell code, and use the context signal and capture limits.
 
-When a tool is unexpectedly absent, check:
+When a tool is missing, check:
 
 1. The owning client is currently observing the session.
-2. The global definition is valid and in scope for the client-side `cwd`.
+2. The global definition is valid, and the client's `cwd` is inside home.
 3. The nearest `enabledClientTools` selection includes the exact name, or `defaultEnabled` applies.
 4. `--no-client-tools` is not active for the TUI.
 5. No other observer or host tool owns the same name.
 6. The client was restarted or reconnected after configuration changes.
 
-For execution failures, distinguish client-local process errors from `executionEnvironment.exec()` errors on the session machine. Check executable permissions, the client `PATH`, stderr diagnostics, timeout and framing limits, then the execution environment's own `cwd`, login startup files, and command availability. See [tools](tools.md), [security](security.md), and [troubleshooting](troubleshooting.md).
+For failures, first tell apart errors from the local process and errors from `executionEnvironment.exec()` on the session machine. Check executable permissions, the client's `PATH`, stderr output, and timeout and framing limits. Then check the execution environment's `cwd`, login startup files, and whether the command exists there. See [tools](tools.md), [security](security.md), and [troubleshooting](troubleshooting.md).

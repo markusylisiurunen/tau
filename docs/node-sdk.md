@@ -1,8 +1,8 @@
 # Node SDK
 
-Tau's Node SDK provides a typed client for creating, observing, and controlling sessions without implementing the wire protocol directly. Use the in-process client when your application should own the host, the WebSocket client for a long-running `tau serve` host, or the transport adapter with a custom connection implementation.
+Tau's Node SDK is a typed client for creating, observing, and controlling sessions without handling the wire protocol yourself. Use the in-process client when your application should run the host itself, the WebSocket client to connect to a long-running `tau serve` host, or the transport adapter to bring your own connection.
 
-The SDK uses the same public [session protocol](session-protocol.md) as the TUI. Session behavior is therefore consistent across local applications, remote integrations, and terminal clients.
+The SDK speaks the same [session protocol](session-protocol.md) as the TUI, so sessions behave the same in local applications, remote integrations, and the terminal.
 
 ## Install and import
 
@@ -32,7 +32,7 @@ const client = await createTauSdkClient({
 });
 ```
 
-The host uses the current host user's Tau session store and history database. `cwd` in the client options controls startup configuration for host-wide services and defaults to `process.cwd()`. Each session separately resolves runtime configuration and content from the execution environment and `cwd` passed to `client.sessions.create()`.
+The host uses the current user's Tau session store and history database. The `cwd` option decides which configuration the host reads at startup, for host-wide services, and defaults to `process.cwd()`. Each session reads its own configuration and content from the execution environment and `cwd` passed to `client.sessions.create()`.
 
 The in-process options are:
 
@@ -50,13 +50,13 @@ type TauSdkClientOptions = {
 };
 ```
 
-`persona`, `reasoning`, and `noAgentContextFiles` configure sessions created by this owned host. `connectTimeoutMs` defaults to 5,000 ms. Default initialization metadata is `{ client: { name: "tau-sdk", version: "1" } }`.
+`persona`, `reasoning`, and `noAgentContextFiles` apply to sessions created by this host. `connectTimeoutMs` defaults to 5,000 ms. Default initialization metadata is `{ client: { name: "tau-sdk", version: "1" } }`.
 
-The in-process host does not write asynchronous diagnostics to stdout or stderr. Set `onDiagnostic` to receive structured host diagnostics such as retryable history replication failures and route them through the embedding application's logging or presentation owner.
+The in-process host never writes background diagnostics to stdout or stderr. Set `onDiagnostic` to receive them as structured objects, such as history replication failures that will be retried, and route them to your application's logging.
 
-By default, creating an in-process client starts one asynchronous model-catalog freshness check against `pi.dev`. The host restores `~/.config/tau/models-store.json` first, does not refresh on a recurring timer, and keeps each session on its captured catalog until `session.reload()`. Set `refreshModelCatalog: false` to disable this client's automatic check, or set `TAU_OFFLINE` to disable automatic checks process-wide. Both controls preserve an existing cache and do not prevent an explicit `tau models refresh`. See [models](models.md) for precedence and [security](security.md) for the trust boundary.
+By default, creating an in-process client starts one background check of the model catalog against `pi.dev`. The host loads `~/.config/tau/models-store.json` first, never refreshes on a timer, and keeps each session on the catalog it started with until `session.reload()`. Set `refreshModelCatalog: false` to skip this client's check, or set `TAU_OFFLINE` to skip automatic checks for the whole process. Neither removes an existing cache or blocks an explicit `tau models refresh`. See [models](models.md) for details and [security](security.md) for why the catalog is trusted.
 
-Closing this client shuts down its host after persisting live sessions. It also cancels and awaits a client-owned catalog refresh; a refresh shared with another in-process client continues until its final owner closes.
+Closing this client saves live sessions and shuts down its host. It also cancels its catalog refresh and waits for it. A refresh shared with another in-process client continues until the last of them closes.
 
 ### Connect to `tau serve`
 
@@ -74,13 +74,13 @@ const client = await createTauSdkWebSocketClient({
 });
 ```
 
-Options include `url`, optional `authToken`, `connectTimeoutMs`, `initialize`, `clientTools`, and an optional `webSocketFactory` for runtimes that need a custom WebSocket implementation. Closing the SDK client closes only its connection. Sessions remain with the server.
+Options are `url`, optional `authToken`, `connectTimeoutMs`, `initialize`, `clientTools`, and an optional `webSocketFactory` for runtimes that need their own WebSocket implementation. Closing the client closes only its connection; the sessions stay on the server.
 
-WebSocket authentication grants full session access. Deployment and TLS guidance belongs to [remote sessions](remote-sessions.md), and the trust model belongs to [security](security.md).
+The WebSocket token gives full access to all sessions. See [remote sessions](remote-sessions.md) for deployment and TLS, and [security](security.md) for the trust model.
 
 ### Supply a protocol transport
 
-`createTauSdkClientFromTransport(transport, options?)` builds the same client facade over any `SessionProtocolTransport`. This keeps the SDK facade independent of WebSocket and allows applications to supply another transport without changing session semantics.
+`createTauSdkClientFromTransport(transport, options?)` builds the same client on top of any `SessionProtocolTransport`, so you can use another transport with the same session behavior.
 
 A custom transport implements:
 
@@ -99,11 +99,11 @@ type SessionProtocolTransport = {
 };
 ```
 
-A terminal transport failure must call `onFailure` listeners so the SDK can abort delegated client tools and reject outstanding work.
+When the transport fails for good, it must call the `onFailure` listeners, so the SDK can abort client tools and reject open requests.
 
 ## Create and run a session
 
-A typical integration creates and automatically observes a session, listens for state, submits work, and closes cleanly:
+A typical integration creates a session (which also observes it), listens for updates, submits work, and closes cleanly:
 
 ```ts
 import {
@@ -147,64 +147,64 @@ try {
 }
 ```
 
-`client.sessions.create(input)` sends `session.create`, then observes the new session before resolving. `client.sessions.observe(sessionId)` does the same observation handshake for an existing session. `client.sessions.list()` returns `{ sessionId, lifecycle }` summaries.
+`client.sessions.create(input)` sends `session.create`, then observes the new session before returning. `client.sessions.observe(sessionId)` observes an existing session. `client.sessions.list()` returns `{ sessionId, lifecycle }` for each session.
 
-Creation requires complete execution-environment input and immutable attributes. The execution `cwd` must be absolute and belongs to the selected environment, not necessarily the SDK process. Fly Sprite sessions refer to already-provisioned targets configured on the host. See [sessions](sessions.md) for creation attributes and [ownership and scope](ownership-and-scope.md) for path ownership.
+Creating a session requires the full execution environment and the creation attributes, which never change afterward. The `cwd` must be absolute and is a path in the chosen environment, which may not be where the SDK runs. A Fly Sprite session refers to an existing Sprite that the host is configured to reach. See [sessions](sessions.md) for creation attributes and [ownership and scope](ownership-and-scope.md) for which machine owns which paths.
 
-`session.unobserve()` stops observation and makes that `TauSdkSession` facade terminal. It does not delete the hosted session. `client.close()` is idempotent and closes the whole client.
+`session.unobserve()` stops observing, and that `TauSdkSession` object can no longer be used. The session itself is not deleted. `client.close()` closes the whole client and is safe to call more than once.
 
 The connected `TauSdkClient` exposes:
 
 | Member | Purpose |
 | --- | --- |
 | `ready` | The validated server `ready` message and advertised methods. |
-| `sessions.create(input)` | Create, observe, and return a session facade. |
+| `sessions.create(input)` | Create and observe a session, and return its object. |
 | `sessions.list()` | List hosted session summaries. |
-| `sessions.observe(sessionId)` | Observe an existing session and return a facade. |
+| `sessions.observe(sessionId)` | Observe an existing session and return its object. |
 | `subscribe(listener)` | Receive deltas for every observed session on this connection. |
 | `subscribePendingUserMessages(listener)` | Receive pending-state replacements across observed sessions. |
 | `subscribeSubagentActivities(listener)` | Receive subagent-activity changes across observed sessions. |
-| `subscribeEphemeral(listener)` | Receive best-effort ephemeral events across observed sessions. |
-| `close()` | Close the client and its owned resources. |
+| `subscribeEphemeral(listener)` | Receive ephemeral events, which are not guaranteed, across observed sessions. |
+| `close()` | Close the client and everything it owns. |
 
 Each subscription returns an unsubscribe function.
 
-## Use the session facade
+## Use the session object
 
-`TauSdkSession.id` is the bound session id. Its methods map directly to protocol operations; the [method reference](session-protocol-methods.md) defines exact results, turn outcomes, busy rules, and mutation behavior.
+`TauSdkSession.id` is the session's ID. Each method corresponds to a protocol method; the [method reference](session-protocol-methods.md) gives exact results, turn outcomes, and when a call returns `busy` or interrupts work.
 
 | SDK method | Purpose |
 | --- | --- |
 | `record(text, options?)` | Append user text without running a turn. |
 | `submit(text, options?)` | Append user text and run an idle session turn. |
-| `queue(text, options?)` | Run now or wait behind active session work. |
-| `steer(text)` | Redirect active model work at a safe boundary. |
-| `cancelPendingMessages()` | Cancel all queued and unapplied steering input. |
+| `queue(text, options?)` | Run now, or after the running turn. |
+| `steer(text)` | Change the running turn's direction at its next safe point. |
+| `cancelPendingMessages()` | Cancel all queued messages and steering not yet applied. |
 | `retry()` | Run from current history without appending user text. |
-| `exec(command, options?)` | Run an independent login-Bash command in the execution environment. |
-| `sample({ context, options })` | Run isolated inference without mutating the session. |
-| `interrupt()` | Request cancellation of active session work. |
-| `snapshot()` | Read the complete authoritative snapshot. |
-| `setReasoning(reasoning)` | Set reasoning for the next independently started turn. |
+| `exec(command, options?)` | Run a command in a login Bash in the execution environment. |
+| `sample({ context, options })` | Run a standalone model call without changing the session. |
+| `interrupt()` | Ask the session's running work to stop. |
+| `snapshot()` | Read the complete current snapshot. |
+| `setReasoning(reasoning)` | Set reasoning, starting with the next turn. |
 | `setPersona(personaId)` | Change persona and return the updated snapshot. |
 | `resolvePrompt(promptId)` | Load a current prompt body from the execution environment. |
-| `autocompletePaths({ query, limit })` | Request bounded execution-environment path suggestions. |
-| `reload()` | Reload session-owned configuration and content. |
+| `autocompletePaths({ query, limit })` | Get a limited list of path suggestions from the execution environment. |
+| `reload()` | Reload the session's configuration and content. |
 | `compact(mode, options?)` | Manually compact model context. |
 | `rewindToHistoryEntryId(id)` | Rewind from one user history entry while idle. |
 | `interruptSubagent(subagentId)` | Interrupt one live subagent run. |
-| `createEphemeralContext(options)` | Create a non-persisted host-owned agent context. |
+| `createEphemeralContext(options)` | Create an agent context on the host that is not saved. |
 | `submitEphemeralThread(options)` | Run or continue one ephemeral thread. |
 | `closeEphemeralContext(contextId)` | Close an ephemeral context and its threads. |
-| `unobserve()` | Stop observation and retire this facade. |
+| `unobserve()` | Stop observing; this object can no longer be used. |
 
-`submit`, `queue`, and `record` accept `{ historyEntryId?: string }`. When omitted, Tau generates the user history id. Use `getTauSdkSessionTurnRecord(snapshot, id)` to distinguish unknown, running, and settled accepted turns, or `getTauSdkSessionTurnOutcome(snapshot, id)` when only a settled outcome matters.
+`submit`, `queue`, and `record` accept `{ historyEntryId?: string }`; without it, Tau generates the ID. Use `getTauSdkSessionTurnRecord(snapshot, id)` to tell whether an accepted turn is unknown, running, or finished, or `getTauSdkSessionTurnOutcome(snapshot, id)` when you only need the final outcome.
 
-`createEphemeralContext` and `submitEphemeralThread` accept an optional `reasoning` effort. A context inherits the parent session agent's current effort when creation omits it. A submission override becomes that thread's current effort before its turn; forks inherit the source thread's effort before applying an override.
+`createEphemeralContext` and `submitEphemeralThread` accept an optional `reasoning` effort. Without it, a new context uses the session's current effort. On submission, the given effort becomes the thread's effort before the turn runs. A fork copies the source thread's effort, then applies any given effort.
 
 ### Execute a command
 
-`exec` generates a unique wire-level execution id and supports exact positional arguments, environment overrides other than `HOME`, binary stdin, a command `cwd`, timeout, capture limit, and cancellation signal:
+`exec` generates a unique execution ID for you. It supports exact positional arguments, environment variables other than `HOME`, binary stdin, a starting `cwd`, a timeout, a capture limit, and a cancellation signal:
 
 ```ts
 const controller = new AbortController();
@@ -219,11 +219,11 @@ const result = await session.exec('exec "$0" "$@"', {
 console.log(result.exitCode, result.output);
 ```
 
-Aborting the signal sends targeted `session.cancelExec` and rejects the SDK call. It does not interrupt turns or other executions. The operation does not enter conversation history.
+Aborting the signal cancels only this command, with `session.cancelExec`, and rejects the call. Turns and other commands keep running. The command is never added to the conversation.
 
 ### Sample a model
 
-`sample` uses the session's active resolved model target and credentials but only the supplied provider-neutral context:
+`sample` uses the session's current model and credentials, but only the context you supply, in Tau's provider-independent format:
 
 ```ts
 const sampled = await session.sample({
@@ -243,21 +243,21 @@ const sampled = await session.sample({
 console.log(sampled.message.content);
 ```
 
-The returned complete assistant message can be reused in a later sampling context. Optional tool schemas can produce tool-call content, but Tau does not execute those calls. Sampling does not emit deltas, change snapshot revision or cost, or write conversation history.
+You can reuse the returned assistant message in a later sample's context. If you pass tool schemas, the model may return tool calls, but Tau never runs them. Sampling sends no deltas, changes neither the snapshot revision nor the cost, and adds nothing to the conversation.
 
 ## Consume streamed state
 
-The SDK exposes connection-wide subscriptions on `TauSdkClient` and session-filtered subscriptions on `TauSdkSession`. Prefer the session facade unless one component deliberately multiplexes several sessions.
+`TauSdkClient` has subscriptions for all sessions on the connection, and `TauSdkSession` has subscriptions for one session. Prefer the session's own unless one component handles several sessions.
 
 ### Snapshot deltas
 
-`session.onDelta(listener)` receives only that session's `TauSdkDelta` messages. The facade buffers deltas received before its first local delta listener and replays them when that listener is attached. Use `applySessionProtocolDelta` against an installed snapshot. On any revision gap or invalid transition, refresh with `session.snapshot()`.
+`session.onDelta(listener)` receives only that session's `TauSdkDelta` messages. Deltas that arrive before the first listener is added are kept and delivered to it. Apply them to your snapshot with `applySessionProtocolDelta`. If a revision is missing or a change is invalid, fetch a fresh copy with `session.snapshot()`.
 
-A method that returns an authoritative snapshot, such as reload, compact, rewind, or persona change, lets the facade discard buffered deltas through that revision. Do not also replay stale presentation transitions from those discarded deltas.
+Methods that return a full snapshot, such as reload, compact, rewind, and persona change, let the session object drop the kept deltas up to that revision. Do not replay UI effects from those dropped deltas.
 
 ### Pending input
 
-`session.pendingUserMessages()` returns a clone of the current full pending-message state. `session.onPendingUserMessages(listener)` immediately emits the current baseline, then newer full replacements. Its revision is independent of the snapshot.
+`session.pendingUserMessages()` returns a copy of the full pending-message state. `session.onPendingUserMessages(listener)` sends the current state right away, then each newer full replacement. Its revision is separate from the snapshot's.
 
 ```ts
 const stopPending = session.onPendingUserMessages(({ state }) => {
@@ -265,29 +265,29 @@ const stopPending = session.onPendingUserMessages(({ state }) => {
 });
 ```
 
-Pending input is shared among clients observing the live hosted session and starts empty after recovery.
+All clients observing the live session share pending input. It is empty after recovery.
 
 ### Subagent activity
 
-`session.subagentActivities()` returns the current transient activity state. `session.onSubagentActivities(listener)` immediately emits the current agents as `agent.set` changes, then later per-agent replacements and removals.
+`session.subagentActivities()` returns the current live activity. `session.onSubagentActivities(listener)` sends the current subagents right away as `agent.set` changes, then later replacements and removals for each subagent.
 
-For a custom accumulator, use `applySessionProtocolSubagentActivitiesMessage`. This channel has its own revision and does not replace durable `snapshot.agents`.
+To keep your own copy, use `applySessionProtocolSubagentActivitiesMessage`. This channel has its own revision and does not replace the saved `snapshot.agents`.
 
 ### Ephemeral events
 
-`session.onEphemeral(listener)` receives best-effort footer notices, ephemeral thread progress, and non-recoverable timeline notices. These events are not replayed or included in `session.snapshot()`.
+`session.onEphemeral(listener)` receives footer notices, ephemeral thread progress, and timeline notices that are not saved. Delivery is not guaranteed, and these events are never replayed or included in `session.snapshot()`.
 
-If rendering `timeline.item`, accept only the active epoch and merge by its allocated sequence. Compaction and rewind causes determine which client-local ephemeral items remain valid. The [session protocol](session-protocol.md) gives the application rules.
+If you show `timeline.item` events, accept only the current epoch and place each by its sequence number. Compaction and rewind causes decide which of these items you keep. The [session protocol](session-protocol.md) gives the application rules.
 
 ## Host a browser diff review
 
-`startTauSdkDiffReview()` starts the built-in browser review UI for an observed session without requiring the TUI or opening a browser. It supports client-owned reverse proxying, durable review-state storage, restored conversation context, and an awaited one-shot submission callback.
+`startTauSdkDiffReview()` starts the built-in browser review UI for an observed session, without the TUI and without opening a browser. Your application can put it behind its own reverse proxy, store review state, restore earlier conversations, and receive the submitted review once through a callback.
 
-See [SDK browser diff review](sdk-diff-review.md) for its startup, persistence, submission, and lifecycle contracts.
+See [SDK browser diff review](sdk-diff-review.md) for startup, storage, submission, and lifecycle.
 
 ## Provide client tools
 
-Pass `TauSdkClientTool` entries in `clientTools` when model-facing work must run in the integration process:
+Pass `TauSdkClientTool` entries in `clientTools` to give the model tools that run in your process:
 
 ```ts
 import {
@@ -338,19 +338,19 @@ const client = await createTauSdkClient({
 });
 ```
 
-The handler receives `sessionId`, owning `agentId`, `callId`, an `AbortSignal`, and an execution-environment facade. The handler itself runs on the client machine. `context.executionEnvironment.exec()` crosses the session boundary and runs in the session execution environment.
+The handler receives `sessionId`, the calling `agentId`, `callId`, an `AbortSignal`, and the execution-environment API. The handler runs on the client machine, while `context.executionEnvironment.exec()` runs commands in the session's execution environment.
 
-`describe` is optional. When present, the SDK calls it with the arguments and a reduced context containing `sessionId`, `agentId`, `callId`, and `signal` before acknowledgement. This context deliberately has no execution-environment facade. It may return a partial running presentation containing `subject`, `subjectWrap`, `details`, or `metadata`. Tau owns action and operation, fills every omitted field, and acknowledges the resolved presentation before calling `execute`.
+`describe` is optional. If present, the SDK calls it before accepting the call, with the arguments and a smaller context of `sessionId`, `agentId`, `callId`, and `signal`, without execution-environment access. It may return a partial presentation for the running card, with `subject`, `subjectWrap`, `details`, or `metadata`. Tau sets the action and operation, fills in omitted fields, and acknowledges with the result before calling `execute`.
 
-The execution result may independently include the same partial shape for the terminal card. Return a string or `{ content, presentation? }` for success, or `{ ok: false, error, presentation? }` for a structured failure. Successful `content` may be a string or an ordered array of text/image blocks. Strings are delivered as one text block. Omitted presentation fields use Tau's terminal defaults; empty detail or metadata arrays suppress those defaults. If `describe` throws, the SDK reports a preparation error without calling `execute`. If the client never returns a result because of cancellation, timeout, detach, or another failure, the host produces a complete fallback presentation.
+The execution result may include the same partial shape for the finished card. Return a string or `{ content, presentation? }` for success, or `{ ok: false, error, presentation? }` for a handled failure. `content` may be a string, sent as one text block, or an ordered array of text and image blocks. Omitted presentation fields get Tau's defaults, and an empty `details` or `metadata` array hides that default. If `describe` throws, the SDK reports a preparation error and does not call `execute`. If no result is returned, because of cancellation, timeout, detach, or another failure, the host shows a complete default card.
 
-Tau preserves every explicit presentation field up to the protocol safety limits; it does not apply display truncation or normalize client text. `truncateTauClientToolText` provides optional caller-controlled line, character, and head or middle truncation. Use its result directly for a subject. For a block of detail text, split the result on `\n` and map each line to one `details` entry; use `maxLines: 1` when assigning it directly to one detail or metadata entry. The helper shapes text but does not replace protocol validation. The SDK aborts handlers on host cancellation, client close, or terminal transport failure. `client.close()` waits for active handlers to settle.
+Tau keeps every presentation field you set, up to the protocol limits, without truncating or normalizing it. `truncateTauClientToolText` truncates text for you by lines and characters, keeping the start or the middle. Use its result directly as a subject. For a block of detail text, split the result on `\n` and make each line one `details` entry; use `maxLines: 1` when the result goes into a single entry. The helper does not replace protocol validation. The SDK aborts handlers when the host cancels, the client closes, or the transport fails, and `client.close()` waits for running handlers to finish.
 
-Tool definitions are frozen for each assistant turn and remain independent of persona tool allowlists. Names cannot collide with host tools or another observing client's tools. See [client tools](client-tools.md) for authority, limits, command-backed tools, and disconnect behavior.
+Each assistant turn keeps the tool definitions it started with. Client tools are not affected by the persona's tool list. Names must not match host tools or tools of another observing client. See [client tools](client-tools.md) for authority, limits, command-backed tools, and disconnect behavior.
 
 ### Build a code-mode tool
 
-`createTauCodeModeClientTool()` wraps a bounded one-shot JavaScript API as an SDK client tool:
+`createTauCodeModeClientTool()` turns an API you define into a client tool that runs one-off JavaScript programs against it:
 
 ```ts
 import {
@@ -372,40 +372,40 @@ const tickets = createTauCodeModeClientTool({
 });
 ```
 
-Pass `tickets` in `clientTools`. Generated code receives the declared API namespace, progressively disclosed `docs`, `printText`, the asynchronous `printImage` output helper, `truncate` and `truncateLines`, and live `Date` and `Math`. API calls cross a bounded JSON bridge. The submitted code appears, concisely truncated and character-wrapped, as the running and terminal tool-card subject. The tool description remains explicit caller input; the builder is optional.
+Pass `tickets` in `clientTools`. The model's code receives your API namespace, `docs` (read on demand), `printText`, the async `printImage`, `truncate` and `truncateLines`, and the real `Date` and `Math`. API calls pass through a size-limited JSON bridge. The submitted code, truncated and wrapped, is the subject of the running and finished tool cards. You write the description; the description builder is optional.
 
-Use `await printImage({ data, mimeType })` to forward a base64 image. Successful code-mode results contain an ordered `content` array of text/image blocks. SDK client tools preserve that order: adjacent text writes form one text block, and each awaited image separates the preceding and following text. The helper validates and prepares JPEG, PNG, or WebP images outside the sandbox, creates no files, and shares the limits described in [tools](tools.md).
+Use `await printImage({ data, mimeType })` to return a base64 image. Results contain an ordered `content` array of text and image blocks, and SDK client tools keep that order: consecutive text output forms one block, and each image splits the text before and after it. The helper validates and prepares JPEG, PNG, or WebP images outside the sandbox, creates no files, and uses the limits described in [tools](tools.md).
 
-Code-mode tool calls and standalone execution accept optional `maxOutputTokens` (1 through 65,536), with an 8,192-token default text budget. Output persistence is opt-in through the definition's `persistOutput` callback.
+Code-mode calls and standalone runs accept an optional `maxOutputTokens` (1 through 65,536), with a default text budget of 8,192 tokens. Saving output to files is off unless the definition provides a `persistOutput` callback.
 
-The SDK also exports `executeTauCodeMode` for standalone execution. The separate `@markusylisiurunen/tau/code-mode` entry point additionally exports `runTauClientToolCommand`, and `runTauCodeModeCommand` for command-backed tools. Use the helpers instead of implementing their framing manually.
+The SDK also exports `executeTauCodeMode` for standalone runs. The separate `@markusylisiurunen/tau/code-mode` entry point also exports `runTauClientToolCommand` and `runTauCodeModeCommand` for command tools. Use these helpers instead of implementing the protocol yourself.
 
 ## Cancel and close deliberately
 
-Most turn and mutation methods do not accept an `AbortSignal`. Call `session.interrupt()` to cancel active host work. `session.exec()` is the exception: its optional signal targets only that execution.
+Most turn and session-changing methods do not accept an `AbortSignal`. Call `session.interrupt()` to stop running work on the host. `session.exec()` is the exception: its optional signal cancels only that command.
 
-`session.unobserve()` retires one facade. `client.close()` retires the connection, rejects pending transport requests, aborts client-tool handlers, waits for them to settle, and then closes the transport. For the default in-process client it also persists sessions and shuts down the owned host. For WebSocket it leaves the remote host and sessions running.
+`session.unobserve()` ends one session object. `client.close()` ends the connection: it rejects open requests, aborts client tool handlers, waits for them to finish, and closes the transport. For the default in-process client, it also saves sessions and shuts down the host. Over WebSocket, the remote host and its sessions keep running.
 
-Always close clients in `finally`. Do not continue using a session facade after unobserve or any client after close.
+Always close clients in `finally`. Never use a session object after `unobserve()`, or a client after `close()`.
 
 ## Handle errors
 
 All exported SDK and transport errors extend `TauSessionClientError`:
 
 - `TauSessionProtocolResponseError` means the host returned a protocol error. It exposes `code`, `message`, `requestId`, and optional `data`.
-- `TauTransportError` means connection setup, framing, version validation, timeout, closure, or another terminal transport operation failed.
+- `TauTransportError` means the connection failed: during setup, framing, version checks, a timeout, closing, or another fatal transport error.
 
 Branch on a protocol error's `code`, not its message. A successful request can still return a failed, aborted, or blocked turn outcome, so inspect `result.turn.status` separately.
 
-Listener exceptions are isolated from SDK event delivery. Handle failures inside listeners and keep state application deterministic.
+An exception in one listener does not stop delivery to others. Handle errors inside your listeners, and keep state updates deterministic.
 
 ## Use the public types and helpers
 
-The SDK entry point exports the types needed at integration boundaries rather than requiring imports from internal modules:
+The SDK entry point exports every type an integration needs, so you never import from internal modules:
 
 - `TauSdkClient`, `TauSdkSession`, client option types, session summaries, and request and result aliases;
 - `TauSdkDelta`, `SessionProtocolSnapshot`, pending-message types, subagent-activity types, and ephemeral event types;
-- `TauSdkClientTool`, its execution context and environment facade, and code-mode definition and result types;
+- `TauSdkClientTool`, its execution context and execution-environment API, and code-mode definition and result types;
 - `SessionProtocolTransport`, listener types, WebSocket options, and transport errors.
 
 It also exports `applySessionProtocolDelta`, `applySessionProtocolSubagentActivitiesMessage`, the turn-ledger helpers, and user-text projection helpers:
@@ -418,4 +418,4 @@ import {
 } from "@markusylisiurunen/tau/sdk";
 ```
 
-Use `getTauUserDisplayText` before rendering raw snapshot user text. It removes Tau metadata and leading exact hidden system blocks. `getTauUserModelText` removes Tau metadata while preserving model-facing hidden instructions. `projectTauUserText` returns both views together. These helpers apply only to user messages.
+Use `getTauUserDisplayText` before showing user text from a snapshot. It removes Tau metadata and leading hidden `<system>` blocks. `getTauUserModelText` removes Tau metadata but keeps the hidden blocks the model sees. `projectTauUserText` returns both. These helpers are for user messages only.

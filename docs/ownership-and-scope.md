@@ -1,6 +1,6 @@
 # Ownership and scope
 
-Tau separates terminal interaction, session orchestration, and agent-visible execution even when all three happen in one process. This is the most important fact to establish before changing a path or configuration file. In an attached session, “local” can refer to three different machines.
+Tau splits a session into three parts: the terminal or other interface you use, the host that runs the session, and the machine the agent works on. They stay separate even when all three run in one process. Know which part owns a path or setting before you change it. In an attached session, “local” can mean any of three machines.
 
 ## The four operating roles
 
@@ -8,31 +8,29 @@ Tau separates terminal interaction, session orchestration, and agent-visible exe
 
 The **client** is the interface attached to a session host. The terminal client owns the TUI, editor state, terminal colors, active theme, local speech commands, the diff-review process, and configured command client tools. An SDK program or Telegram adapter can also be a client.
 
-Client tools execute on the client machine, not wherever the agent's Bash tool runs. Client-local configuration is discovered from the client's startup working directory and home.
+Client tools run on the client machine, which may differ from the machine where the agent's Bash tool runs. Client configuration is found from the client's startup working directory and home.
 
 ### Host
 
 The **host** creates, observes, persists, and recovers sessions. It owns model calls, credentials, session orchestration, tool binding, history storage, and execution-environment lifecycle. Local `tau` creates an in-process host. `tau serve` is the standalone host entry point.
 
-The host's home owns data such as session snapshots, authentication storage, usage logs, and the local history database. Use Tau commands and session operations to manage these stores rather than editing their files directly.
+Session snapshots, authentication storage, usage logs, and the local history database live in the host user's home. Manage them with Tau commands and session operations. Do not edit their files directly.
 
-MCP connections are host-owned. Configure servers on the host; stdio servers run there, with host credentials and host resource access, not in the session execution environment.
+MCP connections belong to the host. Configure servers on the host. Stdio servers run there, with the host's credentials and access to the host's resources. They do not run in the session's execution environment.
 
-The intrinsic `tau_docs` tool is also host-owned. It reads documentation packaged with the installed host version.
+The built-in `tau_docs` tool also belongs to the host. It reads the documentation installed with the host's Tau version.
 
 ### Execution environment
 
 The **execution environment** is the machine the agent can act on. It owns the agent-visible working directory (`cwd`), home, platform, environment, filesystem, processes, project repository, project configuration and content, `AGENTS.md` files, skills, and command resolution.
 
-Tau asks the execution environment to read or execute against those resources. The host must not treat its own filesystem as a shortcut, even when a local execution environment happens to share it.
-
-A session has one authoritative execution-environment snapshot. Paths shown to the agent and paths passed to agent tools are execution-environment paths.
+Tau reads files and runs commands through the execution environment, even when it is on the same machine as the host. Each session has exactly one execution environment. Paths shown to the agent and paths passed to its tools are always paths on that environment.
 
 ### Telegram runner
 
-The **Telegram runner** owns Telegram polling, chat routing, attachments, outbound messages, project selection, and Telegram-specific persisted runner state. It is a client of local in-process Tau sessions and also starts their host on the runner machine.
+The **Telegram runner** owns Telegram polling, chat routing, attachments, outbound messages, project selection, and Telegram-specific persisted runner state. It is a client of in-process Tau sessions and starts their host on the runner machine.
 
-For repository and composite projects it prepares managed workspaces. A configured persistent directory project reuses the specified directory. Those workspaces become local execution environments for their sessions. The separate file passed to `tau telegram --config-file` is runner configuration, not a Tau `config.json` level.
+For repository and composite projects it prepares managed workspaces. A persistent-directory project reuses the configured directory. Each workspace becomes the local execution environment of its session. The file passed to `tau telegram --config-file` is runner configuration. It is not one of Tau's `config.json` levels.
 
 ## Where each mode runs
 
@@ -45,11 +43,11 @@ For repository and composite projects it prepares managed workspaces. A configur
 | SDK over WebSocket | SDK caller | Remote server | Environment selected or restored by that host |
 | `tau telegram` | Telegram runner | In-process on the runner machine | Prepared project workspace or persistent directory |
 
-A Fly Sprite can place the execution environment on another target while the host stays on its own machine. The host keeps provider credentials and orchestration authority; the target owns its paths and commands.
+A Fly Sprite puts the execution environment on another machine while the host stays on its own. The host keeps the provider credentials and runs the session. The Sprite owns its paths and commands.
 
 ## Who owns common paths and behavior
 
-| Resource or behavior | Canonical owner | Consequence |
+| Resource or behavior | Owner | Consequence |
 | --- | --- | --- |
 | Agent `cwd`, home, repository, files, and commands | Execution environment | Use target paths in prompts, `session.create`, and agent tool calls. |
 | `.tau/config.json`, personas, prompts, skills, and `AGENTS.md` used by a session | Execution environment | Edit them on the target and relative to the session `cwd`. |
@@ -60,9 +58,9 @@ A Fly Sprite can place the execution environment on another target while the hos
 | Local transcript history and remote history outbox | Host home | History follows the host, not an attached TUI or execution target. |
 | Terminal theme and `/theme` | TUI client | An attached client selects from Tau’s built-in themes. Themes are not session state. |
 | `/diff` process | TUI client | Tau’s built-in browser tool runs on the client machine. Repository capture still runs through the session execution environment. |
-| Configured command client tools | Owning client | Commands and their environment are client-local; their execution-environment facade reaches the session target explicitly. |
+| Configured command client tools | Owning client | Commands and their environment are on the client. File access they make on behalf of the session goes to the execution environment. |
 | `/listen` and `/speak` capture or playback | TUI client | Required programs, devices, and media credentials belong on the client machine. |
-| Host execution-environment targets | Host startup | Fly Sprite API definitions must be available to the host before it accepts sessions using them. |
+| Host execution-environment targets | Host startup | Fly Sprite connection settings must be in the host's configuration before it accepts sessions that use them. |
 | Telegram bot token, routing, workspaces, and generated runner state | Telegram runner | Manage these through the Telegram config and runner commands, not project `config.json`. |
 
 ## Decide where to edit configuration
@@ -71,10 +69,10 @@ Start from the behavior that consumes the setting:
 
 1. If it changes what the agent sees or can do in the project, edit configuration or content in the execution environment's discovery path.
 2. If it changes terminal rendering, `/diff`, `/listen`, or a command client tool, edit the TUI client's configuration and restart that client.
-3. If it changes credentials, session persistence, remote history, or available hosted-environment resolvers, edit or export it for the host process and restart the host when required.
+3. If it changes credentials, session storage, remote history, or hosted execution environment connections, set it for the host process and restart the host when required.
 4. If it changes Telegram routing or workspace preparation, edit the runner's `--config-file` on the runner machine.
 
-For a local `tau` session these locations often collapse to one home and repository. The ownership rule still predicts remote behavior and prevents configuration from being placed on the wrong machine.
+For a local `tau` session these locations are often the same home and repository. Following the ownership rule anyway means the configuration still works when the session becomes remote.
 
 ## A remote configuration example
 
@@ -84,22 +82,22 @@ Suppose a laptop runs:
 tau attach --new --cwd /srv/ledger ws://devbox.example:8787
 ```
 
-The path `/srv/ledger` is interpreted by the host and its local execution environment. Project personas and `.tau/config.json` are read from `/srv/ledger` and its ancestors on `devbox.example`. The laptop's current directory does not influence that session runtime.
+The host and its local execution environment resolve `/srv/ledger`. Project personas and `.tau/config.json` are read from `/srv/ledger` and its parent directories on `devbox.example`. The laptop's current directory has no effect on the session.
 
 The laptop still loads its own theme and command client tools before attaching. `/diff` launches Tau’s built-in browser tool on the laptop. Git snapshot commands for the review run through the session and therefore see `/srv/ledger` on the execution environment.
 
-If the selected persona needs a provider credential, the host on `devbox.example` makes the model call. Export the provider environment variable for `tau serve` there, or make the appropriate runtime configuration available to that host. Setting it only in the laptop shell does not authenticate the remote host.
+The host on `devbox.example` makes the model calls, so it needs the provider credential. Export the provider's environment variable for `tau serve` there, or put the key in that host's global configuration. Setting it only in the laptop shell does not reach the remote host.
 
 ## Home has a boundary too
 
-Tau includes global configuration only when the relevant `cwd` is equal to or below that component's home. For execution runtime discovery, both values belong to the execution environment. For client-local startup discovery, they belong to the client.
+Tau includes global configuration only when the relevant `cwd` is the home directory or inside it. For session configuration, both the `cwd` and the home are on the execution environment. For client startup configuration, both are on the client.
 
-This matters when a remote or hosted environment uses a project outside its configured home. In that case Tau walks project levels to the filesystem root but does not inject `~/.config/tau` from some other machine or home.
+This matters when a remote or hosted environment uses a project outside its home. Tau then reads project levels up to the filesystem root but does not add `~/.config/tau`, from that machine or any other.
 
 ## What `tau_docs` can and cannot tell you
 
-`tau_docs` documents contracts shipped with the host. It can explain valid fields, paths, precedence, and supported behavior for that installed host version.
+`tau_docs` reads the documentation installed with the host. It can explain valid fields, paths, precedence, and supported behavior for that host's Tau version.
 
-It cannot inspect effective configuration, current environment variables, loaded client tools, the active TUI theme, attached-client versions, or files on a client machine. An attached client can be a different Tau version from the host. Use client commands and direct inspection on the owning machine for client-local questions, and use session-visible warnings or host-side inspection for effective runtime questions.
+It cannot see effective configuration, environment variables, loaded client tools, the active TUI theme, the versions of attached clients, or files on a client machine. An attached client can run a different Tau version from the host. For client questions, use client commands and look on the client machine. For questions about the running session, use the warnings the session reports or inspect the host.
 
 See [configuration](configuration.md) for level discovery and change boundaries, [remote sessions](remote-sessions.md) for attach and server operation, and [security](security.md) for trust implications.

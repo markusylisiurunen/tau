@@ -16,9 +16,9 @@ Requires an OpenAI or Google API key for the selected model. See [feature-specif
 
 ## Models and capabilities
 
-`--model` is required; the CLI has no implicit default. Start with `gpt-image-2.5-flare` at `--quality medium` for everyday generation and editing. Increase quality or choose `gpt-image-2.5-sunburst` when precise edits justify the extra effort. See [approximate cost](#approximate-cost) before choosing settings.
+`--model` is required; there is no default. Start with `gpt-image-2.5-flare` at `--quality medium` for everyday generation and editing. Increase quality or choose `gpt-image-2.5-sunburst` when precise edits justify the extra effort. See [approximate cost](#approximate-cost) before choosing settings.
 
-Choose size, resolution, and aspect ratio for the intended use; there is no recommended universal size. Dimensions in the examples illustrate particular use cases. Omitted controls use provider defaults, except `--format`, which defaults to `png`. Unsupported options fail before generation.
+Choose size, resolution, and aspect ratio for the intended use; no single size fits everything. The sizes in the examples are for those particular cases. Options you leave out use the provider's defaults, except `--format`, which defaults to `png`. Unsupported options fail before anything is generated.
 
 | Model | Resolution | Aspect ratios | Thinking | Other controls |
 | --- | --- | --- | --- | --- |
@@ -42,7 +42,7 @@ Gemini does not support transparent-background generation ([Google documentation
 
 ## Input and examples
 
-Supply exactly one of `--prompt` and `--prompt-file` (UTF-8). Repeat `--reference` for local PNG, JPEG, or WebP files. References retain their order and original bytes. OpenAI reference requests use the edit endpoint.
+Give exactly one of `--prompt` and `--prompt-file` (UTF-8). Repeat `--reference` for each local PNG, JPEG, or WebP reference image. References are sent in order and unchanged. With references, OpenAI requests use the edit endpoint.
 
 Up to 16 references are accepted for OpenAI and 14 for Gemini; Flash Lite is not optimized for multiple references. Each reference is limited to 50 MB. Gemini's complete serialized request is limited to 19 MB, including the prompt, base64-encoded references, and JSON escaping.
 
@@ -84,7 +84,7 @@ for i in 1 2 3 4; do
 done
 ```
 
-Each invocation is independent; edits use only the supplied prompt and references.
+Each run is independent; an edit sees only the prompt and references you give it.
 
 ## Outputs and recovery
 
@@ -94,9 +94,9 @@ The output's parent directory must exist. Neither the output nor `<output>.parts
 - `image.<format>`: the published image. Gemini responses are converted to PNG when needed; OpenAI bytes are saved as returned.
 - `manifest.json`: model, output path, usage, and `source` with the original filename and provider-declared MIME type (`null` when absent).
 
-Original bytes and usage remain available if conversion fails. Conversion may discard embedded metadata; use the original when provenance matters.
+The original bytes and usage are kept even if conversion fails. Conversion may drop embedded metadata, so use the original when provenance matters.
 
-Failures exit nonzero and identify the invalid option or failed processing stage. Existing output or artifact paths require a fresh `--output` path; preserve retained recovery artifacts. Once generation starts, errors report the retained directory, which may be empty or incomplete. If final publication fails, the error points to the completed image to copy to a fresh path without generating again. Requests are not automatically retried because a failed request may already have incurred a charge; another generation request may incur another charge.
+Failures exit nonzero and name the invalid option or the step that failed. If the output or `.parts` path already exists, choose a new `--output` path, and keep the existing files in case you need them. Once generation has started, errors give the path of the kept directory, which may be empty or incomplete. If only the final copy to `--output` fails, the error points to the finished image, so copy it to a new path instead of generating again. Requests are never retried automatically, because a failed request may already have been charged, and a new request may be charged again.
 
 ## Approximate cost
 
@@ -129,4 +129,4 @@ Approximate USD image-output costs from [Google pricing](https://ai.google.dev/g
 
 Use OpenAI when transparent backgrounds or JPEG/WebP output are required. Compare the quality needed for the task, not just matching tier names across providers. Check [OpenAI pricing](https://developers.openai.com/api/docs/guides/image-generation#gpt-image-25-costs) and Google pricing for current rates before large batches.
 
-See [command-line tools](tools.md) for command discovery and execution ownership.
+See [command-line tools](tools.md) for the other tools and where commands run.

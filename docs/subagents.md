@@ -1,24 +1,24 @@
 # Subagents
 
-Subagents are host-supervised background agent threads created by the main agent. They are useful when work can proceed independently or needs a separate context. A subagent is not a second session and does not have its own persona file.
+Subagents are background agents that the main agent starts and the host supervises. They help when part of the work can run independently or benefits from a separate context. A subagent belongs to its parent session. It is not a session of its own and has no persona file.
 
 ## Background workers
 
-Subagents are general-purpose background workers with no named types. Multiple instances can run concurrently, each with its own task and conversation.
+Subagents are general-purpose workers. There are no named types. Several can run at once, each with its own task and conversation.
 
-The worker inherits the active main persona's model-facing behavior through Tau's maintained wrapper. Its instructions and description are not configuration surfaces. Supply task-specific instructions in the launch prompt, including any relevant skill guidance.
+A subagent behaves like the active main persona, wrapped in instructions that Tau maintains. Those instructions and the subagent's description cannot be configured. Put task-specific instructions, including any relevant skill guidance, in the launch prompt.
 
-Availability follows the main persona's tool list. Built-in personas and standalone custom personas that omit `tools` enable the five supervision tools. A custom persona can prevent launches by providing an explicit `tools` list without `spawn_agent`; omit all five supervision tools when no subagent interaction is wanted. There is no separate subagent enable or disable setting. See [personas](personas.md).
+Whether the agent can start subagents depends on the main persona's tool list. Built-in personas, and custom personas that omit `tools`, enable all five subagent tools. A custom persona with a `tools` list that lacks `spawn_agent` cannot start subagents. Leave out all five subagent tools when no subagent interaction is wanted. There is no other setting to turn subagents on or off. See [personas](personas.md).
 
 ## Trigger sensitivity
 
-The main agent launches subagents only when the user or active instructions explicitly request delegation. Ask for a subagent in ordinary language; no named agent tag is needed. A request does not itself create a thread: the main agent still calls `spawn_agent`.
+The main agent starts subagents only when the user or active instructions explicitly ask for delegation. Ask in ordinary language; no special tag is needed. The request itself does not create a subagent: the main agent still has to call `spawn_agent`.
 
-This is agent-facing policy. The host validates launches but does not infer whether a prompt semantically authorized delegation.
+The agent follows this rule itself. Tau checks that a launch is valid, but it does not judge whether the request really asked for delegation.
 
-## Tool inheritance and restriction
+## Tools
 
-The eligible inherited tools are:
+A subagent can receive these tools:
 
 - `bash`
 - `write`
@@ -30,31 +30,29 @@ The eligible inherited tools are:
 - `mcp`, when the host has enabled MCP servers
 - `models`
 
-Tau then adds intrinsic `tau_docs` to every subagent registry, independently of this subset. A persona’s `tools` list cannot disable it. Apart from `tau_docs`, subagents do not receive subagent supervision tools, client tools, or TUI-local tools.
+A subagent gets each of these that the main persona also has. For example, a main persona with `bash`, `edit`, `history`, and `spawn_agent` gives its subagents `bash`, `edit`, and `history`. Names such as `web` and `history` enable the matching capability in the subagent's `code` tool. MCP uses the host's existing connections, whatever the subagent's working directory. There is no separate tool list for subagents.
 
-The worker inherits the intersection of the main persona's tools and those nine eligible names. MCP uses the parent's shared host connections, independent of the child's working directory. For example, a main persona with `bash`, `edit`, `history`, and `spawn_agent` gives the child `bash`, `edit`, and `history`, plus intrinsic `tau_docs`. Service selectors enable namespaces in the child's `code` tool. There is no separate child tool allowlist.
-
-Subagents cannot launch other subagents: supervision tools are never included in a child's registry. See [tools](tools.md) for the broader availability contract.
+Every subagent also gets the built-in `tau_docs` tool, and a persona's `tools` list cannot remove it. Subagents never get the subagent tools, client tools, or TUI tools, so a subagent cannot start subagents of its own. See [tools](tools.md) for how tool availability works in general.
 
 ## Models and settings
 
-By default, a new subagent inherits the active persona's model and complete settings, including reasoning and service tier. This inheritance is captured when the thread is created. Later persona or reasoning changes do not reconfigure that existing thread.
+By default, a new subagent uses the active persona's model and all of its settings, including reasoning and service tier. These are fixed when the subagent starts. Later persona or reasoning changes do not affect it.
 
-A launch override must use exact form:
+A model override uses this exact form:
 
 ```text
 <provider>/<model>:<effort>
 ```
 
-The provider is normalized to lowercase. The model ID remains exact and case-sensitive. Effort is one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`.
+The provider is lowercased. The model ID is kept exactly as written and is case-sensitive. Effort is one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`.
 
-The configured launch-model list is an allowlist, not a default selection. The main agent should normally omit the `model` argument to `spawn_agent`; when omitted, the subagent inherits the active persona model and reasoning. When supplied, the normalized value must exactly match an entry in the configured allowlist. The override changes provider, model, and reasoning. Other inherited settings remain.
+The configured list of launch models is an allowlist. It does not choose a default. The main agent should normally omit the `model` argument to `spawn_agent`, and the subagent then uses the active persona's model and reasoning. When `model` is given, it must exactly match an allowlist entry after normalization. The override changes the provider, model, and reasoning, and keeps the other settings.
 
-Model IDs may be unbundled when their provider is known, following the synthesis rules in [models](models.md). Invalid provider, model, effort, or format rejects the configuration field. Duplicate normalized entries are removed.
+A model ID may be missing from the catalog if its provider is known (see [models](models.md)). An entry with an invalid provider, model, effort, or format makes the configuration field invalid. Duplicate entries are removed.
 
 ### Allowing model overrides
 
-Configure the built-in worker’s launch allowlist through `subagents.launchModels` in `config.json`:
+Configure the allowlist with `subagents.launchModels` in `config.json`:
 
 ```json
 {
@@ -67,66 +65,66 @@ Configure the built-in worker’s launch allowlist through `subagents.launchMode
 }
 ```
 
-This list is layered configuration. The nearest defined `launchModels` array replaces the broader array rather than appending to it. Tau applies the effective list to every persona that exposes `spawn_agent`.
+The nearest `launchModels` list replaces broader ones; lists are not combined. The resulting list applies to every persona that has `spawn_agent`.
 
-## Working-directory context
+## Working directory
 
-`spawn_agent` normally runs the child in the main session's `cwd`. Its optional `workingDirectory` may be absolute or relative to that `cwd`; Tau resolves it to an absolute execution-environment path.
+`spawn_agent` normally runs the subagent in the main session's `cwd`. The optional `workingDirectory` may be absolute or relative to that `cwd`. Tau resolves it to an absolute path on the execution environment.
 
-When the resolved path differs from the parent `cwd`, Tau rebuilds prompt context from that target directory. It discovers the target platform and repository metadata, reads applicable `AGENTS.md`, and discovers all target skills.
+When that path differs from the parent's `cwd`, Tau rebuilds the subagent's context for the new directory. It detects the platform and repository there, reads the applicable `AGENTS.md` files, and discovers that directory's skills.
 
-The target directory does **not** select a different persona, model catalog, runtime configuration, credential source, or tool policy for the child. Those remain under parent-session authority. Target configuration is consulted only where needed to rebuild target prompt context, such as skill discovery.
+The new directory does **not** change the subagent's persona, model catalog, runtime configuration, credentials, or tool policy. Those always come from the parent session. Configuration in the new directory is read only where context needs it, such as for skill discovery.
 
-This distinction matters in monorepos and hosted environments. `workingDirectory` is an execution-environment path. The host and attached client must not reinterpret it against their own filesystems.
+`workingDirectory` is always a path on the execution environment, which matters in monorepos and hosted environments. The host and attached clients never resolve it against their own filesystems.
 
-A launch is blocked if Tau cannot build target context, the directory is invalid for the backend, or working-directory resolution is unavailable. Passing `.` or another path that resolves to the existing parent `cwd` reuses the already composed parent context.
+A launch fails if Tau cannot build context for the directory, if the directory is invalid for the environment, or if the environment cannot resolve working directories. A path that resolves to the parent's `cwd`, such as `.`, reuses the parent's context.
 
-## Lifecycle and supervision tools
+## Lifecycle and subagent tools
 
-Subagent threads are addressed by host-generated IDs. IDs identify individual live thread records.
+Each subagent has an ID that the host generates.
 
 ### Spawn
 
-`spawn_agent` accepts a title, prompt, optional launch model, and optional working directory. The prompt is the child's only initial user input, so it should be self-contained. A successful call returns immediately with the new ID while the child continues in the background.
+`spawn_agent` takes a title, a prompt, an optional model, and an optional working directory. The prompt is the subagent's only initial input, so it should be self-contained. The call returns right away with the new ID, and the subagent keeps working in the background.
 
-At most eight subagent runs may be active concurrently within one main session. Completed or interrupted idle threads do not consume active capacity.
+At most eight subagents can be running at once in one main session. Subagents that have finished or been interrupted do not count toward this limit.
 
 ### Observe and wait
 
-`list_agents` returns every retained thread with its ID, name, title, runtime model and reasoning, working directory, run state, context usage, cost, and response availability. Use it to rediscover an ID or inspect progress.
+`list_agents` returns every subagent with its ID, name, title, model and reasoning, working directory, run state, context usage, cost, and whether a response is ready. Use it to find an ID again or to check progress.
 
-`wait_for_agents` accepts one or more IDs. It returns as soon as at least one requested thread finishes, and includes current state for all requested IDs. A completed response remains readable through later waits until a follow-up run replaces that retained response.
+`wait_for_agents` takes one or more IDs. It returns as soon as at least one of them finishes, with the current state of all of them. A finished response stays readable through later waits until a follow-up run replaces it.
 
-The host also publishes bounded live subagent activity to observing clients. That activity is presentation state, not a replacement for the final response returned by supervision tools.
+The host also sends live subagent activity to attached clients for display. It is a summary for display, and the final response from these tools remains the real result.
 
 ### Follow up
 
-`send_input_to_agent` starts another run on an existing idle thread. The thread retains its conversation state, model, settings, tools, and working directory. It must finish or be interrupted before another input is accepted.
+`send_input_to_agent` starts another run on an idle subagent. The subagent keeps its conversation, model, settings, tools, and working directory. It must finish or be interrupted before it accepts more input.
 
-Starting a follow-up replaces the previously retained response in the thread's latest-run state. Read any needed result before sending the next input. Follow-ups do not reread a changed persona definition or adopt a newly reloaded launch allowlist.
+A follow-up replaces the subagent's previous response, so read anything you need first. Follow-ups do not pick up a changed persona definition or a reloaded allowlist.
 
 ### Interrupt
 
-`interrupt_agent` requests interruption of the current run and waits for its latest state. The thread remains available for follow-up input. Calling it on an already idle thread simply returns that state.
+`interrupt_agent` asks the current run to stop and waits for the subagent's latest state. The subagent stays available for follow-up input. On an idle subagent, the call just returns its state.
 
-The TUI can also interrupt the selected running subagent with `Ctrl+G`. Interrupting the main session and interrupting a child are separate actions.
+In the TUI, `Ctrl+G` interrupts the selected running subagent. Interrupting the main session does not interrupt subagents, and interrupting a subagent does not interrupt the main session.
 
 ## Detach, rewind, and recovery
 
-Subagents are owned by the live host session, not by an observing TUI. Detaching a client or losing an attach transport does not by itself stop children while the hosted session remains alive. Another observer can reconnect to that live session and see current projected state.
+Subagents belong to the running session on the host, not to an attached TUI. Detaching a client, or losing the connection, does not stop them while the session stays alive. Another client can attach to the session and see their current state.
 
-Subagent runtimes are not recoverable across host-session disposal or process recovery. Tau may persist projected agent status while the session is live, but recovery removes those records and agent-owned presentation because the underlying conversation runtimes no longer exist. A recovered session cannot send follow-up input to an old subagent ID.
+Subagents do not survive the end of a session on the host or a host restart. Their status may be saved while the session is live, but recovery removes those records, because the subagents' conversations no longer exist. A recovered session cannot send input to an old subagent ID.
 
-Rewind also removes subagent threads whose spawning assistant message is no longer in active history. Host shutdown or session disposal interrupts and disposes all child runtimes.
+Rewind also removes subagents that were started by an assistant message the rewind removed. Host shutdown or session disposal interrupts and removes all subagents.
 
-Plan durable work accordingly. Important conclusions should be returned to the main agent and committed to ordinary session history or project files before the live host disappears. [Sessions](sessions.md) explains persistence and recovery more broadly.
+Plan long work with this in mind. Important results should reach the main agent and end up in the session history or in project files before the session on the host goes away. [Sessions](sessions.md) covers saving and recovery in general.
 
 ## Reloading and validation
 
-Persona tool selections and launch-policy changes take effect after `/reload` in an idle TUI session or in a newly created session. Reload updates new launches without reconfiguring already spawned threads. Follow-ups continue on their captured runtime.
+Changes to persona tools or to the launch allowlist apply after `/reload` in an idle session, or in a new session. Reload affects only new launches. Running subagents, and follow-ups to them, keep their existing setup.
 
-`subagents.launchModels` must be a string array of valid `<provider>/<model>:<effort>` values. Unknown providers, invalid efforts, and malformed entries produce configuration diagnostics.
+`subagents.launchModels` must be an array of valid `<provider>/<model>:<effort>` strings. Unknown providers, invalid efforts, and malformed entries produce configuration warnings.
 
-At execution time, launches can be blocked by invalid arguments, a model outside the allowlist, exhausted concurrency, missing prompt composition, or target-context failure. Follow-up, wait, and interrupt calls reject unknown IDs; follow-up also rejects a thread that is still running.
+A launch can fail because of invalid arguments, a model outside the allowlist, the concurrency limit, a prompt that cannot be built, or a working directory whose context cannot be built. Follow-up, wait, and interrupt calls reject unknown IDs. A follow-up also fails while the subagent is still running.
 
-Use `tau --debug --persona <id>` before starting a local TUI to inspect effective tool availability, inherited model and settings, and the child tool list. In a running session, `/reload` reports file warnings and `list_agents` shows live thread state.
+Before starting a local TUI, `tau --debug --persona <id>` shows which tools are available, the model and settings subagents inherit, and the subagents' tool list. In a running session, `/reload` reports file warnings and `list_agents` shows live subagent state.

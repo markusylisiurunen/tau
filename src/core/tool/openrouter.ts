@@ -45,6 +45,7 @@ async function printHelp(
       ...(operation === "decisions"
         ? [
             "  --input <path|->        required UTF-8 JSON containing state and questions; - reads stdin.",
+            "  --image <path>          repeatable PNG/JPEG/WebP attachment (Luna Decisions only).",
           ]
         : operation === "chat"
           ? [
@@ -78,7 +79,11 @@ function parseOptions(argv: string[], operation: Operation) {
   } as const;
   const options: NonNullable<ParseArgsConfig["options"]> =
     operation === "decisions"
-      ? { ...shared, input: { type: "string" } as const }
+      ? {
+          ...shared,
+          input: { type: "string" } as const,
+          image: { type: "string", multiple: true } as const,
+        }
       : ({
           ...shared,
           prompt: { type: "string" },
@@ -180,9 +185,23 @@ export async function runOpenRouterCommand(
         ? await readOpenRouterStdin(options.stdin ?? process.stdin)
         : await readOpenRouterFile(resolve(cwd, path), OPENROUTER_TEXT_BYTES);
     const result = await requestOpenRouterDecisions(
-      requestedModel,
-      parseMediaJson(decodeOpenRouterText(bytes), "decisions input"),
-      { ...options, signal: new AbortController().signal },
+      {
+        model: requestedModel,
+        value: parseMediaJson(decodeOpenRouterText(bytes), "decisions input"),
+        attachments: attachments.map((item) => ({
+          kind: item.kind,
+          path: resolve(cwd, item.path!),
+        })),
+      },
+      {
+        ...options,
+        signal: new AbortController().signal,
+        mediaAdapter: {
+          readFile: readOpenRouterFile,
+          probe: (bytes, format) =>
+            probeOpenRouterMedia(bytes, format, options.spawnImpl ?? spawnWithCapture),
+        },
+      },
     );
     await log(JSON.stringify(result));
     return;

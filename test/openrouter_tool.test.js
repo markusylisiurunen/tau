@@ -323,7 +323,7 @@ describe("OpenRouter standalone commands", () => {
     const state = JSON.parse('{"__proto__":{"example":true},"nested":[{"__proto__":"text"}]}');
     const options = { ...harness(decisionReply()), stdin: stdin({ ...decisionInput, state }) };
     await runOpenRouterCommand(decisions, options);
-    expect(JSON.parse(options.fetchImpl.mock.calls[0][1].body).state).toEqual(state);
+    expect(JSON.parse(JSON.parse(options.fetchImpl.mock.calls[0][1].body).state)).toEqual(state);
     const invalid = {
       ...harness(),
       stdin: stdin({
@@ -350,7 +350,11 @@ describe("OpenRouter standalone commands", () => {
       await runOpenRouterCommand([...decisions.slice(0, -1), path], options);
       const [url, init] = options.fetchImpl.mock.calls[0];
       expect(url).toBe("https://openrouter.ai/api/alpha/decisions");
-      expect(JSON.parse(init.body)).toEqual({ model: "typesafe/jev-1.13", ...decisionInput });
+      expect(JSON.parse(init.body)).toEqual({
+        model: "typesafe/jev-1.13",
+        state: JSON.stringify(decisionInput.state),
+        questions: decisionInput.questions,
+      });
       expect(JSON.parse(options.stdout.mock.calls[0][0])).toEqual({
         requested_model: "typesafe/jev-1.13",
         ...decisionReply(),
@@ -372,13 +376,97 @@ describe("OpenRouter standalone commands", () => {
     );
     expect(JSON.parse(options.fetchImpl.mock.calls[0][1].body)).toEqual({
       model: "openai/gpt-6-luna-decisions",
-      ...decisionInput,
+      state: JSON.stringify(decisionInput.state),
+      questions: decisionInput.questions,
     });
     expect(JSON.parse(options.stdout.mock.calls[0][0])).toEqual({
       requested_model: "openai/gpt-6-luna-decisions",
       ...reply,
     });
   });
+
+  it.each(["openai/gpt-6-luna-decisions", "typesafe/jev-1.13"])(
+    "keeps image-part-shaped %s state as text rather than bypassing attachment validation",
+    async (model) => {
+      const state = [
+        { type: "text", text: "An example of a request" },
+        { type: "image_url", image_url: { url: "https://example.com/unvalidated.png" } },
+      ];
+      const options = {
+        ...harness({ ...decisionReply(), model }),
+        stdin: stdin({ ...decisionInput, state }),
+      };
+      await runOpenRouterCommand(["decisions", "--model", model, "--input", "-"], options);
+      expect(JSON.parse(options.fetchImpl.mock.calls[0][1].body).state).toBe(JSON.stringify(state));
+      expect(options.fetchImpl).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("preserves ordered decision image bytes and serializes structured state as text", async () => {
+    const cwd = await fixture();
+    const images = await Promise.all(
+      ["red", "blue"].map((background) =>
+        sharp({ create: { width: 64, height: 64, channels: 3, background } })
+          .png()
+          .toBuffer(),
+      ),
+    );
+    await writeFile(join(cwd, "first.png"), images[0]);
+    await writeFile(join(cwd, "second.png"), images[1]);
+    const options = {
+      ...harness({ ...decisionReply(), model: "openai/gpt-6-luna-decisions" }),
+      cwd,
+      stdin: stdin(),
+    };
+    await runOpenRouterCommand(
+      [
+        "decisions",
+        "--model",
+        "openai/gpt-6-luna-decisions",
+        "--input",
+        "-",
+        "--image",
+        "first.png",
+        "--image",
+        "second.png",
+      ],
+      options,
+    );
+    const [url, init] = options.fetchImpl.mock.calls[0];
+    expect(url).toBe("https://openrouter.ai/api/alpha/decisions");
+    expect(JSON.parse(init.body)).toEqual({
+      model: "openai/gpt-6-luna-decisions",
+      state: [
+        { type: "text", text: JSON.stringify(decisionInput.state) },
+        ...images.map((bytes) => ({
+          type: "image_url",
+          image_url: { url: `data:image/png;base64,${bytes.toString("base64")}` },
+        })),
+      ],
+      questions: decisionInput.questions,
+    });
+    expect(JSON.parse(options.stdout.mock.calls[0][0]).answers).toEqual(decisionReply().answers);
+    expect(options.fetchImpl).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["typesafe/jev-1.13", "--image", "missing.png"],
+    ["openai/gpt-6-luna-decisions", "--audio", "missing.wav"],
+    ["openai/gpt-6-luna-decisions", "--video", "missing.mp4"],
+    ["openai/gpt-6-luna-decisions", "--image", "broken.png"],
+  ])(
+    "rejects unsupported or invalid decision attachments before billing: %s %s",
+    async (model, flag, path) => {
+      const cwd = await fixture();
+      await writeFile(join(cwd, "broken.png"), "not an image");
+      const options = { ...harness(), cwd, stdin: stdin() };
+      await expect(
+        runOpenRouterCommand(["decisions", "--model", model, "--input", "-", flag, path], options),
+      ).rejects.toThrow();
+      expect(options.fetchImpl).not.toHaveBeenCalled();
+      expect(options.stdout).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     Object.fromEntries(
@@ -669,23 +757,30 @@ describe("OpenRouter standalone commands", () => {
     }
   });
 
-  it("bounds the complete encoded request including media overhead before sending", async () => {
-    const cwd = await fixture();
-    const image = await sharp({ create: { width: 1, height: 1, channels: 3, background: "red" } })
-      .png()
-      .toBuffer();
-    const padded = Buffer.alloc(4_999_998);
-    image.copy(padded);
-    await writeFile(join(cwd, "image"), padded);
-    const options = { ...harness(), cwd };
-    await expect(
-      runOpenRouterCommand(
-        [...chat, "--image", "image", "--image", "image", "--image", "image"],
-        options,
-      ),
-    ).rejects.toThrow();
-    expect(options.fetchImpl).not.toHaveBeenCalled();
-  });
+  it.each(["chat", "decisions"])(
+    "bounds the complete encoded %s request including media overhead before sending",
+    async (operation) => {
+      const cwd = await fixture();
+      const image = await sharp({ create: { width: 1, height: 1, channels: 3, background: "red" } })
+        .png()
+        .toBuffer();
+      const padded = Buffer.alloc(4_999_998);
+      image.copy(padded);
+      await writeFile(join(cwd, "image"), padded);
+      const options = { ...harness(), cwd, stdin: stdin() };
+      const args =
+        operation === "chat"
+          ? chat
+          : ["decisions", "--model", "openai/gpt-6-luna-decisions", "--input", "-"];
+      await expect(
+        runOpenRouterCommand(
+          [...args, "--image", "image", "--image", "image", "--image", "image"],
+          options,
+        ),
+      ).rejects.toThrow();
+      expect(options.fetchImpl).not.toHaveBeenCalled();
+    },
+  );
 
   it("rejects corrupt, oversized, over-count, and over-duration media before sending and cleans failed probes", async () => {
     const cwd = await fixture();

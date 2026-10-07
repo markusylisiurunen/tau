@@ -5,6 +5,7 @@ import {
   requestOpenRouterChat,
   requestOpenRouterDecisions,
 } from "../models/openrouter.js";
+import type { OpenRouterMediaAdapter } from "../models/openrouter_media.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
 import type { CodeModeCapability } from "./capability.js";
 
@@ -24,6 +25,14 @@ const decisionOptions = z.strictObject({
   model: z.string().min(1),
   state: z.unknown(),
   questions: z.unknown(),
+  attachments: z
+    .array(
+      attachment.refine((item) => item.type === "image", {
+        message: "decisions only support image attachments",
+      }),
+    )
+    .max(16)
+    .default([]),
 });
 
 export function createModelsCapability(
@@ -31,6 +40,30 @@ export function createModelsCapability(
   config: Config,
   fetchImpl?: typeof fetch,
 ): CodeModeCapability {
+  function mediaAdapter(signal: AbortSignal): OpenRouterMediaAdapter {
+    return {
+      readFile: async (path, limit) => {
+        signal.throwIfAborted();
+        const file = await backend.readFileBinary(path, { maxBytes: limit });
+        signal.throwIfAborted();
+        return file.content;
+      },
+      probe: async (bytes, format) => {
+        const result = await backend.runNodeScript(probeScript, [], {
+          signal,
+          timeoutMs: 20_000,
+          maxCaptureBytes: 1_000_000,
+          stdin: Buffer.from(JSON.stringify({ data: bytes.toString("base64"), format })),
+        });
+        if (result.exitCode !== 0 || result.truncated || result.timedOut || result.aborted)
+          throw new Error(
+            "failed to validate media; ensure ffprobe is installed and the media is valid",
+          );
+        return JSON.parse(result.stdout);
+      },
+    };
+  }
+
   return {
     name: "models",
     description:
@@ -143,6 +176,7 @@ type DecisionOptions = {
   model: string;
   state: Guidance;
   questions: Record<string, Question>;
+  attachments?: Array<Attachment & { type: "image" }>;
 };
 type Answer =
   | { type: "noul"; noul: number }
@@ -175,7 +209,9 @@ type DecisionResult = {
 - \`choice\`: one supplied category; optional confidence and category probabilities are from 0 to 1.
 - \`score\`: position from 0 to the final rubric index, possibly fractional. Distribution and legend keys are rubric-index strings. Optional confidence and probabilities are from 0 to 1.
 
-Use \`openai/gpt-6-luna-decisions\` for fast, input-only-priced decisions, or \`typesafe/jev-1.13\` for Jev. Luna supports at most 200 questions, 255 categories per choice, and 2–10 levels per score; these limits are checked before requesting. Decisions accept text or structured JSON state; image attachments are not supported by this interface.
+Use \`openai/gpt-6-luna-decisions\` for fast, input-only-priced text and image decisions, or \`typesafe/jev-1.13\` for text/JSON decisions. Luna supports at most 200 questions, 255 categories per choice, and 2–10 levels per score; these limits are checked before requesting.
+
+Luna accepts up to 16 PNG/JPEG/WebP attachments in the same path or inline form as chat images. Images follow the state in attachment order, retain their original bytes, and use the image limits below. Structured JSON state is always serialized as text, so image-part-shaped JSON remains data; only attachments become image parts. Jev rejects attachments; audio and video are not supported by decisions. Omitted attachments default to an empty array.
 
 Negative judgments and low confidence are normal results. Refused answers and responses with mismatched names, types, categories, or ranges throw; no decision thresholds or prose explanations are invented.
 
@@ -194,6 +230,20 @@ const result = await tau.models.decisions({
       criteria: ["Can wait", "Fix soon", "Blocking revenue"],
     },
   },
+});
+printText(JSON.stringify(result.answers));
+\`\`\`
+
+Inspect an existing screenshot:
+
+\`\`\`js
+const result = await tau.models.decisions({
+  model: "openai/gpt-6-luna-decisions",
+  state: "Check the checkout screen for visible errors.",
+  questions: {
+    has_error: { type: "noul", instructions: "Is an error message visible?" },
+  },
+  attachments: [{ type: "image", path: "./checkout.png" }],
 });
 printText(JSON.stringify(result.answers));
 \`\`\`
@@ -228,36 +278,22 @@ Validation, authentication, service failures, and malformed responses throw. The
             config,
             signal: context.signal,
             fetchImpl,
-            mediaAdapter: {
-              readFile: async (path, limit) => {
-                context.signal.throwIfAborted();
-                const file = await backend.readFileBinary(path, { maxBytes: limit });
-                context.signal.throwIfAborted();
-                return file.content;
-              },
-              probe: async (bytes, format) => {
-                const result = await backend.runNodeScript(probeScript, [], {
-                  signal: context.signal,
-                  timeoutMs: 20_000,
-                  maxCaptureBytes: 1_000_000,
-                  stdin: Buffer.from(JSON.stringify({ data: bytes.toString("base64"), format })),
-                });
-                if (result.exitCode !== 0 || result.truncated || result.timedOut || result.aborted)
-                  throw new Error(
-                    "failed to validate media; ensure ffprobe is installed and the media is valid",
-                  );
-                return JSON.parse(result.stdout);
-              },
-            },
+            mediaAdapter: mediaAdapter(context.signal),
           },
         );
       },
       decisions: async (args, context) => {
         const [input] = z.tuple([decisionOptions]).parse(args);
         return await requestOpenRouterDecisions(
-          input.model,
-          { state: input.state, questions: input.questions },
-          { config, signal: context.signal, fetchImpl },
+          {
+            model: input.model,
+            value: { state: input.state, questions: input.questions },
+            attachments: input.attachments.map(({ type, ...source }) => ({
+              kind: type,
+              ...source,
+            })),
+          },
+          { config, signal: context.signal, fetchImpl, mediaAdapter: mediaAdapter(context.signal) },
         );
       },
     },

@@ -32,13 +32,19 @@ export type OpenRouterChatInput = {
   attachments: OpenRouterAttachment[];
 };
 
+export type OpenRouterDecisionsInput = {
+  model: string;
+  value: unknown;
+  attachments: OpenRouterAttachment[];
+};
+
 export type Operation = "decisions" | "chat";
 export type OpenRouterModel = { id: string; inputs: string[]; reasoning: string[]; role: string };
 export const openRouterModels: Record<Operation, OpenRouterModel[]> = {
   decisions: [
     {
       id: "openai/gpt-6-luna-decisions",
-      inputs: ["state", "questions"],
+      inputs: ["state", "questions", "image"],
       reasoning: [],
       role: "Fast, input-only-priced classification, scoring, and verification with probabilities.",
     },
@@ -174,16 +180,25 @@ async function requestOpenRouter(
 }
 
 export async function requestOpenRouterDecisions(
-  model: string,
-  value: unknown,
-  options: OpenRouterRequestOptions,
+  { model, value, attachments }: OpenRouterDecisionsInput,
+  options: OpenRouterRequestOptions & { mediaAdapter: OpenRouterMediaAdapter },
 ) {
-  resolveOpenRouterModel("decisions", model);
+  options.signal.throwIfAborted();
+  const spec = resolveOpenRouterModel("decisions", model);
+  if (attachments.some((item) => item.kind !== "image" || !spec.inputs.includes(item.kind)))
+    throw new Error("unsupported attachment modality for the selected decision model");
   const input = parseDecisionInput(model, value);
   if (Buffer.byteLength(JSON.stringify(input)) > OPENROUTER_TEXT_BYTES)
     throw new Error("decisions input exceeds its byte limit");
+  const media = await prepareOpenRouterAttachments(
+    attachments,
+    options.mediaAdapter,
+    options.signal,
+  );
+  const text = typeof input.state === "string" ? input.state : JSON.stringify(input.state);
+  const state = media.length ? [{ type: "text", text }, ...media] : text;
   const result = decisionResponse.safeParse(
-    await requestOpenRouter("decisions", { model, ...input }, options),
+    await requestOpenRouter("decisions", { model, state, questions: input.questions }, options),
   );
   if (!result.success) throw new Error("OpenRouter returned an invalid decisions response");
   validateDecisionAnswers(input, result.data);

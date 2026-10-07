@@ -1,6 +1,7 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import sharp from "sharp";
 import { describe, expect, it, vi } from "vitest";
 import { runTauCodeMode } from "../dist/code_mode/runtime.js";
 import { createBashCapability } from "../dist/core/code_mode/bash.js";
@@ -512,6 +513,117 @@ describe("code composition", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it("composes ordered path and inline decision images through the scoped backend", async () => {
+    const image = createProtocolImage();
+    const bytes = await sharp({ create: { width: 8, height: 8, channels: 3, background: "blue" } })
+      .png()
+      .toBuffer();
+    const backend = {
+      readFileBinary: vi.fn(async () => ({ content: bytes })),
+      runNodeScript: vi.fn(),
+    };
+    const reply = {
+      model: "openai/gpt-6-luna-decisions",
+      answers: { same: { type: "noul", noul: 0.1 } },
+      usage: { input_tokens: 180, output_tokens: 0 },
+    };
+    const fetchImpl = vi.fn(async () => Response.json(reply));
+    const sdk = bindCodeModeSdk([
+      createModelsCapability(backend, { apiKeys: { openrouter: "secret" } }, fetchImpl),
+    ]);
+    const result = await runTauCodeMode({
+      name: "tau",
+      ...sdk,
+      code: `const result = await tau.models.decisions({
+        model: "openai/gpt-6-luna-decisions",
+        state: "Compare the two images.",
+        questions: { same: { type: "noul", instructions: "Do the images look the same?" } },
+        attachments: [{ type: "image", path: "screenshot.png" }, { type: "image", data: ${JSON.stringify(image.data)}, mimeType: ${JSON.stringify(image.mimeType)} }],
+      }); printText(JSON.stringify(result.answers));`,
+    });
+    expect(result.status).toBe("succeeded");
+    expect(JSON.parse(text(result.result))).toEqual(reply.answers);
+    expect(backend.readFileBinary).toHaveBeenCalledWith("screenshot.png", { maxBytes: 5_000_000 });
+    expect(backend.runNodeScript).not.toHaveBeenCalled();
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body).state).toEqual([
+      { type: "text", text: "Compare the two images." },
+      {
+        type: "image_url",
+        image_url: { url: `data:image/png;base64,${bytes.toString("base64")}` },
+      },
+      { type: "image_url", image_url: { url: `data:${image.mimeType};base64,${image.data}` } },
+    ]);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
+  it("rejects unsupported, ambiguous, invalid, and excessive decision images before file access or inference", async () => {
+    const backend = { readFileBinary: vi.fn() };
+    const fetchImpl = vi.fn();
+    const capability = createModelsCapability(backend, {}, fetchImpl);
+    const image = createProtocolImage();
+    const inline = { type: "image", data: image.data, mimeType: image.mimeType };
+    const input = {
+      model: "openai/gpt-6-luna-decisions",
+      state: "Compare",
+      questions: { q: { type: "noul", instructions: "Are they the same?" } },
+    };
+    for (const attachments of [
+      [{ ...inline, path: "image.png" }],
+      [{ ...inline, data: "invalid" }],
+      [{ ...inline, mimeType: "image/jpeg" }],
+      [{ ...inline, data: "A".repeat(6_666_669) }],
+      Array.from({ length: 17 }, () => ({ type: "image", path: "missing.png" })),
+      [{ type: "audio", path: "missing.wav" }],
+      [{ type: "video", path: "missing.mp4" }],
+    ]) {
+      await expect(
+        capability.api.decisions([{ ...input, attachments }], context()),
+      ).rejects.toThrow();
+    }
+    await expect(
+      capability.api.decisions(
+        [
+          {
+            ...input,
+            model: "typesafe/jev-1.13",
+            attachments: [{ type: "image", path: "missing.png" }],
+          },
+        ],
+        context(),
+      ),
+    ).rejects.toThrow();
+    expect(backend.readFileBinary).not.toHaveBeenCalled();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("cancels decision image preparation before requesting inference", async () => {
+    const controller = new AbortController();
+    const image = createProtocolImage();
+    const backend = {
+      readFileBinary: vi.fn(async () => {
+        controller.abort();
+        return { content: Buffer.from(image.data, "base64") };
+      }),
+    };
+    const fetchImpl = vi.fn();
+    const capability = createModelsCapability(backend, {}, fetchImpl);
+    await expect(
+      capability.api.decisions(
+        [
+          {
+            model: "openai/gpt-6-luna-decisions",
+            state: "Inspect",
+            questions: { q: { type: "noul", instructions: "Is this an image?" } },
+            attachments: [{ type: "image", path: "image.png" }],
+          },
+        ],
+        context({ signal: controller.signal }),
+      ),
+    ).rejects.toThrow();
+    expect(backend.readFileBinary).toHaveBeenCalledOnce();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("rejects an unusable response even when it includes valid usage", async () => {
     const fetchImpl = vi.fn(async () => Response.json({ ...chatReply(), choices: [] }));
     const sdk = bindCodeModeSdk([
@@ -624,34 +736,40 @@ describe("code composition", () => {
     }
   });
 
-  it("propagates cancellation into model requests without retrying", async () => {
-    const controller = new AbortController();
-    let started;
-    const ready = new Promise((resolve) => {
-      started = resolve;
-    });
-    const fetchImpl = vi.fn(async (_url, options) => {
-      started();
-      return await new Promise((_resolve, reject) =>
-        options.signal.addEventListener("abort", () => reject(options.signal.reason), {
-          once: true,
-        }),
-      );
-    });
-    const sdk = bindCodeModeSdk([
-      createModelsCapability({}, { apiKeys: { openrouter: "secret" } }, fetchImpl),
-    ]);
-    const running = runTauCodeMode({
-      name: "tau",
-      ...sdk,
-      signal: controller.signal,
-      code: 'await tau.models.chat({ model: "openai/gpt-6-luna", prompt: "Describe" })',
-    });
-    await ready;
-    controller.abort();
-    expect((await running).status).toBe("cancelled");
-    expect(fetchImpl).toHaveBeenCalledOnce();
-  });
+  it.each(["chat", "decisions"])(
+    "propagates cancellation into %s model requests without retrying",
+    async (operation) => {
+      const controller = new AbortController();
+      let started;
+      const ready = new Promise((resolve) => {
+        started = resolve;
+      });
+      const fetchImpl = vi.fn(async (_url, options) => {
+        started();
+        return await new Promise((_resolve, reject) =>
+          options.signal.addEventListener("abort", () => reject(options.signal.reason), {
+            once: true,
+          }),
+        );
+      });
+      const sdk = bindCodeModeSdk([
+        createModelsCapability({}, { apiKeys: { openrouter: "secret" } }, fetchImpl),
+      ]);
+      const running = runTauCodeMode({
+        name: "tau",
+        ...sdk,
+        signal: controller.signal,
+        code:
+          operation === "chat"
+            ? 'await tau.models.chat({ model: "openai/gpt-6-luna", prompt: "Describe" })'
+            : 'await tau.models.decisions({ model: "openai/gpt-6-luna-decisions", state: "Inspect", questions: { q: { type: "noul", instructions: "Is this valid?" } } })',
+      });
+      await ready;
+      controller.abort();
+      expect((await running).status).toBe("cancelled");
+      expect(fetchImpl).toHaveBeenCalledOnce();
+    },
+  );
 
   it("bounds Unicode and line output locally and rejects non-string printing", async () => {
     const sdk = bindCodeModeSdk([]);

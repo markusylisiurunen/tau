@@ -207,10 +207,10 @@ Run in order:
 ```sh
 npm run check   # writes Markdown and Biome formatting, then typechecks root and diff-tool app
 npm run build
-npm test        # builds again, then runs Vitest
+npm run test:only  # runs Vitest against the existing build
 ```
 
-Inspect what `npm run check` reformatted before building.
+Inspect what `npm run check` reformatted before building. Use `npm test` for a standalone build and test run; `npm run test:only` requires an up-to-date build.
 
 **Dependency upgrades.**
 

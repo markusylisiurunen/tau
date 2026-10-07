@@ -265,7 +265,7 @@ describe("image generation CLI", () => {
       [
         "image-generate",
         "--model",
-        "gemini-3.1-flash-image",
+        "gemini-nano-banana-2.1",
         "--prompt",
         "landscape",
         "--aspect-ratio",
@@ -280,7 +280,7 @@ describe("image generation CLI", () => {
       options,
     );
     const [url, request] = options.fetchImpl.mock.calls[0];
-    expect(url).toContain("/models/gemini-3.1-flash-image:generateContent");
+    expect(url).toContain("/models/gemini-nano-banana-2.1:generateContent");
     expect(JSON.parse(request.body).generationConfig).toEqual({
       responseModalities: ["TEXT", "IMAGE"],
       imageConfig: { aspectRatio: "16:9", imageSize: "2K" },
@@ -288,6 +288,35 @@ describe("image generation CLI", () => {
     });
     expect(await readFile(join(options.cwd, "image.png"))).toEqual(image);
   });
+
+  it.each([undefined, "minimal", "medium", "high"])(
+    "sends Nano Banana 2.1 thinking %s and wide 4K controls without inventing defaults",
+    async (thinking) => {
+      const options = await fixture();
+      options.fetchImpl.mockResolvedValue(geminiImageResponse(await png(), "png"));
+      await runToolCommand(
+        [
+          ...imageArgs.slice(0, 2),
+          "gemini-nano-banana-2.1",
+          ...imageArgs.slice(3),
+          "--aspect-ratio",
+          "8:1",
+          "--resolution",
+          "4K",
+          ...(thinking === undefined ? [] : ["--thinking", thinking]),
+        ],
+        options,
+      );
+      expect(JSON.parse(options.fetchImpl.mock.calls[0][1].body).generationConfig).toEqual({
+        responseModalities: ["TEXT", "IMAGE"],
+        imageConfig: { aspectRatio: "8:1", imageSize: "4K" },
+        ...(thinking === undefined
+          ? {}
+          : { thinkingConfig: { thinkingLevel: thinking.toUpperCase() } }),
+      });
+      expect((await readManifest(options, "image.png")).model).toBe("gemini-nano-banana-2.1");
+    },
+  );
 
   it.each(["png", "jpeg", "webp"])(
     "normalizes Gemini %s images to PNG while retaining the original and usage",
@@ -414,7 +443,10 @@ describe("image generation CLI", () => {
     ["gemini-3-pro-image", "--aspect-ratio", "8:1"],
     ["gemini-3-pro-image", "--thinking", "high"],
     ["gemini-3.1-flash-lite-image", "--resolution", "2K"],
-    ["gemini-3.1-flash-image", "--quality", "high"],
+    ["gemini-nano-banana-2.1", "--quality", "high"],
+    ["gemini-nano-banana-2.1", "--resolution", "512"],
+    ["gemini-3.1-flash-lite-image", "--thinking", "medium"],
+    ["gemini-3.1-flash-image", "--resolution", "1K"],
     ["gpt-image-2.5-flare", "--thinking", "minimal"],
   ])("rejects %s %s %s at the model settings boundary", async (model, flag, value) => {
     const options = await fixture();

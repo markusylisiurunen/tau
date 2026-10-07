@@ -26,6 +26,7 @@ Every request needs an exact `--model` ID from this table. There is no default, 
 
 | Operation | Model | Inputs and suggested role | Reasoning efforts |
 | --- | --- | --- | --- |
+| `decisions` | `openai/gpt-6-luna-decisions` | Text or structured state and questions; fast classification, scoring, verification with probabilities; input-only pricing | Not supported |
 | `decisions` | `typesafe/jev-1.13` | Structured state and questions; classification, scoring, verification with probabilities | Not supported |
 | `chat` | `google/gemini-3.8-flash` | Text, images, audio, video; first choice for audio/video and image-heavy analysis | `low`, `medium`, `high` |
 | `chat` | `openai/gpt-6-luna` | Text and images; cheap everyday extraction, summarization, and routine questions | `none`, `low`, `medium`, `high`, `xhigh`, `max` |
@@ -39,13 +40,13 @@ Roles are guidance for choosing, not guarantees or limits on what a model may be
 ### Decisions
 
 ```sh
-tau tool openrouter decisions --model typesafe/jev-1.13 --input ./decision.json
+tau tool openrouter decisions --model openai/gpt-6-luna-decisions --input ./decision.json
 ```
 
 `--input` is required. A file path reads a UTF-8 JSON document. Exactly `--input -` reads one complete document from stdin until EOF:
 
 ```sh
-tau tool openrouter decisions --model typesafe/jev-1.13 --input - <<'JSON'
+tau tool openrouter decisions --model openai/gpt-6-luna-decisions --input - <<'JSON'
 {
   "state": { "ticket": "The checkout page crashes when I click Pay." },
   "questions": {
@@ -81,14 +82,16 @@ The input contains exactly `state` and `questions`. The model belongs only in `-
 
 Instructions and criterion guidance accept strings, JSON objects, or arrays; choice criterion values may also be `null`. Unknown question fields and the reserved question/category name `__proto__` are rejected. Arbitrary keys within state and guidance are preserved. Several independent questions can share one state; dependent questions require separate calls.
 
-The command posts once to OpenRouter's alpha Decisions endpoint. It validates answer names, types, categories, rubric ranges, and probability bounds. Successful output is one JSON object:
+Luna Decisions supports at most 200 questions, 255 categories per choice, and 2–10 levels per score. These model-specific limits are validated before requesting; Jev accepts a single-level score rubric. Both models use the same input format. Decisions accept text or structured JSON state; this interface does not support image attachments.
+
+The command posts once to OpenRouter's alpha Decisions endpoint. It validates answer names, types, categories, rubric ranges, and probability bounds. Refused or malformed answers fail instead of becoming a negative judgment. Successful output is one JSON object:
 
 ```json
 {
-  "requested_model": "typesafe/jev-1.13",
-  "model": "typesafe/jev-1.13-20260917",
+  "requested_model": "openai/gpt-6-luna-decisions",
+  "model": "openai/gpt-6-luna-decisions-20261006",
   "answers": { "is_bug": { "type": "noul", "noul": 0.96 } },
-  "usage": { "input_tokens": 100, "output_tokens": 10, "cost": 0.00001 }
+  "usage": { "input_tokens": 100, "output_tokens": 0, "cost": 0.00001 }
 }
 ```
 

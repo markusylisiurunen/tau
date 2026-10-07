@@ -472,6 +472,46 @@ describe("code composition", () => {
     expect(text(result.result)).not.toContain("secret");
   });
 
+  it("exposes Luna Decisions through the shared catalog and validates its score limits", async () => {
+    const reply = {
+      model: "openai/gpt-6-luna-decisions-20261006",
+      answers: { urgency: { type: "score", score: 0.6, probabilities: { 0: 0.4, 1: 0.6 } } },
+      usage: { input_tokens: 120, output_tokens: 0, cost: 0.000012 },
+    };
+    const fetchImpl = vi.fn(async () => Response.json(reply));
+    const sdk = bindCodeModeSdk([
+      createModelsCapability({}, { apiKeys: { openrouter: "secret" } }, fetchImpl),
+    ]);
+    const result = await runTauCodeMode({
+      name: "tau",
+      ...sdk,
+      code: `
+        const catalog = await tau.models.list();
+        const model = catalog.decisions.find(item => item.id === "openai/gpt-6-luna-decisions");
+        const result = await tau.models.decisions({
+          model: model.id,
+          state: { ticket: "Checkout broke" },
+          questions: { urgency: { type: "score", instructions: "Rate urgency", criteria: ["Low", "High"] } },
+        });
+        printText(JSON.stringify(result));
+      `,
+    });
+    expect(result.status).toBe("succeeded");
+    expect(JSON.parse(text(result.result))).toEqual({
+      requested_model: "openai/gpt-6-luna-decisions",
+      ...reply,
+    });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    fetchImpl.mockClear();
+    const invalid = await runTauCodeMode({
+      name: "tau",
+      ...sdk,
+      code: 'await tau.models.decisions({ model: "openai/gpt-6-luna-decisions", state: "ticket", questions: { urgency: { type: "score", instructions: "Rate urgency", criteria: ["Only"] } } })',
+    });
+    expect(invalid.status).toBe("failed");
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("rejects an unusable response even when it includes valid usage", async () => {
     const fetchImpl = vi.fn(async () => Response.json({ ...chatReply(), choices: [] }));
     const sdk = bindCodeModeSdk([

@@ -37,6 +37,12 @@ export type OpenRouterModel = { id: string; inputs: string[]; reasoning: string[
 export const openRouterModels: Record<Operation, OpenRouterModel[]> = {
   decisions: [
     {
+      id: "openai/gpt-6-luna-decisions",
+      inputs: ["state", "questions"],
+      reasoning: [],
+      role: "Fast, input-only-priced classification, scoring, and verification with probabilities.",
+    },
+    {
       id: "typesafe/jev-1.13",
       inputs: ["state", "questions"],
       reasoning: [],
@@ -173,7 +179,7 @@ export async function requestOpenRouterDecisions(
   options: OpenRouterRequestOptions,
 ) {
   resolveOpenRouterModel("decisions", model);
-  const input = parseDecisionInput(value);
+  const input = parseDecisionInput(model, value);
   if (Buffer.byteLength(JSON.stringify(input)) > OPENROUTER_TEXT_BYTES)
     throw new Error("decisions input exceeds its byte limit");
   const result = decisionResponse.safeParse(

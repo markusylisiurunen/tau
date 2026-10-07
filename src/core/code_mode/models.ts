@@ -175,11 +175,13 @@ type DecisionResult = {
 - \`choice\`: one supplied category; optional confidence and category probabilities are from 0 to 1.
 - \`score\`: position from 0 to the final rubric index, possibly fractional. Distribution and legend keys are rubric-index strings. Optional confidence and probabilities are from 0 to 1.
 
-Negative judgments and low confidence are normal results. Responses with mismatched names, types, categories, or ranges throw; no decision thresholds or prose explanations are invented.
+Use \`openai/gpt-6-luna-decisions\` for fast, input-only-priced decisions, or \`typesafe/jev-1.13\` for Jev. Luna supports at most 200 questions, 255 categories per choice, and 2–10 levels per score; these limits are checked before requesting. Decisions accept text or structured JSON state; image attachments are not supported by this interface.
+
+Negative judgments and low confidence are normal results. Refused answers and responses with mismatched names, types, categories, or ranges throw; no decision thresholds or prose explanations are invented.
 
 \`\`\`js
 const catalog = await tau.models.list();
-const model = catalog.decisions.find(item => item.id === "typesafe/jev-1.13");
+const model = catalog.decisions.find(item => item.id === "openai/gpt-6-luna-decisions");
 if (!model) throw new Error("decision model unavailable");
 const result = await tau.models.decisions({
   model: model.id,

@@ -68,12 +68,31 @@ export const decisionResponse = z.object({
   }),
 });
 
-export function parseDecisionInput(value: unknown): z.infer<typeof decisionInput> {
+export function parseDecisionInput(model: string, value: unknown): z.infer<typeof decisionInput> {
   const parsed = decisionInput.safeParse(value);
   if (!parsed.success) {
     throw new Error(
       `invalid decisions input: ${parsed.error.issues.map((issue) => `${issue.path.join(".") || "document"}: ${mediaValidationConstraint(issue)}`).join("; ")}`,
     );
+  }
+  if (model === "openai/gpt-6-luna-decisions") {
+    const questions = Object.entries(parsed.data.questions);
+    if (questions.length > 200) {
+      throw new Error("Luna Decisions supports at most 200 questions");
+    }
+    for (const [name, question] of questions) {
+      if (question.type === "choice" && Object.keys(question.criteria).length > 255) {
+        throw new Error(`Luna Decisions supports at most 255 choices for question ${name}`);
+      }
+      if (
+        question.type === "score" &&
+        (question.criteria.length < 2 || question.criteria.length > 10)
+      ) {
+        throw new Error(
+          `Luna Decisions requires between 2 and 10 score levels for question ${name}`,
+        );
+      }
+    }
   }
   return parsed.data;
 }

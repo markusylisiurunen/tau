@@ -156,7 +156,7 @@ describe("OpenRouter standalone commands", () => {
       const catalog = JSON.parse(options.stdout.mock.calls.at(-1)[0]);
       expect(catalog.models.map((model) => model.id)).toEqual(
         operation === "decisions"
-          ? ["typesafe/jev-1.13"]
+          ? ["openai/gpt-6-luna-decisions", "typesafe/jev-1.13"]
           : [
               "google/gemini-3.8-flash",
               "openai/gpt-6-luna",
@@ -356,6 +356,123 @@ describe("OpenRouter standalone commands", () => {
         ...decisionReply(),
       });
     }
+  });
+
+  it("round-trips Luna Decisions with all question types and input-only usage", async () => {
+    const reply = {
+      ...decisionReply(),
+      model: "openai/gpt-6-luna-decisions-20261006",
+      provider: "OpenAI",
+      usage: { input_tokens: 382, output_tokens: 0, cost: 0.0000382 },
+    };
+    const options = { ...harness(reply), stdin: stdin() };
+    await runOpenRouterCommand(
+      ["decisions", "--model", "openai/gpt-6-luna-decisions", "--input", "-"],
+      options,
+    );
+    expect(JSON.parse(options.fetchImpl.mock.calls[0][1].body)).toEqual({
+      model: "openai/gpt-6-luna-decisions",
+      ...decisionInput,
+    });
+    expect(JSON.parse(options.stdout.mock.calls[0][0])).toEqual({
+      requested_model: "openai/gpt-6-luna-decisions",
+      ...reply,
+    });
+  });
+
+  it.each([
+    Object.fromEntries(
+      Array.from({ length: 201 }, (_, i) => [`q${i}`, decisionInput.questions.bug]),
+    ),
+    {
+      q: {
+        type: "choice",
+        instructions: "Choose",
+        criteria: Object.fromEntries(Array.from({ length: 256 }, (_, i) => [`c${i}`, null])),
+      },
+    },
+    { q: { type: "score", instructions: "Rate", criteria: ["Only"] } },
+    {
+      q: {
+        type: "score",
+        instructions: "Rate",
+        criteria: Array.from({ length: 11 }, (_, i) => `Level ${i}`),
+      },
+    },
+  ])("rejects Luna-specific question limits before billing", async (questions) => {
+    const options = { ...harness(), stdin: stdin({ state: "report", questions }) };
+    await expect(
+      runOpenRouterCommand(
+        ["decisions", "--model", "openai/gpt-6-luna-decisions", "--input", "-"],
+        options,
+      ),
+    ).rejects.toThrow();
+    expect(options.fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("accepts Luna's maximum question, choice, and score counts", async () => {
+    const questions = Object.fromEntries(
+      Array.from({ length: 198 }, (_, i) => [`q${i}`, decisionInput.questions.bug]),
+    );
+    questions.team = {
+      type: "choice",
+      instructions: "Choose",
+      criteria: Object.fromEntries(Array.from({ length: 255 }, (_, i) => [`c${i}`, null])),
+    };
+    questions.urgency = {
+      type: "score",
+      instructions: "Rate",
+      criteria: Array.from({ length: 10 }, (_, i) => `Level ${i}`),
+    };
+    const answers = Object.fromEntries(
+      Array.from({ length: 198 }, (_, i) => [`q${i}`, { type: "noul", noul: 0.5 }]),
+    );
+    answers.team = { type: "choice", choice: "c254" };
+    answers.urgency = { type: "score", score: 9 };
+    const options = {
+      ...harness({
+        model: "openai/gpt-6-luna-decisions",
+        answers,
+        usage: { input_tokens: 1, output_tokens: 0 },
+      }),
+      stdin: stdin({ state: "report", questions }),
+    };
+    await runOpenRouterCommand(
+      ["decisions", "--model", "openai/gpt-6-luna-decisions", "--input", "-"],
+      options,
+    );
+    expect(JSON.parse(options.stdout.mock.calls[0][0]).answers).toEqual(answers);
+    expect(options.fetchImpl).toHaveBeenCalledOnce();
+  });
+
+  it("does not publish refused Luna answers as judgments", async () => {
+    const reply = { ...decisionReply(), model: "openai/gpt-6-luna-decisions" };
+    reply.answers.bug = { type: "refusal" };
+    const options = { ...harness(reply), stdin: stdin() };
+    await expect(
+      runOpenRouterCommand(
+        ["decisions", "--model", "openai/gpt-6-luna-decisions", "--input", "-"],
+        options,
+      ),
+    ).rejects.toThrow();
+    expect(options.stdout).not.toHaveBeenCalled();
+    expect(options.fetchImpl).toHaveBeenCalledOnce();
+  });
+
+  it("preserves Jev's single-level score rubric", async () => {
+    const options = {
+      ...harness({
+        model: "typesafe/jev-1.13",
+        answers: { q: { type: "score", score: 0 } },
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }),
+      stdin: stdin({
+        state: "report",
+        questions: { q: { type: "score", instructions: "Rate", criteria: ["Only"] } },
+      }),
+    };
+    await runOpenRouterCommand(decisions, options);
+    expect(options.fetchImpl).toHaveBeenCalledOnce();
   });
 
   it.each([

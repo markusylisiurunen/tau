@@ -98,8 +98,25 @@ export class ModelRuntime {
   }
 
   async getAuth(model: Model<Api>, signal?: AbortSignal): Promise<AuthResult | undefined> {
+    signal?.throwIfAborted();
     const models = isOpenAICodexModel(model) ? this.createCodexRequestModels() : this.models;
-    return await models.getAuth(model, { signal });
+    const pending = models.getAuth(model, { signal });
+    if (!signal) return await pending;
+    return await new Promise<AuthResult | undefined>((resolve, reject) => {
+      const onAbort = () => reject(signal.reason);
+      signal.addEventListener("abort", onAbort, { once: true });
+      if (signal.aborted) onAbort();
+      pending.then(
+        (auth) => {
+          signal.removeEventListener("abort", onAbort);
+          resolve(auth);
+        },
+        (error) => {
+          signal.removeEventListener("abort", onAbort);
+          reject(error);
+        },
+      );
+    });
   }
 
   streamModel<TApi extends Api>(

@@ -10,6 +10,8 @@ A **provider** owns authentication and one or more request APIs. A **model** is 
 
 The bundled catalog comes from Tau's model runtime. It supplies known provider IDs, bundled model IDs, request API names, endpoints, capability flags, token limits, and pricing. Bundled does not mean currently usable: a provider may still lack credentials, an account may not expose a model, or a configured endpoint may reject it. See [credentials](credentials.md).
 
+Azure models use the `azure` provider ID in personas and model configuration. The provider supports both Responses and Chat Completions requests, with the API selected by each model's catalog entry.
+
 ## Remote catalog
 
 A model-owning Tau host restores provider catalogs from `~/.config/tau/models-store.json` during startup, then checks `pi.dev` asynchronously when the cache is older than four hours. This is a startup freshness check, not a recurring timer. Set `TAU_OFFLINE` to skip the automatic network check.

@@ -21,6 +21,20 @@ describe("model catalog", () => {
     expect(model.id).toBe("gpt-5.4");
   });
 
+  it("loads Azure models for both supported APIs", () => {
+    expect(listProviders()).toContain("azure");
+    expect(listProviders()).not.toContain("azure-openai-responses");
+    const models = listModels("azure");
+    expect(models.some((model) => model.api === "azure-openai-responses")).toBe(true);
+    expect(models.some((model) => model.api === "openai-completions")).toBe(true);
+    for (const model of models) {
+      expect(resolveModel("azure", model.id)).toMatchObject({
+        provider: "azure",
+        api: model.api,
+      });
+    }
+  });
+
   it("uses remote pi models as the base catalog", () => {
     const bundled = resolveModel("openai", "gpt-5.4");
     const remote = {

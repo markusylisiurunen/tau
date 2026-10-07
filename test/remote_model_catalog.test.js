@@ -150,11 +150,11 @@ describe("remote model catalog", () => {
     try {
       const catalog = new RemoteModelCatalog({
         path: join(home, "models-store.json"),
-        providerIds: ["azure-openai-responses", "openrouter"],
+        providerIds: ["azure", "openrouter"],
         builtinGeneratedAt: 0,
         fetch: vi.fn(async (url) => {
           const provider = new URL(url).pathname.split("/").at(-1);
-          return provider === "azure-openai-responses"
+          return provider === "azure"
             ? catalogResponse(provider, "gpt-4", {
                 modelOverrides: { baseUrl: "", futureMetadata: { supported: true } },
               })
@@ -173,9 +173,9 @@ describe("remote model catalog", () => {
 
       const result = await catalog.refresh({ force: true });
 
-      expect(result.providers.get("azure-openai-responses")?.status).toBe("updated");
+      expect(result.providers.get("azure")?.status).toBe("updated");
       expect(result.providers.get("openrouter")?.status).toBe("updated");
-      expect(catalog.snapshot().get("azure-openai-responses")?.[0]).toMatchObject({
+      expect(catalog.snapshot().get("azure")?.[0]).toMatchObject({
         baseUrl: "",
         futureMetadata: { supported: true },
       });

@@ -29,9 +29,7 @@ tau
 
 ## Documentation
 
-The [Tau documentation](docs/index.md) is the canonical, version-matched product guide. The running host exposes the same files to agents through the intrinsic `tau_docs` tool, so people and agents work from the same contracts.
-
-Once your first session is running, you can ask Tau itself what it can do:
+The [Tau documentation](docs/index.md) describes the version it ships with. Tau's agent can read the same pages, so once a session is running you can ask Tau about itself:
 
 ```text
 Using Tau's built-in documentation, briefly explain what Tau can do, covering its core features, built-in tools, optional services, and integrations.

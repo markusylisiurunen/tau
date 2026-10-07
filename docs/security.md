@@ -1,54 +1,54 @@
 # Security
 
-Tau gives an agent real tools for changing files, running processes, and calling configured services. Those tools execute when the model calls them. Tau does not insert a confirmation dialog, repository fence, or universal sandbox between a tool call and its owner.
+Tau gives an agent real tools that change files, run processes, and call configured services. A tool runs as soon as the model calls it. Tau adds no confirmation dialog, no restriction to the repository, and no general sandbox.
 
-Safe operation therefore starts with authority: decide which machine may be changed, which credentials it may hold, and which project content is trusted before starting a session. The [ownership and scope](ownership-and-scope.md) page defines the client, host, execution environment, and Telegram runner used below.
+So before starting a session, decide which machine the agent may change, which credentials that machine may hold, and which project content you trust. The [ownership and scope](ownership-and-scope.md) page defines the client, host, execution environment, and Telegram runner used below.
 
 ## Direct execution and operating-system authority
 
-Host tools such as `bash`, `write`, and `edit` act through the session execution environment. They inherit the operating-system permissions of that environment and are not confined to the repository root. Absolute paths are accepted when the operating system permits them. File and process side effects persist even if tool output is later truncated, a turn is interrupted, or the model request fails.
+Host tools such as `bash`, `write`, and `edit` act in the session's execution environment. They have that environment's operating-system permissions and are not limited to the repository. Absolute paths work wherever the operating system allows. Changes to files and processes remain even if the tool output is truncated, the turn is interrupted, or the model request fails.
 
-Client tools are a separate authority. A command client tool runs as the owning client user, with that process's current directory and inherited environment. Its execution-environment facade can additionally request commands on the session target. A remote session can therefore expose two independent operating-system authorities to one logical turn.
+Client tools have separate permissions. A command client tool runs as the client's user, with the client process's current directory and environment. It can also ask to run commands in the execution environment. In a remote session, one turn can therefore act with the permissions of two different machines.
 
-Use the narrowest practical authority for each role:
+Give each part only the access it needs:
 
 - Run Tau and its execution environment as a dedicated, unprivileged user when the workspace does not need access to a personal home directory.
-- Use a container, virtual machine, or separately provisioned hosted environment when work should be isolated from the host. Tau preserves that external boundary, but it does not claim that every configured backend is a security sandbox.
+- Use a container, virtual machine, or separate hosted environment when work should be isolated from the host. Tau respects that isolation, but not every execution environment type is a security sandbox.
 - Mount or copy only the repositories and files the task needs. Do not point an execution environment at a broad home directory for convenience.
 - Give the host only the provider and service credentials needed for its sessions. Give client-tool processes only the client-local credentials they need.
-- Use a persona with a narrower `tools` list for work that should not modify files or invoke external services. Remember that intrinsic `tau_docs` does not come from that list.
+- Use a persona with a shorter `tools` list for work that should not change files or call external services. The built-in `tau_docs` tool is always available regardless of that list.
 
-Interruption, timeouts, output limits, and process-group termination bound execution. They are not approval controls and cannot undo an operation that already completed. Review destructive commands and use Tau's normal session operations instead of asking an agent to manipulate internal state.
+Interruption, timeouts, output limits, and process-group termination limit how long and how much a command runs. They do not ask for approval and cannot undo anything already done. Review destructive commands, and use Tau's normal session operations instead of asking an agent to change Tau's internal files.
 
 ## Treat project content as executable policy
 
-The execution environment supplies more than source files. Tau can load project `.tau/config.json`, personas, prompts, skills, `.agents/skills`, and `AGENTS.md` from the working directory and its discovery path. This content can select models and tools, add instructions, define workflows, or alter which globally trusted client tools are advertised.
+Tau loads more than source files from the execution environment. It reads project `.tau/config.json`, personas, prompts, skills, `.agents/skills`, and `AGENTS.md` from the working directory and its parents. This content can choose models and tools, add instructions, define workflows, and change which of your global client tools are offered.
 
-A repository checkout is therefore part of Tau's trust boundary. Before using it with meaningful credentials or write access, inspect relevant `.tau/`, `.agents/`, and `AGENTS.md` content, including nearer nested levels. Pay particular attention to:
+Trusting a repository therefore means trusting this content. Before using a repository with valuable credentials or write access, read its `.tau/`, `.agents/`, and `AGENTS.md` content, including nested levels. Look especially at:
 
 - persona system prompts, tool lists, and model launch allowlists;
 - skill instructions and any scripts they direct the agent to run;
-- project configuration that supplies API keys, Nook targets, model notices, or hosted-environment definitions;
-- `enabledClientTools`, which can select commands previously trusted in the user's global configuration; and
+- project configuration that sets Nook targets, model notices, or hosted-environment connections;
+- `enabledClientTools`, which can turn on commands from your global configuration; and
 - provision scripts or other repository automation used by integrations such as Telegram.
 
-Project configuration cannot define a command client-tool executable. It can only select definitions from global configuration. That restriction prevents a checkout from directly introducing a new client process, but it does not make a selected command harmless.
+Project configuration cannot define client tool commands. It can only select commands defined in global configuration. A repository therefore cannot add a new process to your machine, but a selected command can still do anything it was written to do.
 
-`--no-agent-context-files` disables automatic `AGENTS.md` injection and descendant path discovery. It does not disable project configuration, personas, skills, or tools. `--no-client-tools` disables TUI-provided tools, not host tools. Use the appropriate control rather than treating either flag as a general safe mode.
+`--no-agent-context-files` turns off `AGENTS.md` loading and the list of nested `AGENTS.md` files. Project configuration, personas, skills, and tools still load. `--no-client-tools` turns off TUI client tools, not host tools. Neither flag is a general safe mode.
 
-Prompt templates are inserted into the editor for review rather than submitted automatically. Leading `<system>` blocks, persona prompts, model notices, and committed session messages are model-facing and may become durable session content. Do not place secrets in instructions, prompts, or model notices.
+Prompt templates are inserted into the editor for you to review; they are never sent automatically. Leading `<system>` blocks, persona prompts, model notices, and session messages are sent to the model and may be saved in the session. Never put secrets in instructions, prompts, or model notices.
 
 ## Trust remote model metadata as routing configuration
 
-A model-owning Tau host refreshes compatible provider catalogs from `pi.dev` and caches them in `~/.config/tau/models-store.json`. This is a trusted software-update channel, not informational discovery: a remote model record can replace its API adapter, endpoint, headers, compatibility behavior, limits, and pricing. Compromise or misconfiguration of that service could redirect provider requests and credentials. Set `TAU_OFFLINE` to disable automatic catalog requests.
+A Tau host that runs models refreshes compatible provider catalogs from `pi.dev` and caches them in `~/.config/tau/models-store.json`. Treat this like a software update channel. A remote model record can change the model's API adapter, endpoint, headers, compatibility settings, limits, and pricing. If that service were compromised or misconfigured, it could redirect provider requests, along with their credentials. Set `TAU_OFFLINE` to turn off automatic catalog requests.
 
 ## Keep secrets with the process that needs them
 
-Most model and service credentials belong to the host because the host performs model calls, web search, history replication, and host-tool Nook requests. TUI speech credentials and command client-tool credentials belong to the client. Telegram bot, transcription, and voice-response credentials belong to the Telegram runner. Hosted-environment bridge and API credentials belong to host startup.
+Most model and service credentials belong on the host, because the host makes model calls, web searches, history replication, and Nook requests for the session tool. TUI speech credentials and command client tool credentials belong on the client. Telegram bot, transcription, and voice credentials belong to the Telegram runner. Credentials for hosted execution environments belong in the host's startup configuration.
 
-In a remote attachment, a credential exported on the laptop does not authenticate the remote host. Conversely, putting a host credential into the execution target's shell environment unnecessarily exposes it to target processes. Follow [credentials](credentials.md) for exact resolution precedence.
+When attached to a remote host, a credential exported on the laptop does not reach the host. Putting a host credential into the execution environment's shell would needlessly expose it to every process there. See [credentials](credentials.md) for which source wins.
 
-Prefer host process environment variables or private global configuration over project files for personal secrets. Some integrations support a configuration field that names an environment variable, which keeps the secret value out of JSON. Telegram currently stores each bot token in its separate runner configuration file, so protect that file as secret material.
+For personal secrets, prefer host environment variables or global configuration over project files. Some integrations accept a field that names an environment variable, which keeps the secret out of JSON. Telegram stores each bot token in the runner's configuration file, so protect that file like any other secret.
 
 Never put credentials in:
 
@@ -58,35 +58,35 @@ Never put credentials in:
 - tool results, session messages, issue comments, or debug output; or
 - Nook static assets or browser KV.
 
-Do not diagnose authentication by dumping an environment, configuration file, `auth.json`, or service response containing headers. Check whether the expected source is configured on the owning process, then exercise a small operation that uses it. `tau auth list` reports Codex account identity and health without displaying tokens.
+Do not debug authentication by printing an environment, a configuration file, `auth.json`, or a service response that includes headers. Check that the expected source is set up for the right process, then run a small operation that uses it. `tau auth list` shows Codex account identities and status without showing tokens.
 
-If a credential appears in a session, log, shell history, repository, Nook deployment, Telegram message, or transcript history, treat it as exposed. Revoke or rotate it at the provider first, replace the stored value through the supported configuration or auth command, restart the owning process when needed, and remove the exposed copy from systems where retention policy permits. Redaction is not a substitute for rotation.
+If a credential appears in a session, log, shell history, repository, Nook deployment, Telegram message, or history, treat it as exposed. First revoke or rotate it at the provider. Then replace the stored value through configuration or the auth command, restart the process that uses it if needed, and delete the exposed copy where retention rules allow. Redacting the copy does not replace rotation.
 
 ## Understand environment sanitization
 
-Local execution-environment commands start from a sanitized copy of the Tau process environment. Tau removes inherited variables whose names end in `_KEY`, `_SECRET`, `_TOKEN`, or `_PASSWORD`, and the exact name `API_KEY`. This reduces accidental leakage from a local host into ordinary agent Bash commands.
+Commands in a local execution environment start from a filtered copy of the Tau process environment. Tau removes inherited variables whose names end in `_KEY`, `_SECRET`, `_TOKEN`, or `_PASSWORD`, and the exact name `API_KEY`. This reduces accidental leaks from a local host into the agent's Bash commands.
 
-The filter is deliberately limited:
+The filter has clear limits:
 
 - It is name-based, so a secret under another name is not recognized.
-- Explicit execution-environment overrides are applied after sanitization and can reintroduce a value.
-- Hosted execution backends start from the target environment supplied by that backend.
+- Variables set explicitly for the execution environment are applied after filtering and can add a secret back.
+- Hosted execution environments start from their own environment.
 - Command client tools inherit the client process environment unchanged.
-- Host-owned model and service code can access the host credentials it is designed to consume.
+- Tau's own model and service code on the host uses the host credentials it needs.
 
-Do not rely on sanitization as a secret store or authorization boundary. Avoid broad environment inspection, and keep secrets out of any process that does not need them.
+The filter is neither a secret store nor an access control. Avoid printing whole environments, and keep secrets out of every process that does not need them.
 
 ## Keep login shells automation-safe
 
-Tau command execution uses a fresh non-interactive login Bash. The execution environment's `HOME` controls login startup discovery. Bash can read `/etc/profile`, the first available user login file, and `BASH_ENV`; a login file may also source `.bashrc`.
+Tau runs each command in a fresh non-interactive login Bash. The execution environment's `HOME` decides which startup files are read. Bash can read `/etc/profile`, the first user login file it finds, and `BASH_ENV`, and a login file may also source `.bashrc`.
 
-These files execute with the same operating-system authority as every tool command. A compromised or overly broad startup file can change `PATH`, run commands, disclose data, terminate the shell, or produce unexpected output. Review startup files in each execution environment, especially targets created from shared images or user homes.
+These files run with the same permissions as every tool command. A compromised or careless startup file can change `PATH`, run commands, leak data, exit the shell, or print unexpected output. Review the startup files in each execution environment, especially ones created from shared images or existing user homes.
 
-Startup files must not print banners, prompt for input, read stdin, require a TTY, launch an editor, or exit the shell unexpectedly. Tau does not suppress their output. There is no TTY, and ordinary agent Bash calls have no stdin, so interactive authentication and terminal prompts fail or wait until timeout. Configure Git, SSH, package managers, and cloud CLIs for deliberate noninteractive use.
+Startup files must not print banners, prompt, read stdin, require a TTY, open an editor, or exit the shell. Tau does not suppress their output. There is no TTY and the agent's Bash calls have no stdin, so interactive logins and terminal prompts fail or hang until the timeout. Set up Git, SSH, package managers, and cloud CLIs to work without prompts.
 
 ## Trust command client tools as local programs
 
-Command client tools are defined only in user-owned global configuration, then selected for a project. Tau starts the configured executable directly, without a shell, and validates model arguments against its configured object schema. The command still runs as trusted local code with the client's full inherited environment and filesystem permissions.
+Command client tools are defined only in your global configuration, and projects can only select them. Tau starts the executable directly, without a shell, and validates the model's arguments against the configured schema. The command still runs as trusted local code, with the client's full environment and file permissions.
 
 Before enabling one:
 
@@ -95,98 +95,98 @@ Before enabling one:
 3. Avoid building shell source from model-provided strings. Prefer fixed commands and argument arrays.
 4. Honor cancellation and set a bounded execution timeout.
 5. Return only the data the model needs, with diagnostics on stderr.
-6. Use the execution-environment facade only for work that truly belongs on the session target.
+6. Run commands in the execution environment only for work that really belongs on the session machine.
 
-A project `enabledClientTools` list is permission to select an already trusted global definition. Unknown selected names are ignored, so verify effective advertisement after changes. Start an untrusted project with `--no-client-tools` until its selection has been reviewed.
+A project's `enabledClientTools` can only select definitions you already trust globally. Unknown names are ignored without an error, so check which tools are actually offered after a change. Start an untrusted project with `--no-client-tools` until you have reviewed its selection.
 
-The TUI's built-in diff review tool is also a client-local process.
+The TUI's built-in diff review tool also runs as a process on the client machine.
 
 ## Use code mode as a capability boundary
 
-The generated JavaScript used by `code` and code-mode client tools runs in Tau's bounded worker runtime. It receives only declared capabilities, `docs`, `printText`, the asynchronous `printImage` output helper, pure `truncate` and `truncateLines` helpers, live `Date`, and `Math.random()`. Generated code has no direct imports, process, environment, credentials, timers, fetch, filesystem, or arbitrary network access. Selecting Bash exposes explicit command execution through `tau.bash` with the same execution authority as direct Bash; the JavaScript sandbox does not restrict what those commands can do.
+JavaScript written by the model for `code` and code-mode client tools runs in a restricted sandbox. It receives only the declared capabilities, `docs`, `printText`, the async `printImage`, the `truncate` and `truncateLines` helpers, the real `Date`, and `Math.random()`. It has no imports, processes, environment variables, credentials, timers, fetch, files, or network access of its own. When Bash is selected, `tau.bash` runs commands with the same permissions as the Bash tool, and the sandbox does not limit what those commands do.
 
-API handlers run outside that worker and retain the authority deliberately exposed by the tool. The boundary therefore limits generated code to declared capabilities, but it does not make an overpowered API safe. Tool authors should validate every argument, expose narrow operations, keep credentials in the parent, enforce cancellation, and avoid returning secrets.
+The API behind each capability runs outside the sandbox, with whatever access the tool gives it. The sandbox limits the model's code to the declared capabilities, but a capability that is too powerful is still dangerous. Tool authors should validate every argument, offer narrow operations, keep credentials outside the sandbox, honor cancellation, and never return secrets.
 
-Standalone `tau.models` requests send only explicit inputs to OpenRouter. File attachments are read from the session machine; inline media is validated against its bytes. Provider credentials stay outside the sandbox, and reported model costs are accounted independently of later program success.
+`tau.models` sends only the inputs given in each request to OpenRouter. File attachments are read from the session machine, and inline media is checked against its bytes. Provider credentials stay outside the sandbox. Reported model costs are recorded even if the program fails later.
 
-The `history` code-mode API is read-only, but it can see transcripts across repositories and execution environments in the configured collection. Its agent policy requires a direct user or active-instruction request before use. That policy does not replace access control on the history service.
+The `history` API is read-only, but it can see transcripts from every repository and execution environment in the configured collection. The agent uses it only when the user or active instructions directly ask. That rule is no substitute for access control on the history service.
 
 ## Trust MCP servers
 
-MCP server definitions come from the host launch directory's global and ancestor/project configuration layers. Launching a host inside a repository trusts those layers to introduce host commands and use host credentials; there is no approval dialog. MCP capabilities apply to all sessions on that host whose persona allows `mcp`, and their supervised subagents; they are not isolated per repository or client. Session execution-environment configuration cannot introduce servers.
+MCP servers come from the global and project configuration of the directory where the host was launched. Launching a host inside a repository lets that repository's configuration start commands on the host and use host credentials, with no approval step. MCP is available to every session on that host whose persona allows `mcp`, and to their subagents. It is not separated per repository or client. Configuration in a session's execution environment cannot add servers.
 
-A stdio MCP server is trusted host code. It runs outside the code-mode sandbox with the host account's filesystem and process permissions and full inherited environment, including credentials. Review executables and arguments before configuring them. HTTP servers receive configured headers and the arguments sent to their tools. Use HTTPS for remote services and grant only the access needed.
+A stdio MCP server is trusted code on the host. It runs outside the code-mode sandbox with the host account's file and process permissions and its full environment, including credentials. Review the executable and arguments before configuring a server. HTTP servers receive the configured headers and the arguments sent to their tools. Use HTTPS for remote servers and give them only the access they need.
 
-MCP does not add a confirmation layer. Tools can mutate external systems or host resources immediately. Interrupting a call cannot undo a completed effect, and an unknown outcome does not make retrying a mutation safe. Server descriptions, instructions, annotations, and results are untrusted data. Annotations such as `readOnlyHint` are not enforced permissions.
+MCP has no confirmation step. Tools can change external systems or host resources immediately. Interrupting a call cannot undo what already happened, and when the outcome is unknown, retrying a change is not safe. Treat server descriptions, instructions, annotations, and results as untrusted data. Annotations such as `readOnlyHint` are not enforced.
 
-Stdio shutdown depends on the MCP transport. Descendants that ignore `SIGTERM` can survive when the server process exits first; do not rely on shutdown to contain untrusted server processes.
+How a stdio server shuts down depends on the MCP transport. Child processes that ignore `SIGTERM` can outlive the server, so do not rely on shutdown to stop untrusted server processes.
 
-The execution environment does not sandbox a host-run MCP server. A server that exposes host files or commands gives the agent that host authority even when Bash runs in a remote sandbox. Disable `mcp` in the persona or disable the server if that authority is inappropriate. Connections and credentials stay outside the generated JavaScript, but the configured server remains responsible for what its tools return.
+The execution environment does not contain an MCP server that runs on the host. A server that exposes host files or commands gives the agent access to the host, even when Bash runs in a remote sandbox. If that access is not acceptable, remove `mcp` from the persona or disable the server. Connections and credentials stay outside the model's JavaScript, but the server decides what its tools return.
 
 ## Protect remote session transports
 
-`tau serve` binds to loopback by default. Keep that default unless remote network access is required. A WebSocket server without `--auth-token` or `TAU_WS_AUTH_TOKEN` is unauthenticated, and any connected client can observe and mutate hosted sessions.
+`tau serve` listens on loopback by default. Keep it that way unless you need remote network access. Without `--auth-token` or `TAU_WS_AUTH_TOKEN`, the WebSocket server has no authentication, and any client that connects can observe and change hosted sessions.
 
-The server's token grants full session access. Tau places it in the WebSocket connection URL as the `tau_token` query parameter. Use a strong random value, avoid command-line literals that enter shell history, and ensure reverse proxies and access logs do not record it.
+The token gives full access to all sessions. Tau sends it in the WebSocket URL as the `tau_token` query parameter. Use a strong random value, avoid typing it on command lines that end up in shell history, and make sure reverse proxies and access logs do not record it.
 
-Tau's listener is plain WebSocket and has no certificate configuration. Across an untrusted network, use one of these patterns:
+Tau serves plain WebSocket and has no TLS settings. Across an untrusted network, use one of these setups:
 
 - bind Tau to loopback and forward it through SSH;
 - place it behind a trusted TLS reverse proxy and connect with `wss://`; or
 - keep it on a private network whose access controls and confidentiality are understood.
 
-A reverse proxy must preserve WebSocket upgrade behavior and the request query string while protecting both. Restrict who can reach the listener even when a token is configured. Multiple observers are active participants, not read-only viewers: they can submit, steer, interrupt, rewind, and advertise client tools. See [remote sessions](remote-sessions.md).
+A reverse proxy must pass through the WebSocket upgrade and the query string, and keep both protected. Limit who can reach the server even when a token is set. Every attached client has full control: it can submit, steer, interrupt, rewind, and offer client tools. See [remote sessions](remote-sessions.md).
 
 ## Secure Telegram access and workspaces
 
-A Telegram runner is both a network-facing client and a local Tau host. Its bot configuration determines who can create turns that may execute tools in configured workspaces.
+A Telegram runner is both a client exposed to the network and a local Tau host. Its bot configuration decides who can start turns that run tools in the configured workspaces.
 
-Set `allowedUserIds` for authorized senders and `allowedChatIds` for authorized chats. If these lists are absent, private chats are not restricted by that dimension. Group chats are ignored unless their chat id is explicitly present in `allowedChatIds`, and group turns require an explicit bot mention. Messages, attachments, audio transcripts, and processing errors from an allowed group can become pending context for a later triggering turn, so membership and chat history are part of the trust decision.
+Set `allowedUserIds` for allowed senders and `allowedChatIds` for allowed chats. Without `allowedUserIds`, any user can message the bot in a private chat, and without `allowedChatIds`, any private chat is allowed. Group chats are ignored unless their chat id is in `allowedChatIds`, and a group turn starts only when the bot is mentioned. Messages, attachments, audio transcripts, and errors from an allowed group can become context for a later turn, so group membership and history are part of what you trust.
 
-Each bot's `allowedProjectIds` should expose only intended projects. Telegram chat sessions are scoped by bot and chat, but a persistent-directory project deliberately reuses one existing directory across all of that project's sessions. Work in one session is visible to later sessions and to other authorized chats selecting the same project. Do not configure a personal home, credential directory, or unrelated shared tree as a persistent project.
+Each bot's `allowedProjectIds` should list only the intended projects. Telegram sessions are separate per bot and chat, but a persistent-directory project uses the same directory for all of its sessions. Work in one session is visible to later sessions and to other allowed chats that select the same project. Never use a personal home, a credential directory, or an unrelated shared directory as a persistent project.
 
-Repository and composite projects use managed workspaces and persistent bare caches. New or reconstructed repositories may execute an executable `.tau/scripts/provision` asynchronously. Review that script as trusted project automation. Persistent-directory projects are not provisioned and are never deleted by Tau.
+Repository and composite projects use managed workspaces and persistent bare repository caches. New or reconstructed repositories may run an executable `.tau/scripts/provision` in the background. Review that script like any other trusted project automation. Persistent-directory projects are never provisioned and never deleted by Tau.
 
-Protect the runner configuration, generated session state, project-preference state, managed workspace root, and execution-environment temporary attachment storage with an appropriate OS account and filesystem permissions. Do not run two Telegram runners against the same state. Operational details are in [Telegram](telegram.md).
+Protect the runner configuration, session state, project-preference state, managed workspace root, and temporary attachment storage with a suitable OS account and file permissions. Never run two Telegram runners on the same state. Operational details are in [Telegram](telegram.md) and [Telegram projects and workspaces](telegram-projects.md).
 
 ## Know what history retains
 
-Tau writes a flat transcript history in the host home independently of recoverable session snapshots. It contains committed user entries, intermediate system instructions, assistant text, and completed tool entries. The initial persona/base prompt is excluded. Compaction does not remove it. Rewind truncates entries after the selected boundary, but history is not an ephemeral cache.
+Tau keeps a flat transcript history in the host user's home, separate from saved sessions. It contains user messages, intermediate system instructions, assistant text, and completed tool calls. The initial persona prompt is not included. Compaction does not remove entries. Rewind removes entries after the rewind point. Apart from that, entries stay; history is not a temporary cache.
 
-Without remote history configuration, this collection stays in the host's local SQLite database. The `tau.history` capability can search the complete machine-local collection, subject to its persona and invocation policy. Protect the host account and database as transcript data.
+Without remote history, it stays in a SQLite database on the host. The `tau.history` capability can search all of it, within the persona's tools and the agent's usage rules. Protect the host account and database as you would the transcripts themselves.
 
-When global `history` configuration is present, local SQLite remains the first durable write and a persistent outbox replicates operations to the configured service asynchronously. Remote entry projections are byte-bounded and large payloads are middle-truncated, but they can still contain source code, tool output, instructions, and personal data. The deployed service also generates semantic digests from transcript content through its configured Cloudflare AI service.
+With global `history` configuration, entries are still written to local SQLite first, and a persistent outbox copies them to the configured service in the background. Remote entries are limited in size, with large content truncated in the middle, but they can still contain source code, tool output, instructions, and personal data. The service also summarizes transcript content with its configured Cloudflare AI service.
 
-Before enabling remote replication, confirm the service owner, retention policy, region, access-key distribution, and acceptable project scope. One service credential can query the shared remote collection. Rotate it if exposed, and do not assume removing the client configuration deletes data already replicated. See [history](history.md) for storage and service behavior.
+Before turning on remote history, confirm who runs the service, its retention policy and region, who holds access keys, and which projects may be sent. One service key can search the whole shared collection. Rotate it if exposed. Removing the configuration does not delete data that was already copied. See [history](history.md) for storage and service behavior.
 
 ## Treat Nook output as published content
 
-Nook deploys static files to path-based HTTPS URLs. Deployments are private by default; `--public` makes the site assets anonymously reachable. Review the built output, not just source files, before deployment. Static assets must never contain provider keys, source maps with secrets, private configuration, or data that should remain on the execution environment.
+Nook deploys static files to HTTPS URLs. Deployments are private by default, and `--public` makes a site's files reachable by anyone. Review the built output, not just the source, before deploying. Static files must never contain provider keys, source maps with secrets, private configuration, or data that should stay on the execution environment.
 
-Each site has browser JSON KV that survives redeploys. Public-site KV is anonymously readable and writable. Private-site KV requires Cloudflare Access identity, but it is still application data available to authorized browser users and site code. It is not a credential vault.
+Each site has a JSON KV store for the browser that survives redeploys. On a public site, anyone can read and write it. On a private site, it requires a Cloudflare Access identity, but it is still application data that every allowed user and the site's code can read. It is not a place for credentials.
 
-Cloudflare Access should protect only the root `/__nook/*` control plane. Public site paths must remain reachable without Access, while private navigation authenticates through `/__nook/auth`. The Nook Worker validates Access JWTs; raw service-token headers only pass the outer Access policy. Follow the exact Access application, audience, cookie, and service-auth setup in [Nook](nook.md).
+Cloudflare Access should protect only the `/__nook/*` control plane at the root. Public site paths must stay reachable without Access, while private sites sign in through `/__nook/auth`. The Nook Worker validates Access JWTs; service-token headers only get a request past Access. Follow the exact Access application, audience, cookie, and service token setup in [Nook](nook.md).
 
-The host-owned Nook tool and `tau nook` CLI can deploy, delete, copy, and modify KV without a separate confirmation layer. Code-mode JavaScript never receives Access credentials directly, but the parent Nook client acts with them on approved API calls.
+The Nook session tool and the `tau nook` CLI can deploy, delete, copy, and change KV without asking for confirmation. The model's JavaScript never receives Access credentials, but Tau uses them for the Nook API calls the program makes.
 
 ## Edit configuration without widening authority accidentally
 
-Configuration changes can redirect network traffic, expose tools, or move credentials across trust boundaries. Use this sequence:
+A configuration change can redirect network traffic, expose tools, or send credentials somewhere new. Follow these steps:
 
-1. Identify the consuming component and its machine, `cwd`, home, and Tau version.
-2. Read the exact version-matched field contract in [configuration](configuration.md) and [configuration reference](config-reference.md).
-3. Inspect nearer configuration levels that may replace or merge the field.
-4. Back up only the user-authored file being changed, with permissions no broader than the original.
-5. Make the smallest edit at the narrowest valid scope. Keep secrets out of project files.
-6. Validate JSON or frontmatter without printing the whole file into a shared transcript.
-7. For a local startup, use `tau --debug` from the relevant directory when its potentially sensitive prompt output can remain private. For a live session, use `/reload` while idle and read every warning.
-8. Restart the owning client, host, or runner when the field is startup-owned. Test one small operation before resuming broader work.
+1. Find out what reads the setting, and its machine, `cwd`, home, and Tau version.
+2. Read the field's entry in [configuration](configuration.md) and the [configuration reference](config-reference.md).
+3. Check nearer configuration levels that may replace or merge the field.
+4. Back up only the file you are changing, with permissions no broader than the original.
+5. Make the smallest edit at the narrowest level that works. Keep secrets out of project files.
+6. Validate the JSON or frontmatter without printing the whole file into a shared transcript.
+7. For a local startup, run `tau --debug` from the relevant directory, if its prompt output can stay private. For a running session, run `/reload` while idle and read every warning.
+8. If the setting is read at startup, restart the client, host, or runner. Test one small operation before continuing.
 
-Unknown configuration fields are stripped, so syntactically valid JSON can still have no effect. Invalid nearer values may be skipped, leaving a broader value effective. Verify behavior rather than assuming the edited value won.
+Unknown fields are removed without a warning, so valid JSON can still have no effect. An invalid nearer value may be skipped, leaving a broader value in effect. Check the behavior instead of assuming your edit applied.
 
 ## Do not edit durable internals
 
-Tau's durable files are implementation-owned recovery state, not configuration surfaces. Do not directly edit or casually delete:
+Tau's internal files hold the state it needs to recover. They are not configuration. Do not edit or casually delete:
 
 - `~/.config/tau/auth.json`;
 - `~/.config/tau/models-store.json`;
@@ -197,4 +197,4 @@ Tau's durable files are implementation-owned recovery state, not configuration s
 - code-mode or compaction temporary files as if they were durable state; or
 - Nook R2 or Durable Object records outside supported Nook operations.
 
-Use `tau auth` for Codex accounts, session protocol and TUI operations for sessions, normal configuration for behavior, and documented service commands for History and Nook. If recovery reports corruption, preserve the original data, stop competing writers, record the exact error and installed version, and investigate through normal recovery before considering any destructive repair.
+Use `tau auth` for Codex accounts, TUI or session protocol operations for sessions, configuration for behavior, and the documented commands for history and Nook. If recovery reports corruption, keep the original data, stop any other process writing to it, write down the exact error and Tau version, and investigate through normal recovery before trying any repair that deletes data.

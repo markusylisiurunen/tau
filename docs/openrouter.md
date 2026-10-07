@@ -1,12 +1,12 @@
 # OpenRouter
 
-`tau tool openrouter` provides standalone, single-request utilities for typed decisions and text or media understanding. They work from a shell inside or outside Tau, without a session, persona, conversation, tools, or session accounting. Only explicitly supplied content is sent to OpenRouter and its selected provider. Judgments are advisory model output, not a security or permission boundary.
+`tau tool openrouter` makes single requests for typed decisions and for understanding text or media. It works from any shell, inside or outside Tau, without a session, persona, conversation, tools, or session cost tracking. Only the content you pass is sent to OpenRouter and its chosen provider. Its judgments are model output; never use them as a security or permission check.
 
 ## Credentials and requirements
 
 Install Tau and configure `OPENROUTER_API_KEY`, or put `apiKeys.openrouter` in the global `~/.config/tau/config.json` on the machine running the command. A nonblank environment key takes precedence. Project configuration cannot supply API keys. There is no key flag.
 
-Tau's local Bash removes inherited credential-shaped environment variables. When invoking through Bash, configure the key on that machine through global configuration or its own supported environment setup. See [credentials](credentials.md) and [tools](tools.md).
+The agent's Bash tool removes inherited variables that look like credentials. When the agent runs the command, put the key in global configuration on that machine, or set it some other way that machine supports. See [credentials](credentials.md) and [tools](tools.md).
 
 Audio and video require `ffprobe` from FFmpeg on `PATH`: `brew install ffmpeg` on macOS or `apt install ffmpeg` on Debian/Ubuntu. Text and images do not require FFmpeg. Media is validated locally, not transcoded.
 
@@ -22,7 +22,7 @@ Help and model listing require neither credentials nor network access and never 
 
 ## Fixed model choices
 
-An actual request requires an exact `--model` ID from this table. There is no default, arbitrary-ID escape hatch, live discovery, refresh, or automatic model substitution. A versioned ID is not necessarily an immutable provider snapshot; output records the returned model separately.
+Every request needs an exact `--model` ID from this table. There is no default, no way to use other IDs, no model discovery or refresh, and no automatic substitution. A versioned ID is not necessarily an immutable provider snapshot; output records the returned model separately.
 
 | Operation | Model | Inputs and suggested role | Reasoning efforts |
 | --- | --- | --- | --- |
@@ -32,7 +32,7 @@ An actual request requires an exact `--model` ID from this table. There is no de
 | `chat` | `openai/gpt-6.1-sol` | Text and images; coding, debugging, technical reasoning | `low`, `medium`, `high`, `xhigh`, `max` |
 | `chat` | `anthropic/claude-opus-5.5` | Text and images; premium generalist for writing, synthesis, difficult reasoning, and second opinions | `low`, `medium`, `high`, `xhigh`, `max` |
 
-Roles are selection guidance, not benchmark guarantees or restrictions on tasks. Unsupported settings and modalities fail locally rather than switching models, transcribing audio, or extracting video frames.
+Roles are guidance for choosing, not guarantees or limits on what a model may be used for. Unsupported settings and media types fail locally; the command never switches models, transcribes audio, or extracts video frames instead.
 
 ## Input and examples
 
@@ -142,7 +142,7 @@ These are successful exchanges with distinguishable outcomes; scripts must inspe
 
 ## Outputs and recovery
 
-These are conservative utility safety limits, not promises of every provider's maximum capacity. All byte limits use decimal bytes.
+These are cautious safety limits set by Tau, not the providers' maximum capacities. Byte limits use decimal units.
 
 | Resource | Limit |
 | --- | --- |
@@ -162,4 +162,4 @@ Oversized or unsupported inputs fail before sending. Audio/video validation uses
 
 Diagnostics go to stderr and failures exit nonzero. Authentication, insufficient credits, permission failures, rate limits, and provider/service failures report distinct status diagnostics without dumping provider bodies. There are no automatic retries, including after timeouts or interrupted connections: the provider may already have charged for an unknown outcome. A response exceeding the safety bound can fail after a billable request.
 
-No paid inference compatibility guarantee follows from local validation. OpenRouter's alpha Decisions contract and provider availability can change independently of Tau. Review the actual output and current service errors rather than treating model judgments as verified facts.
+Passing local validation does not guarantee the provider accepts the request. OpenRouter's alpha Decisions API and provider availability can change independently of Tau. Read the actual output and errors, and never treat model judgments as verified facts.

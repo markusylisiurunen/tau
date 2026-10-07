@@ -18,11 +18,11 @@ Voice listing prints one JSON object per voice, containing `voice_id` and `name`
 
 ## Models
 
-`--model` is required; the CLI has no implicit default. Use `eleven_v4_turbo` for lower-latency speech, as shown in the examples. Use `eleven_v4` when maximum quality matters more than latency. Both support narration and multi-speaker dialogue.
+`--model` is required; there is no default. Use `eleven_v4_turbo` for lower-latency speech, as shown in the examples. Use `eleven_v4` when maximum quality matters more than latency. Both support narration and multi-speaker dialogue.
 
 ## Input and examples
 
-Supply a UTF-8 JSON document with exactly `voices` and `chunks`. `voices` maps speaker names to voice IDs; `chunks` is an ordered, nonempty array of nonempty arrays of speaker turns. Each turn contains exactly `speaker` and nonblank `text`.
+Give a UTF-8 JSON document with exactly two fields, `voices` and `chunks`. `voices` maps speaker names to voice IDs; `chunks` is an ordered, nonempty array of nonempty arrays of speaker turns. Each turn contains exactly `speaker` and nonblank `text`.
 
 ```json
 {
@@ -68,7 +68,7 @@ Single-speaker narration uses the same shape with one voice. All chunks are vali
 - Each chunk contains at most 2,000 Unicode code points across its text, including whitespace and delivery tags.
 - Every speaker must resolve to a voice. At most 10 distinct voices may be used.
 
-Tau packs consecutive whole chunks into requests of at most 2,000 characters, following the [dialogue endpoint's reliability recommendation](https://elevenlabs.io/docs/api-reference/text-to-dialogue/convert). The caller chooses chunk boundaries; text and turn order are preserved.
+Tau combines consecutive whole chunks into requests of at most 2,000 characters, as the [dialogue endpoint documentation](https://elevenlabs.io/docs/api-reference/text-to-dialogue/convert) recommends for reliability. You choose where chunks break; text and turn order are kept.
 
 ## Conversational assistant replies
 
@@ -152,7 +152,7 @@ The output parent directory must exist. Neither the requested WAV nor `<output>.
 
 Stdout on success is one JSON object with absolute `output`, `artifacts`, and the number of `batches`. The manifest contains the script text; keep artifacts private for sensitive scripts.
 
-Failures exit nonzero and identify invalid script fields, chunks, or turns before generation, or the failed batch and processing stage afterward. Existing output or artifact paths require a fresh `--output` path; preserve recovery artifacts. Errors after output preparation report the retained directory, which may be incomplete. If final publication fails, copy the completed `assembled.wav` to a fresh path instead of generating again. Requests are not automatically retried because a failed request may already have incurred a charge; another generation request may incur another charge.
+Failures exit nonzero. Before generation, the error names the invalid field, chunk, or turn. After it starts, the error names the failed batch and step. If the output or `.parts` path already exists, choose a new `--output` path, and keep the existing files in case you need them. Errors after the output directory is created give its path; it may be incomplete. If only the final copy fails, copy the finished `assembled.wav` to a new path instead of generating again. Requests are never retried automatically, because a failed request may already have been charged, and a new request may be charged again.
 
 To recover after a later batch fails, inspect the manifest's `completed` flags and chunk mapping. Generate only the unfinished chunks to a fresh output path, then assemble the completed PCM files from both runs in script order. Request stitching does not carry over between invocations.
 
@@ -178,4 +178,4 @@ Standard rates from the [ElevenLabs API pricing page](https://elevenlabs.io/pric
 
 Check current API pricing for plan and voice-specific rates. The manifest's `characterCost` preserves the provider's billing header verbatim.
 
-See [command-line tools](tools.md) for command discovery and execution ownership.
+See [command-line tools](tools.md) for the other tools and where commands run.

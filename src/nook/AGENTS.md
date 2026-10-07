@@ -1,24 +1,28 @@
 # Nook
 
-Tau's Nook subtree contains the bundled Cloudflare-only static mini-app platform. Keep V0 narrow and explicit: static assets are deployed to path-based site URLs, each site gets small same-origin JSON KV, and all infrastructure assumptions are Cloudflare Worker/R2/Durable Object based.
+Nook is Tau's bundled static mini-app platform, built only on Cloudflare (Worker, R2, Durable Objects). Sites are static assets at path-based URLs, and each site has a small same-origin JSON KV store. V0 is deliberately narrow. Keep it that way unless the user asks to widen it.
 
 ## Scope
 
-- Supported: static asset hosting, Nook-hosted editable templates, per-site JSON KV, private/public active deployments, CLI setup/destroy/deploy/list/delete/template/KV operations, and the configured `nook` model tool.
-- Unsupported in V0: provider abstraction, dashboards, wildcard subdomain app URLs, rollback/history, per-site server code, realtime, AI proxy APIs, ownership/roles, audit logs, `.gitignore`/`.nookignore`, and automatic DNS or Cloudflare Access setup.
-- Build app artifacts outside Nook, then deploy the output directory. Do not add bundler-specific behavior to the Worker.
+- **Supported:** static hosting, Nook-hosted editable templates, per-site JSON KV, private and public active deployments, the CLI (setup, destroy, deploy, list, delete, template, KV), and the `nook` code-mode capability.
+- **Do not add in V0:** a provider abstraction, dashboards, wildcard subdomain URLs, rollback or history, per-site server code, realtime, AI proxy APIs, ownership or roles, audit logs, `.gitignore`/`.nookignore` handling, or automatic DNS and Cloudflare Access setup.
+- Users build apps outside Nook and deploy the output directory. Never add bundler-specific behavior to the Worker.
 
-## Architecture
+## Where things are
 
-- `src/nook/worker/` is the self-contained Worker implementation. Keep Worker code Worker-native and avoid Tau runtime dependencies there.
-- `src/core/nook/` owns Tau-side CLI/client/setup/deploy helpers.
-- `src/core/code_mode/nook.ts` owns the parent-side bridge, validation, and execution-environment file operations for the Nook capability in the assistant-facing composition tool. `src/core/static/code_mode/nook/` owns its static API reference.
-- `src/nook/README.md` is the user-facing reference for setup, deploy, browser SDK, CLI, and V0 behavior.
+- `src/nook/worker/`: the self-contained Worker. Keep it Worker-native, with no Tau runtime imports.
+- `src/core/nook/`: Tau-side CLI, client, setup, and deploy.
+- `src/core/code_mode/nook.ts`: the trusted parent-side bridge for the code-mode capability, covering validation and file access through the execution backend. Its API reference is in `src/core/static/code_mode/nook/`.
+- `docs/nook.md`: the public reference.
 
 ## Security and tenancy
 
-- The Worker must derive site scope from the first URL path segment. Browser, CLI, and tool payloads must not be trusted to select another site's KV scope.
-- `/__nook/*` is reserved for platform endpoints and must never be served from user assets.
-- Setup and destroy are CLI-only infrastructure flows. The model tool must operate only an already configured Nook target. Generated code receives no credentials, ambient filesystem, process, environment, network, import, timer, or raw request authority; the separately enabled tau.bash capability supplies filesystem and process operations. The host parent owns authenticated Nook HTTP and uses the generic execution backend for agent-visible paths.
-- Cloudflare Access protects only the root `/__nook/*` control-plane path, with its Cookie Path Attribute disabled. Public site paths reach the Worker anonymously; private site navigation authenticates through `/__nook/auth`, then relies on the Worker's validation of the hostname-scoped Access JWT. Browser KV remains under `/<site>/__nook/kv/*`, while CLI/tool KV uses `/__nook/api/sites/<site>/kv/*`.
-- Cloudflare Access service-token headers are only for passing Access. Worker authorization must rely on validated Access JWT claims, not raw service-token headers.
+- **Site scope comes from the URL.** The Worker derives it from the first path segment. Browser, CLI, and tool payloads can never select another site's KV.
+- `/__nook/*` is reserved for platform endpoints and is never served from user assets.
+- Setup and destroy are CLI-only. The model-facing capability operates only an already configured target.
+- Generated code gets no credentials and no ambient filesystem, process, environment, network, import, timer, or raw-request authority. File and process access comes only from the separately enabled `tau.bash` capability. The host parent makes the authenticated Nook HTTP calls.
+- **Access topology:**
+  - Cloudflare Access protects only the root `/__nook/*` control plane, with its cookie Path attribute disabled.
+  - Public site paths reach the Worker anonymously. Private site navigation authenticates through `/__nook/auth`, after which the Worker validates the hostname-scoped Access JWT.
+  - Browser KV is at `/<site>/__nook/kv/*`. CLI and tool KV is at `/__nook/api/sites/<site>/kv/*`.
+- Service-token headers only get a request past Access. Worker authorization relies on validated Access JWT claims, never on the raw headers.

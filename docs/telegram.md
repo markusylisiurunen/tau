@@ -1,8 +1,8 @@
 # Telegram
 
-Tau's Telegram runner turns one or more bots into clients of local, in-process Tau sessions. It owns Telegram polling, chat routing, attachments, project selection, and workspace preparation on the runner machine. Each prepared workspace then becomes an ordinary local execution environment with normal Tau configuration, personas, tools, project context, session snapshots, and history.
+Tau's Telegram runner connects one or more Telegram bots to Tau sessions that run in the same process. On the runner machine, it polls Telegram, routes chats, handles attachments, and prepares project workspaces. Each workspace is an ordinary local execution environment, with normal Tau configuration, personas, tools, project context, saved sessions, and history.
 
-Bot access can lead to model calls, filesystem changes, and repository mutations. Configure chat, user, and project boundaries before inviting a bot into a group.
+Anyone who can use a bot can cause model calls, file changes, and repository changes. Set up chat, user, and project limits before adding a bot to a group.
 
 ## Start the runner
 
@@ -14,9 +14,9 @@ tau telegram --config-file /etc/tau/telegram.json
 
 The process stays in the foreground until `SIGINT` or `SIGTERM`. Relative `--config-file` paths resolve from the process working directory. Paths inside that file resolve as described below, usually from the config file's directory.
 
-The Telegram file is **not** a Tau `config.json` level. It controls runner concerns such as bot tokens, project definitions, workspace roots, and routing. Tau still loads normal configuration from the runner's startup working directory and from each prepared session workspace. See [configuration](configuration.md) and [ownership and scope](ownership-and-scope.md).
+The Telegram file is **not** one of Tau's `config.json` levels. It configures the runner: bot tokens, projects, workspace roots, and routing. Tau still loads normal configuration from the runner's startup directory and from each session's workspace. See [configuration](configuration.md) and [ownership and scope](ownership-and-scope.md).
 
-Run at most one Telegram runner for a given configuration and workspace root. Concurrent runners are unsupported and can race Telegram updates, persisted runner state, and workspace cleanup.
+Run at most one runner per configuration and workspace root. Two runners would compete for Telegram updates, runner state, and workspace cleanup.
 
 ## Minimal configuration
 
@@ -44,24 +44,24 @@ A useful configuration defines at least one bot and one project:
 }
 ```
 
-The bot token is a required literal string; Telegram config has no token environment indirection. Protect the file, never commit it, and rotate an exposed token through BotFather. Do not print the config into a session or shared log.
+The bot token must be written in the file; it cannot come from an environment variable. Protect the file, never commit it, and rotate an exposed token through BotFather. Never print the config into a session or shared log.
 
-Unknown object fields are stripped, so a misspelled field can have no effect without making the JSON invalid.
+Unknown fields are removed, so a misspelled field silently has no effect.
 
-## Top-level contract
+## Top-level fields
 
 | Field | Required | Behavior |
 | --- | --- | --- |
-| `bots` | Yes | Non-empty object keyed by operator-chosen bot ID. |
+| `bots` | Yes | Non-empty object keyed by a bot ID you choose. |
 | `projects` | Yes | Object keyed by project ID. Bots select from these definitions. |
 | `workspaceRoot` | No | Base for managed workspaces; defaults to `.tau/telegram-workspaces` beside the Telegram config file. |
 | `maxSessions` | No | Positive integer cap on active sessions across the whole runner. |
 
-A relative top-level `workspaceRoot` resolves from the Telegram config file's directory. Tau persists runner session records at `<workspaceRoot>-sessions.json` and per-chat preferences at `<workspaceRoot>-project-preferences.json`. These are runner-owned state files, not operator editing surfaces. Session snapshots remain in the normal host store under the runner user's Tau home.
+A relative `workspaceRoot` resolves from the config file's directory. Tau saves runner session records in `<workspaceRoot>-sessions.json` and per-chat preferences in `<workspaceRoot>-project-preferences.json`. These are the runner's own state files; do not edit them. Sessions are saved in the usual place in the runner user's Tau home.
 
-`maxSessions` counts queued, preparing, running, and waiting sessions across all configured bots. Failed records do not consume the active cap, but they remain visible to their owning chat until replaced or closed.
+`maxSessions` counts queued, preparing, running, and waiting sessions across all bots. Failed sessions do not count, but stay visible to their chat until replaced or closed.
 
-## Bot contract and access control
+## Bots and access control
 
 Each `bots.<id>` object supports:
 
@@ -76,152 +76,37 @@ Each `bots.<id>` object supports:
 
 The runner retries failed polling after 1,000 ms and uses a 30-second Telegram long-poll timeout.
 
-An absent or empty `allowedUserIds` means no user restriction. An absent or empty `allowedChatIds` allows DMs but allows no groups. When `allowedChatIds` is non-empty, it restricts DMs to listed chat IDs and enables only listed groups. Group IDs are usually negative integers.
+A missing or empty `allowedUserIds` allows every user. A missing or empty `allowedChatIds` allows all DMs and no groups. A non-empty `allowedChatIds` allows only the listed DMs and groups. Group IDs are usually negative.
 
-Use both lists for a private bot. `allowedUserIds` controls who can trigger work, but messages from other users in an allowed group can still enter the sender-attributed pending group context. Only add the bot to groups whose conversation is suitable for model input.
+Use both lists for a private bot. `allowedUserIds` decides who can start work, but in an allowed group, messages from other users can still become context, labeled with their sender. Add the bot only to groups whose conversation is fine to send to the model.
 
-A bot sees only `allowedProjectIds`. If that field is omitted, it sees every configured project. A sole allowed project is selected automatically; otherwise a chat needs `defaultProjectId` or an explicit `/use_<project>` preference before `/new`.
+A bot sees only its `allowedProjectIds`, or every project if the field is missing. If only one project is allowed, it is selected automatically. Otherwise a chat needs `defaultProjectId` or a `/use_<project>` choice before `/new`.
 
-Telegram’s 100-command limit permits eleven built-ins and up to 89 `/use_<projectId>` commands.
+Telegram allows 100 commands per bot: twelve built-ins and up to 88 `/use_<projectId>` commands.
 
-## Project IDs and common fields
+## Projects
 
-Project IDs become Telegram command suffixes. They must contain only lowercase letters, digits, and underscores, and may be at most 28 characters:
+Each project tells the runner where a session works. There are three kinds:
 
-```text
-ledger
-platform_api
-release2026
-```
+- A **repository project** clones one GitHub repository into a new workspace for each session.
+- A **persistent-directory project** reuses one existing directory for all of its sessions.
+- A **composite project** combines several repository projects in one workspace.
 
-Every project can have an optional non-empty `description`. Repository and persistent-directory projects can select `persona` as `<id>` or `<id>:<reasoning>`. Composite projects require their own persona. Sessions load applicable `AGENTS.md` instructions.
+Project IDs become `/use_<projectId>` commands, so they may contain only lowercase letters, digits, and underscores, and be at most 28 characters. Every project can have a `description`, and must define exactly one of `repo`, `directory`, or `projectIds`. [Telegram projects and workspaces](telegram-projects.md) describes each kind, where workspaces live, provision hooks, and what happens to workspaces on restart.
 
-Each project must define exactly one workspace source: `repo`, `directory`, or `projectIds`.
-
-## Repository projects
-
-A repository project clones one GitHub repository into a session-specific managed workspace:
-
-```json
-{
-  "projects": {
-    "ledger": {
-      "repo": "acme/ledger",
-      "ref": "main",
-      "workingDirectory": "packages/api",
-      "persona": "gpt-6.1-sol-coder"
-    }
-  }
-}
-```
-
-`repo` must use GitHub `owner/repo` syntax. Arbitrary Git URLs are not accepted. The runner needs `gh` and `git` on its login-shell `PATH`, and `gh` must already be authenticated for the repository.
-
-All managed projects use the top-level `workspaceRoot`. A session workspace is:
-
-```text
-<effective-workspace-root>/<project-id>/<telegram-session-id>
-```
-
-`workingDirectory` is optional and must be a relative directory inside the clone. Tau validates that it exists and does not escape the repository, then uses it as the session `cwd`. Without it, the repository root is the `cwd`.
-
-`ref` is optional and is passed to `git checkout` after cloning. Without it, the clone's default branch remains checked out. Configure a ref when sessions must begin from a predictable branch or commit.
-
-### Repository caches
-
-Tau keeps a persistent bare cache at:
-
-```text
-<effective-workspace-root>-repo-cache/<project-id>.git
-```
-
-The first preparation uses `gh repo clone <owner/repo> <cache> -- --bare`. Later preparations fetch and prune the cache, then create the session workspace with a shared local clone. If the repository configured for the same project ID changes, Tau discards and recreates that cache.
-
-Caches are shared preparation inputs, not session workspaces.
-
-## Persistent-directory projects
-
-A persistent-directory project reuses one existing directory instead of creating a managed clone:
-
-```json
-{
-  "projects": {
-    "notes": {
-      "directory": "/srv/tau/notes",
-      "persona": "gpt-6.1-sol-coder"
-    }
-  }
-}
-```
-
-Relative `directory` paths resolve from the Telegram config file's directory. JSON does not expand `~`, so use an absolute path when referring to a home directory.
-
-The directory must already exist. Tau never creates, replaces, provisions, or removes it. `/new`, session close, runner shutdown, and startup cleanup all preserve it.
-
-Every session for this project uses the same directory as its execution-environment `cwd`, including sessions owned by different chats or bots. Tau does not serialize their filesystem work. Use `maxSessions`, bot project scoping, and access allowlists to prevent unsafe concurrent edits when the directory is not designed for them.
-
-Persistent-directory sessions omit the conventional history `repository` attribute. On recovery, Tau requires the configured directory to match the directory stored in the Tau session snapshot. Changing `directory` does not migrate existing sessions and causes those recoveries to fail.
-
-## Composite projects
-
-A composite project creates a root containing multiple repositories:
-
-```json
-{
-  "projects": {
-    "web": { "repo": "acme/web", "ref": "main" },
-    "api": { "repo": "acme/api", "workingDirectory": "services/http" },
-    "platform": {
-      "projectIds": ["web", "api"],
-      "persona": "gpt-6.1-sol-coder:high",
-      "instructions": "Keep shared contracts synchronized.",
-      "subagents": {
-        "launchModels": ["openai/gpt-6.1-sol:high"]
-      }
-    }
-  }
-}
-```
-
-`projectIds` requires at least two unique repository projects; directories and composites are invalid members. Order controls workspace context and history `repository`.
-
-Members live at `<composite-root>/<member-project-id>` and use each repository's cache, ref, and working directory. The root is the session `cwd`. At creation, Tau writes a root `AGENTS.md` listing the members and optional `instructions`, plus root `.tau/config.json` containing `subagents` or `{}`. These are workspace files, not synchronized mirrors of Telegram configuration, and are not regenerated when a preserved session reconnects.
-
-`subagents.launchModels` sets the subagent launch override allowlist. Runtime config resolves and enforces entries. See [subagents](subagents.md) for model syntax and inheritance.
-
-The composite owns the parent persona, subagents, model catalog, config, settings, and tools. Child `.tau/config.json` files are not merged. A subagent in a member directory rebuilds only target context: environment and repository metadata, applicable `AGENTS.md`, and all discovered skills.
-
-Composite preparation is all-or-nothing. If one member cannot be prepared, Tau removes the generated composite workspace. Composite workspaces and member repository caches use the top-level `workspaceRoot`.
-
-## Managed workspace lifecycle
-
-Repository and composite projects follow the same lifecycle. Tau prepares one workspace per session, then the session continues working there. A normal runner restart reconnects without fetching or checking out repositories, rerunning provision hooks, or rewriting generated files. Workspace-preparation changes in Telegram configuration affect later preparations, not a preserved workspace.
-
-If the expected workspace is missing, recovery reconstructs it from the caches and current project configuration. `/new` and session close remove a managed workspace; normal shutdown preserves it. Tau does not commit, push, or save uncommitted changes elsewhere.
-
-## Managed workspace safety
-
-**Important:** startup removes entries under managed workspace roots that no persisted session references. Dedicate these roots to Tau; never use a home directory, repository collection, or unrelated tree.
-
-Tau preserves referenced managed workspaces, configured persistent directories, and repository caches. `/new` closes the active session before replacing it. Closing a repository or composite session interrupts work and removes its workspace; persistent directories remain untouched.
-
-## Provision hooks
-
-A repository may provide `.tau/scripts/provision` at its root. It must be a regular executable file, not a symlink, and start with a shebang. Tau runs it through `session.exec` from the configured working directory after the session becomes available, without blocking chat input.
-
-New and reconstructed workspaces run their hooks; preserved workspaces and persistent-directory projects do not. Composite sessions run member hooks in order and continue after failures. A failure is reported to linked chats but leaves the session usable. Keep hooks repeatable and non-interactive.
+**Important:** at startup, the runner deletes everything under its managed workspace roots that no saved session uses. Give Tau a dedicated `workspaceRoot`; never use a home directory, a collection of repositories, or any directory with other content.
 
 ## Normal Tau configuration inside workspaces
 
-After preparation, Tau creates an ordinary local session at the workspace `cwd`. Runtime discovery reads normal `~/.config/tau` and ancestor `.tau` content visible from that path: personas, prompts, skills, project context, host tools, and other session settings work as they do in the TUI.
+After preparation, Tau creates an ordinary local session in the workspace. It reads `~/.config/tau` and the `.tau` directories above the workspace as usual, so personas, prompts, skills, project context, host tools, and other settings work as in the TUI.
 
-A project `persona` overrides the normal default for that session. Sessions include applicable `AGENTS.md` instructions. Composite root context is generated deliberately and uses its required persona.
+A project's `persona` replaces the default for its sessions. Composite sessions use the generated root files and their required persona.
 
-Every Telegram turn starts with hidden `<system>` guidance identifying Telegram as the source and reply destination. It favors direct simple answers and brief acknowledgements or meaningful progress updates for tool-driven or multi-step work, since users cannot see tool activity.
+Every Telegram turn starts with a hidden `<system>` block saying the message comes from Telegram and the reply goes there. It asks for direct answers to simple questions, and for short acknowledgements or useful progress updates during longer work, because users cannot see tool activity.
 
-A per-bot `systemMessage` appears in a second hidden block after the default. Audio transcripts receive another warning that they may contain noise or errors. Unlike project context, hidden guidance is persisted with user turns and can appear in history, so never put credentials in configured messages.
+A per-bot `systemMessage` goes in a second hidden block. Audio transcripts get another block warning that they may contain noise or errors. Hidden blocks are saved with the user's message and can appear in history, so never put credentials in configured messages.
 
-The runner's speech credentials and `speech.voiceId` are loaded at startup from its environment and normal Tau config, based on the runner process's startup `cwd`. Restart the runner after changing those settings.
+The runner loads its speech credentials and `speech.voiceId` at startup, from its environment and from the Tau config for its startup directory. Restart the runner after changing them.
 
 ## Chat commands
 
@@ -238,12 +123,12 @@ The runner's speech credentials and `speech.voiceId` are loaded at startup from 
 | `/prompt` | [Records a saved prompt](prompts-and-project-context.md#telegram-prompt-picker) while idle, without starting a turn. |
 | `/compact` | Runs summary-only compaction while idle. |
 | `/interrupt` | Interrupts the active Tau turn. |
-| `/tts_on` | Enables a Gemini-generated voice note after each final assistant response. |
+| `/tts_on` | Sends a voice note after each final assistant response. |
 | `/tts_off` | Disables voice responses. |
 
-[Persona](personas.md) selection is session-local; `/new` uses the project default.
+A [persona](personas.md) choice applies to the current session only; `/new` uses the project's default.
 
-Preferences persist per bot and chat across restarts, projects, and sessions. Project changes apply to `/new`, not the active session.
+Preferences are saved per bot and chat, and survive restarts and new sessions. A project change applies at the next `/new`, not to the current session.
 
 In groups, commands must explicitly mention the bot. Accepted forms include:
 
@@ -257,81 +142,79 @@ Commands addressed to other bots are ignored.
 
 ## DMs, groups, and active work
 
-In a DM, ordinary text goes to the active session. If no session is selected but the chat owns exactly one session, Tau selects it automatically. Otherwise the bot asks for `/new`.
+In a DM, ordinary text goes to the active session. If none is selected but the chat has exactly one session, Tau selects it. Otherwise the bot asks for `/new`.
 
-In an allowed group, ordinary messages trigger Tau only when they explicitly mention the bot username. Non-triggering text and captions are buffered as sender-attributed background context. On the next valid mention, Tau includes up to the most recent 50 buffered messages since the previous bot-triggering turn, then clears that buffer after successful submission.
+In an allowed group, a message starts a turn only when it mentions the bot's username. Other text and captions are kept as background context, labeled with their sender. At the next mention, Tau includes up to the 50 most recent kept messages since the last turn, and clears them once the turn is submitted.
 
-Pending group context can include attachment paths, audio transcripts, and processing errors. It is untrusted model input. `allowedUserIds` prevents an unlisted sender from triggering work, but their message can still become context in an allowed group.
+Group context can include attachment paths, audio transcripts, and processing errors. The model receives it as untrusted input. `allowedUserIds` stops an unlisted sender from starting work, but their messages can still become context in an allowed group.
 
-Telegram text and transcribed audio use automatic submit-or-steer behavior. When the session is idle, the input starts a normal turn. When Tau is already working, it becomes steering input that stops the active turn at its next safe boundary and continues with the new message. Additional steering follows Tau's normal batching behavior. Telegram does not expose a separate queued-turn command. Use `/interrupt` when the desired action is to stop rather than steer.
+Text and transcribed audio either start or steer a turn. When the session is idle, the message starts a normal turn. When Tau is working, the message steers the running turn: the turn stops at its next safe point and continues with the new message. Further steering is batched as usual. Telegram has no command to queue a separate turn. Use `/interrupt` to stop instead of steering.
 
-Tau keeps tool and lifecycle chatter quiet. It sends committed assistant text, including multiple messages from one run, and refreshes the typing indicator during work. Oversized replies are split into bounded chunks. Durable failed, blocked, and confirmed-unaccepted turn notifications remain pending until Telegram acknowledges delivery.
+Tau does not report tool activity or lifecycle events. It sends assistant text, including several messages from one run, and keeps the typing indicator on during work. Long replies are split into parts. Notifications about failed, blocked, and unaccepted turns are kept until Telegram confirms delivery.
 
 ## Attachments and audio
 
-Telegram accepts arbitrary documents, photos, videos, animations, video notes, audio files, and voice notes. The agent receives execution-environment paths, sanitized filenames, MIME types, byte sizes, and captions. Receipt never executes files.
+The bot accepts any documents, photos, videos, animations, video notes, audio files, and voice notes. The agent receives the file paths in the execution environment, cleaned-up filenames, MIME types, sizes, and captions. Files are never run on receipt.
 
-Limits are 32 attachments per turn, 20 MiB per file, and 100 MiB per turn. Downloads are bounded even without size metadata. Oversized or failed transfers are skipped with a warning.
+Limits are 32 attachments per turn, 20 MiB per file, and 100 MiB per turn. Downloads are limited even when Telegram does not report a size. Files that are too large or fail to download are skipped with a warning.
 
-Uploads only queue files; captions are metadata. The next text or voice transcript submits or steers with one hidden `<system>` block per attachment. Only voice notes are automatically transcribed, up to 20 minutes. Audio-player files and audio documents arrive without transcription. Voice originals remain available even if transcription fails. DM and bot-triggering group transcripts are echoed before submission.
+Sending a file only queues it, and its caption is kept as metadata. The next text or voice message starts or steers a turn, with one hidden `<system>` block per attachment. Only voice notes are transcribed, up to 20 minutes long. Audio files and audio documents arrive without a transcript. The original voice file stays available even if transcription fails. Transcripts of DMs, and of group messages that mention the bot, are echoed before submission.
 
-Files use native temporary directories in the execution environment; OS cleanup can invalidate their paths. Pending queues and group context clear on shutdown. File contents and metadata are untrusted.
+Files are stored in the execution environment's temporary directory, so system cleanup can remove them. Queued files and group context are cleared on shutdown. Treat file contents and metadata as untrusted.
 
-Voice transcription uses Gemini with `GEMINI_API_KEY`, then `apiKeys.google`. Optional hints use GPT-6 Luna (reasoning disabled) and OpenAI credentials. Gemini transcribes audio verbatim with `gemini-3.5-transcribe`, using English (`en-US`) and Finnish (`fi-FI`) hints. It attempts remote file deletion. File delivery needs no Google key. See [credentials](credentials.md).
+Voice transcription uses Gemini with `GEMINI_API_KEY`, or else `apiKeys.google`. Optional spelling hints use GPT-6 Luna (reasoning disabled) with OpenAI credentials. Gemini transcribes verbatim with `gemini-3.5-transcribe`, using English (`en-US`) and Finnish (`fi-FI`) hints, and Tau tries to delete the uploaded file afterward. Receiving files needs no Google key. See [credentials](credentials.md).
 
-`/tts_on` rewrites text with `gpt-6-luna` (reasoning disabled) and generates speech with Eleven v4 Turbo. It requires both OpenAI and ElevenLabs credentials and runner `ffmpeg` with Opus. Voice notes use brisk delivery and 1.15× speed. See [`speech` configuration](config-reference.md#speech) for default and custom voice selection. Source and rewritten text each allow 10,000 Unicode characters; audio allows 32 MiB. Rewrite and job timeouts are one and five minutes. Jobs are ephemeral. Failure sends `voice response failed. please try again.` without affecting text; details stay in logs.
+`/tts_on` rewrites text with `gpt-6-luna` (reasoning disabled) and generates speech with Eleven v4 Turbo. It requires both OpenAI and ElevenLabs credentials and runner `ffmpeg` with Opus. Voice notes use brisk delivery and 1.15× speed. See [`speech` configuration](config-reference.md#speech) for default and custom voice selection. Source and rewritten text are limited to 10,000 Unicode characters each, and audio to 32 MiB. Rewriting times out after one minute and the whole job after five. Jobs are not saved. On failure, the bot sends `voice response failed. please try again.`; the text reply is unaffected and details go to the logs.
 
 ## Command client tools
 
-Telegram provides [photo, video, audio, and document delivery tools](tools.md#sending-files-to-telegram), plus workspace-selected command tools. Global `clientTools` definitions provide executables; the workspace's nearest `enabledClientTools` selects an exact subset. An empty list disables configured tools, not built-in delivery tools.
+Telegram offers [photo, video, audio, and document delivery tools](tools.md#sending-files-to-telegram), plus the command tools selected by the workspace. Global `clientTools` define the commands, and the workspace's nearest `enabledClientTools` selects which ones are offered. An empty list turns off configured tools, but not the delivery tools.
 
-These command processes run on the Telegram runner machine with the runner process environment. They can reach the session workspace only through their explicit execution-environment facade, despite physical co-location. Telegram does not advertise TUI-only `diff_review` or `prefill_input` tools.
+Command processes run on the runner machine with the runner's environment. Even though the workspace is on the same machine, they reach it only through the execution-environment API. Telegram does not offer the TUI's `diff_review` or `prefill_input`.
 
-Tool selection occurs when the session client is created or reconnected. `/reload` does not rebuild the Telegram client advertisement. Restart the runner or create a new session client after changing command client-tool selection. See [client tools](client-tools.md).
+Tools are selected when the runner creates or reconnects a session's client. `/reload` does not change them. Restart the runner, or start a new session, after changing which command tools are selected. See [client tools](client-tools.md).
 
 ## Persistence and restart behavior
 
-Normal shutdown interrupts live work, waits for it to settle, and disconnects sessions. Finished sessions reconnect with their conversation on restart. A session interrupted during workspace or Tau session creation starts preparation again. A persistent-directory workspace is never reconstructed and must remain at its original path.
+Normal shutdown interrupts running work, waits for it to finish, and disconnects sessions. On restart, sessions reconnect with their conversation. A session interrupted while its workspace or Tau session was being created starts preparation again. A persistent-directory workspace is never reconstructed and must stay at its original path.
 
-If the connection is lost after Telegram submits a message, startup checks whether Tau accepted and completed it. Running work remains interruptible until it settles. A confirmed unaccepted message prompts the user to resend it; failed or blocked outcomes remain queued until delivery succeeds.
+If the connection drops after a message was sent to Tau, startup checks whether Tau accepted and finished it. Work still running can be interrupted until it finishes. If Tau never accepted the message, the user is asked to resend it. Failed or blocked results stay queued until they are delivered.
 
-Restart does not replay responses. It clears voice jobs and short-lived retries, but pending notifications remain.
+Restart does not resend earlier replies. It clears voice jobs and pending retries, but keeps pending notifications.
 
-If a failed session still has unresolved submitted work, Tau can reconnect to determine the outcome. Other failed sessions remain visible with their original diagnostic until the owning chat replaces or closes them. Do not edit runner state files to force recovery.
+If a failed session still has submitted work with an unknown result, Tau can reconnect to find out. Other failed sessions stay visible with their original error until their chat replaces or closes them. Do not edit runner state files to force recovery.
 
 ## Verify a runner safely
 
-1. Validate that the Telegram file is parseable JSON without displaying it in a shared terminal transcript.
+1. Check that the Telegram file is valid JSON, without showing it in a shared terminal.
 2. Confirm the runner user can execute `tau`, `git`, and `gh`, and that `gh` can access each repository.
 3. Start the runner and watch for config, polling, command-sync, cache, checkout, and recovery errors. Successful startup prints `tau telegram running`.
 4. In an allowed DM, run `/status`, select a project if needed, then run `/new`.
-5. Submit a small nonsensitive prompt and confirm an assistant response.
-6. If groups are enabled, verify that an unmentioned message stays quiet and an explicitly mentioned command works.
-7. If a provision hook exists, confirm its completion or reported failure before relying on its dependencies.
-8. Restart the runner normally and use `/status` to confirm the session recovered without replaying old replies.
+5. Send a small, non-sensitive prompt and confirm the reply.
+6. If groups are enabled, check that a message without a mention gets no reply and a command with a mention works.
+7. If there is a provision hook, wait for it to finish or report a failure before relying on what it installs.
+8. Restart the runner normally and use `/status` to confirm the session recovered without resending old replies.
 
 Do not verify bot tokens, provider keys, Access secrets, transcript contents, or runner state by printing them.
 
-## Common failures
+## Troubleshooting
 
-**The runner rejects its config.** Check required `bots` and `projects` objects, exact project IDs, positive numeric fields, known allowed projects, and that each project defines exactly one of `repo`, `directory`, or `projectIds`.
+**The runner rejects its config.** Startup errors name every invalid bot or project field. Check the required `bots` and `projects` objects, exact project IDs, positive numbers, allowed project IDs, persona suffixes, and that each project defines exactly one of `repo`, `directory`, or `projectIds`. Check the JSON syntax without printing the file, which contains bot tokens, and restart the runner after fixing it. Relative paths in the file resolve from its directory.
 
-**The bot ignores a DM.** If `allowedChatIds` is set, the DM chat ID must be listed. If `allowedUserIds` is set, the sender's user ID must also be listed.
+**The bot ignores a DM.** If `allowedChatIds` is set, the DM's chat ID must be listed. If `allowedUserIds` is set, the sender's user ID must be listed too.
 
-**The bot ignores a group.** Groups require an explicit `allowedChatIds` entry and a direct `@botusername` mention. Commands also need the mention in one of the accepted command forms.
+**The bot ignores a group.** The group must be in `allowedChatIds`, the message must mention the bot (commands in one of the accepted forms), and the sender must be in `allowedUserIds` when that list is set. Messages that do not mention the bot can still become context for the next turn, so make sure that is acceptable before allowing more groups.
 
-**`/new` asks for a project.** Configure `defaultProjectId`, expose only one project, or run the matching `/use_<projectId>` command first.
+**`/new` asks for a project, or uses the wrong one.** Set `defaultProjectId`, allow only one project, or run `/use_<projectId>` first. `/use_<projectId>` affects only future `/new` sessions; `/status` shows the current session's project and the saved choice separately.
 
-**Repository preparation fails.** Verify runner-side `gh` authentication, `git` availability, repository access, configured `ref`, and that `workingDirectory` exists in the checked-out tree. A changed repository under an existing project ID causes cache reinitialization.
+**A message sent during work changes direction.** While a turn is running, a new message steers it instead of waiting in a queue. Wait for the turn to finish before sending an unrelated task, or use `/interrupt` first.
 
-**Startup removed unexpected files.** The configured workspace root was not dedicated to Tau. Stop the runner and move `workspaceRoot` to an isolated directory before restarting. Recovery data does not make unrelated deleted files restorable.
+**Audio or an attachment fails.** The reply or runner log names the step that failed: download, saving, format, or transcription. Check that Telegram can deliver the file to the bot, the type is supported, the runner can write to its temporary directory, and Gemini accepts the media type. Transcription needs `GEMINI_API_KEY` or `apiKeys.google` for the runner process; restart the runner after setting it. Changing a workspace's environment does not affect the runner. Do not log media or transcripts to debug this.
 
-**Provisioning fails but chat still works.** This is expected isolation. Fix the executable bit, shebang, script behavior, or dependencies, then create a new managed workspace if the hook needs to run again.
+**Voice replies fail.** `/tts_on` needs OpenAI and ElevenLabs credentials and `ffmpeg` with Opus on the runner. Check [`speech.voiceId`](config-reference.md#speech) if a configured voice is unavailable. The bot replies `voice response failed. please try again.` and logs the details; the text reply is still delivered.
 
-**A persistent-directory session fails recovery.** Restore the configured directory and its original path, or return the project config to the snapshot's durable `cwd`. Tau does not migrate an existing session to a new persistent directory.
+**Replies or notifications arrive late or not at all.** Each outgoing message part has a deadline and is retried twice on retryable errors. Tau honors Telegram's `retry_after`, and later notifications in a chat wait for earlier ones. Long replies are split, so only a later part may have failed. The runner log shows the method, status, retry class, attempt, chat, session, and message. Fix network, rate-limit, token, or chat permission problems on the runner. Before resending by hand, check which parts arrived. A delivery failure is not a failed turn, and notifications about failed or blocked turns are sent again after a restart. Never fix delivery by editing runner state.
 
-**Audio reports a missing key.** Set the credential for the Gemini in the runner process and restart it. A workspace-only environment change does not update the runner's startup speech configuration.
+**A command client tool is missing.** Check global `clientTools`, the workspace's `enabledClientTools`, and whether the session's client was created after the change. Telegram never offers the TUI's tools.
 
-**A message sent during active work changes direction.** Telegram uses steering, not ordinary queueing, while a turn is running. Wait for completion before sending an independent next task, or use `/interrupt` to stop the current run first.
-
-**A command client tool is absent.** Check global `clientTools`, the prepared workspace's `enabledClientTools`, and whether the session client was created after the change. Telegram never provides TUI-only tools.
+For workspace preparation, provisioning, and recovery problems, see [Telegram projects and workspaces](telegram-projects.md#troubleshooting).

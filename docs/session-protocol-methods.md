@@ -1,8 +1,8 @@
 # Session protocol method reference
 
-This page defines every request method in protocol version 15. It is the compact wire reference for clients that already understand connection, observation, and delta application from the [session protocol](session-protocol.md).
+This page lists every request method of the protocol version that ships with this Tau release. It is a compact reference for clients that already know how to connect, observe, and apply deltas, as described in the [session protocol](session-protocol.md).
 
-Every request uses `{ version, type: "request", id, method, params }`. Every successful response uses `{ version, type: "response", id, ok: true, result }`. `params` is required even when empty, and unknown object fields are stripped.
+Every request is `{ version, type: "request", id, method, params }`, and every successful response is `{ version, type: "response", id, ok: true, result }`. `version` is the number the server sends in `ready`. `params` is required even when empty, and unknown fields are removed.
 
 ## Common values
 
@@ -10,7 +10,7 @@ A `sessionId` is a non-empty opaque string returned by `session.create` or `sess
 
 Reasoning values are `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`.
 
-Turn methods return one of these terminal outcomes:
+Turn methods return one of these final outcomes:
 
 ```ts
 type TurnOutcome =
@@ -24,7 +24,7 @@ type TurnOutcome =
     };
 ```
 
-A completed protocol request can therefore contain a failed, aborted, or blocked turn outcome. The protocol request itself fails only when the host cannot accept or settle it.
+A successful request can therefore report a failed, aborted, or blocked turn. The request itself fails only when the host cannot accept or finish it.
 
 ## Connect and find sessions
 
@@ -47,7 +47,7 @@ params: {
 }
 
 result: {
-  protocolVersion: 15;
+  protocolVersion: number; // same as `version` in `ready`
   methods: string[];
   alreadyInitialized: boolean;
 }
@@ -76,11 +76,11 @@ params: {
 result: { sessionId: string }
 ```
 
-`cwd` must be absolute inside the selected execution environment. Fly Sprites must already exist and be reachable through a host-configured resolver. Tau does not provision a target or repository.
+`cwd` must be an absolute path inside the chosen execution environment. A Fly Sprite must already exist, and the host must have a `flySprites` connection configured. Tau does not create the target or the repository.
 
-`attributes` is required, including when empty. It accepts at most 32 immutable pairs; keys are 1 to 64 characters and values at most 1,024 characters. Tau stores the supplied strings without inferring missing provenance. Conventional attributes and their use are covered in [sessions](sessions.md) and [history](history.md).
+`attributes` is required, even when empty. It accepts at most 32 pairs, which never change after creation. Keys are 1 to 64 characters and values at most 1,024 characters. Tau stores them as given and does not fill in missing ones. Conventional attributes and their use are covered in [sessions](sessions.md) and [history](history.md).
 
-A local `env` supplies execution-environment overrides. Names must be valid environment-variable names, values cannot contain NUL, and `HOME` is forbidden because the execution environment owns it. Overrides become durable session state, so do not put secrets there unless the session store is protected accordingly.
+A local `env` sets environment variables for the execution environment. Names must be valid variable names, values cannot contain NUL, and `HOME` is not allowed because the execution environment sets it. These variables are saved with the session, so do not put secrets there unless the session store is protected accordingly.
 
 Creation returns only an id. Call `session.observe` for state and streamed updates.
 
@@ -111,7 +111,7 @@ result: {
 }
 ```
 
-Install all three baselines before applying later messages. Calling `observe` again refreshes the baselines without creating a second session.
+Install all three before applying later messages. Calling `observe` again returns fresh starting states; it does not create a second session.
 
 ### `session.unobserve`
 
@@ -139,7 +139,7 @@ params: { sessionId: string; text: string; historyEntryId?: string }
 result: { snapshot: SessionProtocolSnapshot; userHistoryEntryId: string }
 ```
 
-This is a serialized context mutation. It can interrupt an active turn and rejects pending queue or steering requests before appending the message. Use it for user-authored material that should become model-visible, not for arbitrary client diagnostics.
+This changes the context and waits its turn behind other changes. It can interrupt a running turn, and rejects pending queued and steering requests before adding the message. Use it for text written by the user that the model should see, not for client diagnostics.
 
 ### `session.submit`
 
@@ -150,22 +150,22 @@ params: { sessionId: string; text: string; historyEntryId?: string }
 result: { userHistoryEntryId: string; turn: TurnOutcome }
 ```
 
-Once accepted, the turn is durably represented in `snapshot.turns[userHistoryEntryId]`. Changes stream through the observed state channels while the request remains open.
+Once accepted, the turn is recorded in `snapshot.turns[userHistoryEntryId]`. Updates arrive through the observed channels while the request is open.
 
 ### `session.queue`
 
-Uses the same parameters and result as `session.submit`. When the session is idle it starts immediately. While a turn is active, it appears in pending state and starts after the session becomes idle.
+Same parameters and result as `session.submit`. When the session is idle, the turn starts right away. While a turn is running, the message is listed as pending and starts once the session is idle.
 
 ```ts
 params: { sessionId: string; text: string; historyEntryId?: string }
 result: { userHistoryEntryId: string; turn: TurnOutcome }
 ```
 
-The request response remains pending until its eventual turn settles.
+The response arrives when that turn finishes.
 
 ### `session.steer`
 
-Requests a change of direction for active model work.
+Changes the direction of the running turn.
 
 ```ts
 params: {
@@ -178,11 +178,11 @@ result: {
 }
 ```
 
-When idle, steering starts an ordinary turn. During an active turn, Tau waits for a safe continuation boundary, batches steering in arrival order, and starts one continuation turn before queued work. Batched requests share the generated `userHistoryEntryId`. Steering does not accept a caller-provided history id.
+When idle, steering starts an ordinary turn. During a turn, Tau waits for the next safe point, batches steering messages in arrival order, and continues the turn with them before any queued work. Batched requests share the same generated `userHistoryEntryId`. Steering does not accept a history ID from the caller.
 
 ### `session.cancelPendingMessages`
 
-Cancels all pending queue and steering requests without interrupting active work.
+Cancels all pending queued and steering requests without interrupting running work.
 
 ```ts
 params: {
@@ -212,7 +212,7 @@ The session must be idle.
 
 ### `session.interrupt`
 
-Requests cancellation of active session work, including turns, direct executions, model samples, and maintenance.
+Asks the session's running work to stop: turns, direct commands, model samples, and maintenance.
 
 ```ts
 params: {
@@ -224,7 +224,7 @@ result: {
 }
 ```
 
-`isTurnRunning` may remain `true` while cancellation settles. The method also cancels unapplied boundary steering. It does not dispose reusable subagent threads; use `session.interruptSubagent` for one subagent.
+`isTurnRunning` may stay `true` until the cancellation finishes. The method also cancels steering that has not been applied. It does not interrupt or remove subagents; use `session.interruptSubagent` for a subagent.
 
 ## Run independent execution and sampling
 
@@ -259,9 +259,9 @@ result: {
 
 `execId` must be unique among active executions in the session. `stdinBase64` is limited to 16 MiB decoded. `maxCaptureBytes` is positive and at most 24 MiB; the default is 1 MiB. `HOME` cannot be overridden.
 
-When `args` is present, Bash receives the first value as `$0` and the rest as `$@`. A safe exact-executable pattern is `command: 'exec "$0" "$@"'` with the executable and arguments in `args`. `cwd` chooses the command directory but is not a confinement boundary.
+When `args` is present, Bash receives the first value as `$0` and the rest as `$@`. To run one executable safely, use `command: 'exec "$0" "$@"'` with the executable and its arguments in `args`. `cwd` sets the starting directory; it does not restrict the command to it.
 
-Executions can overlap turns, samples, mutations, and other executions. Clients must coordinate workspace access when consistency matters.
+Commands can run at the same time as turns, samples, session changes, and other commands. Clients must coordinate workspace access when consistency matters.
 
 ### `session.cancelExec`
 
@@ -279,7 +279,7 @@ result: {
 
 ### `session.sample`
 
-Runs isolated inference against the session's active resolved model target. It uses only the supplied context and does not mutate the session, execute tool calls, emit deltas, or add to session cost.
+Runs a standalone model call with the session's current model. It uses only the context you supply, and does not change the session, run tools, send deltas, or add to the session's cost.
 
 ```ts
 params: {
@@ -299,13 +299,13 @@ params: {
 result: { message: AssistantMessage }
 ```
 
-`context.messages` and the returned message use Tau's provider-neutral model message shape. Intermediate system messages use the plain-text, versioned metadata shape described in the [session protocol](session-protocol.md); metadata is not sent to the provider. Unsupported sections and tool mutations are rejected. Returned tool calls are data only. Samples can run concurrently and are cancelled by `session.interrupt`, transport shutdown, or host shutdown.
+`context.messages` and the returned message use Tau's provider-independent message format. System messages after the first use the plain-text format with versioned metadata described in the [session protocol](session-protocol.md); the metadata is not sent to the provider. Sections and tool changes are rejected. Tool calls in the response are returned as data and never run. Samples can run at the same time, and `session.interrupt`, transport shutdown, or host shutdown cancels them.
 
 ## Read and change session state
 
 ### `session.snapshot`
 
-Returns the complete authoritative snapshot.
+Returns the complete current snapshot.
 
 ```ts
 params: {
@@ -318,7 +318,7 @@ Use this after observation, on demand, or to recover from a delta revision gap. 
 
 ### `session.setReasoning`
 
-Changes the reasoning effort for the next independently started turn.
+Changes the reasoning effort, starting with the next turn.
 
 ```ts
 params: {
@@ -331,7 +331,7 @@ result: {
 }
 ```
 
-The update is serialized but does not interrupt a running turn. Active turns and steering continuations retain their captured settings.
+The change waits its turn behind other changes but does not interrupt a running turn. Running turns, including their steering, keep their settings.
 
 ### `session.setPersona`
 
@@ -345,7 +345,7 @@ params: {
 result: SessionProtocolSnapshot;
 ```
 
-This is a serialized context mutation. It interrupts an active turn and rejects pending input before returning the authoritative snapshot.
+This changes the context and waits its turn behind other changes. It interrupts a running turn and rejects pending input, then returns the new snapshot.
 
 ### `session.resolvePrompt`
 
@@ -362,11 +362,11 @@ result: {
 }
 ```
 
-Snapshot catalog entries contain prompt metadata only. Call this lazily when the user invokes a prompt.
+The snapshot catalog holds only prompt IDs and labels. Call this when the user chooses a prompt.
 
 ### `session.autocompletePaths`
 
-Returns bounded path suggestions from the execution environment.
+Returns a limited list of path suggestions from the execution environment.
 
 ```ts
 params: { sessionId: string; query: string; limit: number }
@@ -379,7 +379,7 @@ result: { paths: string[] }
 
 ### `session.reload`
 
-Reloads session-owned configuration and content from the execution environment.
+Reloads the session's configuration and content from the execution environment.
 
 ```ts
 params: { sessionId: string }
@@ -390,11 +390,11 @@ result: {
 }
 ```
 
-Reload is a serialized context mutation. It interrupts an active turn and rejects pending input. It does not reload client-owned themes or tools, process environment variables, or host-wide services. See [configuration](configuration.md) for apply boundaries.
+Reload changes the context and waits its turn behind other changes. It interrupts a running turn and rejects pending input. It does not reload client themes or tools, process environment variables, or host services. See [configuration](configuration.md) for when changes apply.
 
 ### `session.compact`
 
-Manually replaces active model context with a generated summary.
+Replaces the model's context with a generated summary.
 
 ```ts
 params: {
@@ -409,11 +409,11 @@ result: {
 }
 ```
 
-Compaction interrupts an active turn, rejects pending input, and returns an authoritative replacement snapshot. A successful compaction advances the timeline epoch.
+Compaction interrupts a running turn, rejects pending input, and returns the new snapshot. A successful compaction advances the timeline epoch.
 
 ### `session.rewind`
 
-Removes one selected user history entry and all later active state.
+Removes one user message and everything after it.
 
 ```ts
 params: { sessionId: string; historyEntryId: string }
@@ -425,13 +425,13 @@ result: {
 }
 ```
 
-Rewind requires no active turn and no pending user input. It returns `busy` rather than interrupting work. The returned `text` is the selected user text for restoring to an editor.
+Rewind requires an idle session with no pending input, and returns `busy` instead of interrupting work. The returned `text` is the removed user message, for putting back in an editor.
 
 ## Control subagents and ephemeral contexts
 
 ### `session.interruptSubagent`
 
-Interrupts the current run of one supervised subagent without disposing its reusable thread.
+Interrupts one subagent's current run. The subagent stays available for follow-ups.
 
 ```ts
 params: {
@@ -445,7 +445,7 @@ result: {
 
 ### `session.ephemeral.create`
 
-Creates a non-persisted host-owned agent context independent of the main timeline.
+Creates an agent context on the host that is not saved and is separate from the main conversation.
 
 ```ts
 params: {
@@ -459,7 +459,7 @@ result: {
 }
 ```
 
-The context uses the hosted session's persona and execution environment plus the supplied instructions and exact tool set. `reasoning` sets the initial effort for new threads. When omitted, the context captures the parent session agent's current effective effort. Later parent setting changes do not affect the context. It is not recoverable after host restart.
+The context uses the session's persona and execution environment, with the given instructions and exactly the given tools. `reasoning` sets the starting effort for new threads. Without it, the context uses the session's effort at creation time. Later changes to the session's settings do not affect the context. It does not survive a host restart.
 
 ### `session.ephemeral.submit`
 
@@ -477,7 +477,7 @@ params: {
 result: { threadId: string; response: string }
 ```
 
-`reasoning` updates the target thread before running the submitted message and remains active for later submissions. When omitted, the thread retains its current effort. `forkFromThreadId` creates a new thread from an idle thread in the same context, including its current reasoning effort; a submit-time `reasoning` value overrides only the new fork. Overlapping submissions to the same thread return `busy`; independent threads can run concurrently.
+`reasoning` changes the thread's effort before running the message, and stays in effect for later messages. Without it, the thread keeps its current effort. `forkFromThreadId` creates a new thread from an idle thread in the same context, copying its effort; a `reasoning` value given here applies only to the new fork. A second submission to a busy thread returns `busy`, while different threads can run at once.
 
 ### `session.ephemeral.close`
 
@@ -497,7 +497,7 @@ result: {
 
 ## Complete delegated client-tool calls
 
-These methods are for a client that advertised tools during `initialize`. Ordinary clients do not call them.
+These methods are for clients that offered tools in `initialize`. Other clients never call them.
 
 ### `session.clientTool.ack`
 
@@ -523,9 +523,9 @@ result: {
 }
 ```
 
-The optional presentation is a partial running-state override. When present, `subject` must be non-empty and may contain line feeds but not carriage returns. Each detail text and metadata value is one line. Presentation objects are limited to 1 MiB; subjects and detail values to 256 KiB each; metadata values to 16 KiB each; and detail and metadata collections to 1,024 entries each.
+The optional presentation partly overrides the running tool card. If given, `subject` must be non-empty and may contain line feeds but not carriage returns. Each detail text and metadata value is one line. Presentation objects are limited to 1 MiB; subjects and detail values to 256 KiB each; metadata values to 16 KiB each; and detail and metadata collections to 1,024 entries each.
 
-The host preserves explicit fields within those safety limits and supplies canonical display-truncated defaults for omitted fields. It owns the action and operation and records the resolved presentation. Empty detail or metadata arrays suppress those default fields. An accepted acknowledgement authorizes the client to begin execution.
+The host keeps fields you set, within those limits, and fills in omitted fields with defaults truncated as Tau truncates its own cards. It sets the action and operation, and records the final presentation. An empty `details` or `metadata` array hides that default. Once the acknowledgement is accepted, the client may start work.
 
 ### `session.clientTool.result`
 
@@ -564,10 +564,10 @@ params:
 result: { accepted: boolean };
 ```
 
-`content` preserves text/image block order in the model-facing result, snapshots, and deltas. It may be empty and allows at most 1,024 blocks, including at most 16 images with valid padded base64 representing at most 3.5 MiB each. Image bytes are not presentation content.
+`content` keeps the order of text and image blocks in the model's result, snapshots, and deltas. It may be empty and can have at most 1,024 blocks, including at most 16 images in valid padded base64 of at most 3.5 MiB each. Images are never shown in the tool card.
 
-The optional result presentation applies only to the reported terminal state and is resolved independently from the running presentation. The host preserves explicit fields unchanged after safety validation and supplies canonical display-truncated defaults for omitted fields. If no client result arrives, the host uses a complete fallback for timeout, cancellation, detach, or another terminal outcome.
+The optional presentation applies only to the finished card, separately from the running one. The host keeps fields you set once they pass validation, and fills in omitted fields with truncated defaults. If no result arrives, the host shows a complete default card for the timeout, cancellation, detach, or other outcome.
 
-A successful result is accepted only after the host has accepted the acknowledgement. An error sent before acknowledgement records a preparation failure, such as an error from `describe`, without authorizing execution. An error sent afterward records an execution failure.
+A successful result is accepted only after the host has accepted the acknowledgement. An error sent before acknowledging records a preparation failure, such as an error from `describe`, and the tool never runs. An error sent afterward records an execution failure.
 
-`accepted: false` means the successful call was not yet authorized, or the call was cancelled, timed out, detached, unknown, or already completed. Do not retry or send additional results for that call.
+`accepted: false` means a successful result arrived before the call was acknowledged, or the call was cancelled, timed out, detached, unknown, or already finished. Do not retry or send more results for that call.

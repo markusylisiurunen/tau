@@ -23,7 +23,6 @@ Choose size, resolution, and aspect ratio for the intended use; no single size f
 | Model | Resolution | Aspect ratios | Thinking | Other controls |
 | --- | --- | --- | --- | --- |
 | `gemini-nano-banana-2.1` | `1K`, `2K`, `4K` | Standard and wide | `minimal`, `medium`, `high` | PNG |
-| `gemini-3.1-flash-lite-image` | `1K` | Standard and wide | `minimal`, `high` | PNG |
 | `gpt-image-2.5-flare` | Exact `--size` | Through dimensions | Not exposed | Quality, background, encoding, compression |
 | `gpt-image-2.5-sunburst` | Exact `--size` | Through dimensions | Not exposed | Quality, background, encoding, compression |
 
@@ -45,7 +44,7 @@ Gemini does not support transparent-background generation ([Google documentation
 
 Give exactly one of `--prompt` and `--prompt-file` (UTF-8). Repeat `--reference` for each local PNG, JPEG, or WebP reference image. References are sent in order and unchanged. With references, OpenAI requests use the edit endpoint.
 
-Up to 16 references are accepted for OpenAI and 14 for Gemini; Flash Lite is not optimized for multiple references. Each reference is limited to 50 MB. Gemini's complete serialized request is limited to 19 MB, including the prompt, base64-encoded references, and JSON escaping.
+Up to 16 references are accepted for OpenAI and 14 for Gemini. Each reference is limited to 50 MB. Gemini's complete serialized request is limited to 19 MB, including the prompt, base64-encoded references, and JSON escaping.
 
 Create an asset:
 
@@ -124,10 +123,7 @@ Approximate USD image-output costs from [Google pricing](https://ai.google.dev/g
 
 | Model | 1K | 2K | 4K | When to choose it |
 | --- | --- | --- | --- | --- |
-| `gemini-3.1-flash-lite-image` | $0.034 | Unsupported | Unsupported | Simple 1K images; not optimized for multiple references |
 | `gemini-nano-banana-2.1` | $0.0336 | $0.0504 | $0.113 | Reference-based editing, text rendering, and very wide aspect ratios |
-
-Flash Lite has no image-output price advantage at 1K at these rates. Total cost also depends on input and thinking tokens.
 
 Nano Banana 2.1 charges $1.50 per million input tokens and $7.50 per million text/thinking output tokens in addition to image output. The manifest records reported usage.
 

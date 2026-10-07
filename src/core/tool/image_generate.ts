@@ -60,13 +60,6 @@ type ImageModel =
 
 const imageModels: Record<string, ImageModel> = {
   "gemini-nano-banana-2.1": { provider: "google", settings: googleSettings },
-  "gemini-3.1-flash-lite-image": {
-    provider: "google",
-    settings: googleSettings.extend({
-      resolution: z.literal("1K").optional(),
-      thinking: z.enum(["minimal", "high"]).optional(),
-    }),
-  },
   "gpt-image-2.5-flare": { provider: "openai", settings: openaiSettings },
   "gpt-image-2.5-sunburst": { provider: "openai", settings: openaiSettings },
 };
@@ -92,11 +85,11 @@ export function printImageGenerateHelp(log: (line: string) => void = console.log
       "options:",
       "  --reference <path>       repeatable local PNG/JPEG/WebP reference, in prompt order.",
       "  --aspect-ratio <ratio>   model-supported ratio (Gemini).",
-      "  --resolution <tier>      1K, 2K, or 4K, depending on model (Gemini).",
+      "  --resolution <tier>      1K, 2K, or 4K (Gemini).",
       "  --size <WIDTHxHEIGHT>    exact dimensions, or auto (OpenAI).",
       "  --quality <level>        auto, low, medium, high, xhigh, max (OpenAI).",
       "  --background <mode>      auto, opaque, transparent (OpenAI).",
-      "  --thinking <level>       minimal, medium, high (Nano Banana 2.1); minimal, high (Lite).",
+      "  --thinking <level>       minimal, medium, high (Gemini).",
       "  --format <encoding>      png (default), jpeg, webp (OpenAI); png (Gemini).",
       "  --compression <0-100>    JPEG/WebP compression (OpenAI).",
       "  --help                  show this help.",

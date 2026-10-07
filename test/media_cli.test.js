@@ -327,7 +327,7 @@ describe("image generation CLI", () => {
         .toBuffer();
       options.fetchImpl.mockResolvedValue(geminiImageResponse(image, format));
       await runToolCommand(
-        [...imageArgs.slice(0, 2), "gemini-3.1-flash-lite-image", ...imageArgs.slice(3)],
+        [...imageArgs.slice(0, 2), "gemini-nano-banana-2.1", ...imageArgs.slice(3)],
         options,
       );
       const output = await readFile(join(options.cwd, "image.png"));
@@ -351,7 +351,7 @@ describe("image generation CLI", () => {
     options.fetchImpl.mockResolvedValue(geminiImageResponse(image, "jpeg"));
     await expect(
       runToolCommand(
-        [...imageArgs.slice(0, 2), "gemini-3.1-flash-lite-image", ...imageArgs.slice(3)],
+        [...imageArgs.slice(0, 2), "gemini-nano-banana-2.1", ...imageArgs.slice(3)],
         options,
       ),
     ).rejects.toThrow();
@@ -388,7 +388,7 @@ describe("image generation CLI", () => {
           [
             "image-generate",
             "--model",
-            "gemini-3.1-flash-lite-image",
+            "gemini-nano-banana-2.1",
             "--prompt-file",
             "prompt.txt",
             "--output",
@@ -415,21 +415,10 @@ describe("image generation CLI", () => {
       [...imageArgs, "--background", "transparent", "--format", "jpeg", "--output", "image.jpg"],
       [
         ...imageArgs.slice(0, 2),
-        "gemini-3.1-flash-lite-image",
+        "gemini-nano-banana-2.1",
         ...imageArgs.slice(3),
         "--background",
         "transparent",
-      ],
-      [
-        "image-generate",
-        "--model",
-        "gemini-3.1-flash-lite-image",
-        "--prompt",
-        "a",
-        "--output",
-        "image.png",
-        "--resolution",
-        "4K",
       ],
     ]) {
       await expect(runToolCommand(args, options)).rejects.toThrow();
@@ -439,10 +428,8 @@ describe("image generation CLI", () => {
   });
 
   it.each([
-    ["gemini-3.1-flash-lite-image", "--resolution", "2K"],
     ["gemini-nano-banana-2.1", "--quality", "high"],
     ["gemini-nano-banana-2.1", "--resolution", "512"],
-    ["gemini-3.1-flash-lite-image", "--thinking", "medium"],
     ["gpt-image-2.5-flare", "--thinking", "minimal"],
   ])("rejects %s %s %s at the model settings boundary", async (model, flag, value) => {
     const options = await fixture();
@@ -456,7 +443,7 @@ describe("image generation CLI", () => {
     expect(await readdir(options.cwd)).toEqual([]);
   });
 
-  it.each(["gemini-3-pro-image", "gemini-3.1-flash-image"])(
+  it.each(["gemini-3-pro-image", "gemini-3.1-flash-image", "gemini-3.1-flash-lite-image"])(
     "rejects retired model %s without generating or creating artifacts",
     async (model) => {
       const options = await fixture();

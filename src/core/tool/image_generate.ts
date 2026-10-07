@@ -22,8 +22,8 @@ const ratios = ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9",
 const wideRatios = [...ratios, "1:4", "4:1", "1:8", "8:1"] as const;
 const googleSettings = z.strictObject({
   "aspect-ratio": z.enum(wideRatios).optional(),
-  resolution: z.enum(["512", "1K", "2K", "4K"]).optional(),
-  thinking: z.enum(["minimal", "high"]).optional(),
+  resolution: z.enum(["1K", "2K", "4K"]).optional(),
+  thinking: z.enum(["minimal", "medium", "high"]).optional(),
   format: z.literal("png").default("png"),
 });
 const openaiSettings = z
@@ -59,19 +59,7 @@ type ImageModel =
   | { provider: "openai"; settings: typeof openaiSettings };
 
 const imageModels: Record<string, ImageModel> = {
-  "gemini-3-pro-image": {
-    provider: "google",
-    settings: googleSettings.extend({
-      "aspect-ratio": z.enum(ratios).optional(),
-      resolution: z.enum(["1K", "2K", "4K"]).optional(),
-      thinking: z.never().optional(),
-    }),
-  },
-  "gemini-3.1-flash-image": { provider: "google", settings: googleSettings },
-  "gemini-3.1-flash-lite-image": {
-    provider: "google",
-    settings: googleSettings.extend({ resolution: z.literal("1K").optional() }),
-  },
+  "gemini-nano-banana-2.1": { provider: "google", settings: googleSettings },
   "gpt-image-2.5-flare": { provider: "openai", settings: openaiSettings },
   "gpt-image-2.5-sunburst": { provider: "openai", settings: openaiSettings },
 };
@@ -97,11 +85,11 @@ export function printImageGenerateHelp(log: (line: string) => void = console.log
       "options:",
       "  --reference <path>       repeatable local PNG/JPEG/WebP reference, in prompt order.",
       "  --aspect-ratio <ratio>   model-supported ratio (Gemini).",
-      "  --resolution <tier>      512, 1K, 2K, or 4K, depending on model (Gemini).",
+      "  --resolution <tier>      1K, 2K, or 4K (Gemini).",
       "  --size <WIDTHxHEIGHT>    exact dimensions, or auto (OpenAI).",
       "  --quality <level>        auto, low, medium, high, xhigh, max (OpenAI).",
       "  --background <mode>      auto, opaque, transparent (OpenAI).",
-      "  --thinking <level>       minimal or high (Gemini Flash/Lite).",
+      "  --thinking <level>       minimal, medium, high (Gemini).",
       "  --format <encoding>      png (default), jpeg, webp (OpenAI); png (Gemini).",
       "  --compression <0-100>    JPEG/WebP compression (OpenAI).",
       "  --help                  show this help.",

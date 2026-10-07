@@ -16,17 +16,19 @@ Requires an OpenAI or Google API key for the selected model. See [feature-specif
 
 ## Models and capabilities
 
-`--model` is required; there is no default. Start with `gpt-image-2.5-flare` at `--quality medium` for everyday generation and editing. Increase quality or choose `gpt-image-2.5-sunburst` when precise edits justify the extra effort. See [approximate cost](#approximate-cost) before choosing settings.
+`--model` is required; there is no default. Start with `gpt-image-2.5-flare` at `--quality medium` for everyday generation and editing, balancing quality and cost.
+
+For demanding generation and editing where image quality is the priority, choose `gemini-nano-banana-2.1` or `gpt-image-2.5-sunburst`. Nano Banana supports very wide aspect ratios and resolution tiers up to `4K`. Sunburst supports exact dimensions, transparent backgrounds, and PNG/JPEG/WebP output. See [approximate cost](#approximate-cost) before choosing settings.
 
 Choose size, resolution, and aspect ratio for the intended use; no single size fits everything. The sizes in the examples are for those particular cases. Options you leave out use the provider's defaults, except `--format`, which defaults to `png`. Unsupported options fail before anything is generated.
 
 | Model | Resolution | Aspect ratios | Thinking | Other controls |
 | --- | --- | --- | --- | --- |
-| `gemini-3-pro-image` | `1K`, `2K`, `4K` | Standard | Provider-managed | PNG |
-| `gemini-3.1-flash-image` | `512`, `1K`, `2K`, `4K` | Standard and wide | `minimal`, `high` | PNG |
-| `gemini-3.1-flash-lite-image` | `1K` | Standard and wide | `minimal`, `high` | PNG |
+| `gemini-nano-banana-2.1` | `1K`, `2K`, `4K` | Standard and wide | `minimal`, `medium`, `high` | PNG |
 | `gpt-image-2.5-flare` | Exact `--size` | Through dimensions | Not exposed | Quality, background, encoding, compression |
 | `gpt-image-2.5-sunburst` | Exact `--size` | Through dimensions | Not exposed | Quality, background, encoding, compression |
+
+Google's defaults are `1K` resolution and `medium` thinking. Use `--thinking minimal` for faster generation and lower thinking-token usage.
 
 Standard `--aspect-ratio` values are `1:1`, `2:3`, `3:2`, `3:4`, `4:3`, `4:5`, `5:4`, `9:16`, `16:9`, `21:9`. Wide values additionally include `1:4`, `4:1`, `1:8`, `8:1`. Resolution tiers describe approximate output size.
 
@@ -44,7 +46,7 @@ Gemini does not support transparent-background generation ([Google documentation
 
 Give exactly one of `--prompt` and `--prompt-file` (UTF-8). Repeat `--reference` for each local PNG, JPEG, or WebP reference image. References are sent in order and unchanged. With references, OpenAI requests use the edit endpoint.
 
-Up to 16 references are accepted for OpenAI and 14 for Gemini; Flash Lite is not optimized for multiple references. Each reference is limited to 50 MB. Gemini's complete serialized request is limited to 19 MB, including the prompt, base64-encoded references, and JSON escaping.
+Up to 16 references are accepted for OpenAI and 14 for Gemini. Each reference is limited to 50 MB. Gemini's complete serialized request is limited to 19 MB, including the prompt, base64-encoded references, and JSON escaping.
 
 Create an asset:
 
@@ -69,7 +71,7 @@ Generate at a higher resolution using a reference:
 
 ```bash
 tau tool image-generate \
-  --model gemini-3-pro-image --reference ./sauna.png \
+  --model gemini-nano-banana-2.1 --reference ./sauna.png \
   --prompt 'Recreate this image at higher resolution. Preserve composition and colors; refine fine detail.' \
   --aspect-ratio 16:9 --resolution 4K --output ./sauna-4k.png
 ```
@@ -100,7 +102,7 @@ Failures exit nonzero and name the invalid option or the step that failed. If th
 
 ## Approximate cost
 
-Use Flare for fast everyday images and drafts; reserve Sunburst for demanding edits where preservation and precision matter most. Start at `medium`, use `low` for inexpensive exploration, and increase quality only when the result needs it. Explicit `--size` and `--quality` make budgeting more predictable than `auto`.
+For OpenAI models, start at `--quality medium`, use `low` for inexpensive exploration, and increase quality when the result needs it. Explicit `--size` and `--quality` make budgeting more predictable than `auto`. For Nano Banana, account for resolution and thinking usage as well as input costs.
 
 ### OpenAI: cost per image
 
@@ -121,11 +123,11 @@ For example, 100 square 1024-pixel drafts at `low` have an estimated output cost
 
 Approximate USD image-output costs from [Google pricing](https://ai.google.dev/gemini-api/docs/pricing), excluding input and text/thinking usage:
 
-| Model | 1K | 2K | 4K | When to choose it |
-| --- | --- | --- | --- | --- |
-| `gemini-3.1-flash-lite-image` | $0.034 | Unsupported | Unsupported | Simple 1K images; not optimized for multiple references |
-| `gemini-3.1-flash-image` | $0.067 | $0.101 | $0.151 | Resolution tiers and very wide aspect ratios |
-| `gemini-3-pro-image` | $0.134 | $0.134 | $0.24 | Higher-resolution reference-based work with standard aspect ratios |
+| Model                    | 1K      | 2K      | 4K     |
+| ------------------------ | ------- | ------- | ------ |
+| `gemini-nano-banana-2.1` | $0.0336 | $0.0504 | $0.113 |
+
+Input costs $1.50 per million tokens. Text and thinking output cost $7.50 per million tokens, in addition to image output. The manifest records provider-reported usage.
 
 Use OpenAI when transparent backgrounds or JPEG/WebP output are required. Compare the quality needed for the task, not just matching tier names across providers. Check [OpenAI pricing](https://developers.openai.com/api/docs/guides/image-generation#gpt-image-25-costs) and Google pricing for current rates before large batches.
 

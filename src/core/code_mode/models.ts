@@ -5,6 +5,7 @@ import {
   requestOpenRouterChat,
   requestOpenRouterDecisions,
 } from "../models/openrouter.js";
+import type { OpenRouterMediaAdapter } from "../models/openrouter_media.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
 import type { CodeModeCapability } from "./capability.js";
 
@@ -24,6 +25,14 @@ const decisionOptions = z.strictObject({
   model: z.string().min(1),
   state: z.unknown(),
   questions: z.unknown(),
+  attachments: z
+    .array(
+      attachment.refine((item) => item.type === "image", {
+        message: "decisions only support image attachments",
+      }),
+    )
+    .max(16)
+    .default([]),
 });
 
 export function createModelsCapability(
@@ -31,6 +40,30 @@ export function createModelsCapability(
   config: Config,
   fetchImpl?: typeof fetch,
 ): CodeModeCapability {
+  function mediaAdapter(signal: AbortSignal): OpenRouterMediaAdapter {
+    return {
+      readFile: async (path, limit) => {
+        signal.throwIfAborted();
+        const file = await backend.readFileBinary(path, { maxBytes: limit });
+        signal.throwIfAborted();
+        return file.content;
+      },
+      probe: async (bytes, format) => {
+        const result = await backend.runNodeScript(probeScript, [], {
+          signal,
+          timeoutMs: 20_000,
+          maxCaptureBytes: 1_000_000,
+          stdin: Buffer.from(JSON.stringify({ data: bytes.toString("base64"), format })),
+        });
+        if (result.exitCode !== 0 || result.truncated || result.timedOut || result.aborted)
+          throw new Error(
+            "failed to validate media; ensure ffprobe is installed and the media is valid",
+          );
+        return JSON.parse(result.stdout);
+      },
+    };
+  }
+
   return {
     name: "models",
     description:
@@ -143,6 +176,7 @@ type DecisionOptions = {
   model: string;
   state: Guidance;
   questions: Record<string, Question>;
+  attachments?: Array<Attachment & { type: "image" }>;
 };
 type Answer =
   | { type: "noul"; noul: number }
@@ -175,11 +209,19 @@ type DecisionResult = {
 - \`choice\`: one supplied category; optional confidence and category probabilities are from 0 to 1.
 - \`score\`: position from 0 to the final rubric index, possibly fractional. Distribution and legend keys are rubric-index strings. Optional confidence and probabilities are from 0 to 1.
 
-Negative judgments and low confidence are normal results. Responses with mismatched names, types, categories, or ranges throw; no decision thresholds or prose explanations are invented.
+Prefer \`openai/gpt-6-luna-decisions\` for decisions, including text, JSON, and image-based judgments. Choose \`typesafe/jev-1.13\` for high-volume text or JSON decisions when cost is the priority.
+
+Luna supports at most 200 questions, 255 categories per choice question, and 2–10 rubric levels per score question. These limits are checked before sending the request. Jev also accepts a single-level score rubric.
+
+Luna accepts up to 16 PNG/JPEG/WebP images. Supply them through \`attachments\`, using the same path or inline forms as chat images. Describe what to check in \`questions\`. Images follow \`state\` in attachment order and retain their original bytes. Objects and arrays in \`state\` are sent as JSON text, so image URLs inside \`state\` are treated as text.
+
+The image limits below apply to decisions too. Jev accepts no attachments. Neither decision model accepts audio or video. Omitting \`attachments\` sends no images.
+
+Negative judgments and low confidence are normal results. Refusals and responses with mismatched names, types, categories, or ranges throw. The tool returns the model's answers without adding decision thresholds or prose explanations.
 
 \`\`\`js
 const catalog = await tau.models.list();
-const model = catalog.decisions.find(item => item.id === "typesafe/jev-1.13");
+const model = catalog.decisions.find(item => item.id === "openai/gpt-6-luna-decisions");
 if (!model) throw new Error("decision model unavailable");
 const result = await tau.models.decisions({
   model: model.id,
@@ -192,6 +234,20 @@ const result = await tau.models.decisions({
       criteria: ["Can wait", "Fix soon", "Blocking revenue"],
     },
   },
+});
+printText(JSON.stringify(result.answers));
+\`\`\`
+
+Inspect an existing screenshot:
+
+\`\`\`js
+const result = await tau.models.decisions({
+  model: "openai/gpt-6-luna-decisions",
+  state: "Check the checkout screen for visible errors.",
+  questions: {
+    has_error: { type: "noul", instructions: "Is an error message visible?" },
+  },
+  attachments: [{ type: "image", path: "./checkout.png" }],
 });
 printText(JSON.stringify(result.answers));
 \`\`\`
@@ -226,36 +282,22 @@ Validation, authentication, service failures, and malformed responses throw. The
             config,
             signal: context.signal,
             fetchImpl,
-            mediaAdapter: {
-              readFile: async (path, limit) => {
-                context.signal.throwIfAborted();
-                const file = await backend.readFileBinary(path, { maxBytes: limit });
-                context.signal.throwIfAborted();
-                return file.content;
-              },
-              probe: async (bytes, format) => {
-                const result = await backend.runNodeScript(probeScript, [], {
-                  signal: context.signal,
-                  timeoutMs: 20_000,
-                  maxCaptureBytes: 1_000_000,
-                  stdin: Buffer.from(JSON.stringify({ data: bytes.toString("base64"), format })),
-                });
-                if (result.exitCode !== 0 || result.truncated || result.timedOut || result.aborted)
-                  throw new Error(
-                    "failed to validate media; ensure ffprobe is installed and the media is valid",
-                  );
-                return JSON.parse(result.stdout);
-              },
-            },
+            mediaAdapter: mediaAdapter(context.signal),
           },
         );
       },
       decisions: async (args, context) => {
         const [input] = z.tuple([decisionOptions]).parse(args);
         return await requestOpenRouterDecisions(
-          input.model,
-          { state: input.state, questions: input.questions },
-          { config, signal: context.signal, fetchImpl },
+          {
+            model: input.model,
+            value: { state: input.state, questions: input.questions },
+            attachments: input.attachments.map(({ type, ...source }) => ({
+              kind: type,
+              ...source,
+            })),
+          },
+          { config, signal: context.signal, fetchImpl, mediaAdapter: mediaAdapter(context.signal) },
         );
       },
     },

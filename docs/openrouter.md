@@ -26,7 +26,8 @@ Every request needs an exact `--model` ID from this table. There is no default, 
 
 | Operation | Model | Inputs and suggested role | Reasoning efforts |
 | --- | --- | --- | --- |
-| `decisions` | `typesafe/jev-1.13` | Structured state and questions; classification, scoring, verification with probabilities | Not supported |
+| `decisions` | `openai/gpt-6-luna-decisions` | Questions about text, structured state, or images; recommended first choice for decisions | Not supported |
+| `decisions` | `typesafe/jev-1.13` | Questions about text or structured state; use for high-volume decisions when cost is the priority | Not supported |
 | `chat` | `google/gemini-3.8-flash` | Text, images, audio, video; first choice for audio/video and image-heavy analysis | `low`, `medium`, `high` |
 | `chat` | `openai/gpt-6-luna` | Text and images; cheap everyday extraction, summarization, and routine questions | `none`, `low`, `medium`, `high`, `xhigh`, `max` |
 | `chat` | `openai/gpt-6.1-sol` | Text and images; coding, debugging, technical reasoning | `low`, `medium`, `high`, `xhigh`, `max` |
@@ -39,13 +40,13 @@ Roles are guidance for choosing, not guarantees or limits on what a model may be
 ### Decisions
 
 ```sh
-tau tool openrouter decisions --model typesafe/jev-1.13 --input ./decision.json
+tau tool openrouter decisions --model openai/gpt-6-luna-decisions --input ./decision.json
 ```
 
 `--input` is required. A file path reads a UTF-8 JSON document. Exactly `--input -` reads one complete document from stdin until EOF:
 
 ```sh
-tau tool openrouter decisions --model typesafe/jev-1.13 --input - <<'JSON'
+tau tool openrouter decisions --model openai/gpt-6-luna-decisions --input - <<'JSON'
 {
   "state": { "ticket": "The checkout page crashes when I click Pay." },
   "questions": {
@@ -81,14 +82,28 @@ The input contains exactly `state` and `questions`. The model belongs only in `-
 
 Instructions and criterion guidance accept strings, JSON objects, or arrays; choice criterion values may also be `null`. Unknown question fields and the reserved question/category name `__proto__` are rejected. Arbitrary keys within state and guidance are preserved. Several independent questions can share one state; dependent questions require separate calls.
 
-The command posts once to OpenRouter's alpha Decisions endpoint. It validates answer names, types, categories, rubric ranges, and probability bounds. Successful output is one JSON object:
+Luna Decisions supports at most 200 questions, 255 categories per choice question, and 2–10 rubric levels per score question. Tau checks these limits before sending the request. Jev also accepts a single-level score rubric. Both models use the same JSON input format.
+
+Luna also accepts up to 16 ordered local PNG/JPEG/WebP images using repeatable `--image <path>` flags:
+
+```sh
+tau tool openrouter decisions \
+  --model openai/gpt-6-luna-decisions \
+  --input ./visual-checks.json --image ./checkout.png
+```
+
+Describe what to check in `questions` and supply images with `--image`. Images follow `state` in flag order and retain their original bytes. Objects and arrays in `state` are sent as JSON text, so image URLs inside `state` are treated as text.
+
+Images use the [same validation and limits as chat images](#outputs-and-recovery). Only local files are accepted; external URLs and file IDs are unsupported. Jev accepts no images. Neither decision model accepts audio or video.
+
+The command posts once to OpenRouter's alpha Decisions endpoint. It validates answer names, types, categories, rubric ranges, and probability bounds. Refusals and malformed answers fail the command. Successful output is one JSON object:
 
 ```json
 {
-  "requested_model": "typesafe/jev-1.13",
-  "model": "typesafe/jev-1.13-20260917",
+  "requested_model": "openai/gpt-6-luna-decisions",
+  "model": "openai/gpt-6-luna-decisions-20261006",
   "answers": { "is_bug": { "type": "noul", "noul": 0.96 } },
-  "usage": { "input_tokens": 100, "output_tokens": 10, "cost": 0.00001 }
+  "usage": { "input_tokens": 100, "output_tokens": 0, "cost": 0.00001 }
 }
 ```
 

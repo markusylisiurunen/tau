@@ -26,7 +26,7 @@ Every request needs an exact `--model` ID from this table. There is no default, 
 
 | Operation | Model | Inputs and suggested role | Reasoning efforts |
 | --- | --- | --- | --- |
-| `decisions` | `openai/gpt-6-luna-decisions` | Questions about text, structured state, or images; use when decision quality is the priority | Not supported |
+| `decisions` | `openai/gpt-6-luna-decisions` | Questions about text, structured state, or images; recommended first choice for decisions | Not supported |
 | `decisions` | `typesafe/jev-1.13` | Questions about text or structured state; use for high-volume decisions when cost is the priority | Not supported |
 | `chat` | `google/gemini-3.8-flash` | Text, images, audio, video; first choice for audio/video and image-heavy analysis | `low`, `medium`, `high` |
 | `chat` | `openai/gpt-6-luna` | Text and images; cheap everyday extraction, summarization, and routine questions | `none`, `low`, `medium`, `high`, `xhigh`, `max` |

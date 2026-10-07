@@ -22,13 +22,12 @@ Choose size, resolution, and aspect ratio for the intended use; no single size f
 
 | Model | Resolution | Aspect ratios | Thinking | Other controls |
 | --- | --- | --- | --- | --- |
-| `gemini-3-pro-image` | `1K`, `2K`, `4K` | Standard | Provider-managed | PNG |
 | `gemini-nano-banana-2.1` | `1K`, `2K`, `4K` | Standard and wide | `minimal`, `medium`, `high` | PNG |
 | `gemini-3.1-flash-lite-image` | `1K` | Standard and wide | `minimal`, `high` | PNG |
 | `gpt-image-2.5-flare` | Exact `--size` | Through dimensions | Not exposed | Quality, background, encoding, compression |
 | `gpt-image-2.5-sunburst` | Exact `--size` | Through dimensions | Not exposed | Quality, background, encoding, compression |
 
-Nano Banana 2.1 is the Google choice for generation and reference-based editing, including text-heavy images and wide layouts. Its provider defaults are `1K` resolution and `medium` thinking. Use `--thinking minimal` when speed and lower thinking usage matter. Search grounding and dedicated mask controls are not exposed.
+Prefer Nano Banana 2.1 for Google image generation and reference-based editing, including images with text and wide layouts. Its provider defaults are `1K` resolution and `medium` thinking. Use `--thinking minimal` to favor speed and reduce thinking-token usage.
 
 Standard `--aspect-ratio` values are `1:1`, `2:3`, `3:2`, `3:4`, `4:3`, `4:5`, `5:4`, `9:16`, `16:9`, `21:9`. Wide values additionally include `1:4`, `4:1`, `1:8`, `8:1`. Resolution tiers describe approximate output size.
 
@@ -127,9 +126,10 @@ Approximate USD image-output costs from [Google pricing](https://ai.google.dev/g
 | --- | --- | --- | --- | --- |
 | `gemini-3.1-flash-lite-image` | $0.034 | Unsupported | Unsupported | Simple 1K images; not optimized for multiple references |
 | `gemini-nano-banana-2.1` | $0.0336 | $0.0504 | $0.113 | Reference-based editing, text rendering, and very wide aspect ratios |
-| `gemini-3-pro-image` | $0.134 | $0.134 | $0.24 | Higher-resolution reference-based work with standard aspect ratios |
 
-Nano Banana 2.1 also charges $1.50 per million input tokens and $7.50 per million text/thinking output tokens. Reference-heavy prompts and thinking add to the image-output prices above; the manifest preserves reported usage.
+Flash Lite has no image-output price advantage at 1K at these rates. Total cost also depends on input and thinking tokens.
+
+Nano Banana 2.1 charges $1.50 per million input tokens and $7.50 per million text/thinking output tokens in addition to image output. The manifest records reported usage.
 
 Use OpenAI when transparent backgrounds or JPEG/WebP output are required. Compare the quality needed for the task, not just matching tier names across providers. Check [OpenAI pricing](https://developers.openai.com/api/docs/guides/image-generation#gpt-image-25-costs) and Google pricing for current rates before large batches.
 

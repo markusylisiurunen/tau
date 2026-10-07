@@ -209,11 +209,11 @@ type DecisionResult = {
 - \`choice\`: one supplied category; optional confidence and category probabilities are from 0 to 1.
 - \`score\`: position from 0 to the final rubric index, possibly fractional. Distribution and legend keys are rubric-index strings. Optional confidence and probabilities are from 0 to 1.
 
-Use \`openai/gpt-6-luna-decisions\` for fast, input-only-priced text and image decisions, or \`typesafe/jev-1.13\` for text/JSON decisions. Luna supports at most 200 questions, 255 categories per choice, and 2–10 levels per score; these limits are checked before requesting.
+Prefer \`openai/gpt-6-luna-decisions\` for decision quality and image-based judgments. Consider \`typesafe/jev-1.13\` for high-volume text/JSON decisions when cost efficiency is the priority. Luna supports at most 200 questions, 255 categories per choice, and 2–10 levels per score. These limits are checked before sending the request.
 
-Luna accepts up to 16 PNG/JPEG/WebP attachments in the same path or inline form as chat images. Images follow the state in attachment order, retain their original bytes, and use the image limits below. Structured JSON state is always serialized as text, so image-part-shaped JSON remains data; only attachments become image parts. Jev rejects attachments; audio and video are not supported by decisions. Omitted attachments default to an empty array.
+Luna accepts up to 16 PNG/JPEG/WebP attachments in the same path or inline form as chat images. Images follow the state in attachment order, retain their original bytes, and use the image limits below. Objects and arrays in \`state\` are sent as JSON text. To send images, use \`attachments\`; image URLs inside \`state\` remain text. Jev accepts no attachments. Neither model accepts audio or video. Omitting \`attachments\` sends no images.
 
-Negative judgments and low confidence are normal results. Refused answers and responses with mismatched names, types, categories, or ranges throw; no decision thresholds or prose explanations are invented.
+Negative judgments and low confidence are normal results. Refusals and responses with mismatched names, types, categories, or ranges throw. The tool returns the model's answers without adding decision thresholds or prose explanations.
 
 \`\`\`js
 const catalog = await tau.models.list();

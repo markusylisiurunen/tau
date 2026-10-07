@@ -439,14 +439,10 @@ describe("image generation CLI", () => {
   });
 
   it.each([
-    ["gemini-3-pro-image", "--resolution", "512"],
-    ["gemini-3-pro-image", "--aspect-ratio", "8:1"],
-    ["gemini-3-pro-image", "--thinking", "high"],
     ["gemini-3.1-flash-lite-image", "--resolution", "2K"],
     ["gemini-nano-banana-2.1", "--quality", "high"],
     ["gemini-nano-banana-2.1", "--resolution", "512"],
     ["gemini-3.1-flash-lite-image", "--thinking", "medium"],
-    ["gemini-3.1-flash-image", "--resolution", "1K"],
     ["gpt-image-2.5-flare", "--thinking", "minimal"],
   ])("rejects %s %s %s at the model settings boundary", async (model, flag, value) => {
     const options = await fixture();
@@ -459,6 +455,22 @@ describe("image generation CLI", () => {
     expect(options.fetchImpl).not.toHaveBeenCalled();
     expect(await readdir(options.cwd)).toEqual([]);
   });
+
+  it.each(["gemini-3-pro-image", "gemini-3.1-flash-image"])(
+    "rejects retired model %s without generating or creating artifacts",
+    async (model) => {
+      const options = await fixture();
+      const log = vi.fn();
+      printImageGenerateHelp(log);
+      expect(log.mock.calls.map(([line]) => line).join("\n")).not.toContain(model);
+      await expect(
+        runToolCommand([...imageArgs.slice(0, 2), model, ...imageArgs.slice(3)], options),
+      ).rejects.toThrow();
+      expect(options.fetchImpl).not.toHaveBeenCalled();
+      expect(options.stdout).not.toHaveBeenCalled();
+      expect(await readdir(options.cwd)).toEqual([]);
+    },
+  );
 
   it.each(["not json", JSON.stringify({ data: [{}] })])(
     "rejects malformed provider responses without publishing output or retrying",
@@ -496,7 +508,7 @@ describe("image generation CLI", () => {
         [
           "image-generate",
           "--model",
-          "gemini-3-pro-image",
+          "gemini-nano-banana-2.1",
           "--prompt",
           "blocked prompt",
           "--output",

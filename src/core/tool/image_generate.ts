@@ -59,14 +59,6 @@ type ImageModel =
   | { provider: "openai"; settings: typeof openaiSettings };
 
 const imageModels: Record<string, ImageModel> = {
-  "gemini-3-pro-image": {
-    provider: "google",
-    settings: googleSettings.extend({
-      "aspect-ratio": z.enum(ratios).optional(),
-      resolution: z.enum(["1K", "2K", "4K"]).optional(),
-      thinking: z.never().optional(),
-    }),
-  },
   "gemini-nano-banana-2.1": { provider: "google", settings: googleSettings },
   "gemini-3.1-flash-lite-image": {
     provider: "google",

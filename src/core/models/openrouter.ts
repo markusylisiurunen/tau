@@ -46,13 +46,13 @@ export const openRouterModels: Record<Operation, OpenRouterModel[]> = {
       id: "openai/gpt-6-luna-decisions",
       inputs: ["state", "questions", "image"],
       reasoning: [],
-      role: "Fast, input-only-priced classification, scoring, and verification with probabilities.",
+      role: "First choice for decision quality: classification, scoring, and verification with text or images.",
     },
     {
       id: "typesafe/jev-1.13",
       inputs: ["state", "questions"],
       reasoning: [],
-      role: "Typed classification, scoring, and verification with probabilities.",
+      role: "High-volume text/JSON decisions when cost efficiency is the priority.",
     },
   ],
   chat: [

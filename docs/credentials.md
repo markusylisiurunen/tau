@@ -86,7 +86,7 @@ First login activates the account only when no accounts are stored. Later logins
 
 `auth use` replaces the previous active account. Logout removes the account; logging out the active account leaves no account active even if others remain. With no active account, requests fail with instructions to log in or select one. Failed or exhausted accounts surface failures without automatic switching. Usage never determines selection.
 
-Auth storage is reloaded for later requests across sessions. Switching accounts does not alter a request already in flight and needs no host restart. Cancelling a model request stops waiting for authentication, but an OAuth refresh already in progress finishes and saves the rotated credentials so later requests can still authenticate.
+Auth storage is reloaded for later requests across sessions. Switching accounts does not alter a request already in flight and needs no host restart.
 
 ## History and Nook indirection
 

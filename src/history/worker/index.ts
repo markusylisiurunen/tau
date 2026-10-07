@@ -136,6 +136,7 @@ export default {
     }
     const origin = viewerOrigin(url);
 
+    let operationId: string | undefined;
     try {
       if (url.pathname.startsWith("/v1/")) {
         if (!authorizeApi(request, env)) return error("unauthorized", "Invalid API key", 401);
@@ -146,6 +147,7 @@ export default {
           const operations = parseOperations(body);
           let applied = 0;
           for (const operation of operations) {
+            operationId = operation.id;
             if (await applyOperation(env.DB, operation)) applied += 1;
           }
           return json({ applied });
@@ -180,12 +182,12 @@ export default {
       if (caught instanceof HistoryApiError) {
         return viewerRoute
           ? viewerError(caught.message, caught.status)
-          : error(caught.code, caught.message, caught.status);
+          : error(caught.code, caught.message, caught.status, operationId);
       }
       logWorkerError("history_request_failed", caught, { pathname: url.pathname });
       return viewerRoute
         ? viewerError("Internal server error", 500)
-        : error("internal_error", "Internal server error", 500);
+        : error("internal_error", "Internal server error", 500, operationId);
     }
   },
 
@@ -433,148 +435,152 @@ export async function applyOperation(
 ): Promise<boolean> {
   if (await operationExists(database, operation.id)) return false;
 
-  const statements: D1PreparedStatement[] = [];
-  const appliedAt = Date.now();
-  if (operation.type === "create") {
-    const attributesJson = stableJson(operation.session.attributes);
-    const session = await database
-      .prepare("SELECT attributes_json, created_at FROM sessions WHERE session_id = ?")
-      .bind(operation.sessionId)
-      .first<{ attributes_json: string; created_at: number }>();
-    if (session) {
-      if (
-        session.attributes_json !== attributesJson ||
-        session.created_at !== operation.session.createdAt
-      ) {
-        throw new HistoryApiError(
-          "immutable_conflict",
-          `session '${operation.sessionId}' has conflicting immutable data`,
-          409,
-        );
-      }
-    } else {
-      statements.push(
-        database
-          .prepare(
-            "INSERT INTO sessions (session_id, attributes_json, created_at, updated_at) VALUES (?, ?, ?, ?)",
-          )
-          .bind(
-            operation.sessionId,
-            attributesJson,
-            operation.session.createdAt,
-            operation.session.createdAt,
-          ),
-      );
-    }
-    for (const [key, value] of Object.entries(operation.session.attributes)) {
-      statements.push(
-        database
-          .prepare("INSERT OR IGNORE INTO attributes (session_id, key, value) VALUES (?, ?, ?)")
-          .bind(operation.sessionId, key, value),
-      );
-    }
-  } else if (operation.type === "append") {
-    await requireSession(database, operation.sessionId);
-    const current = await database
-      .prepare("SELECT COALESCE(MAX(position), 0) AS position FROM entries WHERE session_id = ?")
-      .bind(operation.sessionId)
-      .first<{ position: number }>();
-    const existingEntries = await database
-      .prepare(
-        `SELECT entry_id FROM entries
-         WHERE session_id = ? AND entry_id IN (${operation.entries.map(() => "?").join(", ")})`,
-      )
-      .bind(operation.sessionId, ...operation.entries.map((entry) => entry.id))
-      .all<{ entry_id: string }>();
-    const existingEntryIds = new Set(existingEntries.results.map((row) => row.entry_id));
-    let position = Number(current?.position ?? 0);
-    let updatedAt = 0;
-    for (const entry of operation.entries) {
-      if (existingEntryIds.has(entry.id)) continue;
-      existingEntryIds.add(entry.id);
-      position += 1;
-      updatedAt = Math.max(updatedAt, entry.timestamp);
-      const searchText = entrySearchText(entry);
-      statements.push(
-        database
-          .prepare(
-            "INSERT INTO entries (session_id, position, entry_id, timestamp, payload_json, search_text) VALUES (?, ?, ?, ?, ?, ?)",
-          )
-          .bind(
-            operation.sessionId,
-            position,
-            entry.id,
-            entry.timestamp,
-            JSON.stringify(entry),
-            searchText,
-          ),
-        database
-          .prepare(
-            "INSERT INTO entries_fts (session_id, entry_id, position, text) VALUES (?, ?, ?, ?)",
-          )
-          .bind(operation.sessionId, entry.id, position, searchText),
-      );
-    }
-    if (updatedAt > 0) {
-      statements.push(
-        database
-          .prepare(
-            "UPDATE sessions SET updated_at = MAX(updated_at, ?), transcript_revision = transcript_revision + 1 WHERE session_id = ?",
-          )
-          .bind(updatedAt, operation.sessionId),
-      );
-    }
-  } else {
-    await requireSession(database, operation.sessionId);
-    if (operation.afterEntryId === null) {
-      statements.push(
-        database.prepare("DELETE FROM entries_fts WHERE session_id = ?").bind(operation.sessionId),
-        database.prepare("DELETE FROM entries WHERE session_id = ?").bind(operation.sessionId),
-      );
-    } else {
-      const retained = await database
-        .prepare("SELECT position FROM entries WHERE session_id = ? AND entry_id = ?")
-        .bind(operation.sessionId, operation.afterEntryId)
-        .first<{ position: number }>();
-      if (!retained) {
-        throw new HistoryApiError(
-          "not_found",
-          `truncate entry '${operation.afterEntryId}' was not found`,
-          404,
-        );
-      }
-      statements.push(
-        database
-          .prepare("DELETE FROM entries_fts WHERE session_id = ? AND CAST(position AS INTEGER) > ?")
-          .bind(operation.sessionId, retained.position),
-        database
-          .prepare("DELETE FROM entries WHERE session_id = ? AND position > ?")
-          .bind(operation.sessionId, retained.position),
-      );
-    }
-    statements.push(
-      database.prepare("DELETE FROM sessions_fts WHERE session_id = ?").bind(operation.sessionId),
-      database
-        .prepare(
-          "UPDATE sessions SET updated_at = ?, digest_title = NULL, digest_summary = NULL, digest_through_entry_id = NULL, transcript_revision = transcript_revision + 1 WHERE session_id = ?",
-        )
-        .bind(appliedAt, operation.sessionId),
-    );
-  }
-
-  statements.push(
-    database
-      .prepare("INSERT INTO operations (operation_id, session_id, applied_at) VALUES (?, ?, ?)")
-      .bind(operation.id, operation.sessionId, appliedAt),
-  );
   try {
+    const statements: D1PreparedStatement[] = [];
+    const appliedAt = Date.now();
+    if (operation.type === "create") {
+      const attributesJson = stableJson(operation.session.attributes);
+      const session = await database
+        .prepare("SELECT attributes_json, created_at FROM sessions WHERE session_id = ?")
+        .bind(operation.sessionId)
+        .first<{ attributes_json: string; created_at: number }>();
+      if (session) {
+        if (
+          session.attributes_json !== attributesJson ||
+          session.created_at !== operation.session.createdAt
+        ) {
+          throw new HistoryApiError(
+            "immutable_conflict",
+            `session '${operation.sessionId}' has conflicting immutable data`,
+            409,
+          );
+        }
+      } else {
+        statements.push(
+          database
+            .prepare(
+              "INSERT INTO sessions (session_id, attributes_json, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            )
+            .bind(
+              operation.sessionId,
+              attributesJson,
+              operation.session.createdAt,
+              operation.session.createdAt,
+            ),
+        );
+      }
+      for (const [key, value] of Object.entries(operation.session.attributes)) {
+        statements.push(
+          database
+            .prepare("INSERT OR IGNORE INTO attributes (session_id, key, value) VALUES (?, ?, ?)")
+            .bind(operation.sessionId, key, value),
+        );
+      }
+    } else if (operation.type === "append") {
+      await requireSession(database, operation.sessionId);
+      const current = await database
+        .prepare("SELECT COALESCE(MAX(position), 0) AS position FROM entries WHERE session_id = ?")
+        .bind(operation.sessionId)
+        .first<{ position: number }>();
+      const existingEntries = await database
+        .prepare(
+          `SELECT entry_id FROM entries
+         WHERE session_id = ? AND entry_id IN (${operation.entries.map(() => "?").join(", ")})`,
+        )
+        .bind(operation.sessionId, ...operation.entries.map((entry) => entry.id))
+        .all<{ entry_id: string }>();
+      const existingEntryIds = new Set(existingEntries.results.map((row) => row.entry_id));
+      let position = Number(current?.position ?? 0);
+      let updatedAt = 0;
+      for (const entry of operation.entries) {
+        if (existingEntryIds.has(entry.id)) continue;
+        existingEntryIds.add(entry.id);
+        position += 1;
+        updatedAt = Math.max(updatedAt, entry.timestamp);
+        const searchText = entrySearchText(entry);
+        statements.push(
+          database
+            .prepare(
+              "INSERT INTO entries (session_id, position, entry_id, timestamp, payload_json, search_text) VALUES (?, ?, ?, ?, ?, ?)",
+            )
+            .bind(
+              operation.sessionId,
+              position,
+              entry.id,
+              entry.timestamp,
+              JSON.stringify(entry),
+              searchText,
+            ),
+          database
+            .prepare(
+              "INSERT INTO entries_fts (session_id, entry_id, position, text) VALUES (?, ?, ?, ?)",
+            )
+            .bind(operation.sessionId, entry.id, position, searchText),
+        );
+      }
+      if (updatedAt > 0) {
+        statements.push(
+          database
+            .prepare(
+              "UPDATE sessions SET updated_at = MAX(updated_at, ?), transcript_revision = transcript_revision + 1 WHERE session_id = ?",
+            )
+            .bind(updatedAt, operation.sessionId),
+        );
+      }
+    } else {
+      await requireSession(database, operation.sessionId);
+      if (operation.afterEntryId === null) {
+        statements.push(
+          database
+            .prepare("DELETE FROM entries_fts WHERE session_id = ?")
+            .bind(operation.sessionId),
+          database.prepare("DELETE FROM entries WHERE session_id = ?").bind(operation.sessionId),
+        );
+      } else {
+        const retained = await database
+          .prepare("SELECT position FROM entries WHERE session_id = ? AND entry_id = ?")
+          .bind(operation.sessionId, operation.afterEntryId)
+          .first<{ position: number }>();
+        if (!retained) {
+          throw new HistoryApiError(
+            "not_found",
+            `truncate entry '${operation.afterEntryId}' was not found`,
+            404,
+          );
+        }
+        statements.push(
+          database
+            .prepare(
+              "DELETE FROM entries_fts WHERE session_id = ? AND CAST(position AS INTEGER) > ?",
+            )
+            .bind(operation.sessionId, retained.position),
+          database
+            .prepare("DELETE FROM entries WHERE session_id = ? AND position > ?")
+            .bind(operation.sessionId, retained.position),
+        );
+      }
+      statements.push(
+        database.prepare("DELETE FROM sessions_fts WHERE session_id = ?").bind(operation.sessionId),
+        database
+          .prepare(
+            "UPDATE sessions SET updated_at = ?, digest_title = NULL, digest_summary = NULL, digest_through_entry_id = NULL, transcript_revision = transcript_revision + 1 WHERE session_id = ?",
+          )
+          .bind(appliedAt, operation.sessionId),
+      );
+    }
+
+    statements.push(
+      database
+        .prepare("INSERT INTO operations (operation_id, session_id, applied_at) VALUES (?, ?, ?)")
+        .bind(operation.id, operation.sessionId, appliedAt),
+    );
     await database.batch(statements);
     return true;
   } catch (error) {
     try {
       if (await operationExists(database, operation.id)) return false;
     } catch {
-      // Preserve the batch failure when reconciliation is unavailable.
+      // Preserve the operation failure when reconciliation is unavailable.
     }
     throw error;
   }
@@ -1759,6 +1765,6 @@ function json(value: unknown, status = 200): Response {
   });
 }
 
-function error(code: string, message: string, status: number): Response {
-  return json({ error: { code, message } }, status);
+function error(code: string, message: string, status: number, operationId?: string): Response {
+  return json({ error: { code, message, ...(operationId ? { operationId } : {}) } }, status);
 }

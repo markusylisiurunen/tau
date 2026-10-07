@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { runInNewContext } from "node:vm";
 import { describe, expect, it, vi } from "vitest";
 import { createHistoryCapability } from "../dist/core/code_mode/history.js";
+import { runHistoryCommand } from "../dist/core/history/cli.js";
 import { resolveHistoryRemoteTarget } from "../dist/core/history/config.js";
 import { HistoryManager } from "../dist/core/history/history_manager.js";
 import { LocalHistoryStore } from "../dist/core/history/local_history_store.js";
@@ -734,7 +735,7 @@ describe("session history", () => {
       expect(store.listReplicationFailures(remote.endpoint)).toMatchObject([
         {
           sessionId: "conflicting",
-          operationId: expect.any(String),
+          operationId: null,
           code: "immutable_conflict",
           message: "session 'conflicting' has conflicting immutable data",
         },
@@ -752,6 +753,179 @@ describe("session history", () => {
       await history.flush();
       history.close();
       vi.unstubAllGlobals();
+    }
+  });
+
+  it("reconciles overlapping rewinds through the manager without quarantining or replaying removed entries", async () => {
+    const harness = createSqliteD1Harness();
+    initializeHistoryD1(harness);
+    const store = new LocalHistoryStore(":memory:");
+    const reportReplicationFailure = vi.fn();
+    const manager = new HistoryManager(store, { reportReplicationFailure });
+    const remote = { endpoint: "https://history.example.com", apiKey: "secret" };
+    store.createSession({ sessionId: "rewinds", attributes: {}, createdAt: 1 }, remote);
+    store.append(
+      "rewinds",
+      ["a", "b", "c"].map((id, index) => createTextEntry(id, "user", id, index + 2)),
+      remote,
+    );
+    store.truncateFromSources("rewinds", ["c"], remote);
+    store.truncateFromSources("rewinds", ["b"], remote);
+    const operations = store
+      .listPendingOperations(remote.endpoint, 10)
+      .map((item) => item.operation);
+    const rewinds = operations.filter((operation) => operation.type === "truncate");
+    const prepare = harness.database.prepare.bind(harness.database);
+    let interleaved = false;
+    harness.database.prepare = (query) => {
+      const statement = prepare(query);
+      if (query === "SELECT position FROM entries WHERE session_id = ? AND entry_id = ?") {
+        const first = statement.first.bind(statement);
+        statement.first = async () => {
+          if (!interleaved) {
+            interleaved = true;
+            for (const rewind of rewinds) await applyOperation(harness.database, rewind);
+          }
+          return await first();
+        };
+      }
+      return statement;
+    };
+    vi.stubGlobal("fetch", async (_url, init) =>
+      callHistoryWorker("/v1/operations", JSON.parse(init.body), harness),
+    );
+    try {
+      manager.registerSession({ sessionId: "rewinds", attributes: {}, createdAt: 1 }, remote);
+      await manager.flush();
+      expect(interleaved).toBe(true);
+      expect(reportReplicationFailure).not.toHaveBeenCalled();
+      expect(store.listReplicationFailures(remote.endpoint)).toEqual([]);
+      expect(store.listPendingOperations(remote.endpoint, 10)).toEqual([]);
+      manager.append("rewinds", [createTextEntry("d", "user", "after rewind", 10)], remote);
+      await manager.flush();
+      expect(
+        harness.sqlite
+          .prepare("SELECT entry_id FROM entries ORDER BY position")
+          .all()
+          .map((row) => row.entry_id),
+      ).toEqual(["a", "d"]);
+    } finally {
+      manager.close();
+      harness.sqlite.close();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("attributes a batched rewind failure and supports retrying a persisted quarantine", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "tau-history-retry-"));
+    const path = join(directory, "history.sqlite");
+    const harness = createSqliteD1Harness();
+    initializeHistoryD1(harness);
+    let store = new LocalHistoryStore(path);
+    const reportReplicationFailure = vi.fn();
+    let manager = new HistoryManager(store, { reportReplicationFailure });
+    const remote = { endpoint: "https://history.example.com", apiKey: "secret" };
+    const session = { sessionId: "rewind", attributes: {}, createdAt: 1 };
+    store.createSession(session, remote);
+    // The remote is missing a locally retained anchor.
+    store.append("rewind", [createTextEntry("anchor", "user", "anchor", 2)]);
+    store.append("rewind", [createTextEntry("removed", "user", "removed", 3)], remote);
+    store.truncateFromSources("rewind", ["removed"], remote);
+    const operations = store
+      .listPendingOperations(remote.endpoint, 10)
+      .map((item) => item.operation);
+    const rewind = operations.at(-1);
+    vi.stubGlobal("fetch", async (_url, init) =>
+      callHistoryWorker("/v1/operations", JSON.parse(init.body), harness),
+    );
+    try {
+      manager.registerSession(session, remote);
+      await manager.flush();
+      expect(store.listReplicationFailures(remote.endpoint)).toMatchObject([
+        { operationId: rewind.id, code: "not_found" },
+      ]);
+      expect(reportReplicationFailure).toHaveBeenCalledWith(
+        expect.objectContaining({ operationId: rewind.id, quarantined: true }),
+      );
+      expect(
+        harness.sqlite
+          .prepare("SELECT 1 FROM operations WHERE operation_id = ?")
+          .get(operations[1].id),
+      ).toBeDefined();
+      manager.close();
+      store = new LocalHistoryStore(path);
+      manager = new HistoryManager(store, { reportReplicationFailure });
+      await manager.retryReplication(remote, session.sessionId);
+      expect(store.listReplicationFailures(remote.endpoint)).toMatchObject([
+        { operationId: rewind.id },
+      ]);
+      // A marker committed by another sender makes retry safe even with the anchor absent.
+      harness.sqlite
+        .prepare("INSERT INTO operations (operation_id, session_id, applied_at) VALUES (?, ?, ?)")
+        .run(rewind.id, session.sessionId, 4);
+      await manager.retryReplication(remote, session.sessionId);
+      expect(store.listReplicationFailures(remote.endpoint)).toEqual([]);
+      expect(store.listPendingOperations(remote.endpoint, 10)).toEqual([]);
+    } finally {
+      manager.close();
+      harness.sqlite.close();
+      vi.unstubAllGlobals();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("inspects persisted failures and retries only the selected quarantine through the CLI", async () => {
+    const home = mkdtempSync(join(tmpdir(), "tau-history-cli-"));
+    const configDir = join(home, ".config", "tau");
+    mkdirSync(configDir, { recursive: true });
+    const remote = { endpoint: "https://history.example.com", apiKey: "secret" };
+    writeFileSync(
+      join(configDir, "config.json"),
+      JSON.stringify({ history: { endpoint: remote.endpoint } }),
+    );
+    const store = new LocalHistoryStore(join(configDir, "history.sqlite"));
+    for (const sessionId of ["selected", "other"]) {
+      store.createSession({ sessionId, attributes: {}, createdAt: 1 }, remote);
+      store.quarantineReplicationSession({
+        endpoint: remote.endpoint,
+        sessionId,
+        operationId: null,
+        code: "not_found",
+        message: "missing",
+        failedAt: 1,
+      });
+    }
+    const stdout = vi.fn();
+    vi.stubEnv("HOME", home);
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue(home);
+    const fetchMock = vi.fn(async () =>
+      Response.json({ error: { code: "internal_error", message: "unavailable" } }, { status: 503 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      await runHistoryCommand(["status"], { env: {}, stdout });
+      expect(JSON.parse(stdout.mock.calls.at(-1)[0]).failures).toHaveLength(2);
+      expect(fetchMock).not.toHaveBeenCalled();
+      const options = { env: { TAU_HISTORY_API_KEY: "secret" }, stdout };
+      await expect(
+        runHistoryCommand(["retry", "--session", "selected"], options),
+      ).rejects.toThrow();
+      expect(store.listPendingOperations(remote.endpoint, 10)).toHaveLength(2);
+      fetchMock.mockImplementation(async () => Response.json({ applied: 1 }));
+      await runHistoryCommand(["retry", "--session", "selected"], options);
+      expect(store.listReplicationFailures(remote.endpoint)).toMatchObject([
+        { sessionId: "other" },
+      ]);
+      expect(
+        store.listPendingOperations(remote.endpoint, 10).map((item) => item.operation.sessionId),
+      ).toEqual(["other"]);
+      expect(stdout.mock.calls.flat().join("\n")).not.toContain("secret");
+    } finally {
+      store.close();
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+      cwd.mockRestore();
+      rmSync(home, { recursive: true, force: true });
     }
   });
 
@@ -781,6 +955,7 @@ describe("session history", () => {
 
       expect(store.listPendingOperations(remote.endpoint, 10)).toHaveLength(1);
       expect(store.listReplicationFailures(remote.endpoint)).toEqual([]);
+      expect(reportReplicationFailure.mock.calls[0][0]).not.toHaveProperty("operationId");
       expect(reportReplicationFailure).toHaveBeenCalledWith(
         expect.objectContaining({
           event: "history_replication_failed",
@@ -1895,6 +2070,7 @@ describe("session history", () => {
       error: {
         code: "immutable_conflict",
         message: "session 'session-1' has conflicting immutable data",
+        operationId: "create-conflict",
       },
     });
 

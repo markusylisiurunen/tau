@@ -124,6 +124,13 @@ export class HistoryManager {
     await Promise.allSettled([...this.replicationRuns.values()]);
   }
 
+  async retryReplication(target: HistoryRemoteTarget, sessionId: string): Promise<void> {
+    await this.replicationRuns.get(target.endpoint);
+    this.requireLocal().clearReplicationFailure(target.endpoint, sessionId);
+    this.scheduleReplication(target);
+    await this.replicationRuns.get(target.endpoint);
+  }
+
   close(): void {
     const local = this.local;
     this.local = undefined;
@@ -218,7 +225,7 @@ export class HistoryManager {
             local.quarantineReplicationSession({
               endpoint,
               sessionId: first.sessionId,
-              operationId: first.id,
+              operationId: error.operationId ?? null,
               code: error.code,
               message: error.message,
               failedAt: Date.now(),
@@ -226,7 +233,7 @@ export class HistoryManager {
             this.emitReplicationFailure({
               endpoint,
               sessionId: first.sessionId,
-              operationId: first.id,
+              operationId: error.operationId,
               error,
               quarantined: true,
             });
@@ -235,7 +242,7 @@ export class HistoryManager {
           this.emitReplicationFailure({
             endpoint,
             sessionId: first.sessionId,
-            operationId: first.id,
+            operationId: error instanceof RemoteHistoryError ? error.operationId : undefined,
             error,
           });
           return;

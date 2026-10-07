@@ -16,6 +16,7 @@ import {
   type DiffReviewToolLauncher,
 } from "../core/diff_review/index.js";
 import { buildDiffReviewInstructions } from "../core/diff_review/review_instructions.js";
+import type { HistoryReplicationFailureDiagnostic } from "../core/history/history_manager.js";
 import { type CoreDeps, createDefaultCoreDeps } from "../core/runtime/deps.js";
 import { runDirectBashCommand } from "../core/session/direct_bash.js";
 import type { SubagentEvent } from "../core/subagents/types.js";
@@ -293,8 +294,20 @@ export class SessionChatController {
     }
   }
 
-  showHistoryReplicationDelayed(): void {
-    this.view.showFooterNotice("history replication delayed", "default");
+  showHistoryReplicationFailure(diagnostic: HistoryReplicationFailureDiagnostic): void {
+    const title = diagnostic.quarantined
+      ? "history replication blocked"
+      : "history replication delayed";
+    const tone = diagnostic.quarantined ? "error" : "default";
+    this.view.showFooterNotice(title, tone);
+    this.view.addTranscriptNotice(title, tone, [
+      JSON.stringify(diagnostic, null, 2),
+      ...(diagnostic.quarantined
+        ? [
+            "inspect blocked sessions with tau history status; retry with tau history retry --session <session-id> on the host",
+          ]
+        : []),
+    ]);
   }
 
   getInputHandlers(): ChatViewInputHandlers {

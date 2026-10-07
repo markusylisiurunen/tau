@@ -150,15 +150,37 @@ Replication starts locally:
 
 A service outage does not block sessions or local recording. Pending changes stay on disk and are sent again later, including after a host restart or the next history activity. The service applies each change only once, even if it arrives twice. Changes for one session are sent in order, and each session is sent independently of the others.
 
-If the service permanently rejects a change, for example because the session's attributes conflict with what it already has, Tau stops sending changes for that session only. The pending changes and the error stay in local SQLite, later changes for that session wait, and other sessions keep replicating. Temporary network, authentication, rate-limit, and service errors do not stop a session's replication; the changes are retried later. Both kinds of failure produce a `history_replication_failed` host diagnostic, without the API key:
+If the service permanently rejects a change, for example because the session's attributes conflict with what it already has, Tau stops sending changes for that session only. The pending changes and the error stay in local SQLite, later changes for that session wait, and other sessions keep replicating. Temporary network, authentication, rate-limit, and service errors leave changes pending for a later retry. Both kinds of failure produce a `history_replication_failed` host diagnostic, without the API key:
 
 - Headless Tau commands print it to stderr.
-- The TUI shows a short notice in the footer.
+- The TUI distinguishes blocked replication from a retryable delay in the footer. A transcript notice keeps the affected session, operation ID (when known), and error.
 - An in-process SDK host delivers it only through `onDiagnostic`, when configured.
 
 Local entries keep everything recorded. For the remote copy, an entry larger than 1 MiB keeps its ID and metadata, but oversized content, arguments, or results are truncated in the middle with a marker. The host's local entry can therefore contain details the shared copy leaves out.
 
 With a remote target configured, history searches go only to the service. Tau never falls back to local results when the service is unreachable, because that would change which collection you are searching. Do not assume sessions recorded before you added the configuration appear remotely.
+
+## Recover blocked replication
+
+A permanent rejection blocks that session until you explicitly retry it. Restarting the host does not clear the block, also called a quarantine.
+
+Run this on the affected host with its remote history configuration:
+
+```sh
+tau history status
+```
+
+The command prints persisted quarantines for the configured endpoint as JSON. It does not require an API key. When a change fails, its diagnostic identifies the failed operation, even if earlier changes in the same request succeeded. Request-level and transport failures may have no operation ID.
+
+Fix the underlying service or data problem before retrying. If the service needs an update, deploy it with `tau history setup` using the setup requirements above and the existing credentials. Then, on the affected host, run:
+
+```sh
+tau history retry --session <session-id>
+```
+
+Retry requires the host's history API key. It clears only the named session's quarantine and sends pending changes with their original operation IDs. Local history and queued changes are preserved. The command can also send pending changes for other unblocked sessions at the same endpoint; other quarantines stay blocked.
+
+If the service permanently rejects the session again, Tau restores its quarantine. A temporary failure leaves changes pending for a later retry. The command exits unsuccessfully if the selected session remains blocked or a temporary failure prevents replication from completing.
 
 ## Verify operation
 

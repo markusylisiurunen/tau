@@ -964,19 +964,29 @@ describe("formatRewindCandidateAge", () => {
 });
 
 describe("SessionChatController", () => {
-  it("shows delayed history replication through the footer", async () => {
-    const { session, view, controller } = await createControllerHarness({
-      targetLabel: "in-process",
-    });
-
-    controller.showHistoryReplicationDelayed();
-
-    expect(view.footerNotices).toContainEqual({
-      text: "history replication delayed",
-      tone: "default",
-      durationMs: 3000,
-    });
-  });
+  it.each([false, true])(
+    "retains history diagnostics without writing through the renderer (blocked=%s)",
+    async (quarantined) => {
+      const { view, controller } = await createControllerHarness({ targetLabel: "in-process" });
+      const diagnostic = {
+        event: "history_replication_failed",
+        endpoint: "https://history.example.com",
+        sessionId: "another-session",
+        operationId: "rewind-1",
+        ...(quarantined ? { quarantined: true } : {}),
+        error: {
+          status: quarantined ? 404 : 503,
+          code: quarantined ? "not_found" : "internal_error",
+          message: "failure",
+        },
+      };
+      controller.showHistoryReplicationFailure(diagnostic);
+      expect(view.footerNotices.at(-1).tone).toBe(quarantined ? "error" : "default");
+      const notice = view.transcriptNotices.at(-1);
+      expect(notice.tone).toBe(quarantined ? "error" : "default");
+      expect(JSON.parse(notice.content[0])).toEqual(diagnostic);
+    },
+  );
 
   it("renders the main-style startup intro and compact remote cwd label", async () => {
     const systemPrompt = [

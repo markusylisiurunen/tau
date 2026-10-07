@@ -32,7 +32,7 @@ export type PendingReplicationOperation = {
 export type HistoryReplicationFailure = {
   endpoint: string;
   sessionId: string;
-  operationId: string;
+  operationId: string | null;
   code: string;
   message: string;
   failedAt: number;
@@ -366,11 +366,18 @@ export class LocalHistoryStore {
       .run(
         failure.endpoint,
         failure.sessionId,
-        failure.operationId,
+        // The persisted column is NOT NULL; an empty ID represents an unattributed failure.
+        failure.operationId ?? "",
         failure.code,
         failure.message,
         failure.failedAt,
       );
+  }
+
+  clearReplicationFailure(endpoint: string, sessionId: string): void {
+    this.database
+      .prepare("DELETE FROM history_replication_failures WHERE endpoint = ? AND session_id = ?")
+      .run(endpoint, sessionId);
   }
 
   listReplicationFailures(endpoint: string): HistoryReplicationFailure[] {
@@ -384,7 +391,7 @@ export class LocalHistoryStore {
     ).map((row) => ({
       endpoint: String(row.endpoint),
       sessionId: String(row.session_id),
-      operationId: String(row.operation_id),
+      operationId: row.operation_id ? String(row.operation_id) : null,
       code: String(row.code),
       message: String(row.message),
       failedAt: Number(row.failed_at),

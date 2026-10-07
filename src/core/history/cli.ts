@@ -1,3 +1,8 @@
+import { createDefaultConfigDeps } from "../config/deps.js";
+import { loadConfig } from "../config/schema.js";
+import { resolveHistoryRemoteTarget } from "./config.js";
+import { HistoryManager } from "./history_manager.js";
+import { getDefaultHistoryDatabasePath, LocalHistoryStore } from "./local_history_store.js";
 import { destroyHistoryService, setupHistoryService } from "./setup.js";
 
 export class HistoryCliError extends Error {
@@ -13,6 +18,8 @@ export function printHistoryHelp(log: (line: string) => void = console.log): voi
       "usage:",
       "  tau history setup --domain <domain> --zone-name <zone> [--api-key <key>] [--viewer-password <password>]  # Workers Paid",
       "  tau history destroy --yes",
+      "  tau history status",
+      "  tau history retry --session <session-id>",
     ].join("\n"),
   );
 }
@@ -29,6 +36,45 @@ export async function runHistoryCommand(
   }
 
   try {
+    if (subcommand === "status" || subcommand === "retry") {
+      let sessionId: string | undefined;
+      if (subcommand === "retry" && args.length === 2 && args[0] === "--session") {
+        sessionId = args[1];
+      } else if (subcommand !== "status" || args.length > 0) {
+        throw new Error("use tau history status or tau history retry --session <session-id>");
+      }
+      if (subcommand === "retry" && !sessionId?.trim()) {
+        throw new Error("tau history retry requires a session ID");
+      }
+      const deps = createDefaultConfigDeps();
+      const config = loadConfig(process.cwd(), deps);
+      if (!config.history) throw new Error("remote history is not configured on this host");
+      const endpoint = config.history.endpoint;
+      const target = sessionId ? resolveHistoryRemoteTarget(config, options.env) : undefined;
+      const store = new LocalHistoryStore(getDefaultHistoryDatabasePath(deps.env.home()));
+      let retryFailed = false;
+      const manager = new HistoryManager(store, {
+        reportReplicationFailure: (diagnostic) => {
+          stdout(JSON.stringify(diagnostic));
+          if (!diagnostic.quarantined || diagnostic.sessionId === sessionId) retryFailed = true;
+        },
+      });
+      try {
+        if (sessionId && target) await manager.retryReplication(target, sessionId);
+        const failures = store.listReplicationFailures(endpoint);
+        stdout(JSON.stringify({ endpoint, failures }));
+        if (
+          retryFailed ||
+          (sessionId && failures.some((failure) => failure.sessionId === sessionId))
+        ) {
+          throw new Error("history replication retry did not complete");
+        }
+      } finally {
+        manager.close();
+      }
+      return;
+    }
+
     if (subcommand === "setup") {
       let domain = options.env?.TAU_HISTORY_DOMAIN;
       let zoneName = options.env?.TAU_HISTORY_ZONE_NAME;

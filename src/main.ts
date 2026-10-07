@@ -1109,7 +1109,7 @@ const initialUserMessage = await readPipedStdin();
 const terminalColors = detectTerminalColors();
 
 let sessionChatApp: SessionChatApp | undefined;
-let historyReplicationDelayed = false;
+const pendingHistoryDiagnostics: HistoryReplicationFailureDiagnostic[] = [];
 const clientTools = createTuiClientTools({
   enabled: !cli.noClientTools,
   getController: () => sessionChatApp?.getController(),
@@ -1124,12 +1124,12 @@ const sessionClient = await createTauSdkClientWithHostConfig(
     noAgentContextFiles: cli.noAgentContextFiles,
     initialize: { client: { name: "tau-tui", version: "1" } },
     clientTools,
-    onDiagnostic: () => {
+    onDiagnostic: (diagnostic) => {
       const controller = sessionChatApp?.getController();
       if (controller) {
-        controller.showHistoryReplicationDelayed();
+        controller.showHistoryReplicationFailure(diagnostic);
       } else {
-        historyReplicationDelayed = true;
+        pendingHistoryDiagnostics.push(diagnostic);
       }
     },
   },
@@ -1158,9 +1158,8 @@ const app = await SessionChatApp.open({
   config,
 });
 sessionChatApp = app;
-if (historyReplicationDelayed) {
-  historyReplicationDelayed = false;
-  app.getController().showHistoryReplicationDelayed();
+for (const diagnostic of pendingHistoryDiagnostics.splice(0)) {
+  app.getController().showHistoryReplicationFailure(diagnostic);
 }
 
 let isShuttingDown = false;

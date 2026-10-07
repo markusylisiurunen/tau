@@ -19,6 +19,7 @@ export class RemoteHistoryError extends Error {
     readonly status: number,
     readonly code: string | undefined,
     message: string,
+    readonly operationId?: string,
   ) {
     super(message);
     this.name = "RemoteHistoryError";
@@ -108,7 +109,18 @@ export class RemoteHistoryClient implements HistoryQuery {
     signal?: AbortSignal,
   ): Promise<void> {
     if (operations.length === 0) return;
-    await this.request("/v1/operations", { operations }, signal);
+    try {
+      await this.request("/v1/operations", { operations }, signal);
+    } catch (error) {
+      if (
+        error instanceof RemoteHistoryError &&
+        error.operationId &&
+        !operations.some((operation) => operation.id === error.operationId)
+      ) {
+        throw new Error("History service returned an unknown failing operation ID");
+      }
+      throw error;
+    }
   }
 
   async search(input: HistorySearchInput, signal?: AbortSignal): Promise<HistorySearchResult> {
@@ -173,7 +185,11 @@ export class RemoteHistoryClient implements HistoryQuery {
         remoteError && "message" in remoteError && typeof remoteError.message === "string"
           ? boundUtf8(remoteError.message, MAX_ERROR_MESSAGE_BYTES)
           : `History service request failed with HTTP ${response.status}`;
-      throw new RemoteHistoryError(response.status, code, message);
+      const operationId =
+        remoteError && "operationId" in remoteError && typeof remoteError.operationId === "string"
+          ? boundUtf8(remoteError.operationId, 1024)
+          : undefined;
+      throw new RemoteHistoryError(response.status, code, message, operationId);
     }
     return value;
   }

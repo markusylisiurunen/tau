@@ -26,8 +26,8 @@ Every request needs an exact `--model` ID from this table. There is no default, 
 
 | Operation | Model | Inputs and suggested role | Reasoning efforts |
 | --- | --- | --- | --- |
-| `decisions` | `openai/gpt-6-luna-decisions` | Text or structured state, images, and questions; first choice for decision quality | Not supported |
-| `decisions` | `typesafe/jev-1.13` | Text or structured state and questions; high-volume decisions when cost efficiency is the priority | Not supported |
+| `decisions` | `openai/gpt-6-luna-decisions` | Questions about text, structured state, or images; use when decision quality is the priority | Not supported |
+| `decisions` | `typesafe/jev-1.13` | Questions about text or structured state; use for high-volume decisions when cost is the priority | Not supported |
 | `chat` | `google/gemini-3.8-flash` | Text, images, audio, video; first choice for audio/video and image-heavy analysis | `low`, `medium`, `high` |
 | `chat` | `openai/gpt-6-luna` | Text and images; cheap everyday extraction, summarization, and routine questions | `none`, `low`, `medium`, `high`, `xhigh`, `max` |
 | `chat` | `openai/gpt-6.1-sol` | Text and images; coding, debugging, technical reasoning | `low`, `medium`, `high`, `xhigh`, `max` |
@@ -82,7 +82,7 @@ The input contains exactly `state` and `questions`. The model belongs only in `-
 
 Instructions and criterion guidance accept strings, JSON objects, or arrays; choice criterion values may also be `null`. Unknown question fields and the reserved question/category name `__proto__` are rejected. Arbitrary keys within state and guidance are preserved. Several independent questions can share one state; dependent questions require separate calls.
 
-Luna Decisions supports at most 200 questions, 255 categories per choice, and 2–10 levels per score. Tau checks these limits before sending the request. Jev also accepts a single-level score rubric. Both models use the same JSON input format.
+Luna Decisions supports at most 200 questions, 255 categories per choice question, and 2–10 rubric levels per score question. Tau checks these limits before sending the request. Jev also accepts a single-level score rubric. Both models use the same JSON input format.
 
 Luna also accepts up to 16 ordered local PNG/JPEG/WebP images using repeatable `--image <path>` flags:
 
@@ -92,7 +92,9 @@ tau tool openrouter decisions \
   --input ./visual-checks.json --image ./checkout.png
 ```
 
-Put the visual criteria in `questions`. Images follow `state` in flag order and retain their original bytes. Objects and arrays in `state` are sent as JSON text. To send images, use `--image`; image URLs inside `state` remain text. Images use the same validation and limits as chat images. Jev accepts no images. Neither model accepts audio or video. Image inputs must be local files; external URLs and file IDs are not supported.
+Describe what to check in `questions` and supply images with `--image`. Images follow `state` in flag order and retain their original bytes. Objects and arrays in `state` are sent as JSON text, so image URLs inside `state` are treated as text.
+
+Images use the [same validation and limits as chat images](#outputs-and-recovery). Only local files are accepted; external URLs and file IDs are unsupported. Jev accepts no images. Neither decision model accepts audio or video.
 
 The command posts once to OpenRouter's alpha Decisions endpoint. It validates answer names, types, categories, rubric ranges, and probability bounds. Refusals and malformed answers fail the command. Successful output is one JSON object:
 

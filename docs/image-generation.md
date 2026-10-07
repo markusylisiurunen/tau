@@ -16,7 +16,9 @@ Requires an OpenAI or Google API key for the selected model. See [feature-specif
 
 ## Models and capabilities
 
-`--model` is required; there is no default. Start with `gpt-image-2.5-flare` at `--quality medium` for everyday generation and editing. Increase quality or choose `gpt-image-2.5-sunburst` when precise edits justify the extra effort. See [approximate cost](#approximate-cost) before choosing settings.
+`--model` is required; there is no default. Start with `gpt-image-2.5-flare` at `--quality medium` for everyday generation and editing, balancing quality and cost.
+
+For demanding generation and editing where image quality is the priority, choose `gemini-nano-banana-2.1` or `gpt-image-2.5-sunburst`. Nano Banana supports very wide aspect ratios and resolution tiers up to `4K`. Sunburst supports exact dimensions, transparent backgrounds, and PNG/JPEG/WebP output. See [approximate cost](#approximate-cost) before choosing settings.
 
 Choose size, resolution, and aspect ratio for the intended use; no single size fits everything. The sizes in the examples are for those particular cases. Options you leave out use the provider's defaults, except `--format`, which defaults to `png`. Unsupported options fail before anything is generated.
 
@@ -26,7 +28,7 @@ Choose size, resolution, and aspect ratio for the intended use; no single size f
 | `gpt-image-2.5-flare` | Exact `--size` | Through dimensions | Not exposed | Quality, background, encoding, compression |
 | `gpt-image-2.5-sunburst` | Exact `--size` | Through dimensions | Not exposed | Quality, background, encoding, compression |
 
-Prefer Nano Banana 2.1 for Google image generation and reference-based editing, including images with text and wide layouts. Its provider defaults are `1K` resolution and `medium` thinking. Use `--thinking minimal` to favor speed and reduce thinking-token usage.
+Google's defaults are `1K` resolution and `medium` thinking. Use `--thinking minimal` for faster generation and lower thinking-token usage.
 
 Standard `--aspect-ratio` values are `1:1`, `2:3`, `3:2`, `3:4`, `4:3`, `4:5`, `5:4`, `9:16`, `16:9`, `21:9`. Wide values additionally include `1:4`, `4:1`, `1:8`, `8:1`. Resolution tiers describe approximate output size.
 
@@ -100,7 +102,7 @@ Failures exit nonzero and name the invalid option or the step that failed. If th
 
 ## Approximate cost
 
-Use Flare for fast everyday images and drafts; reserve Sunburst for demanding edits where preservation and precision matter most. Start at `medium`, use `low` for inexpensive exploration, and increase quality only when the result needs it. Explicit `--size` and `--quality` make budgeting more predictable than `auto`.
+For OpenAI models, start at `--quality medium`, use `low` for inexpensive exploration, and increase quality when the result needs it. Explicit `--size` and `--quality` make budgeting more predictable than `auto`. For Nano Banana, account for resolution and thinking usage as well as input costs.
 
 ### OpenAI: cost per image
 
@@ -121,11 +123,11 @@ For example, 100 square 1024-pixel drafts at `low` have an estimated output cost
 
 Approximate USD image-output costs from [Google pricing](https://ai.google.dev/gemini-api/docs/pricing), excluding input and text/thinking usage:
 
-| Model | 1K | 2K | 4K | When to choose it |
-| --- | --- | --- | --- | --- |
-| `gemini-nano-banana-2.1` | $0.0336 | $0.0504 | $0.113 | Reference-based editing, text rendering, and very wide aspect ratios |
+| Model                    | 1K      | 2K      | 4K     |
+| ------------------------ | ------- | ------- | ------ |
+| `gemini-nano-banana-2.1` | $0.0336 | $0.0504 | $0.113 |
 
-Nano Banana 2.1 charges $1.50 per million input tokens and $7.50 per million text/thinking output tokens in addition to image output. The manifest records reported usage.
+Input costs $1.50 per million tokens. Text and thinking output cost $7.50 per million tokens, in addition to image output. The manifest records provider-reported usage.
 
 Use OpenAI when transparent backgrounds or JPEG/WebP output are required. Compare the quality needed for the task, not just matching tier names across providers. Check [OpenAI pricing](https://developers.openai.com/api/docs/guides/image-generation#gpt-image-25-costs) and Google pricing for current rates before large batches.
 

@@ -209,9 +209,13 @@ type DecisionResult = {
 - \`choice\`: one supplied category; optional confidence and category probabilities are from 0 to 1.
 - \`score\`: position from 0 to the final rubric index, possibly fractional. Distribution and legend keys are rubric-index strings. Optional confidence and probabilities are from 0 to 1.
 
-Prefer \`openai/gpt-6-luna-decisions\` for decision quality and image-based judgments. Consider \`typesafe/jev-1.13\` for high-volume text/JSON decisions when cost efficiency is the priority. Luna supports at most 200 questions, 255 categories per choice, and 2–10 levels per score. These limits are checked before sending the request.
+Use \`openai/gpt-6-luna-decisions\` when decision quality is the priority or the task requires images. Use \`typesafe/jev-1.13\` for high-volume text or JSON decisions when cost is the priority.
 
-Luna accepts up to 16 PNG/JPEG/WebP attachments in the same path or inline form as chat images. Images follow the state in attachment order, retain their original bytes, and use the image limits below. Objects and arrays in \`state\` are sent as JSON text. To send images, use \`attachments\`; image URLs inside \`state\` remain text. Jev accepts no attachments. Neither model accepts audio or video. Omitting \`attachments\` sends no images.
+Luna supports at most 200 questions, 255 categories per choice question, and 2–10 rubric levels per score question. These limits are checked before sending the request. Jev also accepts a single-level score rubric.
+
+Luna accepts up to 16 PNG/JPEG/WebP images. Supply them through \`attachments\`, using the same path or inline forms as chat images. Describe what to check in \`questions\`. Images follow \`state\` in attachment order and retain their original bytes. Objects and arrays in \`state\` are sent as JSON text, so image URLs inside \`state\` are treated as text.
+
+The image limits below apply to decisions too. Jev accepts no attachments. Neither decision model accepts audio or video. Omitting \`attachments\` sends no images.
 
 Negative judgments and low confidence are normal results. Refusals and responses with mismatched names, types, categories, or ranges throw. The tool returns the model's answers without adding decision thresholds or prose explanations.
 

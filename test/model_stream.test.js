@@ -389,7 +389,7 @@ describe("request-scoped Codex auth", () => {
     }
   });
 
-  test("cancels a blocked OAuth refresh without persisting or starting provider work", async () => {
+  test("cancels a request while preserving an in-progress OAuth refresh", async () => {
     const fx = createTempAuthPath();
     try {
       const { runtime, model, refresh, stream } = createCodexRuntime(fx.authPath, 0);
@@ -400,7 +400,7 @@ describe("request-scoped Codex auth", () => {
         refreshSignal = signal;
         started.resolve();
         await release.promise;
-        return { ...credential, refresh: "must-not-persist", expires: Number.MAX_SAFE_INTEGER };
+        return { ...credential, refresh: "rotated-refresh", expires: Number.MAX_SAFE_INTEGER };
       });
       const controller = new AbortController();
       const result = runtime
@@ -408,14 +408,14 @@ describe("request-scoped Codex auth", () => {
         .result();
       await started.promise;
       controller.abort();
-      expect(refreshSignal.aborted).toBe(true);
+      expect(refreshSignal.aborted).toBe(false);
       expect((await result).stopReason).toBe("error");
       release.resolve();
       await vi.waitFor(() =>
         expect(
           JSON.parse(readFileSync(fx.authPath, "utf8")).providers["openai-codex"].accounts[0]
             .refresh,
-        ).toBe("refresh-a"),
+        ).toBe("rotated-refresh"),
       );
       expect(stream).not.toHaveBeenCalled();
     } finally {

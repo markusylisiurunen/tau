@@ -20,7 +20,7 @@ Sources and their roles:
 - **No commits, releases, or work-destroying git commands** unless the user explicitly asks for that exact operation. That includes `git reset --hard`, `git checkout -- <file>`, `git restore`, `git stash`, rebase, cherry-pick, and force-push.
 - **Never edit durable Tau state directly** (auth storage, session documents, history databases and outboxes, Telegram runner state, managed workspaces, Nook storage). Use the supported command, protocol, or recovery path.
 - **Confirm before destructive operations** such as deleting files or dropping data.
-- **Do only the requested change.** No surrounding cleanup, speculative config, or new abstractions. Match local naming, structure, error handling, and test style.
+- **Do only the requested change.** No surrounding cleanup, speculative config, or speculative abstractions. Match local naming, structure, error handling, and test style.
 
 ## Design principles
 
@@ -90,7 +90,7 @@ Rules that follow:
 
 **Turns and failures.**
 
-- Every accepted logical turn has a receipt in the snapshot's `turns` ledger, keyed by the submitted user history entry ID. Persist a running receipt before model work and the settlement before returning the live result. Recovery aborts running receipts.
+- Every accepted logical turn has a receipt in the snapshot's `turns` ledger, keyed by the submitted user history entry ID. Persist a running receipt before model work and the settlement before returning the live result. Compaction and rewind preserve receipts. Recovery aborts running receipts.
 - Provider failures and interruptions are assistant-message state. A failed or blocked turn without a failed assistant message settles exactly once as a semantic core notice.
 - Clients switch on notice `kind` and the live request outcome, never on titles, IDs, counts, or timing. `tau.*` kinds are reserved; other kinds are lowercase and dotted.
 - One per-session mutation queue serializes durable writes with streamed and transient projections. Publish only state built on a committed predecessor. Roll back the projection when persistence fails. Observer-listener failure never fails a committed event.
@@ -111,7 +111,7 @@ Rules that follow:
 - `src/protocol/system_message.ts` supports existing intermediate system messages. That support does not authorize new uses. When handling them, keep their plain-text contract and versioned metadata: strip metadata for model calls, keep it for recovery and forks. Sections and tool mutations are unsupported.
 - Snapshot user text is raw. Strip Tau metadata before model calls and display. Hide leading `<system>` blocks only when displaying user messages, never in assistant, tool-result, or system messages.
 
-**State that does not belong in the snapshot:** themes (client-local, fixed catalog), prompt bodies (catalogs hold metadata, bodies load lazily through the execution environment), and path autocomplete. Searchable history (`src/core/history/`, `docs/history.md`) is a separate transcript and cannot recover session state.
+**State that does not belong in the snapshot:** themes (client-local, fixed catalog), prompt bodies (catalogs hold metadata, bodies load lazily through the execution environment), and path autocomplete. Searchable history (`src/core/history/`, `docs/history.md`) is a separate transcript and cannot recover session state. Rewind truncates it; compaction does not.
 
 ## Tools and processes
 
@@ -123,7 +123,7 @@ Read `docs/tools.md`, `docs/client-tools.md`, and `docs/security.md` before chan
   - Generated code receives only the declared API. Credentials and service clients stay in the trusted parent. Target file and process access goes through the execution backend.
   - Only `printText` text and `await printImage(block)` images reach the result. Image validation and preparation run outside the sandbox. An image keeps the position where it was emitted, not where preparation finished, all the way to clients.
   - Direct tools and composed operations share the same services. Model usage inside code mode is an awaited `tool_usage` event, persisted even if the program fails.
-- **Bash.** Each call runs a fresh, noninteractive login Bash in the execution environment, so no shell state persists. Capture, timeout, env sanitization, and termination stay centralized in `src/core/tools/execution_backend.ts`. Background jobs (`src/core/tools/bash_jobs.ts`) are live-only, shared within one `ChatRuntime`, and never recovered. Disposal must stop running jobs before waiting for them.
+- **Bash.** Each call runs a fresh, noninteractive login Bash in the execution environment, so no shell state persists. Capture, timeout, env sanitization, and termination stay centralized in `src/core/tools/execution_backend.ts`. Background jobs (`src/core/tools/bash_jobs.ts`) are live-only, shared within one `ChatRuntime`, and never recovered. Jobs survive turn interruption and observer release, and running jobs prevent session eviction. Disposal must stop running jobs before waiting for them.
 - **Process safety.** Preserve process-group termination with `SIGKILL` escalation so aborted commands do not orphan children. Do not weaken local env sanitization of secret-like names; it is not a complete security boundary either.
 - Keep immediate tool-call schemas strict.
 

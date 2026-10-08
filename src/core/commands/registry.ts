@@ -13,6 +13,7 @@ export type Command = (
   | { type: "compactSummaryOnly" }
   | { type: "compactSummaryAndLast" }
   | { type: "reload" }
+  | { type: "autoCompact"; input: string }
   | { type: "listen"; action: "record" | "retry" | "discard" }
   | { type: "speak" }
   | { type: "autoSpeak"; enabled: boolean | undefined }
@@ -51,6 +52,7 @@ export interface CommandDispatchContext {
   compactSummaryOnly: (extra?: string) => Promise<void>;
   compactSummaryAndLast: (extra?: string) => Promise<void>;
   reload: () => Promise<void>;
+  autoCompact: (input: string) => Promise<void>;
   listen: (action: "record" | "retry" | "discard") => Promise<void> | void;
   speak: () => Promise<void> | void;
   autoSpeak: (enabled: boolean | undefined) => Promise<void> | void;
@@ -250,6 +252,20 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
       return { type: "diff", argsText: extra ?? "", extra };
     },
     run: (ctx, command) => ctx.diff(command.argsText),
+  });
+
+  registry.register({
+    id: "autoCompact",
+    usage: "/auto-compact [tokens|default]",
+    description: "inspect or set the automatic compaction threshold",
+    autocompleteDescription: "inspect or set the automatic compaction threshold",
+    argument: "none",
+    allowDuringStreaming: true,
+    parse: (raw) => {
+      const { command, extra } = splitCommandInput(raw);
+      return command === "/auto-compact" ? { type: "autoCompact", input: extra ?? "" } : null;
+    },
+    run: (ctx, command) => ctx.autoCompact(command.input),
   });
 
   registry.register({

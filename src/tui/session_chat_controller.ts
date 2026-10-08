@@ -1,6 +1,10 @@
 import { dirname } from "node:path/posix";
 import type { AssistantMessage, Message, ToolResultMessage } from "@earendil-works/pi-ai";
 import {
+  formatAutoCompactThreshold,
+  parseAutoCompactThreshold,
+} from "../core/commands/auto_compact.js";
+import {
   type CommandDispatchContext,
   type CommandRegistry,
   createCommandRegistry,
@@ -229,6 +233,7 @@ export class SessionChatController {
       listen: (action) => this.handleListenCommand(action),
       speak: () => this.speakLastAssistantMessage(),
       autoSpeak: (enabled) => this.setAutoSpeak(enabled),
+      autoCompact: (input) => this.setAutoCompactThreshold(input),
       persona: (id) => this.setPersona(id),
       prompt: (id) => this.insertPrompt(id),
       theme: (id) => this.switchTheme(id),
@@ -2282,6 +2287,27 @@ export class SessionChatController {
     await this.setPersona(next.id);
   }
 
+  private async setAutoCompactThreshold(input: string): Promise<void> {
+    try {
+      const threshold = parseAutoCompactThreshold(input);
+      if (threshold !== undefined) {
+        const result = await this.session.setAutoCompactThreshold(threshold);
+        this.snapshot = { ...this.snapshot, revision: result.revision, settings: result.settings };
+        this.refreshStatus();
+      }
+      this.view.addTranscriptNotice("auto-compact", "default", [
+        formatAutoCompactThreshold(this.snapshot.settings),
+        ...(threshold !== undefined
+          ? ["changes apply from the next turn; this does not start compaction."]
+          : []),
+      ]);
+    } catch (error) {
+      this.view.addTranscriptNotice("failed to set auto-compact", "error", [
+        (error as Error).message,
+      ]);
+    }
+  }
+
   private async cycleReasoningLevel(): Promise<void> {
     const allowed = this.getAllowedReasoningLevels(this.getCurrentPersonaSnapshot());
     const current = (this.snapshot.settings.reasoning ?? allowed[0]!) as ReasoningEffort;
@@ -2651,7 +2677,11 @@ export class SessionChatController {
     const contextWindowUsageTokens = getAssistantContextWindowUsage(last);
     const percent = windowTokens > 0 ? (contextWindowUsageTokens / windowTokens) * 100 : 0;
     const percentStr = `${formatAdaptiveNumber(percent, 1, 3)}%`;
-    return `${stats} · ${percentStr}/${formatTokenWindow(windowTokens)}`;
+    const threshold =
+      this.snapshot.settings.autoCompactThresholdTokens === null
+        ? ""
+        : ` (${formatTokenWindow(this.snapshot.settings.effectiveAutoCompactThresholdTokens)})`;
+    return `${stats} · ${percentStr}/${formatTokenWindow(windowTokens)}${threshold}`;
   }
 
   private getSessionCostString(): string {

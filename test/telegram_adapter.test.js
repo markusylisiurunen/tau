@@ -208,6 +208,8 @@ function createStatusSnapshot(overrides = {}) {
     lifecycle: "idle",
     costTotal: 0.12345,
     settings: {
+      autoCompactThresholdTokens: null,
+      effectiveAutoCompactThresholdTokens: 183616,
       personaId: "default",
       reasoning: "medium",
     },
@@ -373,6 +375,15 @@ function createSessionManagerHarness(initialSessions = [], options = {}) {
         includedLastAssistant: false,
       };
     }),
+    setAutoCompactThreshold: vi.fn(async (sessionId, thresholdTokens) => {
+      const session = sessions.get(sessionId);
+      session.snapshot.settings.autoCompactThresholdTokens = thresholdTokens;
+      session.snapshot.settings.effectiveAutoCompactThresholdTokens = Math.min(
+        thresholdTokens ?? Infinity,
+        session.snapshot.bootstrap.model.contextWindow - 16384,
+      );
+      return { revision: 2, settings: session.snapshot.settings };
+    }),
     setReasoning: vi.fn(async (sessionId, reasoning) => {
       const session = sessions.get(sessionId);
       if (!session) throw new Error("missing session");
@@ -470,6 +481,10 @@ describe("telegram adapter", () => {
         { command: "prompt", description: "add a saved prompt without starting a turn" },
         { command: "compact", description: "compact session context" },
         { command: "interrupt", description: "interrupt active run" },
+        {
+          command: "auto_compact",
+          description: "inspect or set the automatic compaction threshold",
+        },
         { command: "tts_on", description: "enable voice responses" },
         { command: "tts_off", description: "disable voice responses" },
         { command: "effort_low", description: "set reasoning effort to low" },
@@ -1309,6 +1324,41 @@ describe("telegram adapter", () => {
         "reasoning effort low is not supported by this session.",
       ]);
       expect(managerHarness.manager.setReasoning).not.toHaveBeenCalled();
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it("routes auto-compaction commands while running and rejects invalid thresholds", async () => {
+    const chatId = 21;
+    const inputs = ["50000", "50k", "49k", "50k junk", "", "default"];
+    const apiHarness = createApiHarness([
+      inputs.map((input, index) => ({
+        update_id: index + 1,
+        message: { chat: { id: chatId, type: "private" }, text: `/auto_compact ${input}` },
+      })),
+    ]);
+    const managerHarness = createSessionManagerHarness([
+      createManagedSession({
+        id: "threshold-session",
+        ownerId: ownerIdForChat(chatId),
+        state: "running",
+        snapshot: createStatusSnapshot(),
+      }),
+    ]);
+    const adapter = await startAdapter({
+      projects: { demo: { repo: "owner/demo" } },
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+    });
+    try {
+      await waitFor(() => apiHarness.sendMessages.length === inputs.length);
+      expect(managerHarness.manager.setAutoCompactThreshold.mock.calls).toEqual([
+        ["threshold-session", 50000],
+        ["threshold-session", 50000],
+        ["threshold-session", null],
+      ]);
+      expect(managerHarness.manager.sendMessage).not.toHaveBeenCalled();
     } finally {
       await adapter.close();
     }
@@ -2986,7 +3036,7 @@ describe("telegram adapter", () => {
     try {
       await waitFor(() => apiHarness.sendMessages.length === 1);
       expect(apiHarness.sendMessages[0].text).toBe(
-        "unsupported command. supported commands: /new, /status, /persona, /prompt, /compact, /interrupt, /tts_on, /tts_off, /effort_low, /effort_medium, /effort_high, /effort_xhigh, /use_demo",
+        "unsupported command. supported commands: /new, /status, /persona, /prompt, /compact, /interrupt, /auto_compact, /tts_on, /tts_off, /effort_low, /effort_medium, /effort_high, /effort_xhigh, /use_demo",
       );
       expect(managerHarness.manager.closeSession).not.toHaveBeenCalled();
     } finally {

@@ -90,6 +90,7 @@ Then use Shift+Tab to choose a reasoning level. A newly added persona appears on
 | `/exit` | Close this TUI. On a long-running remote host, this detaches; the session is not deleted. |
 | `/rewind` | Pick an earlier user message, remove it and everything after it, and put its text back in the editor. |
 | `/diff [git diff args...]` | Open the local diff review tool on a snapshot taken from the execution environment. |
+| `/auto-compact [tokens\|default]` | Show the automatic-compaction threshold. Pass `50k` or `50000` to set it (minimum 50,000 tokens), or `default` to restore the model-based threshold. |
 | `/compact-all [guidance]` | Replace the model's context with a generated summary. |
 | `/compact-keep-last [guidance]` | Same, and include the last assistant response in the summary when there is one. |
 | `/reload` | Reload session configuration and content from the execution environment. |
@@ -102,7 +103,9 @@ Then use Shift+Tab to choose a reasoning level. A newly added persona appears on
 | `/prompt:<id>` | Load a prompt from the execution environment into the editor without sending it. |
 | `/theme:<id>` | Switch this TUI's theme until it exits. |
 
-Run commands that change the context, such as persona changes, compaction, rewind, and reload, while idle. `/auto-speak`, `/listen`, `/prompt:<id>`, and `/exit` do little during a running turn. Other commands wait until Tau is idle.
+Run commands that change the context, such as persona changes, compaction, rewind, and reload, while idle. `/auto-compact` can inspect or change the next-turn threshold during a running turn. `/auto-speak`, `/listen`, `/prompt:<id>`, and `/exit` do little during a running turn. Other commands wait until Tau is idle.
+
+The footer shows context usage as a percentage of the full model window, such as `20%/272k`. When an override is set, the effective compaction threshold appears in parentheses: `20%/272k (50k)`. This threshold cannot exceed the model's context window minus 16,384 tokens. With the default setting, the footer shows no threshold.
 
 [Sessions](sessions.md) describes compaction, rewind, recovery, and retry. [Prompts and project context](prompts-and-project-context.md) covers prompt files.
 

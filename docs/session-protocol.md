@@ -18,7 +18,7 @@ The server sends `ready` as its first message:
 
 ```json
 {
-  "version": 17,
+  "version": 18,
   "type": "ready",
   "methods": ["initialize", "session.create", "session.list"]
 }
@@ -30,7 +30,7 @@ After `ready`, send `initialize` with non-empty client metadata:
 
 ```json
 {
-  "version": 17,
+  "version": 18,
   "type": "request",
   "id": "init-1",
   "method": "initialize",
@@ -50,7 +50,7 @@ Every request has the same envelope:
 
 ```json
 {
-  "version": 17,
+  "version": 18,
   "type": "request",
   "id": "req-42",
   "method": "session.snapshot",
@@ -64,7 +64,7 @@ Successful responses echo the request id:
 
 ```json
 {
-  "version": 17,
+  "version": 18,
   "type": "response",
   "id": "req-42",
   "ok": true,
@@ -100,13 +100,20 @@ Observing controls which updates you receive; it does not make you the owner. `s
 | `revision` | Monotonic protocol snapshot revision. |
 | `lifecycle` | `idle` or `running`. |
 | `agentState` | Independent agent revision, model context key, and optional usage checkpoint. |
-| `settings`, `costTotal` | Persona and reasoning settings, and accumulated session cost. |
+| `settings`, `costTotal` | Persona, reasoning, and auto-compaction settings, and accumulated session cost. |
 | `bootstrap`, `catalog` | Selected model and prompt metadata plus available personas, prompt metadata, skills, and enabled host-configured MCP server names. |
 | `executionEnvironment` | The environment kind, identity, `cwd`, and home used for agent-visible work. |
 | `messages`, `turns` | Messages sent to the model, and a saved record for each accepted turn. |
 | `timeline` | Ordered active transcript placement. |
 | `tools`, `operations`, `agents` | Changing state that timeline items or client views refer to. |
 | `facets` | Versioned client-facing metadata. Unknown facet kinds and versions should be ignored. |
+
+Both auto-compaction fields in `settings` are required:
+
+- `autoCompactThresholdTokens` is the configured value: a safe integer of at least 50,000, or `null` for the model-based default.
+- `effectiveAutoCompactThresholdTokens` is the integer threshold clients should display. It is the model's context window minus 16,384 tokens, or the configured value if that is smaller.
+
+`bootstrap.model.contextWindow` is the full model window, regardless of the compaction threshold.
 
 `catalog.mcpServers` lists the enabled MCP servers in the host configuration, by name only. It does not mean they are connected; servers connect on first use. Connection settings and credentials are never included.
 
@@ -132,7 +139,7 @@ Observed snapshot changes arrive as `session.delta`:
 
 ```json
 {
-  "version": 17,
+  "version": 18,
   "type": "session.delta",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "fromRevision": 8,
@@ -170,7 +177,7 @@ Some live state is not part of the snapshot. Each of these channels has its own 
 
 ```json
 {
-  "version": 17,
+  "version": 18,
   "type": "session.pendingUserMessages",
   "sessionId": "...",
   "state": {
@@ -207,7 +214,7 @@ An initialized client that advertised a tool can receive:
 
 ```json
 {
-  "version": 17,
+  "version": 18,
   "type": "session.clientTool.call",
   "sessionId": "...",
   "agentId": "main",
@@ -231,7 +238,7 @@ Error responses use `ok: false`:
 
 ```json
 {
-  "version": 17,
+  "version": 18,
   "type": "response",
   "id": "req-42",
   "ok": false,
@@ -266,7 +273,7 @@ The server accepts new requests before earlier ones finish, so responses and str
 - Only one main-session turn runs at a time. `session.submit` and `session.retry` return `busy` on conflict.
 - `session.queue` waits until the session is idle. `session.steer` joins the running turn at its next safe point. Each request gets its own response when done.
 - Session changes run one at a time, in arrival order across all clients. Changes that replace the context can interrupt running work and reject pending input. `session.rewind` instead requires an idle session with no pending input.
-- `session.setReasoning` waits its turn but does not interrupt the running turn. The new setting applies from the next turn.
+- `session.setReasoning` and `session.setAutoCompactThreshold` wait their turn but do not interrupt the running turn. New settings apply from the next logical turn. The running turn and its steering continuations keep their original settings.
 - `session.exec` and `session.sample` run alongside everything else: turns, other changes, each other, and ephemeral agents. Clients must coordinate their own use of the workspace.
 - Ephemeral contexts are not part of that one-at-a-time ordering. Two submissions to the same ephemeral thread conflict, while different threads can run at once.
 

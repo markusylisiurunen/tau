@@ -41,6 +41,48 @@ const bootstrap = createProtocolBootstrap();
 const catalog = createProtocolCatalog();
 
 describe("session_protocol", () => {
+  it("validates auto-compaction thresholds for creation and mutation", () => {
+    for (const thresholdTokens of [null, 50000, 100000, Number.MAX_SAFE_INTEGER]) {
+      expect(
+        validateSessionProtocolParams("session.setAutoCompactThreshold", {
+          sessionId: "s",
+          thresholdTokens,
+        }).ok,
+      ).toBe(true);
+      expect(
+        validateSessionProtocolParams("session.create", {
+          executionEnvironment: { kind: "local", cwd: "/repo" },
+          attributes: {},
+          autoCompactThresholdTokens: thresholdTokens,
+        }).ok,
+      ).toBe(true);
+    }
+    for (const thresholdTokens of [
+      49999,
+      -1,
+      50000.5,
+      "50k",
+      Number.MAX_SAFE_INTEGER + 1,
+      Infinity,
+      undefined,
+    ]) {
+      expect(
+        validateSessionProtocolParams("session.setAutoCompactThreshold", {
+          sessionId: "s",
+          thresholdTokens,
+        }).ok,
+      ).toBe(false);
+      if (thresholdTokens !== undefined)
+        expect(
+          validateSessionProtocolParams("session.create", {
+            executionEnvironment: { kind: "local", cwd: "/repo" },
+            attributes: {},
+            autoCompactThresholdTokens: thresholdTokens,
+          }).ok,
+        ).toBe(false);
+    }
+  });
+
   it.each(["session.startGoal", "session.resumeGoal", "session.clearGoal"])(
     "rejects removed goal method %s",
     (method) => {
@@ -1489,7 +1531,11 @@ describe("session_protocol", () => {
         "session.setReasoning",
         {
           revision: 2,
-          settings: { personaId: "default", reasoning: "high" },
+          settings: {
+            ...createProtocolSnapshot().settings,
+            personaId: "default",
+            reasoning: "high",
+          },
         },
       ],
       ["session.snapshot", createProtocolSnapshot({ bootstrap, catalog })],
@@ -2134,7 +2180,11 @@ describe("session_protocol", () => {
         changes: [
           {
             type: "settings.set",
-            settings: { personaId: "default", reasoning: "high" },
+            settings: {
+              ...createProtocolSnapshot().settings,
+              personaId: "default",
+              reasoning: "high",
+            },
           },
         ],
       },
@@ -2146,6 +2196,7 @@ describe("session_protocol", () => {
     const settingsPatchedSnapshot = applySessionProtocolDelta(settingsSnapshot, settingsDelta);
     expect(settingsPatchedSnapshot.revision).toBe(3);
     expect(settingsPatchedSnapshot.settings).toEqual({
+      ...createProtocolSnapshot().settings,
       personaId: "default",
       reasoning: "high",
     });

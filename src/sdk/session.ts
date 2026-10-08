@@ -415,6 +415,16 @@ class TauSdkClientImpl implements TauSdkClient {
     return this.transport.request("session.snapshot", { sessionId });
   }
 
+  sendSetAutoCompactThreshold(
+    sessionId: string,
+    thresholdTokens: number | null,
+  ): Promise<SessionProtocolResultByMethod["session.setAutoCompactThreshold"]> {
+    return this.transport.request("session.setAutoCompactThreshold", {
+      sessionId,
+      thresholdTokens,
+    });
+  }
+
   sendSetReasoning(
     sessionId: string,
     reasoning: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max",
@@ -774,6 +784,17 @@ class TauSdkSessionImpl implements TauSdkSession {
     }
 
     const snapshot = await this.client.sendSnapshot(this.sessionId);
+    this.discardBufferedDeltasThrough(snapshot.revision);
+    return snapshot;
+  }
+
+  async setAutoCompactThreshold(
+    thresholdTokens: number | null,
+  ): Promise<SessionProtocolResultByMethod["session.setAutoCompactThreshold"]> {
+    const snapshot = await this.client.sendSetAutoCompactThreshold(
+      this.activeSessionId(),
+      thresholdTokens,
+    );
     this.discardBufferedDeltasThrough(snapshot.revision);
     return snapshot;
   }

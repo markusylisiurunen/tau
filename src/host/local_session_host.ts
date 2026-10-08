@@ -20,6 +20,7 @@ import { ChatRuntime, type ChatRuntimeEnvironment } from "../core/runtime/chat_r
 import type { CoreDeps } from "../core/runtime/deps.js";
 import type { RuntimePromptBootstrap } from "../core/runtime/runtime_bootstrap.js";
 import type { SessionPromptComposition } from "../core/runtime/session_prompt_composer.js";
+import { getEffectiveAutoCompactThresholdTokens } from "../core/session/auto_compaction_threshold.js";
 import type { SubagentEvent } from "../core/subagents/types.js";
 import type { ToolActivity } from "../core/tools/activity.js";
 import { buildToolRunPresentation, TOOL_UI_FACET_VERSION } from "../core/tools/presentation.js";
@@ -92,6 +93,7 @@ import {
   createSessionProtocolDeltaMessage,
   createSessionProtocolEphemeralMessage,
   createSessionProtocolSubagentActivitiesMessage,
+  parseAutoCompactThresholdTokens,
   projectSessionProtocolNoticePresentation,
   projectSessionProtocolSubagentActivity,
   SESSION_PROTOCOL_MAX_SUBAGENT_ACTIVITIES,
@@ -211,6 +213,7 @@ export class LocalSessionHost implements TauSessionHost {
 
   async createSession(input: SessionProtocolCreateParams): Promise<LocalHostedSession> {
     this.assertHostActive();
+    parseAutoCompactThresholdTokens(input.autoCompactThresholdTokens ?? null);
     const executionEnvironment = await this.sessionOptions.executionEnvironmentResolver.resolve(
       input.executionEnvironment,
     );
@@ -351,6 +354,12 @@ export class LocalSessionHost implements TauSessionHost {
       recordUsage: this.sessionOptions.recordUsage,
       deps: this.sessionOptions.deps,
     });
+
+    runtime.setAutoCompactThreshold(
+      committedSnapshot
+        ? committedSnapshot.settings.autoCompactThresholdTokens
+        : (createParams?.autoCompactThresholdTokens ?? null),
+    );
 
     const attributes = committedSnapshot?.attributes ?? createParams?.attributes;
     if (!attributes) {
@@ -1132,6 +1141,33 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     );
   }
 
+  async setAutoCompactThreshold(
+    thresholdTokens: number | null,
+  ): Promise<SessionProtocolSettingsUpdateResult> {
+    parseAutoCompactThresholdTokens(thresholdTokens);
+    this.assertActive();
+    return await this.enqueueConfigurationMutation(async () => {
+      const fromRevision = this.committedSnapshot.revision;
+      this.runtime.setAutoCompactThreshold(thresholdTokens);
+      const snapshot = await this.commitSnapshot();
+      if (snapshot.revision !== fromRevision) {
+        this.emitDelta(
+          createSessionProtocolDeltaMessage({
+            sessionId: snapshot.sessionId,
+            fromRevision,
+            toRevision: snapshot.revision,
+            cause: { type: "configuration" },
+            delta: {
+              type: "snapshot.patch",
+              changes: [{ type: "settings.set", settings: snapshot.settings }],
+            },
+          }),
+        );
+      }
+      return { revision: snapshot.revision, settings: snapshot.settings };
+    });
+  }
+
   async setReasoning(reasoning: ReasoningEffort): Promise<SessionProtocolSettingsUpdateResult> {
     this.assertActive();
     return await this.enqueueConfigurationMutation(async () => {
@@ -1700,6 +1736,11 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       lifecycle: this.activeTurnPromise || this.runtime.isTurnRunning ? "running" : "idle",
       costTotal: this.costTotal,
       settings: {
+        autoCompactThresholdTokens: this.runtime.agent.spec.autoCompactThresholdTokens,
+        effectiveAutoCompactThresholdTokens: getEffectiveAutoCompactThresholdTokens(
+          this.runtime.agent.spec.model.model.contextWindow,
+          this.runtime.agent.spec.autoCompactThresholdTokens,
+        ),
         personaId: this.runtime.persona.id,
         ...(this.runtime.persona.settings.reasoning !== undefined
           ? { reasoning: this.runtime.persona.settings.reasoning }

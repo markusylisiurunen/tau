@@ -243,6 +243,7 @@ describe("AgentSupervisor", () => {
     expect(failed.ok).toBe(true);
     if (!failed.ok) throw new Error(failed.reason);
     const failedRecord = getRecord(supervisor, failed.state.id);
+    failedRecord.runtime.spec.retryPolicy.delayMs = 0;
     failedRecord.runtime.spec.model.stream = vi.fn(() =>
       createStream(
         createAssistant("", { stopReason: "error", errorMessage: "provider overloaded" }),

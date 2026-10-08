@@ -1742,6 +1742,7 @@ describe("built-in diff tool", () => {
       parseDiffToolLaunchEnvironment(bridge.launchEnvironment),
     );
     const server = new DiffToolHttpServer({ client });
+    let closeTimeout;
 
     try {
       const started = await server.start();
@@ -1750,14 +1751,16 @@ describe("built-in diff tool", () => {
       const guideRequestStarted = once(server.server, "request");
       const guideRequest = fetch(`${started.url}api/guide/generate`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", Connection: "close" },
       });
       await guideRequestStarted;
 
       await expect(
         Promise.race([
           bridge.cancel("controller_cancelled"),
-          new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 250)),
+          new Promise((_, reject) => {
+            closeTimeout = setTimeout(() => reject(new Error("timeout")), 250);
+          }),
         ]),
       ).resolves.toBeUndefined();
       await server.waitUntilClosed();
@@ -1770,6 +1773,7 @@ describe("built-in diff tool", () => {
         ),
       });
     } finally {
+      clearTimeout(closeTimeout);
       continueBootstrap?.();
       await server.close();
       await bridge.close();

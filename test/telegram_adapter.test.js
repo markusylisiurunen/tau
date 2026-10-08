@@ -54,7 +54,8 @@ async function waitFor(predicate, timeoutMs = 2000) {
     if (Date.now() - start > timeoutMs) {
       throw new Error("waitFor timeout");
     }
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    if (vi.isFakeTimers()) await vi.advanceTimersByTimeAsync(10);
+    else await new Promise((resolve) => setTimeout(resolve, 10));
   }
 }
 
@@ -1513,6 +1514,7 @@ describe("telegram adapter", () => {
   });
 
   it("routes allowed group mentions with sender-attributed pending context", async () => {
+    vi.useFakeTimers();
     const groupChatId = -1001;
     const apiHarness = createApiHarness([
       [
@@ -1574,6 +1576,7 @@ describe("telegram adapter", () => {
       );
     } finally {
       await adapter.close();
+      vi.useRealTimers();
     }
   });
 
@@ -1851,6 +1854,7 @@ describe("telegram adapter", () => {
   });
 
   it("starts the delayed /new acknowledgment before closing the previous session", async () => {
+    vi.useFakeTimers();
     const chatId = 199;
     const apiHarness = createApiHarness([
       [
@@ -1905,10 +1909,12 @@ describe("telegram adapter", () => {
     } finally {
       closeSession.resolve();
       await adapter.close();
+      vi.useRealTimers();
     }
   });
 
   it("supports /new and routes plain text to the active session", async () => {
+    vi.useFakeTimers();
     const apiHarness = createApiHarness([
       [
         {
@@ -2007,6 +2013,7 @@ describe("telegram adapter", () => {
       );
     } finally {
       await adapter.close();
+      vi.useRealTimers();
     }
   });
 
@@ -2353,6 +2360,7 @@ describe("telegram adapter", () => {
   });
 
   it("queues attachment-only messages and prepends them to the next text turn", async () => {
+    vi.useFakeTimers();
     const apiHarness = createApiHarness([
       [
         {
@@ -2432,6 +2440,7 @@ describe("telegram adapter", () => {
       expect(apiHarness.setMessageReactions).not.toContainEqual({ chatId: 205, messageId: 504 });
     } finally {
       await adapter.close();
+      vi.useRealTimers();
     }
   });
 
@@ -2514,6 +2523,7 @@ describe("telegram adapter", () => {
   });
 
   it("transcribes voice messages and sends the transcript to the active session", async () => {
+    vi.useFakeTimers();
     const apiHarness = createApiHarness([
       [
         {
@@ -2586,6 +2596,7 @@ describe("telegram adapter", () => {
       );
     } finally {
       await adapter.close();
+      vi.useRealTimers();
     }
   });
 
@@ -3793,6 +3804,7 @@ describe("telegram adapter", () => {
   });
 
   it("splits oversized quiet-mode replies into multiple telegram messages", async () => {
+    vi.useFakeTimers();
     const apiHarness = createApiHarness([
       [
         {
@@ -3876,6 +3888,7 @@ describe("telegram adapter", () => {
       expect(chunks[1].sentAt - chunks[0].sentAt).toBeGreaterThanOrEqual(900);
     } finally {
       await adapter.close();
+      vi.useRealTimers();
     }
   });
 

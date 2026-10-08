@@ -22,9 +22,9 @@ jobs:
 
       - run: npm install --global npm@12
       - run: npm ci --strict-allow-scripts && (cd src/diff_tool/app && npm ci --strict-allow-scripts)
-      - run: npm run build
       - run: npm run check
-      - run: npm test
+      - run: npm run build
+      - run: npm run test:only
 
       - name: set npm tag
         run: |

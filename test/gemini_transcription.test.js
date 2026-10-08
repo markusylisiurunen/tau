@@ -467,99 +467,126 @@ describe("gemini transcription", () => {
     const fetchMock = createGeminiFetchMock();
     const socket = new EventEmitter();
     const sent = [];
+    const setupSent = Promise.withResolvers();
+    const audioSent = Promise.withResolvers();
+    const streamEndSent = Promise.withResolvers();
     socket.send = vi.fn((data, callback) => {
-      sent.push(JSON.parse(data));
+      const event = JSON.parse(data);
+      sent.push(event);
       callback?.();
+      if (event.setup) setupSent.resolve();
+      if (event.realtimeInput?.audio) audioSent.resolve();
+      if (event.realtimeInput?.audioStreamEnd) streamEndSent.resolve();
     });
     socket.close = vi.fn();
     socket.terminate = vi.fn();
     const webSocketFactory = vi.fn(() => socket);
     const onProgress = vi.fn();
-    const transcription = startGeminiTranscription({
-      apiKey: "gemini key",
-      openAIApiKey: "openai-key",
-      onProgress,
-      context: { messages: [{ role: "user", text: "Configure Acme SSO" }] },
-      fetchImpl: fetchMock,
-      webSocketFactory,
-    });
-    const audio = Buffer.from([1, 2, 3, 4]);
-    transcription.appendAudio(audio);
+    let transcription;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      transcription = startGeminiTranscription({
+        apiKey: "gemini key",
+        openAIApiKey: "openai-key",
+        onProgress,
+        context: { messages: [{ role: "user", text: "Configure Acme SSO" }] },
+        fetchImpl: fetchMock,
+        webSocketFactory,
+      });
+      const audio = Buffer.from([1, 2, 3, 4]);
+      transcription.appendAudio(audio);
 
-    socket.emit("open");
-    await vi.waitFor(() => expect(sent).toHaveLength(1));
-    expect(webSocketFactory).toHaveBeenCalledWith(expect.stringContaining("BidiGenerateContent"));
-    expect(webSocketFactory.mock.calls[0][0]).toContain("key=gemini%20key");
-    expect(sent[0]).toEqual({
-      setup: {
-        model: "models/gemini-3.5-transcribe-live",
-        generationConfig: { responseModalities: ["TEXT"] },
-        inputAudioTranscription: {
-          languageCodes: ["en-US", "fi-FI"],
-          customVocabulary: ["Acme SSO", "OAuth"],
-          mode: "VERBATIM",
+      socket.emit("open");
+      await setupSent.promise;
+      expect(sent).toHaveLength(1);
+      expect(webSocketFactory).toHaveBeenCalledWith(expect.stringContaining("BidiGenerateContent"));
+      expect(webSocketFactory.mock.calls[0][0]).toContain("key=gemini%20key");
+      expect(sent[0]).toEqual({
+        setup: {
+          model: "models/gemini-3.5-transcribe-live",
+          generationConfig: { responseModalities: ["TEXT"] },
+          inputAudioTranscription: {
+            languageCodes: ["en-US", "fi-FI"],
+            customVocabulary: ["Acme SSO", "OAuth"],
+            mode: "VERBATIM",
+          },
         },
-      },
-    });
+      });
 
-    socket.emit("message", JSON.stringify({ setupComplete: {} }));
-    await vi.waitFor(() => expect(sent).toHaveLength(2));
-    expect(sent[1]).toEqual({
-      realtimeInput: {
-        audio: {
-          data: audio.toString("base64"),
-          mimeType: "audio/pcm;rate=16000",
+      socket.emit("message", JSON.stringify({ setupComplete: {} }));
+      await audioSent.promise;
+      expect(sent).toHaveLength(2);
+      expect(sent[1]).toEqual({
+        realtimeInput: {
+          audio: {
+            data: audio.toString("base64"),
+            mimeType: "audio/pcm;rate=16000",
+          },
         },
-      },
-    });
+      });
 
-    for (const text of ["Hey", "Hey, um", "Hey, um This is", "Hey, um this is"]) {
+      for (const text of ["Hey", "Hey, um", "Hey, um This is", "Hey, um this is"]) {
+        socket.emit(
+          "message",
+          JSON.stringify({ serverContent: { interimInputTranscription: { text } } }),
+        );
+      }
+      expect(onProgress.mock.calls.map(([text]) => text)).toEqual([
+        "Hey",
+        "Hey, um",
+        "Hey, um This is",
+        "Hey, um this is",
+      ]);
+      socket.emit("message", JSON.stringify({ setupComplete: {} }));
+      expect(sent).toHaveLength(2);
+      for (const text of ["first segment", "second segment"]) {
+        socket.emit("message", JSON.stringify({ serverContent: { inputTranscription: { text } } }));
+        socket.emit("message", JSON.stringify({ serverContent: { generationComplete: true } }));
+      }
+      expect(onProgress).toHaveBeenLastCalledWith("first segment second segment");
       socket.emit(
         "message",
-        JSON.stringify({ serverContent: { interimInputTranscription: { text } } }),
+        JSON.stringify({ serverContent: { interimInputTranscription: { text: "third" } } }),
       );
+      expect(onProgress).toHaveBeenLastCalledWith("first segment second segment third");
+      transcription.appendAudio(audio);
+      expect(sent).toHaveLength(3);
+      expect(socket.close).not.toHaveBeenCalled();
+      const completion = transcription.finish();
+      void completion.catch(() => {});
+      await streamEndSent.promise;
+      expect(sent).toHaveLength(4);
+      expect(sent[3]).toEqual({ realtimeInput: { audioStreamEnd: true } });
+      socket.emit(
+        "message",
+        JSON.stringify({
+          serverContent: {
+            inputTranscription: { text: "third segment" },
+            generationComplete: true,
+          },
+        }),
+      );
+      await vi.advanceTimersByTimeAsync(1999);
+      expect(socket.close).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(completion).resolves.toBe("first segment second segment third segment");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(
+        fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/responses")),
+      ).toHaveLength(1);
+      socket.emit(
+        "message",
+        JSON.stringify({ serverContent: { interimInputTranscription: { text: "late" } } }),
+      );
+      expect(onProgress).toHaveBeenLastCalledWith("first segment second segment third segment");
+      expect(socket.close).toHaveBeenCalledTimes(1);
+    } finally {
+      try {
+        transcription?.abort();
+      } finally {
+        vi.useRealTimers();
+      }
     }
-    expect(onProgress.mock.calls.map(([text]) => text)).toEqual([
-      "Hey",
-      "Hey, um",
-      "Hey, um This is",
-      "Hey, um this is",
-    ]);
-    socket.emit("message", JSON.stringify({ setupComplete: {} }));
-    expect(sent).toHaveLength(2);
-    for (const text of ["first segment", "second segment"]) {
-      socket.emit("message", JSON.stringify({ serverContent: { inputTranscription: { text } } }));
-      socket.emit("message", JSON.stringify({ serverContent: { generationComplete: true } }));
-    }
-    expect(onProgress).toHaveBeenLastCalledWith("first segment second segment");
-    socket.emit(
-      "message",
-      JSON.stringify({ serverContent: { interimInputTranscription: { text: "third" } } }),
-    );
-    expect(onProgress).toHaveBeenLastCalledWith("first segment second segment third");
-    transcription.appendAudio(audio);
-    expect(sent).toHaveLength(3);
-    expect(socket.close).not.toHaveBeenCalled();
-    const completion = transcription.finish();
-    await vi.waitFor(() => expect(sent).toHaveLength(4));
-    expect(sent[3]).toEqual({ realtimeInput: { audioStreamEnd: true } });
-    socket.emit(
-      "message",
-      JSON.stringify({
-        serverContent: { inputTranscription: { text: "third segment" }, generationComplete: true },
-      }),
-    );
-    await expect(completion).resolves.toBe("first segment second segment third segment");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/responses"))).toHaveLength(
-      1,
-    );
-    socket.emit(
-      "message",
-      JSON.stringify({ serverContent: { interimInputTranscription: { text: "late" } } }),
-    );
-    expect(onProgress).toHaveBeenLastCalledWith("first segment second segment third segment");
-    expect(socket.close).toHaveBeenCalledTimes(1);
   });
 
   it.each(["abort", "error"])("ignores late previews after %s", async (outcome) => {

@@ -1,11 +1,11 @@
-import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseCliArgs } from "../dist/core/cli.js";
+import { spawnWithCapture } from "../dist/core/utils/spawn_capture.js";
 
-describe("cli", () => {
+describe.concurrent("cli", () => {
   it("rejects unknown options", () => {
     expect(() => parseCliArgs(["--bogus"])).toThrow("unknown option: --bogus");
   });
@@ -36,16 +36,19 @@ describe("cli", () => {
     );
   });
 
-  it("rejects invalid auth arguments before creating credential storage", () => {
+  it("rejects invalid auth arguments before creating credential storage", async () => {
     const home = mkdtempSync(join(tmpdir(), "tau-auth-cli-home-"));
     try {
       const mainPath = resolve(process.cwd(), "dist/main.js");
-      const result = spawnSync(process.execPath, [mainPath, "auth", "list", "--bogus"], {
-        encoding: "utf8",
-        env: { ...process.env, HOME: home },
-      });
+      const result = await spawnWithCapture(
+        process.execPath,
+        [mainPath, "auth", "list", "--bogus"],
+        {
+          env: { ...process.env, HOME: home },
+        },
+      );
 
-      expect(result.status).toBe(1);
+      expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain('unknown auth list option "--bogus"');
       expect(existsSync(join(home, ".config", "tau"))).toBe(false);
     } finally {
@@ -53,7 +56,7 @@ describe("cli", () => {
     }
   });
 
-  it("uses runtime prompt bootstrap for debug project context", () => {
+  it("uses runtime prompt bootstrap for debug project context", async () => {
     const home = realpathSync(mkdtempSync(join(tmpdir(), "tau-debug-context-home-")));
     let current = home;
     let atLimit;
@@ -87,17 +90,16 @@ describe("cli", () => {
       }
 
       const mainPath = resolve(process.cwd(), "dist/main.js");
-      const result = spawnSync(
+      const result = await spawnWithCapture(
         process.execPath,
         [mainPath, "--debug", "--persona", "debug-context"],
         {
           cwd: home,
-          encoding: "utf8",
           env: { ...process.env, HOME: home },
         },
       );
 
-      expect(result.status).toBe(0);
+      expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain(atLimit);
       expect(result.stdout).not.toContain(beyondLimit);
     } finally {
@@ -105,118 +107,113 @@ describe("cli", () => {
     }
   });
 
-  it("rejects --debug in serve mode", () => {
+  it("rejects --debug in serve mode", async () => {
     const mainPath = resolve(process.cwd(), "dist/main.js");
-    const result = spawnSync(process.execPath, [mainPath, "serve", "--debug"], {
-      encoding: "utf8",
+    const result = await spawnWithCapture(process.execPath, [mainPath, "serve", "--debug"], {
       env: process.env,
     });
 
-    expect(result.status).toBe(1);
+    expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("--debug is only supported in TUI mode.");
     expect(result.stdout).toBe("");
   });
 
-  it("prints telegram help text when telegram command parsing fails", () => {
+  it("prints telegram help text when telegram command parsing fails", async () => {
     const mainPath = resolve(process.cwd(), "dist/main.js");
-    const result = spawnSync(process.execPath, [mainPath, "telegram"], {
-      encoding: "utf8",
+    const result = await spawnWithCapture(process.execPath, [mainPath, "telegram"], {
       env: process.env,
     });
 
-    expect(result.status).toBe(1);
+    expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("missing --config-file <path>");
     expect(result.stderr).toContain("\n\n");
     expect(result.stdout).toContain("usage:");
     expect(result.stdout).toContain("tau telegram --config-file <path>");
   });
 
-  it("prints models help", () => {
+  it("prints models help", async () => {
     const mainPath = resolve(process.cwd(), "dist/main.js");
-    const result = spawnSync(process.execPath, [mainPath, "models", "--help"], {
-      encoding: "utf8",
+    const result = await spawnWithCapture(process.execPath, [mainPath, "models", "--help"], {
       env: process.env,
     });
 
-    expect(result.status).toBe(0);
+    expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("tau models refresh");
     expect(result.stderr).toBe("");
   });
 
-  it("prints pdf-unpack help", () => {
+  it("prints pdf-unpack help", async () => {
     const mainPath = resolve(process.cwd(), "dist/main.js");
-    const result = spawnSync(process.execPath, [mainPath, "tool", "pdf-unpack", "--help"], {
-      encoding: "utf8",
-      env: process.env,
-    });
+    const result = await spawnWithCapture(
+      process.execPath,
+      [mainPath, "tool", "pdf-unpack", "--help"],
+      {
+        env: process.env,
+      },
+    );
 
-    expect(result.status).toBe(0);
+    expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("tau tool pdf-unpack <file.pdf>");
     expect(result.stdout).toContain("requires pdftoppm from Poppler on PATH");
     expect(result.stderr).toBe("");
   });
 
-  it("prints tool help text when tool command parsing fails", () => {
+  it("prints tool help text when tool command parsing fails", async () => {
     const mainPath = resolve(process.cwd(), "dist/main.js");
-    const result = spawnSync(process.execPath, [mainPath, "tool", "missing"], {
-      encoding: "utf8",
+    const result = await spawnWithCapture(process.execPath, [mainPath, "tool", "missing"], {
       env: process.env,
     });
 
-    expect(result.status).toBe(1);
+    expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("unknown tool subcommand 'missing'");
     expect(result.stdout).toContain("tau tool <command>");
   });
 
-  it("prints diff-tool help", () => {
+  it("prints diff-tool help", async () => {
     const mainPath = resolve(process.cwd(), "dist/main.js");
-    const result = spawnSync(process.execPath, [mainPath, "diff-tool", "--help"], {
-      encoding: "utf8",
+    const result = await spawnWithCapture(process.execPath, [mainPath, "diff-tool", "--help"], {
       env: process.env,
     });
 
-    expect(result.status).toBe(0);
+    expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("tau diff-tool [--help]");
     expect(result.stdout).toContain("built-in browser diff review tool");
     expect(result.stderr).toBe("");
   });
 
-  it("rejects the removed command attachment form", () => {
+  it("rejects the removed command attachment form", async () => {
     const mainPath = resolve(process.cwd(), "dist/main.js");
-    const result = spawnSync(process.execPath, [mainPath, "attach", "--", "true"], {
-      encoding: "utf8",
+    const result = await spawnWithCapture(process.execPath, [mainPath, "attach", "--", "true"], {
       env: process.env,
     });
 
-    expect(result.status).toBe(1);
+    expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("unknown attach option: --");
     expect(result.stdout).toContain("tau attach - terminal TUI over a session protocol transport");
   });
 
-  it("rejects relative attach --new cwd before connecting", () => {
+  it("rejects relative attach --new cwd before connecting", async () => {
     const mainPath = resolve(process.cwd(), "dist/main.js");
-    const result = spawnSync(
+    const result = await spawnWithCapture(
       process.execPath,
       [mainPath, "attach", "--new", "--cwd", "relative/path", "ws://127.0.0.1:1"],
       {
-        encoding: "utf8",
         env: process.env,
       },
     );
 
-    expect(result.status).toBe(1);
+    expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("--new requires --cwd <absolute-path>");
     expect(result.stdout).toContain("tau attach - terminal TUI over a session protocol transport");
   });
 
-  it("shows a clear error when diff-tool is launched outside a Tau diff review session", () => {
+  it("shows a clear error when diff-tool is launched outside a Tau diff review session", async () => {
     const mainPath = resolve(process.cwd(), "dist/main.js");
-    const result = spawnSync(process.execPath, [mainPath, "diff-tool"], {
-      encoding: "utf8",
+    const result = await spawnWithCapture(process.execPath, [mainPath, "diff-tool"], {
       env: {},
     });
 
-    expect(result.status).toBe(1);
+    expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain(
       "tau diff-tool must be launched with a Tau diff-review session environment.",
     );

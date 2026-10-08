@@ -37,16 +37,19 @@ function getTextContent(result) {
 }
 
 describe("public code-mode runtime", () => {
-  it.each([1, 16_384, 65_536])("applies an output budget of %s", async (maxOutputTokens) => {
-    const runtime = await runTauCodeMode({
-      ...createDefinition(),
-      code: 'printText("x".repeat(60_000))',
-      maxOutputTokens,
-    });
-    expect(runtime.status).toBe("succeeded");
-    expect(runtime.projection.maxTokens).toBe(maxOutputTokens);
-    expect(runtime.projection.truncated).toBe(maxOutputTokens === 1);
-  });
+  it.concurrent.each([1, 16_384, 65_536])(
+    "applies an output budget of %s",
+    async (maxOutputTokens) => {
+      const runtime = await runTauCodeMode({
+        ...createDefinition(),
+        code: 'printText("x".repeat(60_000))',
+        maxOutputTokens,
+      });
+      expect(runtime.status).toBe("succeeded");
+      expect(runtime.projection.maxTokens).toBe(maxOutputTokens);
+      expect(runtime.projection.truncated).toBe(maxOutputTokens === 1);
+    },
+  );
 
   it.each([0, -1, 1.5, 65_537, "16384", null, NaN, Infinity])(
     "rejects an invalid runtime output budget %s before side effects",
@@ -80,7 +83,7 @@ describe("public code-mode runtime", () => {
     ).rejects.toThrow();
   });
 
-  it("executes a nested API through the JSON bridge", async () => {
+  it.concurrent("executes a nested API through the JSON bridge", async () => {
     const result = await executeTauCodeMode({
       ...createDefinition(),
       code: 'printText(JSON.stringify(await linear.issues.get("TAU-418")))',
@@ -93,25 +96,28 @@ describe("public code-mode runtime", () => {
     });
   });
 
-  it.each(["jpeg", "png", "webp"])("forwards validated %s images from any API", async (format) => {
-    const data = await sharp({
-      create: { width: 2, height: 2, channels: 3, background: "#123456" },
-    })
-      .toFormat(format)
-      .toBuffer();
-    const block = { type: "image", mimeType: `image/${format}`, data: data.toString("base64") };
-    const result = await executeTauCodeMode({
-      ...createDefinition({
-        api: { screenshot: async () => ({ ...block, annotations: { title: "screen" } }) },
-      }),
-      code: "await printImage(await linear.screenshot())",
-    });
+  it.concurrent.each(["jpeg", "png", "webp"])(
+    "forwards validated %s images from any API",
+    async (format) => {
+      const data = await sharp({
+        create: { width: 2, height: 2, channels: 3, background: "#123456" },
+      })
+        .toFormat(format)
+        .toBuffer();
+      const block = { type: "image", mimeType: `image/${format}`, data: data.toString("base64") };
+      const result = await executeTauCodeMode({
+        ...createDefinition({
+          api: { screenshot: async () => ({ ...block, annotations: { title: "screen" } }) },
+        }),
+        code: "await printImage(await linear.screenshot())",
+      });
 
-    expect(result).toEqual({ content: [block] });
-    expect(getTextContent(result)).not.toContain(block.data);
-  });
+      expect(result).toEqual({ content: [block] });
+      expect(getTextContent(result)).not.toContain(block.data);
+    },
+  );
 
-  it("interleaves console text and awaited images in emission order", async () => {
+  it.concurrent("interleaves console text and awaited images in emission order", async () => {
     const block = createProtocolImage();
     const result = await executeTauCodeMode({
       ...createDefinition({ api: { screenshot: async () => block } }),
@@ -132,7 +138,7 @@ describe("public code-mode runtime", () => {
     ]);
   });
 
-  it("keeps image positions while truncating text across multiple blocks", async () => {
+  it.concurrent("keeps image positions while truncating text across multiple blocks", async () => {
     const block = createProtocolImage();
     const result = await executeTauCodeMode({
       ...createDefinition({ api: { screenshot: async () => block } }),
@@ -180,7 +186,7 @@ describe("public code-mode runtime", () => {
     expect(result.content[1].text.length).toBeLessThan(60_000);
   });
 
-  it("does not forward images merely returned by an API", async () => {
+  it.concurrent("does not forward images merely returned by an API", async () => {
     const result = await executeTauCodeMode({
       ...createDefinition({ api: { screenshot: async () => createProtocolImage() } }),
       code: 'await linear.screenshot(); printText("received")',
@@ -188,28 +194,46 @@ describe("public code-mode runtime", () => {
     expect(result).toEqual({ content: [{ type: "text", text: "received" }] });
   });
 
-  it.each([
-    [null, "expects"],
-    [createProtocolImage({ type: "text" }), "expects"],
-    [createProtocolImage({ data: "not base64!" }), "base64"],
-    [createProtocolImage({ data: "AB==" }), "base64"],
-    [createProtocolImage({ data: "" }), "base64"],
-    [createProtocolImage({ mimeType: "image/gif" }), "supports"],
-    [createProtocolImage({ mimeType: "image/jpeg" }), "MIME type does not match"],
-    [
+  it.concurrent("rejects invalid image blocks outside the sandbox", async () => {
+    const blocks = [
+      null,
+      createProtocolImage({ type: "text" }),
+      createProtocolImage({ data: "not base64!" }),
+      createProtocolImage({ data: "AB==" }),
+      createProtocolImage({ data: "" }),
+      createProtocolImage({ mimeType: "image/gif" }),
+      createProtocolImage({ mimeType: "image/jpeg" }),
       createProtocolImage({ data: Buffer.from("plain text").toString("base64") }),
-      "MIME type does not match",
-    ],
-  ])("rejects invalid image blocks outside the sandbox: %j", async (block, message) => {
-    await expect(
-      executeTauCodeMode({
-        ...createDefinition({ api: { screenshot: async () => block } }),
-        code: "await printImage(await linear.screenshot())",
-      }),
-    ).rejects.toThrow(message);
+    ];
+    const result = await executeTauCodeMode({
+      ...createDefinition({ api: { screenshots: async () => blocks } }),
+      code: [
+        "const outcomes = [];",
+        "for (const [index, block] of (await linear.screenshots()).entries()) {",
+        "  try {",
+        "    await printImage(block);",
+        "    outcomes.push({ index, accepted: true });",
+        "  } catch (error) {",
+        "    outcomes.push({ index, error: error.message });",
+        "  }",
+        "}",
+        "printText(JSON.stringify(outcomes));",
+      ].join("\n"),
+    });
+    expect(result.content).toHaveLength(1);
+    expect(JSON.parse(getTextContent(result))).toEqual([
+      { index: 0, error: expect.stringContaining("expects") },
+      { index: 1, error: expect.stringContaining("expects") },
+      { index: 2, error: expect.stringContaining("base64") },
+      { index: 3, error: expect.stringContaining("base64") },
+      { index: 4, error: expect.stringContaining("base64") },
+      { index: 5, error: expect.stringContaining("supports") },
+      { index: 6, error: expect.stringContaining("MIME type does not match") },
+      { index: 7, error: expect.stringContaining("MIME type does not match") },
+    ]);
   });
 
-  it("decodes image pixels before accepting a valid-looking header", async () => {
+  it.concurrent("decodes image pixels before accepting a valid-looking header", async () => {
     const block = createProtocolImage();
     block.data = Buffer.from(block.data, "base64").subarray(0, 55).toString("base64");
     await expect(
@@ -259,9 +283,9 @@ describe("public code-mode runtime", () => {
     ).rejects.toThrow("bridge payload bytes");
   });
 
-  it("resizes images and preserves output order for concurrent helper calls", async () => {
+  it.concurrent("resizes images and preserves output order for concurrent helper calls", async () => {
     const large = await sharp({
-      create: { width: 4800, height: 2400, channels: 3, background: "#123456" },
+      create: { width: 4608, height: 144, channels: 3, background: "#123456" },
     })
       .png()
       .toBuffer();
@@ -273,7 +297,7 @@ describe("public code-mode runtime", () => {
     const metadata = await sharp(
       Buffer.from(result.content.filter((part) => part.type === "image")[0].data, "base64"),
     ).metadata();
-    expect(metadata).toMatchObject({ width: 4096, height: 2048 });
+    expect(metadata).toMatchObject({ width: 4096, height: 128 });
     expect(result.content.map((part) => (part.type === "text" ? part.text : "image"))).toEqual([
       "0",
       "image",
@@ -284,7 +308,7 @@ describe("public code-mode runtime", () => {
     expect(result.content.filter((part) => part.type === "image")[1]).toEqual(blocks[1]);
   });
 
-  it("bounds image output and makes invalid output catchable without losing valid images", async () => {
+  it.concurrent("bounds image output and makes invalid output catchable without losing valid images", async () => {
     const block = createProtocolImage();
     const result = await executeTauCodeMode({
       ...createDefinition({ api: { screenshot: async () => block } }),
@@ -315,13 +339,13 @@ describe("public code-mode runtime", () => {
     expect(persistOutput).toHaveBeenCalledOnce();
   });
 
-  it("reserves the image helper name for the shared runtime", async () => {
+  it.concurrent("reserves the image helper name for the shared runtime", async () => {
     await expect(
       executeTauCodeMode({ ...createDefinition({ name: "printImage" }), code: "" }),
     ).rejects.toThrow("non-reserved");
   });
 
-  it("omits undefined object properties from API arguments", async () => {
+  it.concurrent("omits undefined object properties from API arguments", async () => {
     const inspect = vi.fn(async ([value]) => value);
     const result = await executeTauCodeMode({
       ...createDefinition({ api: { inspect } }),
@@ -338,7 +362,7 @@ describe("public code-mode runtime", () => {
     );
   });
 
-  it("rejects undefined API arguments instead of converting them to null", async () => {
+  it.concurrent("rejects undefined API arguments instead of converting them to null", async () => {
     await expect(
       executeTauCodeMode({
         ...createDefinition({ api: { inspect: async () => null } }),
@@ -347,22 +371,14 @@ describe("public code-mode runtime", () => {
     ).rejects.toThrow("Code-mode API arguments must be JSON-serializable values");
   });
 
-  it("prepends canonical runtime documentation", async () => {
-    const result = await executeTauCodeMode({
-      ...createDefinition(),
-      code: "printText(docs)",
-    });
-
-    expect(getTextContent(result)).toContain("# Code-mode runtime");
-    expect(getTextContent(result)).not.toContain("`files`");
-    expect(getTextContent(result)).toContain("# Linear API");
-  });
-
-  it("provides executable plain-text output examples without dumping response metadata", async () => {
+  it.concurrent("provides canonical documentation and executable plain-text output examples without dumping response metadata", async () => {
     const docs = await executeTauCodeMode({
       ...createDefinition(),
       code: "printText(docs)",
     });
+    expect(getTextContent(docs)).toContain("# Code-mode runtime");
+    expect(getTextContent(docs)).not.toContain("`files`");
+    expect(getTextContent(docs)).toContain("# Linear API");
     const examples = [...getTextContent(docs).matchAll(/```js\n([\s\S]*?)\n```/g)];
     expect(examples).toHaveLength(2);
     const result = await executeTauCodeMode({

@@ -108,7 +108,12 @@ Observing controls which updates you receive; it does not make you the owner. `s
 | `tools`, `operations`, `agents` | Changing state that timeline items or client views refer to. |
 | `facets` | Versioned client-facing metadata. Unknown facet kinds and versions should be ignored. |
 
-`settings.autoCompactThresholdTokens` is required: a safe integer of at least 50,000, or `null` for the model-based default. `settings.effectiveAutoCompactThresholdTokens` is the required integer trigger after model-window clamping. Clients can display it without duplicating the reserve calculation. `bootstrap.model.contextWindow` remains the full model window.
+Both auto-compaction fields in `settings` are required:
+
+- `autoCompactThresholdTokens` is the configured value: a safe integer of at least 50,000, or `null` for the model-based default.
+- `effectiveAutoCompactThresholdTokens` is the integer threshold clients should display. It is the model's context window minus 16,384 tokens, or the configured value if that is smaller.
+
+`bootstrap.model.contextWindow` is the full model window, regardless of the compaction threshold.
 
 `catalog.mcpServers` lists the enabled MCP servers in the host configuration, by name only. It does not mean they are connected; servers connect on first use. Connection settings and credentials are never included.
 
@@ -268,7 +273,7 @@ The server accepts new requests before earlier ones finish, so responses and str
 - Only one main-session turn runs at a time. `session.submit` and `session.retry` return `busy` on conflict.
 - `session.queue` waits until the session is idle. `session.steer` joins the running turn at its next safe point. Each request gets its own response when done.
 - Session changes run one at a time, in arrival order across all clients. Changes that replace the context can interrupt running work and reject pending input. `session.rewind` instead requires an idle session with no pending input.
-- `session.setReasoning` and `session.setAutoCompactThreshold` wait their turn but do not interrupt the running turn. The new setting applies from the next logical turn, including its steering continuations.
+- `session.setReasoning` and `session.setAutoCompactThreshold` wait their turn but do not interrupt the running turn. New settings apply from the next logical turn. The running turn and its steering continuations keep their original settings.
 - `session.exec` and `session.sample` run alongside everything else: turns, other changes, each other, and ephemeral agents. Clients must coordinate their own use of the workspace.
 - Ephemeral contexts are not part of that one-at-a-time ordering. Two submissions to the same ephemeral thread conflict, while different threads can run at once.
 

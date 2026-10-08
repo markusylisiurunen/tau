@@ -90,11 +90,20 @@ The summary aims both to let work continue right away and to keep earlier work r
 
 ### Automatic compaction
 
-Automatic compaction runs before a model call when the provider's latest token count, plus an estimate for content added since, exceeds the threshold. By default, the threshold is the model's context window minus a fixed reserve of 16,384 tokens. A session can set an earlier threshold: the effective value is the smaller of the configured token count and that model-based default. Writing the checkpoint uses the normal model settings, with no special output limit.
+Automatic compaction runs before a model call when the provider's latest token count, plus an estimate for content added since, exceeds the threshold. By default, the threshold is the model's context window minus a fixed reserve of 16,384 tokens. Writing the checkpoint uses the normal model settings, with no special output limit.
 
-Use `/auto-compact 50000` or `/auto-compact 50k` in the TUI, or `/auto_compact 50k` in Telegram. The minimum configured value is 50,000 tokens. Use `default` to reset, or omit the argument to inspect configured and effective values. Structured SDK and protocol inputs accept safe integers or `null`, not `k` strings. Changes apply from the next logical turn, including any steering continuations; changing the setting does not start compaction. The setting survives recovery, reloads, and persona changes. It applies only to the main conversation; subagents and ephemeral threads keep the model-based default.
+To compact earlier, set a token threshold for the session. The effective threshold is the smaller of this setting and the model's context window minus 16,384 tokens.
 
-The threshold is a trigger, not a hard request-size cap. Large base instructions and summaries can exceed it even after compaction. Earlier compaction may reduce later input cost, but summarization itself costs tokens, can disrupt caching, and loses detail.
+- In the TUI, use `/auto-compact 50000` or `/auto-compact 50k`.
+- In Telegram, use `/auto_compact 50000` or `/auto_compact 50k`.
+- With either command, use `default` to restore the model-based threshold, or omit the argument to show the configured and effective thresholds.
+- SDK and protocol inputs accept a safe integer of at least 50,000, or `null` for the default. They do not accept strings such as `50k`.
+
+The minimum configured threshold is 50,000 tokens. The setting applies to the main conversation and survives recovery, reloads, and persona changes. Subagents and ephemeral threads use their model-based defaults.
+
+Changing the setting does not start compaction. The new threshold applies from the next logical turn. A running turn and its steering continuations keep their original threshold.
+
+The threshold controls when compaction starts; it does not limit request size. Tau does not truncate the input to this threshold before summarizing it. Large base instructions and summaries can leave context above the threshold even after compaction. Earlier compaction may reduce the cost of later requests, but generating a summary also costs tokens, can disrupt caching, and loses detail.
 
 For both automatic and manual compaction, Tau checks that the request fits, using a valid token count from the provider plus estimates for new content and the summary instruction. Without a valid count, it estimates the whole request. If the request cannot fit, compaction fails; Tau never falls back to sending a flattened transcript. Compaction can run several times during one long turn.
 

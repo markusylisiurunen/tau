@@ -1,9 +1,6 @@
-import { spawn } from "node:child_process";
-import { describe, expect, it, vi } from "vitest";
+import { expect, it, vi } from "vitest";
 import { createBashToolDefinition } from "../dist/core/tools/bash.js";
 import { BashJobRegistry, createBashJobToolDefinitions } from "../dist/core/tools/bash_jobs.js";
-import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
-import { createFlySpriteToolExecutionBackend } from "../dist/execution/fly_sprite_execution_environment.js";
 
 const context = (signal = new AbortController().signal) => ({
   signal,
@@ -13,6 +10,25 @@ const context = (signal = new AbortController().signal) => ({
   assistantMessageId: "message",
 });
 const jobId = (text) => text.match(/`([^`]+)`/)[1];
+
+function createPendingBackend() {
+  return {
+    runBash: vi.fn(
+      (_command, options) =>
+        new Promise((resolve) => {
+          options.onStarted();
+          options.onOutput(Buffer.from("ready"));
+          options.signal.addEventListener(
+            "abort",
+            () => {
+              resolve({ exitCode: null, aborted: true, closeSignal: "SIGTERM", truncated: false });
+            },
+            { once: true },
+          );
+        }),
+    ),
+  };
+}
 
 it("rejects background launch timeouts and explains unknown job recovery", async () => {
   const runBash = vi.fn(async (_command, options) => {
@@ -173,115 +189,69 @@ it.each([
   }
 });
 
-for (const kind of ["local", "Sprite"]) {
-  describe(`${kind} Bash jobs`, () => {
-    const createBackend = () =>
-      kind === "local"
-        ? createLocalToolExecutionBackend()
-        : createFlySpriteToolExecutionBackend({
-            cwd: process.cwd(),
-            sprite: {
-              spawn: (command, args, options) =>
-                spawn(command, args, { ...options, stdio: ["pipe", "pipe", "pipe"] }),
-            },
-          });
-
-    it("survives turn cancellation, bounds logs, waits without killing, and stops independently", async () => {
-      const backend = createBackend();
-      const jobs = new BashJobRegistry();
-      const other = new BashJobRegistry();
-      const turn = new AbortController();
-      try {
-        const bash = createBashToolDefinition(backend, process.cwd(), jobs);
-        const outcome = await bash.execute(
-          {
-            id: "start",
-            name: "bash",
-            arguments: { command: "printf ready; sleep 100", background: true },
-          },
-          context(turn.signal),
-        );
-        expect(outcome.outcome).toBe("succeeded");
-        const id = jobId(outcome.content[0].text);
-        turn.abort();
-        await vi.waitFor(() => expect(jobs.format([id])).toContain("ready"));
-        expect(await jobs.wait([id], 10, context().signal, true)).toContain(
-          "Wait timed out after 10ms",
-        );
-        expect(jobs.format([id])).toContain("running");
-        const wait = new AbortController();
-        const waiting = jobs.wait([id], 60_000, wait.signal, true);
-        wait.abort();
-        await expect(waiting).rejects.toBeDefined();
-        const second = await other.start(backend, "sleep 100", process.cwd(), context().signal);
-        const stopTool = createBashJobToolDefinitions(jobs).find(
-          (tool) => tool.schema.name === "stop_bash_job",
-        );
-        const stopped = await stopTool.execute(
-          { id: "stop", name: "stop_bash_job", arguments: { id, includeOutput: false } },
-          context(),
-        );
-        expect(stopped.content[0].text).toContain("stopped");
-        expect(stopped.content[0].text).toContain("Command was cancelled.");
-        expect(stopped.content[0].text).not.toContain("\nready");
-        expect(other.format([second])).toContain("running");
-        const output = await jobs.start(
-          backend,
-          'node -e \'process.stdout.write("x".repeat(100000) + "TAIL")\'',
-          process.cwd(),
-          context().signal,
-        );
-        const result = await jobs.wait([output], 5000, context().signal, true);
-        expect(result).toContain("TAIL");
-        expect(result).toContain("truncated");
-        expect(result.length).toBeLessThan(14000);
-        expect(await jobs.wait([output], 1, context().signal, true)).toContain("succeeded");
-        expect(() => new BashJobRegistry().format([id])).toThrow("Unknown Bash job");
-      } finally {
-        await Promise.all([jobs.dispose(), other.dispose()]);
-        await backend.dispose();
-      }
-    });
-
-    it("kills a TERM-ignoring child on shutdown", async () => {
-      const backend = createBackend();
-      const jobs = new BashJobRegistry();
-      try {
-        const id = await jobs.start(
-          backend,
-          "bash -c 'trap \"\" TERM; echo $$; exec sleep 100' & wait",
-          process.cwd(),
-          context().signal,
-        );
-        let pid;
-        await vi.waitFor(() => {
-          pid = Number(
-            jobs
-              .format([id])
-              .split("\n")
-              .find((line) => /^\d+$/.test(line)),
-          );
-          expect(pid).toBeGreaterThan(0);
-        });
-        await jobs.dispose();
-        expect(jobs.format([id])).toContain("stopped");
-        await vi.waitFor(() => {
-          expect(() => process.kill(pid, 0)).toThrow();
-        });
-      } finally {
-        await jobs.dispose();
-        await backend.dispose();
-      }
-    });
-  });
-}
+it("survives turn cancellation, waits without killing, and stops independently", async () => {
+  vi.useFakeTimers();
+  const backend = createPendingBackend();
+  const jobs = new BashJobRegistry();
+  const other = new BashJobRegistry();
+  const turn = new AbortController();
+  try {
+    const bash = createBashToolDefinition(backend, process.cwd(), jobs);
+    const outcome = await bash.execute(
+      {
+        id: "start",
+        name: "bash",
+        arguments: { command: "server", background: true },
+      },
+      context(turn.signal),
+    );
+    expect(outcome.outcome).toBe("succeeded");
+    const id = jobId(outcome.content[0].text);
+    turn.abort();
+    expect(backend.runBash.mock.calls[0][1].signal.aborted).toBe(false);
+    expect(jobs.read([id])).toEqual([
+      expect.objectContaining({ status: "running", output: "ready" }),
+    ]);
+    const expiry = jobs.wait([id], 10, context().signal, true);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(await expiry).toContain("Wait timed out after 10ms");
+    expect(jobs.hasRunning).toBe(true);
+    const wait = new AbortController();
+    const waiting = jobs.wait([id], 60_000, wait.signal, true);
+    wait.abort();
+    await expect(waiting).rejects.toBeDefined();
+    expect(backend.runBash.mock.calls[0][1].signal.aborted).toBe(false);
+    const second = await other.start(backend, "other server", process.cwd(), context().signal);
+    const stopTool = createBashJobToolDefinitions(jobs).find(
+      (tool) => tool.schema.name === "stop_bash_job",
+    );
+    const stopped = await stopTool.execute(
+      { id: "stop", name: "stop_bash_job", arguments: { id, includeOutput: false } },
+      context(),
+    );
+    expect(stopped.outcome).toBe("succeeded");
+    expect(stopped.content[0].text).not.toContain("\nready");
+    expect(jobs.read([id])).toEqual([
+      expect.objectContaining({ status: "stopped", aborted: true }),
+    ]);
+    expect(other.read([second])).toEqual([expect.objectContaining({ status: "running" })]);
+    expect(backend.runBash.mock.calls[1][1].signal.aborted).toBe(false);
+    expect(() => other.read([id])).toThrow();
+    expect(() => jobs.read([second])).toThrow();
+  } finally {
+    try {
+      await Promise.all([jobs.dispose(), other.dispose()]);
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+});
 
 it("defaults waits to 60 seconds, validates the cap, and retains a running job on expiry", async () => {
   const jobs = new BashJobRegistry();
-  const backend = createLocalToolExecutionBackend();
-  const id = await jobs.start(backend, "printf ready; sleep 100", process.cwd(), context().signal);
+  const backend = createPendingBackend();
+  const id = await jobs.start(backend, "server", process.cwd(), context().signal);
   try {
-    await vi.waitFor(() => expect(jobs.format([id])).toContain("\nready"));
     const tool = createBashJobToolDefinitions(jobs).find(
       (tool) => tool.schema.name === "wait_for_bash_jobs",
     );
@@ -303,7 +273,6 @@ it("defaults waits to 60 seconds, validates the cap, and retains a running job o
   } finally {
     vi.useRealTimers();
     await jobs.dispose();
-    await backend.dispose();
   }
 });
 

@@ -639,22 +639,37 @@ describe("code composition", () => {
   });
 
   it("rejects ambiguous or mismatched media before reading files or making requests", async () => {
-    const backend = { readFileBinary: vi.fn() };
-    const fetchImpl = vi.fn();
-    const sdk = bindCodeModeSdk([createModelsCapability(backend, {}, fetchImpl)]);
     const image = createProtocolImage();
-    for (const attachment of [
+    const backend = {
+      readFileBinary: vi.fn(async () => ({ content: Buffer.from(image.data, "base64") })),
+    };
+    const fetchImpl = vi.fn(async () => Response.json(chatReply()));
+    const sdk = bindCodeModeSdk([
+      createModelsCapability(backend, { apiKeys: { openrouter: "secret" } }, fetchImpl),
+    ]);
+    const attachments = [
       { type: "image", path: "file.png", data: image.data, mimeType: image.mimeType },
       { type: "image", data: image.data, mimeType: "image/jpeg" },
       { type: "image", data: "invalid", mimeType: "image/png" },
-    ]) {
-      const result = await runTauCodeMode({
-        name: "tau",
-        ...sdk,
-        code: `await tau.models.chat({ model: "openai/gpt-6-luna", prompt: "Describe", attachments: [${JSON.stringify(attachment)}] })`,
-      });
-      expect(result.status).toBe("failed");
-    }
+    ];
+    const result = await runTauCodeMode({
+      name: "tau",
+      ...sdk,
+      code: [
+        "const outcomes = [];",
+        `for (const attachment of ${JSON.stringify(attachments)}) {`,
+        "  try {",
+        '    await tau.models.chat({ model: "openai/gpt-6-luna", prompt: "Describe", attachments: [attachment] });',
+        '    outcomes.push("accepted");',
+        "  } catch {",
+        '    outcomes.push("rejected");',
+        "  }",
+        "}",
+        "printText(JSON.stringify(outcomes));",
+      ].join("\n"),
+    });
+    expect(result.status).toBe("succeeded");
+    expect(JSON.parse(text(result.result))).toEqual(["rejected", "rejected", "rejected"]);
     expect(backend.readFileBinary).not.toHaveBeenCalled();
     expect(fetchImpl).not.toHaveBeenCalled();
   });

@@ -5864,10 +5864,14 @@ describe("SessionChatController", () => {
     const pcm = Buffer.from([1, 2, 3, 4]);
     const socket = new EventEmitter();
     const socketEvents = [];
+    const audioSent = Promise.withResolvers();
+    const streamEndSent = Promise.withResolvers();
     socket.send = vi.fn((data, callback) => {
       const event = JSON.parse(data);
       socketEvents.push(event);
       callback?.();
+      if (event.realtimeInput?.audio) audioSent.resolve();
+      if (event.realtimeInput?.audioStreamEnd) streamEndSent.resolve();
       if (event.setup) {
         queueMicrotask(() => socket.emit("message", JSON.stringify({ setupComplete: {} })));
       }
@@ -5919,6 +5923,7 @@ describe("SessionChatController", () => {
       speechToTextDeps: { webSocketFactory, fetchImpl },
     });
 
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
       controller.start();
       await controller.onUserInput("/listen");
@@ -5926,7 +5931,8 @@ describe("SessionChatController", () => {
       await writeFile(audioPath, Buffer.alloc(2048, 1));
 
       socket.emit("open");
-      await waitUntil(() => socketEvents.length === 2);
+      await audioSent.promise;
+      expect(socketEvents).toHaveLength(2);
       for (const text of [
         "English",
         "English.\nSuomeksi myös.",
@@ -5944,7 +5950,7 @@ describe("SessionChatController", () => {
         expect(editor.getCursor()).toEqual(previewCursor);
       }
       controller.getInputHandlers().onToggleRecording();
-      await waitUntil(() => socketEvents.some((event) => event.realtimeInput?.audioStreamEnd));
+      await streamEndSent.promise;
       expect(view.editorEnabledUpdates.at(-1)).toBe(false);
       expect(editor.getText()).toBe(`${prefix}Revised English.\nSuomeksi myös.${suffix}`);
       socket.emit(
@@ -5958,11 +5964,22 @@ describe("SessionChatController", () => {
       );
       expect(editor.getText()).toBe(`${prefix}session transcript${suffix}`);
       expect(view.editorEnabledUpdates.at(-1)).toBe(false);
+      await vi.advanceTimersByTimeAsync(1999);
+      expect(view.editorEnabledUpdates.at(-1)).toBe(false);
+      expect(socket.close).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
       await controller.listenTransition;
       expect(view.editorEnabledUpdates.at(-1)).toBe(true);
     } finally {
-      await controller.dispose();
-      await rm(audioPath, { force: true });
+      try {
+        await controller.dispose();
+      } finally {
+        try {
+          await rm(audioPath, { force: true });
+        } finally {
+          vi.useRealTimers();
+        }
+      }
     }
 
     expect(view.editorEnabledUpdates).toContain(true);

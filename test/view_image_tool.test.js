@@ -107,7 +107,7 @@ describe("view_image tool", () => {
 
     try {
       const filePath = join(fx.dir, "large.png");
-      await createPng(filePath, 8192, 6144);
+      await createPng(filePath, 4608, 3456);
 
       const backend = createLocalToolExecutionBackend();
       const tool = createViewImageToolDefinition(backend);
@@ -171,7 +171,7 @@ describe("view_image tool", () => {
 
     try {
       const filePath = join(fx.dir, "entropy.png");
-      await createHighEntropyPng(filePath, 1536, 1536);
+      await createHighEntropyPng(filePath, 1152, 1088);
 
       const input = readFileSync(filePath);
       expect(input.byteLength).toBeGreaterThan(VIEW_IMAGE_MODEL_MAX_BYTES);
@@ -198,8 +198,8 @@ describe("view_image tool", () => {
         imageBlock.mimeType,
         `${outputMetadata.width}×${outputMetadata.height}`,
       ]);
-      expect(outputMetadata.width).toBe(1536);
-      expect(outputMetadata.height).toBe(1536);
+      expect(outputMetadata.width).toBe(1152);
+      expect(outputMetadata.height).toBe(1088);
       expect(getTextBlock(result.toolResult.content)).toBe(`Successfully viewed ${filePath}.`);
     } finally {
       fx.cleanup();

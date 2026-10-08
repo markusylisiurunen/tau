@@ -2,6 +2,7 @@ import { closeSync, openSync } from "node:fs";
 import { ReadStream } from "node:tty";
 import {
   ProcessTerminal,
+  type ProgramStatus,
   StdinBuffer,
   setKittyProtocolActive,
   type Terminal,
@@ -214,6 +215,8 @@ export class TauTerminal implements Terminal {
       .join("");
     this.output.write(`\x1b]0;${safeTitle}\x07`);
   }
+
+  setProgramStatus(_status: ProgramStatus): void {}
 
   setProgress(active: boolean): void {
     if (active) {

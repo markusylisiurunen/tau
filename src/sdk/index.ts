@@ -124,6 +124,7 @@ export type {
   TauSdkSessionRewindResult,
   TauSdkSessionSampleInput,
   TauSdkSessionSampleResult,
+  TauSdkSessionSetAutoCompactThresholdResult,
   TauSdkSessionSetPersonaResult,
   TauSdkSessionSetReasoningResult,
   TauSdkSessionSnapshotResult,

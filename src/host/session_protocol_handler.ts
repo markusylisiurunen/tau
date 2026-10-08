@@ -264,6 +264,9 @@ export class SessionProtocolHandler {
         case "session.snapshot":
           await this.handleSnapshot(request);
           return;
+        case "session.setAutoCompactThreshold":
+          await this.handleSetAutoCompactThreshold(request);
+          return;
         case "session.setReasoning":
           await this.handleSetReasoning(request);
           return;
@@ -1166,6 +1169,27 @@ export class SessionProtocolHandler {
         await state.session.snapshot(),
       ),
     );
+  }
+
+  private async handleSetAutoCompactThreshold(
+    request: Extract<SessionProtocolRequestMessage, { method: "session.setAutoCompactThreshold" }>,
+  ): Promise<void> {
+    const state = await this.getSessionState(request.params.sessionId);
+    if (!state) {
+      this.sendSessionNotFound(request.id, request.params.sessionId);
+      return;
+    }
+
+    await this.runSessionMutation(state, async () => {
+      if (state.session.sessionId !== request.params.sessionId) {
+        this.sendSessionNotFound(request.id, request.params.sessionId);
+        return;
+      }
+      const result = await state.session.setAutoCompactThreshold(request.params.thresholdTokens);
+      this.sendMessage(
+        createSessionProtocolSuccessResponse(request.id, "session.setAutoCompactThreshold", result),
+      );
+    });
   }
 
   private async handleSetReasoning(

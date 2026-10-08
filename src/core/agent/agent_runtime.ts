@@ -24,6 +24,7 @@ import type {
   AutoCompactionArchivePaths,
   AutoCompactionArchiver,
 } from "../session/auto_compaction_archive.js";
+import { getEffectiveAutoCompactThresholdTokens } from "../session/auto_compaction_threshold.js";
 import {
   buildAutoCompactionContinuationMessage,
   buildAutoCompactionPrompt,
@@ -69,7 +70,6 @@ import type {
 const DEFAULT_RETRY_POLICY = { maxRetries: 1, delayMs: 3_000 } as const;
 const COMPACTION_MAX_ATTEMPTS = 2;
 const COMPACTION_REQUEST_TEXT = "Compact the context.";
-const AUTO_COMPACTION_RESERVE_TOKENS = 16_384;
 const AUTO_COMPACTION_KEEP_RECENT_TOKENS = 20_000;
 const DEFAULT_MAX_MODEL_SUBTURNS = 1024;
 
@@ -115,6 +115,7 @@ export type AgentSpec = {
     delayMs: number;
   };
   maxModelSubturns: number;
+  autoCompactThresholdTokens: number | null;
 };
 
 type AgentRuntimeOptions = {
@@ -202,6 +203,7 @@ type AgentTurnSpec = {
   streamOptions: TauStreamOptions;
   retryPolicy: AgentSpec["retryPolicy"];
   maxModelSubturns: number;
+  autoCompactThresholdTokens: number | null;
 };
 
 type SingleSubturnResult = {
@@ -214,6 +216,7 @@ type SubturnRetryBudget = {
 };
 
 export function createAgentSpec(options: {
+  autoCompactThresholdTokens: number | null;
   model: ModelExecutor;
   modelNotice?: string;
   attribution: AgentSpec["attribution"];
@@ -230,6 +233,7 @@ export function createAgentSpec(options: {
     streamOptions: structuredClone(options.streamOptions),
     retryPolicy: { ...DEFAULT_RETRY_POLICY },
     maxModelSubturns: DEFAULT_MAX_MODEL_SUBTURNS,
+    autoCompactThresholdTokens: options.autoCompactThresholdTokens,
   };
 }
 
@@ -1181,6 +1185,7 @@ export class AgentRuntime {
       streamOptions: structuredClone(this.currentSpec.streamOptions),
       retryPolicy: { ...this.currentSpec.retryPolicy },
       maxModelSubturns: this.currentSpec.maxModelSubturns,
+      autoCompactThresholdTokens: this.currentSpec.autoCompactThresholdTokens,
     };
   }
 
@@ -1427,7 +1432,10 @@ export class AgentRuntime {
   }
 
   private getAutoCompactionThresholdTokens(turnSettings: AgentTurnSpec): number {
-    return turnSettings.model.model.contextWindow - AUTO_COMPACTION_RESERVE_TOKENS;
+    return getEffectiveAutoCompactThresholdTokens(
+      turnSettings.model.model.contextWindow,
+      turnSettings.autoCompactThresholdTokens,
+    );
   }
 
   private getFreshContextUsageEstimateTokens(modelContextKey: string): number | undefined {

@@ -1071,6 +1071,32 @@ describe("SessionChatController", () => {
     expect(help.text).toContain("skills:\n  alpha (~/.tau/skills)");
   });
 
+  it("sets and resets auto-compaction without changing the footer context window", async () => {
+    const { session, controller, view } = await createControllerHarness();
+    session.setAutoCompactThreshold = vi.fn(async (thresholdTokens) => ({
+      revision: 2,
+      settings: {
+        ...session.snapshotValue.settings,
+        autoCompactThresholdTokens: thresholdTokens,
+        effectiveAutoCompactThresholdTokens: thresholdTokens ?? 111616,
+      },
+    }));
+    await controller.start();
+    const original = view.status.footer.contextUsage;
+    for (const input of ["50000", "50k"]) {
+      await controller.onUserInput(`/auto-compact ${input}`);
+      expect(session.setAutoCompactThreshold).toHaveBeenLastCalledWith(50000);
+      expect(view.status.footer.contextUsage).toBe(`${original} (50k)`);
+    }
+    session.setAutoCompactThreshold.mockClear();
+    for (const input of ["49k", "50k junk", "5e4", "50000.5", "9007199254740992", "", "50kk"])
+      await controller.onUserInput(`/auto-compact ${input}`);
+    expect(session.setAutoCompactThreshold).not.toHaveBeenCalled();
+    await controller.onUserInput("/auto-compact default");
+    expect(session.setAutoCompactThreshold).toHaveBeenLastCalledWith(null);
+    expect(view.status.footer.contextUsage).toBe(original);
+  });
+
   it("omits MCP startup sections when no servers are configured", async () => {
     const { controller, view } = await createControllerHarness();
     controller.start();

@@ -65,6 +65,7 @@ export type TauSdkSessionRecordResult = SessionProtocolRecordResult;
 export type TauSdkSessionInterruptResult = SessionProtocolInterruptResult;
 export type TauSdkSessionExecResult = SessionProtocolExecResult;
 export type TauSdkSessionSnapshotResult = SessionProtocolSnapshot;
+export type TauSdkSessionSetAutoCompactThresholdResult = SessionProtocolSettingsUpdateResult;
 export type TauSdkSessionSetReasoningResult = SessionProtocolSettingsUpdateResult;
 export type TauSdkSessionSetPersonaResult = SessionProtocolSnapshot;
 export type TauSdkSessionCompactResult = SessionProtocolCompactResult;
@@ -197,6 +198,9 @@ export type TauSdkSession = {
   sample(input: TauSdkSessionSampleInput): Promise<TauSdkSessionSampleResult>;
   interrupt(): Promise<TauSdkSessionInterruptResult>;
   snapshot(): Promise<TauSdkSessionSnapshotResult>;
+  setAutoCompactThreshold(
+    thresholdTokens: number | null,
+  ): Promise<TauSdkSessionSetAutoCompactThresholdResult>;
   setReasoning(reasoning: TauSdkReasoningEffort): Promise<TauSdkSessionSetReasoningResult>;
   setPersona(personaId: string): Promise<TauSdkSessionSetPersonaResult>;
   resolvePrompt(promptId: string): Promise<TauSdkResolvePromptResult>;

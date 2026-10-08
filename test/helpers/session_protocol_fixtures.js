@@ -95,14 +95,19 @@ export function createProtocolSnapshot(overrides = {}) {
     },
     lifecycle: overrides.lifecycle ?? "idle",
     costTotal: overrides.costTotal ?? 0,
-    settings: overrides.settings ?? {
-      personaId: bootstrap.persona?.id ?? "persona-1",
-      ...(bootstrap.persona?.settings?.reasoning !== undefined
-        ? { reasoning: bootstrap.persona.settings.reasoning }
-        : {}),
-      ...(bootstrap.persona?.settings?.serviceTier !== undefined
-        ? { serviceTier: bootstrap.persona.settings.serviceTier }
-        : {}),
+    settings: {
+      autoCompactThresholdTokens: null,
+      effectiveAutoCompactThresholdTokens:
+        (bootstrap.model ?? bootstrap.persona?.model ?? model).contextWindow - 16_384,
+      ...(overrides.settings ?? {
+        personaId: bootstrap.persona?.id ?? "persona-1",
+        ...(bootstrap.persona?.settings?.reasoning !== undefined
+          ? { reasoning: bootstrap.persona.settings.reasoning }
+          : {}),
+        ...(bootstrap.persona?.settings?.serviceTier !== undefined
+          ? { serviceTier: bootstrap.persona.settings.serviceTier }
+          : {}),
+      }),
     },
     bootstrap: {
       model: bootstrap.model ?? bootstrap.persona?.model ?? model,

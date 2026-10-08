@@ -227,6 +227,8 @@ function expectedCatalog(persona = personas[0]) {
 
 function expectedSettings(persona = personas[0]) {
   return {
+    autoCompactThresholdTokens: null,
+    effectiveAutoCompactThresholdTokens: persona.model.contextWindow - 16384,
     personaId: persona.id,
     ...(persona.settings.reasoning !== undefined ? { reasoning: persona.settings.reasoning } : {}),
     ...(persona.settings.serviceTier !== undefined
@@ -412,6 +414,65 @@ describe("HostedEphemeralAgentSession", () => {
 });
 
 describe("LocalSessionHost", () => {
+  it.each([false, true])(
+    "recovers the auto-compaction setting from disk (legacy: %s)",
+    async (legacy) => {
+      const directory = mkdtempSync(join(tmpdir(), "tau-threshold-recovery-"));
+      const host = createHost(new FileSessionStore({ directory }));
+      let recoveredHost;
+      try {
+        await expect(
+          host.createSession({ ...localCreateInput, autoCompactThresholdTokens: 49999 }),
+        ).rejects.toThrow();
+        const session = await host.createSession({
+          ...localCreateInput,
+          autoCompactThresholdTokens: 50000,
+        });
+        await session.record({ text: "keep this conversation" });
+        await session.reload();
+        await session.setPersona(session.runtime.persona.id);
+        const snapshot = await session.snapshot();
+        expect(snapshot.settings.autoCompactThresholdTokens).toBe(50000);
+        const { contextId } = await session.createEphemeralContext({
+          instructions: "independent",
+          tools: [],
+        });
+        const thread = await session.ephemeralAgentSessions.get(contextId).createThread("thread");
+        expect(thread.runtime.spec.autoCompactThresholdTokens).toBeNull();
+        await host.shutdown();
+        if (legacy) {
+          delete snapshot.settings.autoCompactThresholdTokens;
+          delete snapshot.settings.effectiveAutoCompactThresholdTokens;
+          writeFileSync(
+            join(directory, `${Buffer.from(snapshot.sessionId).toString("base64url")}.json`),
+            JSON.stringify({ format: STORED_SESSION_DOCUMENT_FORMAT, version: 11, snapshot }),
+          );
+        }
+        recoveredHost = createHost(new FileSessionStore({ directory }));
+        const recovered = await recoveredHost.observeSession(snapshot.sessionId);
+        const restored = await recovered.snapshot();
+        expect(restored.messages).toEqual(snapshot.messages);
+        expect(restored.settings.autoCompactThresholdTokens).toBe(legacy ? null : 50000);
+        expect(recovered.runtime.agent.spec.autoCompactThresholdTokens).toBe(legacy ? null : 50000);
+        expect(restored.settings.effectiveAutoCompactThresholdTokens).toBe(
+          Math.min(legacy ? Infinity : 50000, restored.bootstrap.model.contextWindow - 16384),
+        );
+        await recovered.setAutoCompactThreshold(100000);
+        const deltas = [];
+        recovered.onDelta((delta) => deltas.push(delta));
+        const before = await recovered.snapshot();
+        await recovered.setAutoCompactThreshold(null);
+        expect(deltas.reduce(applySessionProtocolDelta, before)).toEqual(
+          await recovered.snapshot(),
+        );
+      } finally {
+        await host.shutdown();
+        await recoveredHost?.shutdown();
+        rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("starts with a persistent warning when local history initialization fails", async () => {
     const root = mkdtempSync(join(tmpdir(), "tau-unavailable-history-"));
     const parentFile = join(root, "not-a-directory");
@@ -3945,6 +4006,7 @@ describe("LocalSessionHost", () => {
     await expect(hostedSession.snapshot()).resolves.toEqual(
       expect.objectContaining({
         settings: {
+          ...expectedSettings(personas[1]),
           personaId: personas[1].id,
           reasoning: "high",
         },
@@ -3975,6 +4037,7 @@ describe("LocalSessionHost", () => {
     const livePersona = {
       ...personas[1],
       label: "live persona",
+      model: { ...personas[1].model, contextWindow: 60000 },
       systemPrompt: "live persona system prompt",
     };
     const liveModelResolver = vi.fn(resolveModel);
@@ -4008,7 +4071,10 @@ describe("LocalSessionHost", () => {
     const host = createHostForEnvironment(store, executionEnvironment);
     const session = await host.createSession(localCreateInput);
 
+    await session.setAutoCompactThreshold(50000);
     const snapshot = await session.setPersona(livePersona.id);
+    expect(snapshot.settings.autoCompactThresholdTokens).toBe(50000);
+    expect(snapshot.settings.effectiveAutoCompactThresholdTokens).toBe(43616);
 
     expect(resolveRuntimeConfig).toHaveBeenCalledTimes(1);
     expect(session.runtime.agent.spec.model.model).toEqual(livePersona.model);
@@ -4064,7 +4130,7 @@ describe("LocalSessionHost", () => {
     const session = await host.createSession(localCreateInput);
     const snapshot = await session.snapshot();
 
-    expect(snapshot.settings).toEqual({
+    expect(snapshot.settings).toMatchObject({
       personaId: "resolved-persona",
       reasoning: "high",
     });

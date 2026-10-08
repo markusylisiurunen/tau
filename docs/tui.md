@@ -90,6 +90,7 @@ Then use Shift+Tab to choose a reasoning level. A newly added persona appears on
 | `/exit` | Close this TUI. On a long-running remote host, this detaches; the session is not deleted. |
 | `/rewind` | Pick an earlier user message, remove it and everything after it, and put its text back in the editor. |
 | `/diff [git diff args...]` | Open the local diff review tool on a snapshot taken from the execution environment. |
+| `/auto-compact [tokens\|default]` | Inspect or set the session threshold (minimum 50k); `default` resets it. |
 | `/compact-all [guidance]` | Replace the model's context with a generated summary. |
 | `/compact-keep-last [guidance]` | Same, and include the last assistant response in the summary when there is one. |
 | `/reload` | Reload session configuration and content from the execution environment. |
@@ -102,7 +103,9 @@ Then use Shift+Tab to choose a reasoning level. A newly added persona appears on
 | `/prompt:<id>` | Load a prompt from the execution environment into the editor without sending it. |
 | `/theme:<id>` | Switch this TUI's theme until it exits. |
 
-Run commands that change the context, such as persona changes, compaction, rewind, and reload, while idle. `/auto-speak`, `/listen`, `/prompt:<id>`, and `/exit` do little during a running turn. Other commands wait until Tau is idle.
+Run commands that change the context, such as persona changes, compaction, rewind, and reload, while idle. `/auto-compact` can inspect or change the next-turn threshold during a running turn. `/auto-speak`, `/listen`, `/prompt:<id>`, and `/exit` do little during a running turn. Other commands wait until Tau is idle.
+
+The footer keeps context usage relative to the full model window, such as `20%/272k`. When a session override is set, it appends the effective compaction threshold: `20%/272k (50k)`. The parentheses reflect model-window clamping and disappear in default mode.
 
 [Sessions](sessions.md) describes compaction, rewind, recovery, and retry. [Prompts and project context](prompts-and-project-context.md) covers prompt files.
 

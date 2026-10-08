@@ -121,10 +121,13 @@ The runner loads its speech credentials and `speech.voiceId` at startup, from it
 | `/effort_high` | Selects high reasoning for future turns. |
 | `/effort_xhigh` | Selects xhigh reasoning for future turns. |
 | `/prompt` | [Records a saved prompt](prompts-and-project-context.md#telegram-prompt-picker) while idle, without starting a turn. |
+| `/auto_compact [tokens\|default]` | Inspect or set the session threshold, such as `50k` or `50000` (minimum 50k); `default` resets it. |
 | `/compact` | Runs summary-only compaction while idle. |
 | `/interrupt` | Interrupts the active Tau turn. |
 | `/tts_on` | Sends a voice note after each final assistant response. |
 | `/tts_off` | Disables voice responses. |
+
+The auto-compaction setting applies from the next turn and survives session recovery. `/status` keeps context usage relative to the full model window and shows the effective threshold in parentheses only when an override is set. See [sessions](sessions.md#automatic-compaction) for limits and cost tradeoffs.
 
 A [persona](personas.md) choice applies to the current session only; `/new` uses the project's default.
 

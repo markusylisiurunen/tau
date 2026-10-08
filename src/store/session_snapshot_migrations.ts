@@ -1,3 +1,4 @@
+import { getEffectiveAutoCompactThresholdTokens } from "../core/session/auto_compaction_threshold.js";
 import { formatTauHiddenSystemBlock } from "../core/utils/user_metadata.js";
 import type { SessionProtocolSnapshot } from "../protocol/session_protocol.js";
 import {
@@ -6,7 +7,7 @@ import {
 } from "../protocol/session_protocol.js";
 
 export const STORED_SESSION_DOCUMENT_FORMAT = "tau-session" as const;
-export const STORED_SESSION_DOCUMENT_VERSION = 11 as const;
+export const STORED_SESSION_DOCUMENT_VERSION = 12 as const;
 export const LEGACY_SESSION_MODEL_CONTEXT_KEY = "legacy-v3";
 
 export type StoredSessionDocument = {
@@ -29,6 +30,7 @@ const storedSessionMigrations = new Map<number, StoredSessionMigration>([
   [8, migrateStoredSessionV8ToV9],
   [9, migrateStoredSessionV9ToV10],
   [10, migrateStoredSessionV10ToV11],
+  [11, migrateStoredSessionV11ToV12],
 ]);
 
 export class UnsupportedStoredSessionVersionError extends Error {
@@ -94,6 +96,28 @@ function decodeStoredSessionDocument(value: unknown): {
   return {
     version: value.version as number,
     snapshot: value.snapshot,
+  };
+}
+
+function migrateStoredSessionV11ToV12(value: unknown): unknown {
+  if (
+    !isRecord(value) ||
+    !isRecord(value.settings) ||
+    !isRecord(value.bootstrap) ||
+    !isRecord(value.bootstrap.model) ||
+    typeof value.bootstrap.model.contextWindow !== "number"
+  )
+    throw new Error("invalid stored session settings");
+  return {
+    ...value,
+    settings: {
+      ...value.settings,
+      autoCompactThresholdTokens: null,
+      effectiveAutoCompactThresholdTokens: getEffectiveAutoCompactThresholdTokens(
+        value.bootstrap.model.contextWindow,
+        null,
+      ),
+    },
   };
 }
 

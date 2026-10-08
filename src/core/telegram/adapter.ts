@@ -7,6 +7,7 @@ import type {
   SessionProtocolSnapshot,
 } from "../../protocol/session_protocol.js";
 import { TauSessionProtocolResponseError } from "../../transport/errors.js";
+import { formatAutoCompactThreshold, parseAutoCompactThreshold } from "../commands/auto_compact.js";
 import type { TelegramProjectConfig } from "../config/schema.js";
 import { formatAdaptiveNumber, formatTokenWindow } from "../utils/format.js";
 import {
@@ -675,7 +676,11 @@ function formatTelegramContextUsage(snapshot: SessionProtocolSnapshot): string {
   const windowTokens =
     getAssistantContextWindow(lastAssistantMessage) || snapshot.bootstrap.model.contextWindow;
   const percent = windowTokens > 0 ? (usageTokens / windowTokens) * 100 : 0;
-  return `${formatAdaptiveNumber(percent, 1, 3)}% of ${formatTokenWindow(windowTokens)} tokens`;
+  const threshold =
+    snapshot.settings.autoCompactThresholdTokens === null
+      ? ""
+      : ` (${formatTokenWindow(snapshot.settings.effectiveAutoCompactThresholdTokens)})`;
+  return `${formatAdaptiveNumber(percent, 1, 3)}% of ${formatTokenWindow(windowTokens)} tokens${threshold}`;
 }
 
 function getTelegramSessionCostTotal(snapshot: SessionProtocolSnapshot): number {
@@ -1456,6 +1461,11 @@ class TelegramAdapterImpl {
         description: "interrupt active run",
         callbackAction: "interrupt",
         handler: async (chatId) => this.handleInterrupt(chatId),
+      },
+      {
+        command: "/auto_compact",
+        description: "inspect or set the automatic compaction threshold",
+        handler: async (chatId, args) => this.handleAutoCompact(chatId, args),
       },
       {
         command: "/tts_on",
@@ -2464,6 +2474,29 @@ class TelegramAdapterImpl {
 
       await sessionManager.setReasoning(session.id, reasoning);
       await this.reply(chatId, `reasoning effort set to ${reasoning}.`);
+    } catch (error) {
+      await this.reply(chatId, this.formatManagerError(error));
+    }
+  }
+
+  private async handleAutoCompact(chatId: number, args: string[]): Promise<void> {
+    const session = await this.requireActiveSession(chatId);
+    if (!session) return;
+    try {
+      const threshold = parseAutoCompactThreshold(args.join(" "));
+      const manager = this.getSessionManagerForChat(chatId);
+      const result =
+        threshold === undefined
+          ? await manager.getSessionSnapshot(session.id)
+          : await manager.setAutoCompactThreshold(session.id, threshold);
+      if (!result) throw new TelegramSessionManagerError("not_ready", "session is still preparing");
+      await this.reply(
+        chatId,
+        formatAutoCompactThreshold(result.settings) +
+          (threshold === undefined
+            ? ""
+            : " changes apply from the next turn; this does not start compaction."),
+      );
     } catch (error) {
       await this.reply(chatId, this.formatManagerError(error));
     }

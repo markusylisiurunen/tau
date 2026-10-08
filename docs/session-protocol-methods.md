@@ -71,6 +71,7 @@ params: {
   attributes: Record<string, string>;
   personaId?: string;
   reasoning?: Reasoning;
+  autoCompactThresholdTokens?: number | null;
 }
 
 result: { sessionId: string }
@@ -315,6 +316,25 @@ result: SessionProtocolSnapshot;
 ```
 
 Use this after observation, on demand, or to recover from a delta revision gap. The [session protocol](session-protocol.md) describes the snapshot and client application rules.
+
+### `session.setAutoCompactThreshold`
+
+Changes the main conversation’s automatic-compaction trigger, starting with the next logical turn.
+
+```ts
+params: {
+  sessionId: string;
+  thresholdTokens: number | null;
+}
+result: {
+  revision: number;
+  settings: SessionProtocolSettingsSnapshot;
+}
+```
+
+`thresholdTokens` must be a safe integer of at least 50,000, or `null` to restore the model-based default. Session creation accepts the same values in optional `autoCompactThresholdTokens`, defaulting to `null`. Numeric strings are rejected. The effective trigger is the smaller of the configured threshold and the model context window minus 16,384 tokens. A smaller model can therefore have an effective threshold below 50,000.
+
+The host persists the setting and publishes a `settings.set` delta to observers. Running turns and their steering continuations keep their captured threshold. Changing it does not start compaction. Reloads, persona changes, and recovery preserve the override; selected-model changes recompute the effective value. Subagents and ephemeral threads use their model-based defaults. See [automatic compaction](sessions.md#automatic-compaction) for request-size limits and costs.
 
 ### `session.setReasoning`
 

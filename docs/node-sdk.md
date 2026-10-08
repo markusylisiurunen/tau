@@ -151,6 +151,8 @@ try {
 
 Creating a session requires the full execution environment and the creation attributes, which never change afterward. The `cwd` must be absolute and is a path in the chosen environment, which may not be where the SDK runs. A Fly Sprite session refers to an existing Sprite that the host is configured to reach. See [sessions](sessions.md) for creation attributes and [ownership and scope](ownership-and-scope.md) for which machine owns which paths.
 
+Session creation also accepts `autoCompactThresholdTokens?: number | null`. Use a safe integer of at least 50,000 to set the main conversation’s auto-compaction trigger; omit it or use `null` for the model-based default. `session.setAutoCompactThreshold(50000)` changes it for the next logical turn, and `session.setAutoCompactThreshold(null)` resets it. Snapshots expose the configured and effective values in `settings`; see [automatic compaction](sessions.md#automatic-compaction).
+
 `session.unobserve()` stops observing, and that `TauSdkSession` object can no longer be used. The session itself is not deleted. `client.close()` closes the whole client and is safe to call more than once.
 
 The connected `TauSdkClient` exposes:
@@ -185,6 +187,7 @@ Each subscription returns an unsubscribe function.
 | `sample({ context, options })` | Run a standalone model call without changing the session. |
 | `interrupt()` | Ask the session's running work to stop. |
 | `snapshot()` | Read the complete current snapshot. |
+| `setAutoCompactThreshold(thresholdTokens)` | Set or reset automatic compaction, starting with the next logical turn. |
 | `setReasoning(reasoning)` | Set reasoning, starting with the next turn. |
 | `setPersona(personaId)` | Change persona and return the updated snapshot. |
 | `resolvePrompt(promptId)` | Load a current prompt body from the execution environment. |

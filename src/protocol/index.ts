@@ -104,6 +104,7 @@ export type {
   SessionProtocolSessionIdParams,
   SessionProtocolSessionLifecycle,
   SessionProtocolSessionSummary,
+  SessionProtocolSetAutoCompactThresholdParams,
   SessionProtocolSetPersonaParams,
   SessionProtocolSetReasoningParams,
   SessionProtocolSettingsSnapshot,

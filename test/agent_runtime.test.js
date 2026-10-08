@@ -94,6 +94,7 @@ function createRuntime(options = {}) {
   const events = [];
   const eventSink = options.eventSink ?? (async (event) => events.push(event));
   const spec = createAgentSpec({
+    autoCompactThresholdTokens: null,
     model: {
       model: persona.model,
       stream: () => {
@@ -142,6 +143,53 @@ function setStreams(runtime, streams) {
 }
 
 describe("AgentRuntime", () => {
+  it("applies a lower threshold only after the active turn and steering finish", async () => {
+    const gate = deferred();
+    const started = deferred();
+    const tool = createTool("wait", async () => {
+      started.resolve();
+      await gate.promise;
+      return { content: [{ type: "text", text: "done" }], outcome: "succeeded" };
+    });
+    const { runtime, events, persona } = createRuntime({
+      tools: [tool],
+      persona: createPersona({ model: { ...personas[0].model, contextWindow: 200000 } }),
+    });
+    const usage = {
+      input: 60000,
+      output: 1,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 60001,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    };
+    const streams = setStreams(runtime, [
+      createStream([], createAssistant(persona, "old response", { usage })),
+      createToolStream(
+        createAssistant(persona, [fauxToolCall("wait", {}, { id: "wait-call" })], {
+          usage,
+          stopReason: "toolUse",
+        }),
+      ),
+      createStream([], createAssistant(persona, "steered response", { usage })),
+      createStream([], createAssistant(persona, "summary")),
+      createStream([], createAssistant(persona, "next response")),
+    ]);
+    await runtime.submit(`old request ${"x".repeat(120000)}`);
+    const active = runtime.submit("use tool");
+    await started.promise;
+    runtime.updateSpec({ ...runtime.spec, autoCompactThresholdTokens: 50000 });
+    const steering = runtime.steer("continue");
+    gate.resolve();
+    await active;
+    await steering.result;
+    expect(events.some((event) => event.type === "compaction_start")).toBe(false);
+    const result = await runtime.submit("next turn");
+    expect(result.finalMessage.content[0].text).toBe("next response");
+    expect(events.filter((event) => event.type === "compaction_start")).toHaveLength(1);
+    expect(streams).toHaveBeenCalledTimes(5);
+  });
+
   it("commits system instructions durably, projects metadata away, and rewinds them", async () => {
     const { runtime, events, persona } = createRuntime();
     const firstId = await runtime.commitSystemMessage("first instruction", {
@@ -793,6 +841,7 @@ describe("AgentRuntime", () => {
           })),
         ],
       });
+      runtime.updateSpec({ ...runtime.spec, autoCompactThresholdTokens: 50000 });
       const toolMessage = createAssistant(persona, [call], {
         stopReason: "toolUse",
         usage: {

@@ -11,7 +11,8 @@ import { type ZodError, z } from "zod";
 import { MODEL_IMAGE_MAX_BYTES, SUPPORTED_IMAGE_TYPES } from "../core/utils/model_image.js";
 import { type IntermediateSystemMessage, isIntermediateSystemMessage } from "./system_message.js";
 
-export const SESSION_PROTOCOL_VERSION = 17 as const;
+export const SESSION_PROTOCOL_VERSION = 18 as const;
+export const MIN_AUTO_COMPACT_THRESHOLD_TOKENS = 50_000;
 export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_IMAGES = 16;
 export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_CONTENT_BLOCKS = 1024;
 export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_IMAGE_BYTES = MODEL_IMAGE_MAX_BYTES;
@@ -56,6 +57,7 @@ export const SESSION_PROTOCOL_METHODS = [
   "session.interrupt",
   "session.snapshot",
   "session.setReasoning",
+  "session.setAutoCompactThreshold",
   "session.setPersona",
   "session.resolvePrompt",
   "session.autocompletePaths",
@@ -145,6 +147,7 @@ export type SessionProtocolCreateParams = {
   executionEnvironment: SessionProtocolExecutionEnvironmentInput;
   attributes: Record<string, string>;
   personaId?: string;
+  autoCompactThresholdTokens?: number | null;
   reasoning?: SessionProtocolReasoningEffort;
 };
 export type SessionProtocolListParams = Record<string, never>;
@@ -191,6 +194,10 @@ export type SessionProtocolSampleOptions = {
 export type SessionProtocolSampleParams = SessionProtocolSessionIdParams & {
   context: SessionProtocolSampleContext;
   options: SessionProtocolSampleOptions;
+};
+
+export type SessionProtocolSetAutoCompactThresholdParams = SessionProtocolSessionIdParams & {
+  thresholdTokens: number | null;
 };
 
 export type SessionProtocolSetReasoningParams = SessionProtocolSessionIdParams & {
@@ -284,6 +291,7 @@ export type SessionProtocolParamsByMethod = {
   "session.interrupt": SessionProtocolSessionIdParams;
   "session.snapshot": SessionProtocolSessionIdParams;
   "session.setReasoning": SessionProtocolSetReasoningParams;
+  "session.setAutoCompactThreshold": SessionProtocolSetAutoCompactThresholdParams;
   "session.setPersona": SessionProtocolSetPersonaParams;
   "session.resolvePrompt": SessionProtocolResolvePromptParams;
   "session.autocompletePaths": SessionProtocolAutocompletePathsParams;
@@ -873,6 +881,8 @@ export type SessionProtocolContentCatalogSnapshot = {
 };
 
 export type SessionProtocolSettingsSnapshot = {
+  autoCompactThresholdTokens: number | null;
+  effectiveAutoCompactThresholdTokens: number;
   personaId: string;
   reasoning?: SessionProtocolReasoningEffort;
   serviceTier?: SessionProtocolServiceTier;
@@ -1114,6 +1124,7 @@ export type SessionProtocolResultByMethod = {
   "session.interrupt": SessionProtocolInterruptResult;
   "session.snapshot": SessionProtocolSnapshot;
   "session.setReasoning": SessionProtocolSettingsUpdateResult;
+  "session.setAutoCompactThreshold": SessionProtocolSettingsUpdateResult;
   "session.setPersona": SessionProtocolSnapshot;
   "session.resolvePrompt": SessionProtocolResolvePromptResult;
   "session.autocompletePaths": SessionProtocolAutocompletePathsResult;
@@ -1797,6 +1808,16 @@ const sessionProtocolSessionIdParamsSchema = z
   })
   .strip();
 
+const autoCompactThresholdTokensSchema = z
+  .number()
+  .int()
+  .min(MIN_AUTO_COMPACT_THRESHOLD_TOKENS)
+  .nullable();
+
+const sessionProtocolSetAutoCompactThresholdParamsSchema = z
+  .object({ sessionId: nonEmptyStringSchema, thresholdTokens: autoCompactThresholdTokensSchema })
+  .strict();
+
 const sessionProtocolSetReasoningParamsSchema = z
   .object({
     sessionId: nonEmptyStringSchema,
@@ -2023,6 +2044,7 @@ const sessionProtocolCreateParamsSchema = z
     executionEnvironment: sessionProtocolExecutionEnvironmentInputSchema,
     attributes: sessionAttributesSchema,
     personaId: nonEmptyStringSchema.optional(),
+    autoCompactThresholdTokens: autoCompactThresholdTokensSchema.optional(),
     reasoning: sessionProtocolReasoningEffortSchema.optional(),
   })
   .strip();
@@ -2126,6 +2148,8 @@ const sessionProtocolContentCatalogSnapshotSchema = z
 
 const sessionProtocolSettingsSnapshotSchema = z
   .object({
+    autoCompactThresholdTokens: autoCompactThresholdTokensSchema,
+    effectiveAutoCompactThresholdTokens: z.number().int(),
     personaId: nonEmptyStringSchema,
     reasoning: sessionProtocolReasoningEffortSchema.optional(),
     serviceTier: sessionProtocolServiceTierSchema.optional(),
@@ -4532,6 +4556,10 @@ export function validateSessionProtocolParams(
   params: unknown,
 ): SessionProtocolParamsValidationResult<SessionProtocolReloadParams>;
 export function validateSessionProtocolParams(
+  method: "session.setAutoCompactThreshold",
+  params: unknown,
+): SessionProtocolParamsValidationResult<SessionProtocolSetAutoCompactThresholdParams>;
+export function validateSessionProtocolParams(
   method: "session.setReasoning",
   params: unknown,
 ): SessionProtocolParamsValidationResult<SessionProtocolSetReasoningParams>;
@@ -4617,6 +4645,8 @@ export function validateSessionProtocolParams(
     case "session.snapshot":
     case "session.reload":
       return validateSessionIdParams(method, params);
+    case "session.setAutoCompactThreshold":
+      return validateSetAutoCompactThresholdParams(params);
     case "session.setReasoning":
       return validateSetReasoningParams(params);
     case "session.setPersona":
@@ -4662,6 +4692,7 @@ export function validateSessionProtocolResult(
     case "session.snapshot":
     case "session.setPersona":
       return validateResult(method, result, sessionProtocolSnapshotSchema);
+    case "session.setAutoCompactThreshold":
     case "session.setReasoning":
       return validateResult(method, result, sessionProtocolSettingsUpdateResultSchema);
     case "session.resolvePrompt":
@@ -4914,6 +4945,26 @@ function validateSampleParams(
     return invalidParams(message);
   }
 
+  return { ok: true, value: parsed.data };
+}
+
+export function parseAutoCompactThresholdTokens(value: unknown): number | null {
+  const parsed = autoCompactThresholdTokensSchema.safeParse(value);
+  if (!parsed.success) {
+    throw new Error("auto-compact threshold must be a safe integer of at least 50000 tokens");
+  }
+  return parsed.data;
+}
+
+function validateSetAutoCompactThresholdParams(
+  params: unknown,
+): SessionProtocolParamsValidationResult<SessionProtocolSetAutoCompactThresholdParams> {
+  const parsed = sessionProtocolSetAutoCompactThresholdParamsSchema.safeParse(params);
+  if (!parsed.success) {
+    return invalidParams(
+      `session.setAutoCompactThreshold params are invalid: ${formatZodError(parsed.error)}`,
+    );
+  }
   return { ok: true, value: parsed.data };
 }
 

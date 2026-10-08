@@ -27,6 +27,48 @@ async function withTempHome(test) {
 }
 
 describe("sdk client integration", () => {
+  it("creates, updates and resets the shared auto-compaction setting", async () => {
+    await withTempHome(async (home) => {
+      const client = await createTauSdkClient({ cwd: home });
+      try {
+        const session = await client.sessions.create({
+          ...localCreateInput,
+          autoCompactThresholdTokens: 50000,
+        });
+        const observer = await client.sessions.observe(session.id);
+        const deltas = [];
+        observer.onDelta((delta) => deltas.push(delta));
+        let snapshot = await session.snapshot();
+        expect(snapshot.settings.autoCompactThresholdTokens).toBe(50000);
+        expect(snapshot.settings.effectiveAutoCompactThresholdTokens).toBe(
+          Math.min(50000, snapshot.bootstrap.model.contextWindow - 16384),
+        );
+        await expect(session.setAutoCompactThreshold(49999)).rejects.toThrow();
+        await session.setAutoCompactThreshold(75000);
+        expect((await observer.snapshot()).settings.autoCompactThresholdTokens).toBe(75000);
+        expect(
+          deltas.some(
+            (delta) =>
+              delta.delta.type === "snapshot.patch" &&
+              delta.delta.changes.some(
+                (change) =>
+                  change.type === "settings.set" &&
+                  change.settings.autoCompactThresholdTokens === 75000,
+              ),
+          ),
+        ).toBe(true);
+        await session.setAutoCompactThreshold(null);
+        snapshot = await observer.snapshot();
+        expect(snapshot.settings.autoCompactThresholdTokens).toBeNull();
+        expect(snapshot.settings.effectiveAutoCompactThresholdTokens).toBe(
+          snapshot.bootstrap.model.contextWindow - 16384,
+        );
+      } finally {
+        await client.close();
+      }
+    });
+  });
+
   it("creates an in-process client and snapshots session state", async () => {
     await withTempHome(async (home) => {
       const client = await createTauSdkClient({
@@ -35,7 +77,7 @@ describe("sdk client integration", () => {
       let unsubscribe = () => {};
 
       try {
-        expect(client.ready.version).toBe(17);
+        expect(client.ready.version).toBe(18);
         await expect(client.sessions.list()).resolves.toEqual([]);
 
         const session = await client.sessions.create(localCreateInput);
@@ -196,7 +238,7 @@ describe("sdk client integration", () => {
         });
         const snapshot = await session.snapshot();
 
-        expect(snapshot.settings).toEqual({
+        expect(snapshot.settings).toMatchObject({
           personaId: "sdk-project-persona",
           reasoning: "high",
         });

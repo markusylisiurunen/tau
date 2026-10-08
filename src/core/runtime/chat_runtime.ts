@@ -130,6 +130,7 @@ export class ChatRuntime {
       agentId: options.sessionId,
       spec: createAgentSpec({
         ...this.resolvedModel,
+        autoCompactThresholdTokens: null,
         systemPrompt: composition.baseSystemPrompt,
         tools,
       }),
@@ -282,6 +283,10 @@ export class ChatRuntime {
     this.refreshSpec();
   }
 
+  setAutoCompactThreshold(thresholdTokens: number | null): void {
+    this.agent.updateSpec({ ...this.agent.spec, autoCompactThresholdTokens: thresholdTokens });
+  }
+
   setReasoning(reasoning: ReasoningEffort): void {
     this.currentPersona = {
       ...this.currentPersona,
@@ -317,6 +322,7 @@ export class ChatRuntime {
     this.agent.updateSpec(
       createAgentSpec({
         ...this.resolvedModel,
+        autoCompactThresholdTokens: this.agent.spec.autoCompactThresholdTokens,
         systemPrompt: this.latestPromptComposition.baseSystemPrompt,
         tools: this.buildToolRegistry(this.latestPromptComposition),
       }),

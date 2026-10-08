@@ -471,6 +471,9 @@ export type TelegramTauSession = {
   resolvePrompt(promptId: string): Promise<SessionProtocolResolvePromptResult>;
   compact(mode: "summary-only" | "summary-and-last"): Promise<SessionProtocolCompactResult>;
   setPersona(personaId: string): Promise<SessionProtocolSnapshot>;
+  setAutoCompactThreshold(
+    thresholdTokens: number | null,
+  ): Promise<SessionProtocolSettingsUpdateResult>;
   setReasoning(
     reasoning: SessionProtocolReasoningEffort,
   ): Promise<SessionProtocolSettingsUpdateResult>;
@@ -518,6 +521,10 @@ export type TelegramSessionManager = {
   recordPrompt(sessionId: string, promptId: string): Promise<string>;
   compactSession(sessionId: string): Promise<SessionProtocolCompactResult>;
   setPersona(sessionId: string, personaId: string): Promise<SessionProtocolSnapshot>;
+  setAutoCompactThreshold(
+    sessionId: string,
+    thresholdTokens: number | null,
+  ): Promise<SessionProtocolSettingsUpdateResult>;
   setReasoning(
     sessionId: string,
     reasoning: SessionProtocolReasoningEffort,
@@ -841,6 +848,17 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       throw new TelegramSessionManagerError("not_ready", "session is still preparing");
     }
     return await entry.tauSession.setPersona(personaId);
+  }
+
+  async setAutoCompactThreshold(
+    sessionId: string,
+    thresholdTokens: number | null,
+  ): Promise<SessionProtocolSettingsUpdateResult> {
+    const entry = this.requireSession(sessionId);
+    if (!entry.tauSession) {
+      throw new TelegramSessionManagerError("not_ready", "session is still preparing");
+    }
+    return await entry.tauSession.setAutoCompactThreshold(thresholdTokens);
   }
 
   async setReasoning(
@@ -2429,6 +2447,14 @@ class ScopedTelegramSessionManager implements TelegramSessionManager {
   async setPersona(sessionId: string, personaId: string): Promise<SessionProtocolSnapshot> {
     this.requireSession(sessionId);
     return await this.sessionManager.setPersona(sessionId, personaId);
+  }
+
+  async setAutoCompactThreshold(
+    sessionId: string,
+    thresholdTokens: number | null,
+  ): Promise<SessionProtocolSettingsUpdateResult> {
+    this.requireSession(sessionId);
+    return await this.sessionManager.setAutoCompactThreshold(sessionId, thresholdTokens);
   }
 
   async setReasoning(

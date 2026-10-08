@@ -96,6 +96,9 @@ export type TauHostedSession = {
       signal?: AbortSignal;
     },
   ): Promise<SessionProtocolSampleResult>;
+  setAutoCompactThreshold(
+    thresholdTokens: number | null,
+  ): Promise<SessionProtocolSettingsUpdateResult>;
   setReasoning(
     reasoning: SessionProtocolSetReasoningParams["reasoning"],
   ): Promise<SessionProtocolSettingsUpdateResult>;

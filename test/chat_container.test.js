@@ -1,3 +1,4 @@
+import { Container } from "@earendil-works/pi-tui";
 import { describe, expect, it, vi } from "vitest";
 import { TuiChatView } from "../dist/tui/chat_view.js";
 import { ChatContainerComponent } from "../dist/tui/ui/chat_container.js";
@@ -11,6 +12,96 @@ function inspectChatContainer(container) {
 }
 
 describe("ChatContainerComponent", () => {
+  it("reuses combined history lines and Markdown components while the last answer streams", () => {
+    const container = new ChatContainerComponent(createUiTheme("plain"));
+    const parent = new Container();
+    parent.addChild(container);
+    for (let index = 0; index < 1000; index += 1) {
+      container.addMessage(
+        {
+          type: "assistant",
+          message: { role: "assistant", content: [{ type: "text", text: `# Message ${index}` }] },
+        },
+        `m${index}`,
+      );
+    }
+    const previousFrame = parent.render(80);
+    const previousLines = [...previousFrame];
+    const combinedLines = container.render(80);
+    const history = container.allMessages.map((record) => {
+      const component = record.renderedMessage.component;
+      return {
+        component,
+        markdown: [...component.contentContainer.children],
+        render: vi.spyOn(component, "render"),
+      };
+    });
+
+    container.addMessage({ type: "assistant_partial", text: "start" }, "stream");
+    const view = Object.create(TuiChatView.prototype);
+    view.chatContainer = container;
+    view.ui = { requestRender: vi.fn() };
+    for (const text of ["start", `# Answer\n\n${"long answer ".repeat(100)}`, "short"]) {
+      view.updateAssistantMessage("stream", { type: "assistant_partial", text });
+      expect(container.render(80)).toBe(combinedLines);
+      const expected = new ChatContainerComponent(createUiTheme("plain"));
+      for (const record of container.allMessages) expected.addMessage(record.model, record.id);
+      expect(parent.render(80)).toEqual(expected.render(80));
+      history.forEach(({ component, markdown, render }, index) => {
+        expect(container.allMessages[index].renderedMessage.component).toBe(component);
+        component.contentContainer.children.forEach((child, childIndex) => {
+          expect(child).toBe(markdown[childIndex]);
+        });
+        expect(render).not.toHaveBeenCalled();
+      });
+      expect(previousFrame).toEqual(previousLines);
+    }
+  });
+
+  it("rebuilds the dirty suffix across batched edits and invalidates on layout changes", () => {
+    let theme = createUiTheme("plain");
+    const container = new ChatContainerComponent(theme);
+    let width = 80;
+    let thoughtsVisible = false;
+    const assertFreshRender = () => {
+      const expected = new ChatContainerComponent(theme, thoughtsVisible);
+      for (const record of container.allMessages) expected.addMessage(record.model, record.id);
+      expect(container.render(width)).toEqual(expected.render(width));
+    };
+    for (let index = 0; index < 5; index += 1) {
+      container.addMessage({ type: "assistant_partial", text: `message ${index}` }, `m${index}`);
+    }
+    assertFreshRender();
+    container.updateMessage("m3", { type: "assistant_partial", text: "long ".repeat(100) });
+    container.updateMessage("m1", { type: "assistant_partial", text: "earlier ".repeat(80) });
+    container.addMessage({ type: "assistant_partial", text: "appended" }, "tail");
+    assertFreshRender();
+    container.updateMessage("m1", { type: "assistant_partial", text: "short" });
+    assertFreshRender();
+    width = 35;
+    assertFreshRender();
+    container.invalidate();
+    assertFreshRender();
+    theme = createUiTheme("ansi");
+    container.setTheme(theme);
+    assertFreshRender();
+    container.updateMessage("m1", { type: "assistant_partial", text: "", thinking: "hidden" });
+    assertFreshRender();
+    thoughtsVisible = true;
+    container.setThinkingVisibility(true);
+    assertFreshRender();
+    container.removeMessages(["m0", "m3"]);
+    assertFreshRender();
+    container.removeMessagesFrom("m4");
+    assertFreshRender();
+    container.replaceMessage("m1", { type: "transcript_text", text: "replacement" });
+    assertFreshRender();
+    container.clear();
+    assertFreshRender();
+    container.addMessage({ type: "assistant_partial", text: "new history" }, "new");
+    assertFreshRender();
+  });
+
   it("retains hidden thinking without invalidating or requesting a render", () => {
     const container = new ChatContainerComponent(createUiTheme("plain"));
     container.addMessage({ type: "assistant_partial", text: "answer", thinking: "first" }, "a");

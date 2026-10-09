@@ -10,7 +10,7 @@ type ChatMessageRecord = {
   id: string;
   model: ChatMessageModel;
   renderedMessage?: RenderedMessage;
-  rendered: boolean;
+  childIndex?: number;
 };
 
 export class ChatContainerComponent extends Container {
@@ -20,7 +20,9 @@ export class ChatContainerComponent extends Container {
   private allMessages: ChatMessageRecord[] = [];
   private idToIndex: Map<string, number> = new Map();
   private cachedRenderWidth?: number;
-  private cachedRenderLines?: string[];
+  private cachedRenderLines: string[] = [];
+  private childLineOffsets: number[] = [0];
+  private dirtyChildIndex = 0;
 
   constructor(theme: Theme, thoughtsVisible = false) {
     super();
@@ -45,17 +47,16 @@ export class ChatContainerComponent extends Container {
       return finalId;
     }
 
-    const record: ChatMessageRecord = { id: finalId, model, rendered: false };
+    const record: ChatMessageRecord = { id: finalId, model };
     this.allMessages.push(record);
     this.idToIndex.set(finalId, this.allMessages.length - 1);
 
     const rendered = this.renderMessage(record);
     if (this.shouldShowMessage(rendered)) {
       this.addSpacerIfNeeded();
+      record.childIndex = this.chatContainer.children.length;
       this.chatContainer.addChild(rendered.component);
-      record.rendered = true;
     }
-    this.invalidateRenderCache();
 
     return finalId;
   }
@@ -64,7 +65,7 @@ export class ChatContainerComponent extends Container {
     const index = this.idToIndex.get(id);
     if (index === undefined) return false;
 
-    this.allMessages[index] = { id, model, rendered: false };
+    this.allMessages[index] = { id, model };
     this.rebuild();
     return true;
   }
@@ -96,10 +97,11 @@ export class ChatContainerComponent extends Container {
 
       if (updated) {
         const shouldShow = this.shouldShowMessage(rendered);
-        if (record.rendered !== shouldShow) {
+        if ((record.childIndex !== undefined) !== shouldShow) {
           this.syncVisibleMessages();
+        } else if (record.childIndex !== undefined) {
+          this.dirtyChildIndex = Math.min(this.dirtyChildIndex, record.childIndex);
         }
-        this.invalidateRenderCache();
         return "updated";
       }
     }
@@ -112,12 +114,14 @@ export class ChatContainerComponent extends Container {
     this.chatContainer.clear();
     for (const record of this.allMessages) {
       const rendered = record.renderedMessage!;
-      record.rendered = this.shouldShowMessage(rendered);
-      if (record.rendered) {
+      record.childIndex = undefined;
+      if (this.shouldShowMessage(rendered)) {
         this.addSpacerIfNeeded();
+        record.childIndex = this.chatContainer.children.length;
         this.chatContainer.addChild(rendered.component);
       }
     }
+    this.invalidateRenderCache();
   }
 
   setThinkingVisibility(visible: boolean) {
@@ -161,12 +165,12 @@ export class ChatContainerComponent extends Container {
     this.chatContainer.clear();
 
     for (const record of this.allMessages) {
-      record.rendered = false;
+      record.childIndex = undefined;
       const rendered = this.renderMessage(record);
       if (this.shouldShowMessage(rendered)) {
         this.addSpacerIfNeeded();
+        record.childIndex = this.chatContainer.children.length;
         this.chatContainer.addChild(rendered.component);
-        record.rendered = true;
       }
     }
     this.invalidateRenderCache();
@@ -178,13 +182,22 @@ export class ChatContainerComponent extends Container {
   }
 
   override render(width: number): string[] {
-    if (this.cachedRenderLines && this.cachedRenderWidth === width) {
-      return this.cachedRenderLines;
+    if (this.cachedRenderWidth !== width) {
+      this.invalidateRenderCache();
+      this.cachedRenderWidth = width;
     }
 
-    const lines = super.render(width);
-    this.cachedRenderWidth = width;
-    this.cachedRenderLines = lines;
+    // The parent Container copies these lines into its own frame buffer.
+    const lines = this.cachedRenderLines;
+    lines.length = this.childLineOffsets[this.dirtyChildIndex]!;
+    this.childLineOffsets.length = this.dirtyChildIndex + 1;
+    const children = this.chatContainer.children;
+    for (let index = this.dirtyChildIndex; index < children.length; index += 1) {
+      const childLines = children[index]!.render(width);
+      for (const line of childLines) lines.push(line);
+      this.childLineOffsets.push(lines.length);
+    }
+    this.dirtyChildIndex = children.length;
     return lines;
   }
 
@@ -217,6 +230,8 @@ export class ChatContainerComponent extends Container {
 
   private invalidateRenderCache(): void {
     this.cachedRenderWidth = undefined;
-    this.cachedRenderLines = undefined;
+    this.cachedRenderLines = [];
+    this.childLineOffsets = [0];
+    this.dirtyChildIndex = 0;
   }
 }

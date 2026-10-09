@@ -733,7 +733,10 @@ class FakeView {
   reconcileSubagentUiSession(snapshots) {
     this.subagentSnapshots = structuredClone(snapshots);
   }
-  resetToolUiSessionPreservingSubagents() {}
+  detachTranscript = vi.fn(() => {
+    this.messages = [];
+    this.toolModels = [];
+  });
   cycleSubagentSelection(direction) {
     this.subagentSelectionCycles.push(direction);
     return undefined;
@@ -1487,7 +1490,7 @@ describe("SessionChatController", () => {
     });
   });
 
-  it("keeps frozen ephemeral notices during revision-gap recovery", async () => {
+  it("does not restore detached ephemeral notices during revision-gap recovery", async () => {
     const snapshot = createSnapshot([
       {
         id: "user-1",
@@ -1635,14 +1638,11 @@ describe("SessionChatController", () => {
     }
     await flush();
 
-    expect(view.messages).toContainEqual({
-      id: "frozen-ephemeral",
-      model: { type: "transcript_notice", title: "frozen notice", tone: "default" },
-    });
+    expect(view.messages.some((message) => message.id === "frozen-ephemeral")).toBe(false);
     expect(view.messages.some((message) => message.id === "active-ephemeral")).toBe(false);
   });
 
-  it("keeps repeated timeline item ids in their respective compacted segments", async () => {
+  it("reuses timeline item ids after releasing the compacted segment", async () => {
     const notice = {
       type: "notice",
       id: "notice-history-unavailable",
@@ -1718,14 +1718,12 @@ describe("SessionChatController", () => {
         message.model.type === "transcript_notice" &&
         message.model.title.startsWith("history unavailable"),
     );
-    expect(notices).toHaveLength(2);
-    expect(notices[0].id).not.toBe(notices[1].id);
+    expect(notices).toHaveLength(1);
     const dividerIndex = view.messages.findIndex(
       (message) =>
         message.model.type === "session_divider" && message.model.label === "compacted context",
     );
-    expect(view.messages.indexOf(notices[0])).toBeLessThan(dividerIndex);
-    expect(view.messages.indexOf(notices[1])).toBeGreaterThan(dividerIndex);
+    expect(view.messages.indexOf(notices[0])).toBeGreaterThan(dividerIndex);
   });
 
   it("shows auto-compaction operation status in the footer", async () => {
@@ -1784,7 +1782,7 @@ describe("SessionChatController", () => {
     expect(view.status.footer.type).toBe("regular");
   });
 
-  it("freezes the old transcript from auto-compaction metadata when the start delta was missed", async () => {
+  it("releases old transcripts on repeated compaction even when the start delta was missed", async () => {
     const retainedEntry = {
       id: "retained-entry",
       message: {
@@ -1875,12 +1873,8 @@ describe("SessionChatController", () => {
       id: "summary-entry",
       model: { type: "user", text: "compacted summary" },
     });
-    expect(view.messages.filter((message) => message.id === retainedEntry.id)).toEqual([
-      {
-        id: retainedEntry.id,
-        model: { type: "user", text: "retained before compaction" },
-      },
-    ]);
+    expect(view.messages.some((message) => message.id === retainedEntry.id)).toBe(false);
+    expect(view.detachTranscript).toHaveBeenCalledTimes(1);
     expect(view.transcriptNotices).toContainEqual({
       text: "retained 1 recent message",
       tone: "default",
@@ -1917,10 +1911,7 @@ describe("SessionChatController", () => {
     for (const listener of session.listeners) {
       listener(createMessageReplaceDelta(session.id, 2, replacedRetainedEntry));
     }
-    expect(view.messages.find((message) => message.id === retainedEntry.id)?.model).toEqual({
-      type: "user",
-      text: "retained before compaction",
-    });
+    expect(view.messages.some((message) => message.id === retainedEntry.id)).toBe(false);
 
     const nextEntry = {
       id: "post-compaction-entry",
@@ -1995,13 +1986,10 @@ describe("SessionChatController", () => {
 
     expect(
       view.messages.filter((message) => message.model.type === "session_divider"),
-    ).toHaveLength(2);
-    expect(view.messages.filter((message) => message.id === nextEntry.id)).toEqual([
-      {
-        id: nextEntry.id,
-        model: { type: "user", text: "after compaction" },
-      },
-    ]);
+    ).toHaveLength(1);
+    expect(view.messages.some((message) => message.id === nextEntry.id)).toBe(false);
+    expect(view.messages.some((message) => message.id === "summary-entry")).toBe(false);
+    expect(view.detachTranscript).toHaveBeenCalledTimes(2);
     expect(view.messages).toContainEqual({
       id: "second-summary-entry",
       model: { type: "user", text: "second compacted summary" },
@@ -2089,10 +2077,7 @@ describe("SessionChatController", () => {
         }),
       );
     }
-    expect(view.messages).toContainEqual({
-      id: frozenAssistant.id,
-      model: expect.objectContaining({ type: "assistant" }),
-    });
+    expect(view.messages.some((message) => message.id === frozenAssistant.id)).toBe(false);
     expect(view.messages.some((message) => message.id === retainedAssistant.id)).toBe(false);
 
     vi.mocked(copyTextToClipboard).mockClear();
@@ -5121,6 +5106,7 @@ describe("SessionChatController", () => {
       },
     ]);
     expect(view.messages.filter((message) => message.model.type === "session_divider")).toEqual([]);
+    expect(view.detachTranscript).not.toHaveBeenCalled();
     expect(view.status.footer.type).toBe("regular");
   });
 
@@ -5156,6 +5142,7 @@ describe("SessionChatController", () => {
     controller.getInputHandlers().onEscape();
     await flush();
     expect(session.interrupt).toHaveBeenCalledTimes(2);
+    expect(view.detachTranscript).not.toHaveBeenCalled();
   });
 
   it("shows manual compaction status until the compact request finishes", async () => {

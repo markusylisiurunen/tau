@@ -23,6 +23,48 @@ function flushTerminal(terminal) {
   return new Promise((resolve) => terminal.write("", resolve));
 }
 
+function createHeadlessView() {
+  const terminal = new headless.Terminal({
+    cols: 80,
+    rows: 24,
+    scrollback: 20000,
+    allowProposedApi: true,
+  });
+  let onResize;
+  const writes = [];
+  createAppTerminal.mockReturnValue({
+    start: (_onInput, resize) => {
+      onResize = resize;
+    },
+    stop() {},
+    write: (data) => {
+      writes.push(data);
+      terminal.write(data);
+    },
+    get columns() {
+      return terminal.cols;
+    },
+    get rows() {
+      return terminal.rows;
+    },
+    hideCursor() {},
+    showCursor() {},
+    setProgramStatus() {},
+    setProgress() {},
+  });
+  terminal.write("shell output\r\nlaunch tau\r\n");
+  const view = new TuiChatView({ showThinking: false, themes: [] });
+  return {
+    terminal,
+    view,
+    writes,
+    resize: (columns, rows) => {
+      terminal.resize(columns, rows);
+      onResize();
+    },
+  };
+}
+
 describe("TuiChatView transcript detachment", () => {
   it.each([
     { messages: 0, editorLines: 1 },
@@ -33,36 +75,7 @@ describe("TuiChatView transcript detachment", () => {
   ])(
     "preserves scrollback with $messages messages and $editorLines editor lines",
     async ({ messages, editorLines }) => {
-      const terminal = new headless.Terminal({
-        cols: 80,
-        rows: 24,
-        scrollback: 20000,
-        allowProposedApi: true,
-      });
-      let onResize;
-      const writes = [];
-      createAppTerminal.mockReturnValue({
-        start: (_onInput, resize) => {
-          onResize = resize;
-        },
-        stop() {},
-        write: (data) => {
-          writes.push(data);
-          terminal.write(data);
-        },
-        get columns() {
-          return terminal.cols;
-        },
-        get rows() {
-          return terminal.rows;
-        },
-        hideCursor() {},
-        showCursor() {},
-        setProgramStatus() {},
-        setProgress() {},
-      });
-      terminal.write("shell output\r\nlaunch tau\r\n");
-      const view = new TuiChatView({ showThinking: false, themes: [] });
+      const { terminal, view, writes, resize } = createHeadlessView();
       const editorText = Array.from({ length: editorLines }, (_, index) => `draft-${index}`).join(
         "\n",
       );
@@ -98,8 +111,7 @@ describe("TuiChatView transcript detachment", () => {
         view.setThinkingVisibility(true);
         view.updateTheme("default");
         view.ui.renderNow();
-        terminal.resize(65, 30);
-        onResize();
+        resize(65, 30);
         view.ui.renderNow();
         await flushTerminal(terminal);
         expect(readLines(terminal, 0, terminal.buffer.active.length)).toContain(frozen);
@@ -115,6 +127,65 @@ describe("TuiChatView transcript detachment", () => {
         }
         await flushTerminal(terminal);
         expect(readLines(terminal, 0, terminal.buffer.active.length)).toContain(frozen);
+      } finally {
+        view.stop();
+        terminal.dispose();
+      }
+    },
+  );
+});
+
+describe("TuiChatView scrollback redraws", () => {
+  it.each([false, true])(
+    "keeps one copy of each message across theme and height changes (detached: %s)",
+    async (detach) => {
+      const { terminal, view, writes, resize } = createHeadlessView();
+      const messages = [];
+      const addMessages = (count) => {
+        for (let index = 0; index < count; index += 1) {
+          const text = `message-${messages.length}-end`;
+          messages.push(text);
+          view.addMessage({ type: "user", text }, text);
+        }
+        view.ui.renderNow();
+      };
+      const expectSingleCopies = async () => {
+        await flushTerminal(terminal);
+        const output = readLines(terminal, 0, terminal.buffer.active.length);
+        expect(output).toContain("shell output");
+        for (const message of messages) {
+          expect(output.split(message).length - 1, message).toBe(1);
+        }
+      };
+      view.start();
+      try {
+        addMessages(30);
+        await expectSingleCopies();
+        if (detach) {
+          view.detachTranscript();
+          addMessages(10);
+          await expectSingleCopies();
+        }
+        for (const [columns, rows] of [
+          [80, 50],
+          [80, 30],
+          [80, 18],
+          [80, 24],
+        ]) {
+          view.updateTheme("default");
+          view.ui.renderNow(true);
+          await expectSingleCopies();
+          resize(columns, rows);
+          view.ui.renderNow();
+          await expectSingleCopies();
+          addMessages(12);
+          await expectSingleCopies();
+        }
+        view.detachTranscript();
+        addMessages(10);
+        await expectSingleCopies();
+        expect(writes.join("")).not.toContain("\x1b[2J");
+        expect(writes.join("")).not.toContain("\x1b[3J");
       } finally {
         view.stop();
         terminal.dispose();

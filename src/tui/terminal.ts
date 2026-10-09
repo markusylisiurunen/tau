@@ -227,34 +227,6 @@ export class TauTerminal implements Terminal {
   }
 }
 
-export function preserveTerminalScrollback(terminal: Terminal): Terminal {
-  return {
-    start: (onInput, onResize) => terminal.start(onInput, onResize),
-    stop: () => terminal.stop(),
-    drainInput: (maxMs, idleMs) => terminal.drainInput(maxMs, idleMs),
-    // Main-screen redraws may clear the viewport, but detached history belongs to the terminal.
-    write: (data) => terminal.write(data.replaceAll("\x1b[3J", "")),
-    get columns() {
-      return terminal.columns;
-    },
-    get rows() {
-      return terminal.rows;
-    },
-    get kittyProtocolActive() {
-      return terminal.kittyProtocolActive;
-    },
-    moveBy: (lines) => terminal.moveBy(lines),
-    hideCursor: () => terminal.hideCursor(),
-    showCursor: () => terminal.showCursor(),
-    clearLine: () => terminal.clearLine(),
-    clearFromCursor: () => terminal.clearFromCursor(),
-    clearScreen: () => terminal.clearScreen(),
-    setTitle: (title) => terminal.setTitle(title),
-    setProgress: (active) => terminal.setProgress(active),
-    setProgramStatus: (status) => terminal.setProgramStatus(status),
-  };
-}
-
 /**
  * Create a terminal for Tau. If stdin is piped and we're still running in a TTY,
  * we fall back to reading input from /dev/tty so the chat remains interactive.

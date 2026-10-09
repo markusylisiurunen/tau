@@ -1,5 +1,5 @@
 import type { AutocompleteProvider, Component } from "@earendil-works/pi-tui";
-import { Spacer, TuiMainScreen } from "@earendil-works/pi-tui";
+import { Spacer } from "@earendil-works/pi-tui";
 import { resolveThemeTokensForAppearance, type ThemeDefinition } from "../core/config/index.js";
 import type { RecordingShortcut } from "../core/config/schema.js";
 import type { SubagentEvent } from "../core/subagents/types.js";
@@ -8,7 +8,8 @@ import type {
   SessionProtocolFeedbackTone,
   SessionProtocolPendingUserMessage,
 } from "../protocol/session_protocol.js";
-import { createAppTerminal, preserveTerminalScrollback } from "./terminal.js";
+import { ScrollbackTui } from "./scrollback_tui.js";
+import { createAppTerminal } from "./terminal.js";
 import { FALLBACK_TERMINAL_COLORS, type TerminalColors } from "./terminal_appearance.js";
 import { ToolUiRouter } from "./tool_ui_router.js";
 import { ChatContainerComponent } from "./ui/chat_container.js";
@@ -112,7 +113,7 @@ export interface ChatView {
 }
 
 export class TuiChatView implements ChatView {
-  private ui: TuiMainScreen;
+  private ui: ScrollbackTui;
   private chatContainer: ChatContainerComponent;
   private footer: FooterComponent;
   private pendingMessages: PendingMessagesComponent;
@@ -139,7 +140,7 @@ export class TuiChatView implements ChatView {
     this.terminalColors = options.terminalColors ?? FALLBACK_TERMINAL_COLORS;
     this.themes = options.themes;
     this.uiTheme = createUiTheme("ansi", this.resolvePaletteOverrides(options.themeId));
-    this.ui = new TuiMainScreen(preserveTerminalScrollback(createAppTerminal()));
+    this.ui = new ScrollbackTui(createAppTerminal());
     this.chatContainer = new ChatContainerComponent(this.uiTheme, options.showThinking);
     this.footer = new FooterComponent(this.uiTheme, this.ui);
     this.pendingMessages = new PendingMessagesComponent(this.uiTheme);
@@ -287,9 +288,10 @@ export class TuiChatView implements ChatView {
   detachTranscript(): void {
     this.ui.renderNow();
     const state = this.ui.captureRenderState();
-    const { columns, rows } = this.ui.terminal;
+    const { columns } = this.ui.terminal;
+    const rows = this.ui.screenRows;
     const transcriptRows = this.chatContainer.render(columns).length;
-    const lineDiff = transcriptRows - state.hardwareCursorRow;
+    const lineDiff = Math.max(transcriptRows, state.previousViewportTop) - state.hardwareCursorRow;
 
     // Relative movement also works before the first screenful, below the shell's output.
     // Moving above the viewport clamps to its top when the transcript is already offscreen.
@@ -298,6 +300,7 @@ export class TuiChatView implements ChatView {
     else if (lineDiff < 0) output += `\x1b[${-lineDiff}A`;
     output += `\x1b[J${"\r\n".repeat(rows - 1)}\x1b[H\x1b[?2026l`;
     this.ui.terminal.write(output);
+    this.ui.resetViewport(rows);
     this.ui.restoreRenderState({
       previousLines: [],
       previousWidth: columns,

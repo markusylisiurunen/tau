@@ -51,19 +51,19 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
-    "@cloudflare/workers-types": "^5.20261008.1",
-    "@types/node": "^24.19.1",
+    "@cloudflare/workers-types": "^5.20261010.1",
+    "@types/node": "^24.19.2",
     "@types/ws": "^8.18.2",
     "prettier": "^3.9.9",
     "typescript": "^7.0.2",
     "vitest": "^5.0.3",
-    "wrangler": "^4.148.0"
+    "wrangler": "^4.149.0"
   },
   "engines": {
     "node": ">=24.0.0"
   },
   "allowScripts": {
-    "esbuild@0.28.1": true,
+    "esbuild@0.28.2": true,
     "protobufjs@7.6.6": false,
     "fsevents@2.3.3": true,
     "@google/genai@2.21.0": false,

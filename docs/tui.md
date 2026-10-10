@@ -107,6 +107,8 @@ Run commands that change the context, such as persona changes, compaction, rewin
 
 The footer shows context usage as a percentage of the full model window, such as `20%/272k`. When an override is set, the effective compaction threshold appears in parentheses: `20%/272k (50k)`. This threshold cannot exceed the model's context window minus 16,384 tokens. With the default setting, the footer shows no threshold.
 
+After successful compaction, the TUI releases the earlier transcript from its live view and starts a new segment. Earlier output remains in terminal scrollback, subject to your terminal's scrollback limit. Theme redraws update the visible live output without replaying rows already in scrollback. Growing the terminal leaves newly exposed history untouched; the live rendering area does not grow until the next compaction. Width changes can still duplicate live output when the terminal reflows earlier rows. Failed, skipped, or interrupted compaction leaves the live transcript in place.
+
 [Sessions](sessions.md) describes compaction, rewind, recovery, and retry. [Prompts and project context](prompts-and-project-context.md) covers prompt files.
 
 ## Keyboard shortcuts

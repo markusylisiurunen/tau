@@ -2233,6 +2233,7 @@ export class SessionChatController {
   }
 
   private startCompactedUiSession(): void {
+    this.view.detachTranscript();
     this.renderSegment += 1;
     this.viewMessageIds.clear();
     this.ephemeralTimelineItems.clear();
@@ -2246,7 +2247,6 @@ export class SessionChatController {
   }
 
   private renderCompactedSnapshot(snapshot: SessionProtocolSnapshot): void {
-    this.view.resetToolUiSessionPreservingSubagents();
     this.startCompactedUiSession();
     this.renderSnapshot(snapshot);
   }
@@ -2255,7 +2255,6 @@ export class SessionChatController {
     snapshot: SessionProtocolSnapshot,
     cause: Extract<SessionProtocolDeltaMessage["cause"], { type: "compaction" }>,
   ): void {
-    this.view.resetToolUiSessionPreservingSubagents();
     this.startCompactedUiSession();
     this.renderSnapshot(snapshot);
 

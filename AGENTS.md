@@ -220,12 +220,7 @@ Inspect what `npm run check` reformatted before building. Use `npm test` for a s
 
 ## Git and GitHub
 
-- Never bypass hooks (`--no-verify`). Before amending, confirm the commit is yours and unpushed.
-- Commit subjects are short, imperative, lowercase, with no prefix. The body is empty, except that a single-commit issue fix without a PR may carry one closing-keyword line (`fixes #123`).
-- Branch names are a few lowercase descriptive words, with no prefix or issue number.
-- PR titles are concise and lowercase except proper nouns. PR bodies are prose with `## why` and `## what` (plus `## details` when useful) and end with a closing-keyword line when tied to an issue. Do not list routine verification commands. Pass multiline bodies with `gh pr create --title "..." --body-file - <<'EOF'`.
-- Use `gh` without `--repo`. Read issues with `gh issue view <id> --json closed,author,labels,title,body,comments`.
-- Never query or watch CI unless asked. When asked for status, run one non-waiting query and report it. Wait or watch only when asked to.
+Use skill `github-workflow` for all Git and GitHub work, including commit and pull request formatting.
 
 ## Releases
 
@@ -244,6 +239,8 @@ gh release create v$(node -p "require('./package.json').version") --generate-not
 ```
 
 ## Writing
+
+Use skill `clear-writing` for all prose.
 
 Before writing, identify the reader and what they need to do. Use only concepts that reader has. An implementation fact being true does not make it relevant.
 

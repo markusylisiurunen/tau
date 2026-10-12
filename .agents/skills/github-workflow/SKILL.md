@@ -22,7 +22,7 @@ The request determines which actions to take. This skill does not by itself gran
 
 By default, write like a developer talking to a colleague: plainly and briefly. Give enough context to understand the point without recounting the whole conversation. Use more detail when requested or needed to explain the change.
 
-Use sentence case for commit subjects, issue and PR titles, headings, and prose: capitalize the first word and proper nouns, and write identifiers as they are spelled. Do not use title case or force prose into lowercase.
+Use sentence case for issue and PR titles, headings, and prose: capitalize the first word and proper nouns, and write identifiers as they are spelled. Do not use title case or force prose into lowercase. Commit subjects follow the lowercase convention below.
 
 Write for someone who has not followed the conversation. Explain the problem, the intended result, and important limitations, without retelling how the work went. Never publish credentials, private document URLs, or unrelated personal information.
 
@@ -30,7 +30,7 @@ Write for someone who has not followed the conversation. Explain the problem, th
 
 Use a few descriptive lowercase words separated by hyphens for branch names, without category prefixes or issue numbers, unless the workflow supplies a name.
 
-Keep commit subjects short and imperative, without a prefix or trailing period, for example `Fix document reconnect handling`. Leave the body empty unless a single commit closes an issue without a PR. In that case, the body is only a closing-keyword line such as `Fixes #123`. When opening a PR, put the closing reference in its body instead.
+Keep commit subjects short, imperative, and lowercase, without a prefix or trailing period, for example `fix document reconnect handling`. Leave the body empty unless a single commit closes an issue without a PR. In that case, the body is only a closing-keyword line such as `fixes #123`. When opening a PR, put the closing reference in its body instead.
 
 ## Pull requests
 

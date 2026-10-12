@@ -1,0 +1,258 @@
+{
+  "version": 1,
+  "files": {
+    ".agents/skills/address-review-comments/SKILL.md": {
+      "type": "file",
+      "hash": "71469ac66b1324f05b43b29f52556e86f321aa1e22ad200cfddedeb759bc4405",
+      "mode": 420
+    },
+    ".agents/skills/agent-browser/SKILL.md": {
+      "type": "file",
+      "hash": "836fae3fe3208edf4177c9902b94ad8fbeada9f5b942458d3357f28d1dc34e4c",
+      "mode": 420
+    },
+    ".agents/skills/clear-writing/SKILL.md": {
+      "type": "file",
+      "hash": "10acd1201074f8fa71d72a9da7029a7ef8ec5e76c55b9e44faab0b6dd067a794",
+      "mode": 420
+    },
+    ".agents/skills/code-review/SKILL.md": {
+      "type": "file",
+      "hash": "c45ec0492687049d8db7ef7de31721295a23082805fb33b30aa96231c2bd67e5",
+      "mode": 420
+    },
+    ".agents/skills/cowork/references/configuration.md": {
+      "type": "file",
+      "hash": "66d7e65697e174fe92935070f3de6a01615f25bf40f6224b76ba629aaf0d3f43",
+      "mode": 420
+    },
+    ".agents/skills/cowork/SKILL.md": {
+      "type": "file",
+      "hash": "f89b922fe2dd4d585825652338e217a6347692879b1ffd6918c8834ca08536b1",
+      "mode": 420
+    },
+    ".agents/skills/decision-review/SKILL.md": {
+      "type": "file",
+      "hash": "94cd97598fc2cab573b2bcd0b7cc48d24420a08ad69708fe714840def97e6fbb",
+      "mode": 420
+    },
+    ".agents/skills/design-afresh/SKILL.md": {
+      "type": "file",
+      "hash": "cbabd89be614848269c159265a51e4ef9a26e91d3fc414e884fc7e5008857e6c",
+      "mode": 420
+    },
+    ".agents/skills/deslop/references/go.md": {
+      "type": "file",
+      "hash": "92f759832bfae830956b2fafe750a9af2baa83e5dc073f0f7b4ae10b3f1ba8eb",
+      "mode": 420
+    },
+    ".agents/skills/deslop/references/typescript.md": {
+      "type": "file",
+      "hash": "200d8be8de6c6a32b669309b22e02817415959af2dbce57c3f9205b350439026",
+      "mode": 420
+    },
+    ".agents/skills/deslop/SKILL.md": {
+      "type": "file",
+      "hash": "acd393b5cd7ef262be3db8069ac75332e88b648bc6d1274e061a848979386342",
+      "mode": 420
+    },
+    ".agents/skills/github-workflow/SKILL.md": {
+      "type": "file",
+      "hash": "4d20b6926c25d728de69bde6f781913038acc0ce82ebfdb5407671fca91264f0",
+      "mode": 420
+    },
+    ".agents/skills/guided-review/SKILL.md": {
+      "type": "file",
+      "hash": "f6299cc3ef7d5d1aa3c067ad36500cfede0c0114e9b6c8753c2ab0cfbf4de63d",
+      "mode": 420
+    },
+    ".agents/skills/plan/SKILL.md": {
+      "type": "file",
+      "hash": "92183b0996f1870ac6a9858515ad75af23ca209b04297c9cca1e7eaeb3bebdc5",
+      "mode": 420
+    },
+    ".claude/commands/workflows/address-review-comments.md": {
+      "type": "file",
+      "hash": "1d529c48b4eef4b73722013cf6513da7fe4c7e9b8eff11f79af712fa47b5fa49",
+      "mode": 420
+    },
+    ".claude/commands/workflows/code-review-branch.md": {
+      "type": "file",
+      "hash": "954627af8d3085322d858b46c20e357b5f5508cd483387a0326c824070fb89c5",
+      "mode": 420
+    },
+    ".claude/commands/workflows/code-review-changes.md": {
+      "type": "file",
+      "hash": "3be1fe36f88a642bea253d66d006415e250f534848aedccd8de91041712d0d0b",
+      "mode": 420
+    },
+    ".claude/commands/workflows/decision-review-branch.md": {
+      "type": "file",
+      "hash": "fb97fa83c2bcd0b9d4343212b5ba54d56e5776c3138c50326a07e62c81468a35",
+      "mode": 420
+    },
+    ".claude/commands/workflows/decision-review-changes.md": {
+      "type": "file",
+      "hash": "88cf18d2aeff36b11002980f4d54ba4bfca4eca830adf081cd8257e412523d38",
+      "mode": 420
+    },
+    ".claude/commands/workflows/deslop-branch.md": {
+      "type": "file",
+      "hash": "add95d53616047b0e147020469f415c663873ab5ef858e2931624298af8ecaa9",
+      "mode": 420
+    },
+    ".claude/commands/workflows/guided-review-branch.md": {
+      "type": "file",
+      "hash": "3db9fdb3068399152a84b5bee9ff427ac1437b75d1247a566be4ce624fac9703",
+      "mode": 420
+    },
+    ".claude/commands/workflows/guided-review-changes.md": {
+      "type": "file",
+      "hash": "900cc3eefe15eca7d500bca3d39619c201ebaa7f94f13da79fe8bf4e8712abe7",
+      "mode": 420
+    },
+    ".claude/commands/workflows/monthly-report.md": {
+      "type": "file",
+      "hash": "ed1b3316bcbe22a726c3b42d5dfd371245ce1044b31f76117863a5465bb7d137",
+      "mode": 420
+    },
+    ".claude/commands/workflows/plan.md": {
+      "type": "file",
+      "hash": "e2f056690eea39338747a4e013a1fa47184540b635f3ef4581b27b44c7a96256",
+      "mode": 420
+    },
+    ".claude/skills/address-review-comments": {
+      "type": "symlink",
+      "hash": "a2bccaca6b946b3bcabb99d136b38379593b9fde6355626624b280c39c0775c4"
+    },
+    ".claude/skills/agent-browser": {
+      "type": "symlink",
+      "hash": "42c69efa53113db14344b45869afad16976d1a55fe4d54b202a4d1995924fc45"
+    },
+    ".claude/skills/clear-writing": {
+      "type": "symlink",
+      "hash": "46617475bdf19da4baa353e1b356471fc60c80ccd549efe14c87f420084beea1"
+    },
+    ".claude/skills/code-review": {
+      "type": "symlink",
+      "hash": "d5622c89fc695a20ab08cab65f699e60a61b03c98a1157dddede6c3223046fe2"
+    },
+    ".claude/skills/cowork": {
+      "type": "symlink",
+      "hash": "3bd9bb1596414bb78617b80ebea2e09913848f10353b5492e8a97f251423f3f7"
+    },
+    ".claude/skills/decision-review": {
+      "type": "symlink",
+      "hash": "304e0c47e9d476de123063eafc63397605c8deb06d4bd6dcca631234b0abcbe4"
+    },
+    ".claude/skills/design-afresh": {
+      "type": "symlink",
+      "hash": "4aba4c0ed4654524ab1eea569a3ee9ae9c8370548105f4efcb1006251114eb73"
+    },
+    ".claude/skills/deslop": {
+      "type": "symlink",
+      "hash": "4127afd0a48f4a7f2fa12c8d2c18f79a5d665db335a0682f9af81bcde968c2a8"
+    },
+    ".claude/skills/github-workflow": {
+      "type": "symlink",
+      "hash": "b26ff8c457de6045d17b1aeab51739f7107cf4f281183a9624c1fafd1f851f55"
+    },
+    ".claude/skills/guided-review": {
+      "type": "symlink",
+      "hash": "370534f21abdda1cee8c767be29c59bf9bc826581a84d4f52d0f2d747e433631"
+    },
+    ".claude/skills/plan": {
+      "type": "symlink",
+      "hash": "c5d36ae1b8458567a4b0dd5d7f7a810ce56606beb614631fadda7f7be4ed1302"
+    },
+    ".cowork/config.json": {
+      "type": "file",
+      "hash": "a68c88a79cf0055bb426317f192651aa90d44e23291254a3e2a504ad2d126b79",
+      "mode": 420
+    },
+    ".cowork/prompts/issue-implement.append.md": {
+      "type": "file",
+      "hash": "24b8dbb9444c1eb6af2a12a5e7a1c40bd5ccf4af14af13eae6e93e38a7ab536e",
+      "mode": 420
+    },
+    ".cowork/prompts/issue-plan.append.md": {
+      "type": "file",
+      "hash": "8b3815cdd0ca5b23560409dda76640f92d04b561b86d241a13de27f2f29a9579",
+      "mode": 420
+    },
+    ".cowork/prompts/pull-request-deslop.append.md": {
+      "type": "file",
+      "hash": "dbddcfae301a7b0f684fa11b7d6fbde359accafefd306f7e08cbea7ba3e93436",
+      "mode": 420
+    },
+    ".cowork/prompts/pull-request-explain.append.md": {
+      "type": "file",
+      "hash": "6cb91d09b09b8f425e9c93c19a9fe3196bbeb49b668b3e87701e7fffa8c2d30e",
+      "mode": 420
+    },
+    ".cowork/prompts/pull-request-review.append.md": {
+      "type": "file",
+      "hash": "16cecf2163bf06986034d3668b29fde802848592841669697c0340fc4e49fe53",
+      "mode": 420
+    },
+    ".tau/config.json": {
+      "type": "file",
+      "hash": "8a3046eb9291d37710c67e80034fff085825fbe524606499cd0603782bc9a5fc",
+      "mode": 420
+    },
+    ".tau/prompts/address-review-comments.md": {
+      "type": "file",
+      "hash": "a8c15ba6af57c2b824c0c2b4c3feecffef954a9136170f2615c2bcabb2d0eff8",
+      "mode": 420
+    },
+    ".tau/prompts/code-review-branch.md": {
+      "type": "file",
+      "hash": "5b0718c8788468d6dba9826a5d01c3079ba14f40bea60ad1ea9c907ccf845725",
+      "mode": 420
+    },
+    ".tau/prompts/code-review-changes.md": {
+      "type": "file",
+      "hash": "fb665a3aea5e3ad3379ae34858c443b6ae67c3eeae0e1959805e2a26c728640e",
+      "mode": 420
+    },
+    ".tau/prompts/decision-review-branch.md": {
+      "type": "file",
+      "hash": "1ab3a873933811508784fad1f34a1ed82b2299aa6560b09d36f57e481462a289",
+      "mode": 420
+    },
+    ".tau/prompts/decision-review-changes.md": {
+      "type": "file",
+      "hash": "3a692eaa3ec7ec912ee10fb7e40df564d2f42f1762f363598fae35f3ff2d0448",
+      "mode": 420
+    },
+    ".tau/prompts/deslop-branch.md": {
+      "type": "file",
+      "hash": "4b5049ddb57710a6258868d0722d26401425d7d8cfaeca6594ef434a910a8d8d",
+      "mode": 420
+    },
+    ".tau/prompts/guided-review-branch.md": {
+      "type": "file",
+      "hash": "6192f7faedfa125d8e1fb00aa9b1a79c020cbafc05662c844795a3f39e8f4536",
+      "mode": 420
+    },
+    ".tau/prompts/guided-review-changes.md": {
+      "type": "file",
+      "hash": "6ca8382872e0e2c0ce0578ed082ba044c223e658edc2b40dd345597943d99f5f",
+      "mode": 420
+    },
+    ".tau/prompts/monthly-report.md": {
+      "type": "file",
+      "hash": "b56246ae86258571136f13ec8ece80a13b7143090be9c2ccf44dd2357e242f30",
+      "mode": 420
+    },
+    ".tau/prompts/plan.md": {
+      "type": "file",
+      "hash": "ff73f625e8b3492eab92629dda63aa1b64c9ce71fbfeb04410ee9c797250c9d3",
+      "mode": 420
+    },
+    "AGENTS.md": {
+      "type": "section",
+      "hash": "0608579801d0479007ff0b92774a6f0faef490a0b86f76b328dc245dedaf1b3b"
+    }
+  }
+}

@@ -1,5 +1,5 @@
 ---
-label: "clean up current branch"
+label: "deslop current branch"
 ---
 
-Use @@skill:deslop. Think hard and be thorough. Your target is the current branch. Enumerate its changes with `git diff main...HEAD` (set `maxOutputTokens: 32768` for large diffs). Treat that diff as the entry surface; follow into surrounding code as the skill directs.
+Use skill `deslop` on the current branch against `main`. Start from the changes the branch makes relative to `main`, and follow into surrounding code as the skill directs.

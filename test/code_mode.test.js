@@ -96,6 +96,24 @@ describe("public code-mode runtime", () => {
     });
   });
 
+  it.concurrent.each(["issue", "[issue]"])(
+    "rejects raw %s output without coercion and accepts selected text",
+    async (value) => {
+      const result = await executeTauCodeMode({
+        ...createDefinition(),
+        code: [
+          'const issue = await linear.issues.get("TAU-418");',
+          "try {",
+          `  printText(${value});`,
+          '} catch (error) { printText(error instanceof TypeError ? "rejected" : "unexpected"); }',
+          "printText(issue.id);",
+        ].join("\n"),
+      });
+
+      expect(getTextContent(result)).toBe("rejected\nTAU-418");
+    },
+  );
+
   it.concurrent.each(["jpeg", "png", "webp"])(
     "forwards validated %s images from any API",
     async (format) => {
@@ -371,7 +389,7 @@ describe("public code-mode runtime", () => {
     ).rejects.toThrow("Code-mode API arguments must be JSON-serializable values");
   });
 
-  it.concurrent("provides canonical documentation and executable plain-text output examples without dumping response metadata", async () => {
+  it.concurrent("provides canonical documentation and executable output examples without dumping response metadata", async () => {
     const docs = await executeTauCodeMode({
       ...createDefinition(),
       code: "printText(docs)",
@@ -380,7 +398,7 @@ describe("public code-mode runtime", () => {
     expect(getTextContent(docs)).not.toContain("`files`");
     expect(getTextContent(docs)).toContain("# Linear API");
     const examples = [...getTextContent(docs).matchAll(/```js\n([\s\S]*?)\n```/g)];
-    expect(examples).toHaveLength(2);
+    expect(examples).toHaveLength(3);
     const result = await executeTauCodeMode({
       ...createDefinition(),
       code: [
@@ -389,7 +407,9 @@ describe("public code-mode runtime", () => {
         ...examples.map((match) => match[1]),
       ].join("\n"),
     });
-    expect(getTextContent(result)).toBe("one: First\nHello\n\nWorld");
+    expect(getTextContent(result)).toBe(
+      'one: First\nHello\n\nWorld\n[{"id":"one","title":"First"}]',
+    );
   });
 
   it("rejects oversized bridge arguments before calling the handler", async () => {

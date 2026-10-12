@@ -159,6 +159,8 @@ printText(await tau.docs("web"));
 
 The agent does not re-read documentation it has already seen. MCP tool descriptions and Nook's authoring guide are read in their own separate steps. Programs do not need to print intermediate results.
 
+`printText` accepts only strings; objects and arrays throw a `TypeError`. The agent selects relevant fields and explicitly formats concise plain text to save tokens. `JSON.stringify` is reserved for cases where the structure matters or machine-readable JSON is requested, with fields selected first instead of dumping whole responses.
+
 Only `printText(string)` and awaited `printImage({ data, mimeType })` produce output, in the order they are called. Return values are ignored. Text is truncated in the middle to `maxOutputTokens` (default 8,192; range 1–65,536). The agent leaves it unset unless needed, and may raise it to 16,384 on its own. Higher values require an explicit user request. When text from the built-in `code` tool is truncated, Tau saves it to a temporary file in the execution environment when possible and reports the path. The agent reads that file instead of running the program again with its side effects. The file does not contain images or text lost to capture limits.
 
 JPEG, PNG, and WebP images are validated outside the sandbox and fitted to 4,096 pixels per dimension and 3.5 MiB each. Source images can be at most 40 megapixels, and a program can emit at most 16 images. Valid images are kept even if the built-in `code` program fails.

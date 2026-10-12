@@ -169,7 +169,7 @@ compartment.evaluate(String.raw`
 
   Object.defineProperty(globalThis, "printText", {
     value: (text) => {
-      if (typeof text !== "string") throw new TypeError("printText expects a string");
+      if (typeof text !== "string") throw new TypeError("printText expects a string. Select relevant fields and format concise plain text to save tokens. Only use JSON.stringify on selected data when JSON structure is needed; do not dump whole responses.");
       writeOutputBridge("stdout", text);
     },
   });

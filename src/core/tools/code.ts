@@ -65,7 +65,7 @@ export function createCodeToolDefinition(options: {
         `Available capabilities: ${capabilities.map((capability) => capability.name).join(", ")}.`,
         ...capabilities.map((capability) => `tau.${capability.name}: ${capability.description}`),
         "When this tool is useful and its runtime guide is not visible, first run only printText(docs). Read it before writing a later program. Before using each capability, printText(await tau.docs(name)) in a documentation-only call unless that reference is already visible. Do not guess API signatures.",
-        "Use printText(string) and await printImage({ data, mimeType }) for output. Return values are ignored. Programs have finite execution, request, and output limits. Side effects are not rolled back and programs are not automatically retried.",
+        "Use printText(string) and await printImage({ data, mimeType }) for output. printText rejects objects and arrays: select relevant fields and format concise plain text to save tokens. Only use JSON.stringify on selected data when JSON structure is needed; do not dump whole responses. Return values are ignored. Programs have finite execution, request, and output limits. Side effects are not rolled back and programs are not automatically retried.",
       ].join("\n\n"),
       parameters: Type.Object(
         {

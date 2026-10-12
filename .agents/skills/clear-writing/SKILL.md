@@ -1,6 +1,6 @@
 ---
 name: "clear-writing"
-description: "Write, rewrite, or review text so it reads like a knowledgeable person explaining something to a respected colleague: plain, direct, precise, and free of AI writing habits. Use for any text, including documentation, skills, prompts, pull requests, blog posts, and messages. Trigger: eager."
+description: "Write, rewrite, or review text so it reads like a knowledgeable person explaining something to a respected colleague: plain, direct, precise, and free of AI writing habits. Apply proactively whenever writing, rewriting, or reviewing text, including documentation, skills, prompts, pull requests, blog posts, and messages, even when the skill is not requested. Trigger: eager."
 ---
 
 Use this skill when writing new text, rewriting existing text, or reviewing someone else's writing. It applies to any writing: documentation, agent instructions, skills, pull request descriptions, commit messages, comments, chat replies, and technical blog posts. The request decides what to produce. When it asks for a rewrite, follow the rewriting section as well.
@@ -17,7 +17,7 @@ Plain does not mean simplistic. Keep every distinction the reader needs, and sta
 
 ## Structure and formatting
 
-Choose the form that makes the content easiest to read. Paragraphs suit reasoning, explanation, and anything where the connections between points matter. Structure suits content that already has structure:
+Choose the form that makes the content easiest to read. Paragraphs are often a good place to start. They suit reasoning, explanation, and anything where the connections between points matter. Structure suits content that already has structure. When the content has that shape, lists, tables, and headings are the better choice, because they make the text easier to scan and follow:
 
 - Bulleted lists for parallel items a reader may scan or check off, such as options, requirements, or findings.
 - Numbered lists for steps that happen in order.
@@ -25,7 +25,20 @@ Choose the form that makes the content easiest to read. Paragraphs suit reasonin
 - Code formatting for commands, code, identifiers, and exact output.
 - Headings in longer documents, so readers can find the part they need.
 
-Write each list item as a complete thought in the same plain style. If the points depend on each other through "because", "so", or "unless", write a paragraph instead, since a list would hide those connections. Keep formatting in proportion to the length of the text: a three-sentence reply needs no headings.
+Write each list item as a complete thought in the same plain style. If the points depend on each other through "because", "so", or "unless", write a paragraph instead, since a list would hide those connections. Keep formatting in proportion to the length of the text: a three-sentence reply needs no headings. Use structure where it fits the content naturally. Do not add it only to make text look organized, and do not use it to break up connected reasoning.
+
+Show the thing itself when that is easier to understand than a description of it. A small concrete example is often faster to read than several paragraphs of prose, and more exact. The reader sees the actual shape and does not have to rebuild it from a description. This also applies to simple things. A rule, calculation, or behavior described only in general terms can take several reads to understand. One concrete case with real values often makes it clear at once, and it also shows whether the general description was correct. Ask yourself what the reader would want to see, and show that.
+
+The right example depends on the subject. In code it might be a few lines of pseudocode or the before and after of a data shape. In a process it might be one worked case. In a rule or policy it might be a short scenario with actual numbers. For a change of any kind, show the state before and after. Keep examples small. Include only the parts that matter, and mark omitted parts clearly. Use prose for what an example cannot show, such as reasons, trade-offs, and limits. Often the best form is one sentence that states the general rule, followed by an example.
+
+- Before: "The endpoint now nests each user's teams inside the user object, and the separate top-level list of teams has been removed."
+- After: "Teams are now nested inside each user:"
+  ```
+  before: { users: [{ id, ... }], teams: [{ id, userId, ... }] }
+  after:  { users: [{ id, teams: [{ id, ... }], ... }] }
+  ```
+- Before: "Refunds are prorated based on the unused portion of the billing period, calculated from the cancellation date."
+- After: "Refunds cover the unused part of the billing period. For example, if you pay 30 € for a 30-day month and cancel after 10 days, you get 20 € back."
 
 ## Habits to remove
 
@@ -94,10 +107,10 @@ The rewrite replaces words that only sound formal ("exhibits", "ameliorate", "ob
 
 ## Rewriting existing text
 
-A rewrite changes how the text reads and keeps what it says. Readers of the original and the rewrite should come away with the same points, weighted the same way.
+A rewrite changes how the text reads and keeps what it says. Readers of the original and the rewrite should come away with the same points, weighted the same way. How much of the form may change depends on the request: fixing errors changes almost nothing, while restructuring a document may change nearly all of it. What the text says stays the same in every case.
 
 1. Read the whole text first and note its points, their order, and how strongly each is stated.
-2. Rewrite section by section. Keep the structure unless it actively hurts comprehension.
+2. Decide how much of the structure to keep. Text that has gone through many revisions often has a structure that no longer fits its content, so restructure when the request allows it and a different order or form would make the text clearer. If the request asks only for a light edit, keep the existing structure unless it actively hurts comprehension. Then rewrite one part at a time, following the structure you chose. That may be the original sections or new ones.
 3. Compare the result with the original line by line. Look for drift in:
    - **Strength.** "May", "can", "usually", "probably", and "never" are meaning. A rewrite that turns "may" into "probably" or "can be acceptable" into "is acceptable" has changed the claim.
    - **Scope.** Check that a rule still covers the same cases, no more and no fewer.

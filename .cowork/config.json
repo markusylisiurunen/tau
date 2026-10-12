@@ -1,13 +1,31 @@
 {
   "workflows": {
-    "issue-plan": { "reasoning": "medium" },
+    "issue-plan": {
+      "persona": "gpt-6-astra-chatgpt-coder",
+      "reasoning": "medium"
+    },
     "pull-request-explain": {
       "persona": "gpt-6.1-sol-chatgpt-coder",
       "reasoning": "medium"
     },
-    "pull-request-review": { "reasoning": "high" },
+    "pull-request-review": {
+      "persona": "gpt-6-astra-chatgpt-coder",
+      "reasoning": "high"
+    },
     "pull-request-diff": {
       "persona": "gpt-6.1-sol-chatgpt-coder",
+      "reasoning": "medium"
+    },
+    "issue-implement": {
+      "persona": "gpt-6-astra-chatgpt-coder",
+      "reasoning": "medium"
+    },
+    "pull-request-deslop": {
+      "persona": "gpt-6-astra-chatgpt-coder",
+      "reasoning": "medium"
+    },
+    "pull-request-fix": {
+      "persona": "gpt-6-astra-chatgpt-coder",
       "reasoning": "medium"
     }
   }

@@ -2,18 +2,22 @@
   "defaultPersona": "gpt-6-astra-chatgpt-coder:medium",
   "subagents": {
     "launchModels": [
-      "openai-codex/gpt-6.1-sol:low",
-      "openai-codex/gpt-6.1-sol:medium",
-      "openai-codex/gpt-6.1-sol:high",
-      "openai-codex/gpt-6.1-sol:xhigh",
-      "openai-codex/gpt-6-luna:low",
-      "openai-codex/gpt-6-luna:medium",
-      "openai-codex/gpt-6-luna:high",
-      "openai-codex/gpt-6-luna:xhigh",
+      "anthropic/claude-opus-5-5:high",
+      "anthropic/claude-opus-5-5:low",
+      "anthropic/claude-opus-5-5:medium",
+      "anthropic/claude-sonnet-5-5:high",
+      "anthropic/claude-sonnet-5-5:low",
+      "anthropic/claude-sonnet-5-5:medium",
+      "openai-codex/gpt-6-astra:high",
       "openai-codex/gpt-6-astra:low",
       "openai-codex/gpt-6-astra:medium",
-      "openai-codex/gpt-6-astra:high",
-      "openai-codex/gpt-6-astra:xhigh"
+      "openai-codex/gpt-6-luna:high",
+      "openai-codex/gpt-6-luna:low",
+      "openai-codex/gpt-6-luna:medium",
+      "openai-codex/gpt-6-luna:xhigh",
+      "openai-codex/gpt-6.1-sol:high",
+      "openai-codex/gpt-6.1-sol:low",
+      "openai-codex/gpt-6.1-sol:medium"
     ]
   }
 }

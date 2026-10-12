@@ -118,11 +118,11 @@ type User struct {
 
 Watch for parallel structs representing the same concept across domain, storage, transport, and presentation layers. Share one owned type when the contracts are truly identical. When boundaries need different structs, use an explicit conversion function and keep field meaning and optionality aligned.
 
-Do not accept multiple JSON or storage shapes indefinitely without a compatibility requirement. Decode the canonical form and reject unexpected alternatives. When persisted data has an openability contract, handle older representations at the owning version or recovery boundary using the simplest appropriate migration, normalization, regeneration, or intentional degradation strategy; keep the current internal type canonical.
+Do not accept multiple JSON or storage shapes indefinitely without a compatibility requirement. Decode the canonical form and handle supported older data at the owning boundary. Preserve required access to existing data; simplifying a reader is not permission to reset or discard it.
 
 ## Keep interfaces earned
 
-An interface should express a real boundary, support multiple meaningful implementations, or isolate a dependency that callers should not own. Remove one-implementation interfaces and pass-through adapters that add no policy or invariant.
+An interface should express a real boundary, support multiple meaningful implementations, or isolate a dependency that callers should not own. One implementation is not itself a reason to remove an interface. Remove interfaces and pass-through adapters when they add no useful boundary or understanding.
 
 Prefer accepting the smallest interface needed at the consumer, but do not create an interface solely to mock a trivial function in a low-value test.
 
@@ -152,6 +152,6 @@ Avoid generic utility packages that collect unrelated one-line helpers. Put beha
 
 ## Test behavior, not syntax
 
-Keep tests for lifecycle, concurrency, persistence, parsing, security boundaries, and error behavior that is easy to regress. Remove tests that only assert a literal return, zero-value initialization, direct field assignment, or a wrapper forwarding its arguments.
+Keep tests for lifecycle, concurrency, persistence, parsing, security boundaries, and other behavior that is easy to regress. Inspect tests of literal returns, zero-value initialization, direct field assignment, and argument forwarding for meaningful coverage. Remove them only when they add no protection beyond the remaining tests; a simple assertion can still protect an important contract.
 
 Heavy mocking and large fake interfaces often indicate the production boundary is too broad. Tighten the design before adding more test machinery.

@@ -68,7 +68,7 @@ const content = readContent(value.content, result) ?? [
 ];
 ```
 
-Choose the canonical serialized shape. Make its parser and serializer symmetric and reject unexpected alternatives. When persisted data has an openability contract, handle older representations at the owning version or recovery boundary using the simplest appropriate migration, normalization, regeneration, or intentional degradation strategy; keep the current internal type canonical.
+Choose the canonical serialized shape. Make its parser and serializer symmetric and handle supported older data at the owning boundary. Preserve required access to existing data; simplifying a reader is not permission to reset or discard it.
 
 ```ts
 // tighter
@@ -124,7 +124,7 @@ Avoid runtime branching that guesses which version of a union or payload arrived
 
 ## Remove thin helpers and abstractions
 
-Inline a helper with one trivial caller unless it owns a non-obvious invariant. Remove wrapper functions that only rename another call, generic utilities used once, interfaces with one implementation and no meaningful boundary, and types that merely alias another type without narrowing or adding semantics.
+Inspect helpers with one trivial caller, wrappers that only rename another call, one-off generic utilities, and types that alias another type. Inline or remove them when they add indirection without naming a useful concept, hiding complexity, or defining a meaningful boundary. A single caller or implementation is not itself a reason to remove an abstraction.
 
 ```ts
 // slop

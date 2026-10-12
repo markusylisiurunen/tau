@@ -1,6 +1,6 @@
 ---
 name: "design-afresh"
-description: "Rethink a target from first principles and design it as if building it today, using top-down reasoning and abstractions that reduce cognitive load. Supports discussion, recommendations, implementation, or PR workflows as requested. Trigger: explicit."
+description: "Rethink a target from first principles and design it as if building it today, using top-down reasoning and abstractions that reduce cognitive load. Supports discussion, recommendations, implementation, or PR workflows as requested. Use only when the user explicitly names this skill or active repository or skill instructions explicitly require it; do not activate merely because a task is related. Trigger: explicit."
 ---
 
 This skill works on any development target: a feature, uncommitted changes, a branch, an existing library, a service, or anything else the user names. It covers existing code as much as new code, and applies equally to frontend and backend work in any language.
@@ -10,14 +10,16 @@ This skill works on any development target: a feature, uncommitted changes, a br
 Three principles apply throughout the work:
 
 - **Design for today's problem from a clean slate.** Bring along what has been learned and the constraints that are real, and leave the inherited structure behind. Choose the design on its merits, then reuse existing code where it fits. The size of the redesign is never a reason to settle for a worse outcome.
-- **Build a coherent architecture with useful abstractions.** Every concept, rule, and piece of state should have a clear owner. Draw boundaries so each part can be understood on its own, and so callers never have to reconstruct internal rules or coordinate hidden dependencies.
+- **Build a coherent architecture with useful abstractions.** Every concept, rule, and piece of state should have a clear owner. A useful abstraction reduces what a reader has to keep in their head: they can think about a part through a small, reliable model and set its internals aside. Draw boundaries so each part can be understood on its own, and so callers never have to reconstruct internal rules or coordinate hidden dependencies.
 - **Make complexity earn its place.** Preserve correctness, security, and real guarantees. Question layers, special cases, and recovery machinery that cost more than they deliver. Keep what fits, and change whatever makes the problem harder than it needs to be.
 
 ## Standard of craftsmanship
 
-Picture a deeply experienced engineer reading the result for the first time. They value simplicity, directness, and readable code that explains itself, and they appreciate abstractions whose boundaries show a thorough understanding of the problem. They should be able to see why each piece exists and how the pieces fit together without knowing the history of the implementation. Names carry meaning, control flow is easy to follow, and interfaces make their responsibilities and correct use clear.
+Picture an experienced engineer reading the result for the first time. They value simplicity, directness, and readable code that explains itself, and they appreciate abstractions whose boundaries show a thorough understanding of the problem. They should be able to see why each piece exists and how the pieces fit together without knowing the history of the implementation. Names carry meaning, control flow is easy to follow, and interfaces make their responsibilities and correct use clear.
 
-Aim to delight that engineer by making a difficult problem feel unexpectedly understandable. The sophistication belongs in the thinking behind the design, and reading the code should take little effort. A good abstraction is admired for the complexity it takes off its callers' hands; its ingenuity is beside the point. The result should feel straightforward without being simplistic: real complexity is handled with care, necessary distinctions stay visible, and the reader is never asked to work harder just to accommodate the implementation.
+Things that play the same role look and behave the same way. Related names follow one pattern, corresponding operations have matching shapes, and an abstraction over several providers or backends makes them feel interchangeable to callers. Once the reader learns one of them, they can predict the rest.
+
+Aim to delight that engineer by making a difficult problem feel unexpectedly understandable. The sophistication belongs in the thinking behind the design, and reading the code should take little effort. A good abstraction earns admiration for the complexity it takes off its callers' hands. How clever it is does not matter. It frees callers from understanding the implementation, and it still makes plain what it does. Go's `io.Reader` is a good example: one small method whose meaning is obvious, behind which files, network connections, compression, and buffering all look the same. The result should feel straightforward without being simplistic: real complexity is handled with care, necessary distinctions stay visible, and the reader is never asked to work harder just to accommodate the implementation.
 
 ## Perspective
 
@@ -41,7 +43,7 @@ Read the applicable project guidance and inspect the target, its consumers, rela
 
 - The problem being solved and the outcomes that matter.
 - The intended behavior, including important failure cases and invariants.
-- Genuine constraints such as security, data integrity, external contracts, performance, and operational requirements.
+- Real constraints such as security, data integrity, external contracts, performance, and operational requirements.
 - Which apparent requirements are merely artifacts of the current implementation.
 
 Existing code and tests are evidence. Weigh them, but do not treat them as an unquestionable specification. Keep observed behavior separate from inferred intent. Resolve uncertainty from the available context first, and ask the user only when a consequential question remains open and the workflow allows it.
@@ -58,9 +60,9 @@ Move freely between levels. Trace representative operations and important edge c
 
 Compare the preferred design with the implementation only after you have formed it. Identify where the current system already fits and where it makes the problem harder to understand or work with.
 
-Look across corresponding operations, interfaces, and representations as well as at each one individually. Meaningful symmetry lets a reader learn a concept once and recognize it everywhere it appears. Ask whether each difference expresses a real requirement or whether reasonable local implementations have simply drifted apart. Related patterns may turn out to be one concept with intentional variations. Share meaning and decisions, and leave mere syntactic similarity alone, so unrelated things can still change independently. The aim is a coherent model; uniformity has no value on its own.
+Look across corresponding operations, interfaces, and representations as well as at each one individually. Meaningful symmetry lets a reader learn a concept once and recognize it everywhere it appears. Ask whether each difference expresses a real requirement or whether reasonable local implementations have simply drifted apart. Related patterns may turn out to be one concept with intentional variations. Share meaning and decisions, and leave mere syntactic similarity alone, so unrelated things can still change independently. The aim is a coherent model, and uniformity has no value on its own.
 
-Use the comparison to decide what to reuse and what to change, and do not let it pull the preferred design back toward the easiest patch. A materially better outcome can justify a substantial refactor or redesign, and neither past effort nor the amount of code involved is a reason to keep a weaker design. Honor any explicit scope or delivery constraints, but do not invent a preference for small diffs. Reuse what genuinely fits, and treat neither preservation nor replacement as a goal in itself.
+Use the comparison to decide what to reuse and what to change, and do not let it pull the preferred design back toward the easiest patch. A materially better outcome can justify a substantial refactor or redesign, and neither past effort nor the amount of code involved is a reason to keep a weaker design. Honor any explicit scope or delivery constraints, but do not invent a preference for small diffs. Reuse what fits, and treat neither preservation nor replacement as a goal in itself.
 
 The target is where the work starts, and its boundary does not limit the architecture. Unless the user explicitly limits scope, follow necessary changes into shared libraries, consumers, and adjacent subsystems so the result is coherent. Every such expansion must serve the target's design; unrelated cleanup falls outside this skill.
 
@@ -76,12 +78,12 @@ Look for:
 - **Clear ownership.** Important rules, state, and lifecycle decisions each have an identifiable owner, instead of being coordinated implicitly across many places.
 - **Useful contracts.** Treat internal packages as small libraries whose users are their callers. Design exported APIs deliberately, with cohesive operations, clear inputs and results, and understandable failure and lifecycle behavior. Correct use should be straightforward without reading the implementation. Internal visibility does not excuse a careless interface. Library-quality design also does not call for speculative extensibility, publishing infrastructure, or new compatibility commitments.
 - **Cohesion.** Details that change for the same reason live together, and unrelated concerns stay apart.
-- **Meaningful distinctions.** Separate states, options, and representations when they need different behavior or guarantees. Having arisen in different places is not reason enough. When several flags together describe one condition, consider naming that condition directly; when they describe independent facts, keep them separate instead of forcing them into one status.
-- **Proportionate structure.** Each layer or extension point should solve a problem that exists today. Ask what would become harder to understand or change if it were removed, rather than whether it might be useful someday.
+- **Meaningful distinctions.** Separate states, options, and representations when they need different behavior or guarantees. Having arisen in different places is not reason enough. When several flags together describe one condition, consider naming that condition directly. When they describe independent facts, keep them separate instead of forcing them into one status.
+- **Proportionate structure.** Each layer or extension point should solve a problem that exists today. Ask what would become harder to understand or change if it were removed, instead of whether it might be useful someday.
 
-Fewer lines or layers do not automatically make code simpler, and more abstractions do not automatically make the architecture better. Use comments to explain reasoning that is genuinely non-obvious; intricacy that could have been avoided should be removed instead of explained.
+Fewer lines or layers do not automatically make code simpler, and more abstractions do not automatically make the architecture better. Keep the bar for comments high. Well-chosen names and clear structure should carry most of the explanation, so add a comment only when the code cannot show its own reasoning, such as a constraint, a tradeoff, or a decision that would otherwise surprise the reader. Remove intricacy that could have been avoided instead of explaining it.
 
-Follow the idioms of the language and repository. In a React feature, for example, check whether state transitions and effects have coherent ownership or are scattered across rendering components. Moving the same tangled hooks into another file leaves the model unchanged, and simple local UI state does not automatically need its own state-management layer. The same principles of ownership and reasoning apply to backend services, libraries, CLI tools, and infrastructure.
+Follow the idioms of the language and repository. Use the patterns, naming, and error handling that people who work in this codebase already know, so the new design looks like it belongs there. A structure that works well in one language can feel foreign in another, and a reader who recognizes familiar patterns has less to learn.
 
 ## Challenge behavior selectively
 
@@ -93,9 +95,9 @@ Avoid reopening every decision. For each challenge, identify the specific behavi
 
 Separate the complexity that real guarantees require from the complexity the implementation introduced. Keep the normal path clear and reliable, and do not let an endless list of hypothetical failures shape the architecture.
 
-For an unusual case, weigh its likelihood, its consequences, how recoverable it is, and how much complexity handling it would add. A clear error, an explicitly unsupported case, or a safe retry by the user can be better than seamless recovery that needs many extra states, fallbacks, and coordination paths. Some inconvenience in a rare situation can be acceptable. Silently corrupting data or reporting false success never is. Rarity alone does not justify weakening security, data integrity, or an established contract.
+For an unusual case, weigh its likelihood, its consequences, how recoverable it is, and how much complexity handling it would add. A clear error, an explicitly unsupported case, or a safe retry by the user can be better than automatic recovery that needs many extra states, fallbacks, and coordination paths. Some inconvenience in a rare situation can be acceptable. Silently corrupting data or reporting false success never is. Rarity alone does not justify weakening security, data integrity, or an established contract.
 
-State any reduced guarantee openly, and never ship a known defect in the name of simplicity. Apply the same judgment to verification: protect the guarantees that matter instead of trying to enumerate every imaginable scenario.
+State any reduced guarantee openly. A rare case that is deliberately left unsupported and fails with a clear error is a documented limitation, and it can be acceptable. A known bug that silently produces wrong results is a defect, and simplicity never justifies shipping one. Apply the same judgment to verification: protect the guarantees that matter instead of trying to enumerate every imaginable scenario.
 
 ## Apply the design and assess the result
 

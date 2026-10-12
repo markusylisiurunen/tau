@@ -186,7 +186,6 @@ Start with the smallest owning area, its callers, and its tests.
 
 - Use an explicit skill only when it is named by an exact `@@skill:<name>`, by active instructions, or by an active skill.
 - Spawn subagents only when the user or active instructions ask for delegation.
-- Default launch overrides when the user names a model without an effort: Sol → `openai-codex/gpt-6.1-sol:medium`, Luna → `openai-codex/gpt-6-luna:high`, GPT-6 Astra → `openai-codex/gpt-6-astra:medium`. Otherwise omit the override.
 
 **Code style.** Biome formats: 2 spaces, 100 columns, `PascalCase` types, `camelCase` values, lowercase filenames. Do not hand-sort imports or hand-wrap. Where a file is inconsistent, match the file.
 
@@ -263,3 +262,20 @@ Before writing, identify the reader and what they need to do. Use only concepts 
 - Update the affected `docs/*.md` pages when supported behavior changes. Update `README.md` only when the landing or first-run path changes. Update this file when workflow, ownership, architecture, or a safeguard changes.
 - Do not document unrelated undocumented behavior unless asked.
 - The docs corpus is flat. Each page appears once in `docs/manifest.json`, uses valid flat links, and stays within packaging bounds (`test/tau_docs_corpus.test.js`).
+
+<!-- agents:subagents:start -->
+
+## Subagent model selection
+
+When neither the user nor active instructions request a subagent model or reasoning effort, omit the model override so the subagent uses the same model and settings as you. A model allowlist alone is not a request to select a model.
+
+When a model is requested without an effort, use its default below. When an effort is explicitly requested, preserve it. If the environment cannot select the requested combination, explain the limitation rather than silently substituting another model.
+
+- Luna: `openai-codex/gpt-6-luna`; allowed efforts: low, medium, high, xhigh; default: `medium`.
+- Sol: `openai-codex/gpt-6.1-sol`; allowed efforts: low, medium, high; default: `medium`.
+- Astra: `openai-codex/gpt-6-astra`; allowed efforts: low, medium, high; default: `low`.
+- Sonnet: `anthropic/claude-sonnet-5-5`; allowed efforts: low, medium, high; default: `medium`.
+- Opus: `anthropic/claude-opus-5-5`; allowed efforts: low, medium, high; default: `medium`.
+
+Sonnet and Opus may be selected as model overrides only when explicitly requested by the user or active instructions. Do not select them on your own. This does not prevent inheriting the parent model when no override is requested.
+<!-- agents:subagents:end -->

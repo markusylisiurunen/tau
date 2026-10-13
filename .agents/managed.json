@@ -71,6 +71,36 @@
       "hash": "92183b0996f1870ac6a9858515ad75af23ca209b04297c9cca1e7eaeb3bebdc5",
       "mode": 420
     },
+    ".agents/skills/ui-design/references/interaction-and-accessibility.md": {
+      "type": "file",
+      "hash": "3309220293eb98a9c2bfd0f2206fe0d773fe9049abace44eb051e95bdf0998a6",
+      "mode": 420
+    },
+    ".agents/skills/ui-design/references/layout-and-type.md": {
+      "type": "file",
+      "hash": "ea5ec2b93b251f8a3e82e98d68515479775c1e542e7c72299e4de179cc3fd674",
+      "mode": 420
+    },
+    ".agents/skills/ui-design/references/motion.md": {
+      "type": "file",
+      "hash": "55f4fca05ae75070a57f5877634eeb7585106d78b8df31310684ee213b663755",
+      "mode": 420
+    },
+    ".agents/skills/ui-design/references/polish.md": {
+      "type": "file",
+      "hash": "cfaee0c0636a1f8823a43067c4a35e0469c837132867b3f18271116f76609925",
+      "mode": 420
+    },
+    ".agents/skills/ui-design/references/visual-direction.md": {
+      "type": "file",
+      "hash": "4d94dd29bd7f1c507b13e81409f1401a3af24e837881271cef5b21f8bb18fc3a",
+      "mode": 420
+    },
+    ".agents/skills/ui-design/SKILL.md": {
+      "type": "file",
+      "hash": "f3fcbec6b344f61147299f3fe7a05fe02a9862b9ea93ae4c3f456f92ca800545",
+      "mode": 420
+    },
     ".claude/commands/workflows/address-review-comments.md": {
       "type": "file",
       "hash": "1d529c48b4eef4b73722013cf6513da7fe4c7e9b8eff11f79af712fa47b5fa49",
@@ -101,6 +131,11 @@
       "hash": "add95d53616047b0e147020469f415c663873ab5ef858e2931624298af8ecaa9",
       "mode": 420
     },
+    ".claude/commands/workflows/finalize-ui.md": {
+      "type": "file",
+      "hash": "510c07eb962227ad4ad6bd15bcb87f12da0c2d84f2b11492c8105915cab926d5",
+      "mode": 420
+    },
     ".claude/commands/workflows/guided-review-branch.md": {
       "type": "file",
       "hash": "3db9fdb3068399152a84b5bee9ff427ac1437b75d1247a566be4ce624fac9703",
@@ -109,6 +144,11 @@
     ".claude/commands/workflows/guided-review-changes.md": {
       "type": "file",
       "hash": "900cc3eefe15eca7d500bca3d39619c201ebaa7f94f13da79fe8bf4e8712abe7",
+      "mode": 420
+    },
+    ".claude/commands/workflows/iterate-ui.md": {
+      "type": "file",
+      "hash": "ec6cd3f20a19fffd91d9e5d2430994d8331a84e07090cd1b43f5e42e01924e75",
       "mode": 420
     },
     ".claude/commands/workflows/monthly-report.md": {
@@ -164,6 +204,10 @@
     ".claude/skills/plan": {
       "type": "symlink",
       "hash": "c5d36ae1b8458567a4b0dd5d7f7a810ce56606beb614631fadda7f7be4ed1302"
+    },
+    ".claude/skills/ui-design": {
+      "type": "symlink",
+      "hash": "0ede215a170a81a3a67bc58f08cbfc2e6523803850f1a6ca15a3045f9c16deaf"
     },
     ".cowork/config.json": {
       "type": "file",
@@ -230,6 +274,11 @@
       "hash": "4b5049ddb57710a6258868d0722d26401425d7d8cfaeca6594ef434a910a8d8d",
       "mode": 420
     },
+    ".tau/prompts/finalize-ui.md": {
+      "type": "file",
+      "hash": "c9f8c5b36ea4fe277c78d501ef1925aa6e45f31043f5a296a4dbd7133513a6c6",
+      "mode": 420
+    },
     ".tau/prompts/guided-review-branch.md": {
       "type": "file",
       "hash": "6192f7faedfa125d8e1fb00aa9b1a79c020cbafc05662c844795a3f39e8f4536",
@@ -238,6 +287,11 @@
     ".tau/prompts/guided-review-changes.md": {
       "type": "file",
       "hash": "6ca8382872e0e2c0ce0578ed082ba044c223e658edc2b40dd345597943d99f5f",
+      "mode": 420
+    },
+    ".tau/prompts/iterate-ui.md": {
+      "type": "file",
+      "hash": "3a64df2b50af99626608249e754ae749f75d63b21513313da26febfd3c9f0ff9",
       "mode": 420
     },
     ".tau/prompts/monthly-report.md": {

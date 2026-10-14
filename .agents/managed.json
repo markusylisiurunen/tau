@@ -304,6 +304,16 @@
       "hash": "ff73f625e8b3492eab92629dda63aa1b64c9ce71fbfeb04410ee9c797250c9d3",
       "mode": 420
     },
+    ".tau/skills/subagents/references/delegation-patterns.md": {
+      "type": "file",
+      "hash": "046100608e0921fa9cefcd45253dfbcea9c8085a95f337c0bba6c2790e9c9991",
+      "mode": 420
+    },
+    ".tau/skills/subagents/SKILL.md": {
+      "type": "file",
+      "hash": "315dd5b38e6cedf3d83805b0adacdbb35922b7c8809ba9f98b2c5cac4e750a43",
+      "mode": 420
+    },
     "AGENTS.md": {
       "type": "section",
       "hash": "0608579801d0479007ff0b92774a6f0faef490a0b86f76b328dc245dedaf1b3b"

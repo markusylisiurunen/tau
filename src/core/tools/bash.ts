@@ -13,7 +13,7 @@ import {
 } from "../utils/truncate.js";
 import { formatZodError } from "../utils/zod.js";
 import type { ToolActivity } from "./activity.js";
-import type { BashJobRegistry } from "./bash_jobs.js";
+import { type BashJobRegistry, buildBashJobMetadata } from "./bash_jobs.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import {
   buildToolRunPresentation,
@@ -520,6 +520,7 @@ export function createBashToolDefinition(
       toolCall: ToolCall,
       context: ToolExecutionContext,
     ): Promise<ToolExecutionOutcome> {
+      const callStartedAt = Date.now();
       const { signal } = context;
       const parsedArgs = parseBashArgs(toolCall.arguments);
       const commandForDisplay = parsedArgs.ok
@@ -563,7 +564,7 @@ export function createBashToolDefinition(
           try {
             if (parsedArgs.data.background) {
               const id = await jobs.start(backend, command, effectiveWorkingDirectory, signal);
-              const text = `${jobs.format([id], false)}\nApplication readiness has not been checked.`;
+              const text = `${jobs.format([id], false).text}\nApplication readiness has not been checked.`;
               const outcome = createTextToolOutcome(text, "succeeded");
               const uiEvent: ToolActivity = {
                 type: "bash_execution",
@@ -574,6 +575,11 @@ export function createBashToolDefinition(
                   toolName: TOOL_NAME_BASH,
                   subject: command,
                   operation: "background",
+                  metadata: buildBashJobMetadata({
+                    text,
+                    durationMs: Math.max(0, Date.now() - callStartedAt),
+                    workingDirectory: effectiveWorkingDirectory,
+                  }),
                   details: text.split("\n").map((text) => ({ text })),
                   actionOverrides: { succeeded: "started" },
                 }),

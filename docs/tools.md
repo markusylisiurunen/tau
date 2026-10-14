@@ -106,6 +106,8 @@ Enabling `bash` also enables `list_bash_jobs`, `read_bash_job`, `stop_bash_job`,
 
 In the TUI, job tool cards have headings such as `reading bash <id>` and `listed bash jobs`, and show a seven-line preview from the middle of the result. A background start shows `started background <command>`, which means only that the command started.
 
+Background launch and job-tool footers show the tool call's duration, estimated tokens, and line count. Counts cover the exact text returned to the model after output limits, before the card preview is shortened. With `includeOutput: false`, only returned job information counts. The launch footer also includes the working directory. A `◆` marker means included command output was truncated; shortening the card preview alone does not add it. A wait that reaches its timeout appends `timed out` without making the card an error. Durations measure the tool call, not the job's lifetime, and cards remain snapshots of that call.
+
 When a job tool call is invalid or fails, the TUI card shows a short diagnostic as well as the model's result. A normal cancellation shows no details.
 
 `wait_for_bash_jobs({ids, timeout?, includeOutput?})` returns when any of the jobs exits or the wait times out. Jobs that already finished return immediately. The timeout is a positive integer in milliseconds, defaults to 60,000, and can be at most 300,000. A timeout counts as a successful result and does not stop the jobs. Interrupting the wait leaves them running too. The tool waits for a job to exit, not to become ready, so check a server's logs or readiness instead. A job finishing never starts an agent turn by itself.

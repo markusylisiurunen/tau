@@ -5359,10 +5359,10 @@ describe("LocalSessionHost", () => {
       expect(reattached).toBe(session);
       await session.record({ text: "second turn" });
       await session.runTurn();
-      expect(session.runtime.bashJobs.format([id])).toContain("running");
+      expect(session.runtime.bashJobs.format([id]).text).toContain("running");
       host.releaseSession(reattached);
       await host.shutdown();
-      expect(session.runtime.bashJobs.format([id])).toContain("stopped");
+      expect(session.runtime.bashJobs.format([id]).text).toContain("stopped");
     } finally {
       await host.shutdown();
       await backend.dispose();

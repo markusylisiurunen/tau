@@ -3,11 +3,13 @@ import { StringDecoder } from "node:string_decoder";
 import stripAnsi from "strip-ansi";
 import { Type } from "typebox";
 import { z } from "zod";
-import { truncateForTokens, truncateToBytesFromEnd } from "../utils/truncate.js";
+import { formatCwd } from "../utils/format.js";
+import { formatTokenEstimate } from "../utils/token.js";
+import { TRUNCATION_MARKER, truncateForTokens, truncateToBytesFromEnd } from "../utils/truncate.js";
 import { formatZodError } from "../utils/zod.js";
 import { formatBashToolResultText } from "./bash.js";
 import type { BashExecutionResult, ToolExecutionBackend } from "./execution_backend.js";
-import { buildToolRunPresentation } from "./presentation.js";
+import { buildToolRunPresentation, formatToolDurationMs } from "./presentation.js";
 import { type AgentTool, createTextToolOutcome, executeTool } from "./registry.js";
 
 const MAX_JOBS = 64;
@@ -137,15 +139,16 @@ export class BashJobRegistry {
     });
   }
 
-  format(ids: string[] = [...this.jobs.keys()], includeOutput = true): string {
+  format(ids: string[] = [...this.jobs.keys()], includeOutput = true) {
     return this.formatJobs(
       ids.map((id) => this.get(id)),
       includeOutput,
     );
   }
 
-  private formatJobs(jobs: BashJob[], includeOutput: boolean): string {
-    return (
+  private formatJobs(jobs: BashJob[], includeOutput: boolean) {
+    let truncated = false;
+    const text =
       jobs
         .map((job) => {
           const id = job.id;
@@ -171,6 +174,7 @@ export class BashJobRegistry {
               maxTokens: Math.min(2048, Math.floor(8192 / Math.max(1, jobs.length))),
               strategy: "tail",
             });
+            truncated ||= model.truncated || job.truncated;
             lines.push(
               "",
               formatBashToolResultText({
@@ -181,8 +185,8 @@ export class BashJobRegistry {
           }
           return lines.join("\n");
         })
-        .join("\n\n") || "No Bash jobs."
-    );
+        .join("\n\n") || "No Bash jobs.";
+    return { text, truncated };
   }
 
   async stopJob(id: string): Promise<void> {
@@ -192,7 +196,7 @@ export class BashJobRegistry {
     if (job.state.status === "failed") throw new Error(job.state.error);
   }
 
-  async stop(id: string, includeOutput: boolean): Promise<string> {
+  async stop(id: string, includeOutput: boolean) {
     await this.stopJob(id);
     return this.format([id], includeOutput);
   }
@@ -223,14 +227,14 @@ export class BashJobRegistry {
     }
   }
 
-  async wait(
-    ids: string[],
-    timeout: number,
-    signal: AbortSignal,
-    includeOutput: boolean,
-  ): Promise<string> {
+  async wait(ids: string[], timeout: number, signal: AbortSignal, includeOutput: boolean) {
     const timedOut = await this.waitJobs(ids, timeout, signal);
-    return `${this.format(ids, includeOutput)}${timedOut ? `\n\nWait timed out after ${timeout}ms; jobs are still running.` : ""}`;
+    const result = this.format(ids, includeOutput);
+    return {
+      ...result,
+      text: `${result.text}${timedOut ? `\n\nWait timed out after ${timeout}ms; jobs are still running.` : ""}`,
+      timedOut,
+    };
   }
 
   get hasRunning(): boolean {
@@ -255,10 +259,29 @@ export class BashJobRegistry {
   }
 }
 
+export function buildBashJobMetadata(args: {
+  text: string;
+  durationMs: number;
+  truncated?: boolean;
+  timedOut?: boolean;
+  workingDirectory?: string;
+}): string[] {
+  const lines = args.text.split("\n").length;
+  return [
+    ...(args.truncated ? [TRUNCATION_MARKER] : []),
+    ...(args.workingDirectory ? [formatCwd(args.workingDirectory)] : []),
+    formatToolDurationMs(args.durationMs),
+    formatTokenEstimate(Buffer.byteLength(args.text, "utf8")),
+    `${lines} line${lines === 1 ? "" : "s"}`,
+    ...(args.timedOut ? ["timed out"] : []),
+  ];
+}
+
 function buildBashJobPresentation(
   toolName: string,
   args: { id?: string; ids?: string[] } | undefined,
   text?: string,
+  metadata?: string[],
 ) {
   const detailText = text?.replace(/\r\n?/g, "\n").trimEnd();
   return buildToolRunPresentation({
@@ -266,6 +289,7 @@ function buildBashJobPresentation(
     operation: "bash",
     subject: args ? (args.ids?.join(", ") ?? args.id ?? "jobs") : "(invalid arguments)",
     details: detailText ? detailText.split("\n").map((text) => ({ text })) : [],
+    metadata,
   });
 }
 
@@ -343,6 +367,7 @@ export function createBashJobToolDefinitions(jobs: BashJobRegistry): AgentTool[]
       },
       execute: (call, context) =>
         executeTool(context, async () => {
+          const startedAt = Date.now();
           const parsed = parser.safeParse(call.arguments);
           if (!parsed.success) {
             const reason = `Invalid arguments: ${formatZodError(parsed.error)}`;
@@ -360,7 +385,7 @@ export function createBashJobToolDefinitions(jobs: BashJobRegistry): AgentTool[]
           const args = parsed.data;
           try {
             context.signal.throwIfAborted();
-            const text =
+            const result =
               "ids" in args
                 ? await jobs.wait(
                     args.ids,
@@ -373,6 +398,7 @@ export function createBashJobToolDefinitions(jobs: BashJobRegistry): AgentTool[]
                     ? await jobs.stop(args.id, args.includeOutput ?? true)
                     : jobs.format([args.id], args.includeOutput ?? true)
                   : jobs.format(undefined, false);
+            const { text } = result;
             return {
               ...createTextToolOutcome(text, "succeeded"),
               uiEvent: {
@@ -380,7 +406,15 @@ export function createBashJobToolDefinitions(jobs: BashJobRegistry): AgentTool[]
                 toolCallId: call.id,
                 toolName: schema.name,
                 status: "success" as const,
-                presentation: buildBashJobPresentation(schema.name, args, text),
+                presentation: buildBashJobPresentation(
+                  schema.name,
+                  args,
+                  text,
+                  buildBashJobMetadata({
+                    ...result,
+                    durationMs: Math.max(0, Date.now() - startedAt),
+                  }),
+                ),
               },
             };
           } catch (error) {

@@ -183,6 +183,37 @@ describe("tool cards", () => {
     },
   );
 
+  it("renders the footer from a completed Bash job tool", async () => {
+    const tool = createBashJobToolDefinitions(new BashJobRegistry()).find(
+      (tool) => tool.schema.name === "list_bash_jobs",
+    );
+    const events = [];
+    await tool.execute(
+      { id: "list", name: tool.schema.name, arguments: {} },
+      {
+        signal: new AbortController().signal,
+        emitActivity: async (event) => events.push(event),
+        agentId: "agent",
+        turnId: "turn",
+        assistantMessageId: "message",
+      },
+    );
+    const presentation = events.at(-1).presentation;
+    expect(presentation.metadata).toEqual([
+      expect.stringMatching(/^\d+(?:\.\d+)?(?:ms|s)$/),
+      "~2 tokens",
+      "1 line",
+    ]);
+    const rendered = renderText(
+      new ToolCardComponent({
+        model: { toolCallId: "list", status: "succeeded", presentation },
+        theme,
+      }),
+      160,
+    );
+    expect(rendered).toContain(`<textMuted>(${presentation.metadata.join(" · ")})</textMuted>`);
+  });
+
   it("uses static active markers with status-specific colors", () => {
     const presentation = buildToolRunPresentation({ toolName: "bash", subject: "pwd" });
     const cases = [

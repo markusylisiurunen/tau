@@ -9,6 +9,10 @@ const context = (signal = new AbortController().signal) => ({
   turnId: "turn",
   assistantMessageId: "message",
 });
+const outputMetadata = (text) => [
+  `~${Math.floor(Buffer.byteLength(text, "utf8") / 6)} tokens`,
+  `${text.split("\n").length} lines`,
+];
 const jobId = (text) => text.match(/`([^`]+)`/)[1];
 
 function createPendingBackend() {
@@ -53,7 +57,7 @@ it("rejects background launch timeouts and explains unknown job recovery", async
       expect(events.at(-1).presentation.details[0].text).toContain("timeout");
     }
     expect(runBash).not.toHaveBeenCalled();
-    expect(jobs.format()).toBe("No Bash jobs.");
+    expect(jobs.format().text).toBe("No Bash jobs.");
     const events = [];
     await bash.execute(
       { id: "launch", name: "bash", arguments: { command: "server", background: true } },
@@ -129,6 +133,11 @@ it.each([
           const terminal = events.at(-1).presentation;
           expect(terminal.subject).toBe(initial.subject);
           expect(terminal.operation).toBe("bash");
+          expect(terminal.metadata).toEqual([
+            ...(hasOutput ? ["◆"] : []),
+            expect.stringMatching(/^\d+(?:\.\d+)?(?:ms|s)$/),
+            ...outputMetadata(text),
+          ]);
           if (hasOutput) {
             expect(terminal.details).toHaveLength(7);
             expect(terminal.details[3].text).toMatch(/…\d+ more lines…/);
@@ -183,7 +192,7 @@ it.each([
       expect(details.slice(-tail.length)).toEqual(tail);
       expect(details.every((line) => !line.includes("\r"))).toBe(true);
     }
-    expect(jobs.format([id])).toBe(expectedText);
+    expect(jobs.format([id]).text).toBe(expectedText);
   } finally {
     await jobs.dispose();
   }
@@ -214,7 +223,7 @@ it("survives turn cancellation, waits without killing, and stops independently",
     ]);
     const expiry = jobs.wait([id], 10, context().signal, true);
     await vi.advanceTimersByTimeAsync(10);
-    expect(await expiry).toContain("Wait timed out after 10ms");
+    expect((await expiry).text).toContain("Wait timed out after 10ms");
     expect(jobs.hasRunning).toBe(true);
     const wait = new AbortController();
     const waiting = jobs.wait([id], 60_000, wait.signal, true);
@@ -261,15 +270,27 @@ it("defaults waits to 60 seconds, validates the cap, and retains a running job o
       );
     }
     vi.useFakeTimers();
-    const waiting = tool.execute({ arguments: { ids: [id], includeOutput: false } }, context());
+    const events = [];
+    const waiting = tool.execute(
+      { arguments: { ids: [id], includeOutput: false } },
+      {
+        ...context(),
+        emitActivity: async (event) => events.push(event),
+      },
+    );
     await vi.advanceTimersByTimeAsync(59999);
-    expect(jobs.format([id])).toContain("running");
+    expect(jobs.format([id]).text).toContain("running");
     await vi.advanceTimersByTimeAsync(1);
     const result = await waiting;
     expect(result.outcome).toBe("succeeded");
     expect(result.content[0].text).toContain("Wait timed out after 60000ms");
     expect(result.content[0].text).not.toContain("\nready");
-    expect(jobs.format([id])).toContain("running");
+    expect(events.at(-1).presentation.metadata).toEqual([
+      "60s",
+      ...outputMetadata(result.content[0].text),
+      "timed out",
+    ]);
+    expect(jobs.format([id]).text).toContain("running");
   } finally {
     vi.useRealTimers();
     await jobs.dispose();
@@ -341,7 +362,7 @@ it("presents bounded cleanup diagnostics without changing backend text casing", 
     );
     expect(outcome.outcome).toBe("failed");
     expect(outcome.content[0].text).toBe(reason);
-    expect(jobs.format([id], false)).toContain(reason);
+    expect(jobs.format([id], false).text).toContain(reason);
     expect(events.at(-1).presentation.subject).toBe(id);
     const diagnostic = events
       .at(-1)
@@ -374,10 +395,76 @@ it("bounds job records and reports backend cleanup failures", async () => {
       "limit reached",
     );
     await expect(jobs.dispose()).rejects.toThrow("failed to stop Bash jobs");
-    expect(jobs.format()).toContain("failed to terminate process group");
+    expect(jobs.format().text).toContain("failed to terminate process group");
     await expect(jobs.start(backend, "closed", "/workspace", context().signal)).rejects.toThrow(
       "closed",
     );
+  } finally {
+    await jobs.dispose();
+  }
+});
+
+it.each([undefined, "/OtherWorkspace"])(
+  "keeps launch footer metadata while the job runs in %s",
+  async (workingDirectory) => {
+    const jobs = new BashJobRegistry();
+    const backend = createPendingBackend();
+    const events = [];
+    try {
+      const bash = createBashToolDefinition(backend, "/Workspace", jobs);
+      const result = await bash.execute(
+        {
+          id: "launch",
+          name: "bash",
+          arguments: { command: "server", background: true, workingDirectory },
+        },
+        { ...context(), emitActivity: async (event) => events.push(event) },
+      );
+      expect(jobs.hasRunning).toBe(true);
+      expect(events.at(-1).presentation.metadata).toEqual([
+        workingDirectory ?? "/Workspace",
+        expect.stringMatching(/^\d+(?:\.\d+)?(?:ms|s)$/),
+        ...outputMetadata(result.content[0].text),
+      ]);
+    } finally {
+      await jobs.dispose();
+    }
+  },
+);
+
+it("marks model-tail truncation across multiple jobs without counting hidden output", async () => {
+  const jobs = new BashJobRegistry();
+  const backend = {
+    async runBash(_command, options) {
+      options.onStarted();
+      options.onOutput(Buffer.from("日本語\n".repeat(2000)));
+      return { exitCode: 0, aborted: false, closeSignal: null, truncated: false };
+    },
+  };
+  try {
+    const ids = await Promise.all(
+      ["one", "two"].map((command) => jobs.start(backend, command, "/Workspace", context().signal)),
+    );
+    await jobs.waitForIdle();
+    const tool = createBashJobToolDefinitions(jobs).find(
+      (tool) => tool.schema.name === "wait_for_bash_jobs",
+    );
+    for (const includeOutput of [true, false]) {
+      const events = [];
+      const result = await tool.execute(
+        {
+          id: "wait",
+          name: tool.schema.name,
+          arguments: { ids, includeOutput },
+        },
+        { ...context(), emitActivity: async (event) => events.push(event) },
+      );
+      expect(events.at(-1).presentation.metadata).toEqual([
+        ...(includeOutput ? ["◆"] : []),
+        expect.stringMatching(/^\d+(?:\.\d+)?(?:ms|s)$/),
+        ...outputMetadata(result.content[0].text),
+      ]);
+    }
   } finally {
     await jobs.dispose();
   }

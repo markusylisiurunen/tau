@@ -38,13 +38,13 @@ for (const kind of ["local", "Sprite"]) {
           signal,
         );
         const result = await jobs.wait([id], 5000, signal, true);
-        expect(result).toContain("TAIL");
-        expect(result).toContain("truncated");
-        expect(result.length).toBeLessThan(14000);
+        expect(result.text).toContain("TAIL");
+        expect(result.text).toContain("truncated");
+        expect(result.text.length).toBeLessThan(14000);
         expect(jobs.read([id])).toEqual([
           expect.objectContaining({ status: "succeeded", exitCode: 0, truncated: true }),
         ]);
-        expect(await jobs.wait([id], 1, signal, true)).toContain("succeeded");
+        expect((await jobs.wait([id], 1, signal, true)).text).toContain("succeeded");
       } finally {
         try {
           await jobs.dispose();
@@ -70,7 +70,7 @@ for (const kind of ["local", "Sprite"]) {
           pid = Number(
             jobs
               .format([id])
-              .split("\n")
+              .text.split("\n")
               .find((line) => /^\d+$/.test(line)),
           );
           expect(pid).toBeGreaterThan(0);

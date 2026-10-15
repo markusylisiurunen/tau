@@ -24,6 +24,7 @@ Project and global content can change which persona ids exist. A configured defa
 | `defaultPersona` | Non-empty string | Global, project | Most-specific wins | Session host; new session |
 | `speech` | Object with optional `voiceId`, `recordingShortcut`, and `vocabulary` | Global, project | Merge by field; vocabulary is additive | TUI client or Telegram runner; process restart |
 | `defaultTheme` | Non-empty string | Global, project | Most-specific wins | TUI client; client restart |
+| `markdownExport` | Object with `url` and optional `token`, `tokenEnv` | Global only | One global object | TUI client; client restart |
 | `clientTools` | Array of objects | Global only | One global definition list | Owning client; TUI restart or new Telegram session client |
 | `enabledClientTools` | String array | Project only | Most-specific project list | Owning client; TUI restart or new Telegram session client |
 | `subagents` | Object | Global, project | Most-specific `launchModels` list | Session runtime; `/reload` or new session |
@@ -91,6 +92,25 @@ Provider ids must be known, and model ids must exist in the model catalog. Entri
 Use notices for guidance that applies to one model. Behavior that belongs to a persona goes in the persona file. See [models](models.md) and [personas](personas.md).
 
 ## Credentials and service selection
+
+### `markdownExport`
+
+`/export-response` sends the latest completed assistant response to one Markdown service. Configure the full endpoint in the terminal client's `~/.config/tau/config.json`:
+
+```json
+{
+  "markdownExport": {
+    "url": "https://example.com/api/documents",
+    "tokenEnv": "INKO_API_TOKEN"
+  }
+}
+```
+
+`url` is required. It must use HTTPS, except that HTTP is allowed for `localhost`, `127.0.0.1`, and `[::1]`. Embedded credentials and fragments are rejected. Project configuration cannot set or override this object.
+
+`token` supplies an inline bearer token and takes precedence over `tokenEnv`. Otherwise, `tokenEnv` names a variable in the terminal process's environment. A missing or empty variable fails before any request. With neither field, requests have no authorization header. Tokens must be non-empty printable ASCII without spaces. Credentials are not included in diagnostics.
+
+The request runs on the terminal's machine, including with `tau attach`. Restart the TUI after changing this configuration. See [the export contract](tui.md#exporting-a-response) for the HTTP request and response.
 
 ### `apiKeys`
 

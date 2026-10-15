@@ -97,6 +97,7 @@ Then use Shift+Tab to choose a reasoning level. A newly added persona appears on
 | `/listen [retry/discard]` | Record speech, or retry or discard a failed recording. macOS only. |
 | `/speak` | Read the last assistant response aloud. macOS only. |
 | `/auto-speak [on | off]` | Toggle automatic reading of final responses, or turn it on or off. |
+| `/export-response` | Send the latest completed response to the configured Markdown service. |
 | `/copy-text` | Copy the last assistant response as plain text. |
 | `/copy-code` | Copy the code blocks from the last assistant response. |
 | `/persona:<id>` | Switch persona while idle. |
@@ -108,6 +109,33 @@ Run commands that change the context, such as persona changes, compaction, rewin
 The footer shows context usage as a percentage of the full model window, such as `20%/272k`. When an override is set, the effective compaction threshold appears in parentheses: `20%/272k (50k)`. This threshold cannot exceed the model's context window minus 16,384 tokens. With the default setting, the footer shows no threshold.
 
 [Sessions](sessions.md) describes compaction, rewind, recovery, and retry. [Prompts and project context](prompts-and-project-context.md) covers prompt files.
+
+## Exporting a response
+
+`/export-response` uploads the latest committed assistant response that finished normally or reached its output limit. It preserves Markdown, including code fences and surrounding whitespace, and sends only text blocks from that message. Reasoning, tool calls, tool results, and other messages are excluded. Failed, interrupted, and tool-call messages are skipped. An empty response is not sent.
+
+Configure [`markdownExport`](config-reference.md#markdownexport) in the terminal client's global configuration. Export is an explicit user action and runs locally even when attached to a remote host. The command waits until the session is idle.
+
+Tau makes one request to the configured endpoint:
+
+```http
+POST <configured endpoint>
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer <token, if configured>
+
+{"version":1,"markdown":"# Proposal\n..."}
+```
+
+The service must return HTTP `201 Created` and a JSON object:
+
+```json
+{ "version": 1, "url": "https://example.com/document/123" }
+```
+
+The returned URL must be HTTP(S), without embedded credentials, whitespace, or control characters. Tau displays it without opening a browser. The service owns storage, permissions, editing, and comments. Paste feedback back into Tau manually; there is no callback or polling.
+
+Requests time out after 30 seconds, responses are limited to 64 KiB, and redirects are rejected. Tau cancels an active request when the TUI detaches. It prevents overlapping exports and never retries automatically. A failed or cancelled request may already have created a document. Export results and errors are local TUI notices and do not change the conversation.
 
 ## Keyboard shortcuts
 

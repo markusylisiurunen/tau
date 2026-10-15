@@ -110,6 +110,7 @@ import {
   readListenAudio,
   startListenAudioCapture,
 } from "./listen_capture.js";
+import { exportMarkdown } from "./markdown_export.js";
 import {
   createSdkDiffSnapshotDeps,
   createSdkToolExecutionBackend,
@@ -146,6 +147,7 @@ export class SessionChatController {
   private readonly targetLabel: string;
   private readonly configuredClientToolNames: string[];
   private readonly config: Config;
+  private markdownExportAbortController?: AbortController;
   private readonly diffToolLauncher?: DiffReviewToolLauncher;
   private readonly deps: CoreDeps;
   private readonly speechToTextDeps?: SpeechToTextDependencies;
@@ -222,6 +224,7 @@ export class SessionChatController {
     this.commandHandlers = {
       help: () => this.showHelp(),
       copyText: () => this.copyLastAssistantText(),
+      exportResponse: () => this.exportLastAssistantResponse(),
       copyCode: () => this.copyLastAssistantCode(),
       exit: () => options.onExit?.(),
       newSession: () => this.createNewSession(),
@@ -273,6 +276,7 @@ export class SessionChatController {
 
   async dispose(): Promise<void> {
     this.disposed = true;
+    this.markdownExportAbortController?.abort();
     this.endListenPreview();
     this.eventUnsubscribe?.();
     this.ephemeralUnsubscribe?.();
@@ -2794,6 +2798,58 @@ export class SessionChatController {
       }
     }
     return [...files];
+  }
+
+  private async exportLastAssistantResponse(): Promise<void> {
+    if (this.markdownExportAbortController) {
+      this.view.showFooterNotice("response export already in progress", "default");
+      return;
+    }
+    const config = this.config.markdownExport;
+    if (!config) {
+      this.view.addTranscriptNotice("markdown export is not configured", "error", [
+        "Set markdownExport in the terminal client's global config.json.",
+      ]);
+      return;
+    }
+    const entry = this.snapshot.messages.findLast(
+      (entry) =>
+        entry.state === "committed" &&
+        isAssistantMessage(entry.message) &&
+        (entry.message.stopReason === "stop" || entry.message.stopReason === "length"),
+    );
+    if (!entry || !isAssistantMessage(entry.message)) {
+      this.view.showFooterNotice("no completed response to export", "default");
+      return;
+    }
+    const markdown = entry.message.content
+      .filter((block) => block.type === "text")
+      .map((block) => block.text)
+      .join("\n");
+    if (!markdown.trim()) {
+      this.view.showFooterNotice("no response text to export", "default");
+      return;
+    }
+    const abortController = new AbortController();
+    this.markdownExportAbortController = abortController;
+    this.view.showFooterNotice("exporting response", "default");
+    try {
+      const url = await exportMarkdown({
+        config,
+        markdown,
+        env: this.deps.env.env(),
+        signal: abortController.signal,
+      });
+      if (!this.disposed) this.view.addTranscriptNotice("response exported", "default", [url]);
+    } catch (error) {
+      if (!this.disposed) {
+        this.view.addTranscriptNotice("failed to export response", "error", [
+          (error as Error).message,
+        ]);
+      }
+    } finally {
+      this.markdownExportAbortController = undefined;
+    }
   }
 
   private async copyLastAssistantText(): Promise<void> {

@@ -5,6 +5,7 @@ import { formatPathForDisplay } from "../utils/format.js";
 export type Command = (
   | { type: "help" }
   | { type: "copyText" }
+  | { type: "exportResponse" }
   | { type: "copyCode" }
   | { type: "exit" }
   | { type: "new" }
@@ -44,6 +45,7 @@ interface CommandDefinition<Ctx, T extends Command = Command> extends CommandInf
 export interface CommandDispatchContext {
   help: () => void;
   copyText: () => Promise<void>;
+  exportResponse: () => Promise<void>;
   copyCode: () => Promise<void>;
   exit: () => void;
   newSession: () => Promise<void>;
@@ -356,6 +358,20 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
       return { type: "speak", extra };
     },
     run: (ctx) => ctx.speak(),
+  });
+
+  registry.register({
+    id: "exportResponse",
+    usage: "/export-response",
+    description: "send the latest completed response to the configured Markdown service",
+    autocompleteDescription: "export the latest completed response as Markdown",
+    argument: "none",
+    parse: (raw) => {
+      const { command, extra } = splitCommandInput(raw);
+      if (command !== "/export-response") return null;
+      return { type: "exportResponse", extra };
+    },
+    run: (ctx) => ctx.exportResponse(),
   });
 
   registry.register({

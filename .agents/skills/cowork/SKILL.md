@@ -18,16 +18,22 @@ Cowork reads workflow configuration from the trusted default branch, never from 
 
 The default mention is `@markustherobot`, although the service can configure a different one. The mention must be the first non-whitespace content in a comment, and the sender must be allowed by the service.
 
-| Context | Comment after the mention                                       | Behavior                                                                   |
-| ------- | --------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| Issue   | A question or planning request                                  | Continues the issue's planning session                                     |
-| Issue   | `implement` followed by guidance                                | Starts a fresh implementation attempt that can push a branch and open a PR |
-| Issue   | `restart` followed by guidance                                  | Replaces the planning session and workspace                                |
-| PR      | A question or change request                                    | Continues the PR conversation, which can update the branch                 |
-| PR      | `review` or `deslop`, optionally followed by guidance           | Starts a fresh review or branch cleanup                                    |
-| PR      | `explain`, optionally followed by guidance                      | Updates a persistent explanation comment                                   |
-| PR      | `restart` or `explain restart`, optionally followed by guidance | Replaces the corresponding conversation and workspace                      |
-| PR      | `diff` with no trailing guidance                                | Creates a hosted interactive review of the current head                    |
+| Context | Comment after the mention                                          | Behavior                                                                   |
+| ------- | ------------------------------------------------------------------ | -------------------------------------------------------------------------- |
+| Issue   | A question or planning request                                     | Continues the issue's planning session                                     |
+| Issue   | `/implement`, with optional guidance on subsequent lines           | Starts a fresh implementation attempt that can push a branch and open a PR |
+| Issue   | `/restart` alone                                                   | Replaces the planning session and workspace without an agent turn          |
+| PR      | A question or change request                                       | Continues the PR conversation, which can update the branch                 |
+| PR      | `/review` or `/deslop`, with optional guidance on subsequent lines | Starts a fresh review or branch cleanup                                    |
+| PR      | `/explain`, with optional guidance on subsequent lines             | Updates a persistent explanation comment                                   |
+| PR      | `/restart` alone                                                   | Replaces the PR conversation and workspace without an agent turn           |
+| PR      | `/diff` alone                                                      | Creates a hosted interactive review of the current head                    |
+
+Ordinary messages may follow the mention on the same line. Commands must be the only token on their line after the mention; guidance starts on a later line, optionally after a blank line. Bare keywords are ordinary conversation. There is no explanation restart command.
+
+The agent receives the request with the leading mention and recognized command removed and surrounding whitespace trimmed. Internal formatting stays unchanged. Agent-starting commands without guidance use “Run the selected workflow. No additional instructions were provided.” The original comment ID and URL remain available separately.
+
+Send `/restart` alone, then send the actual request in a separate comment. The request can follow immediately and queues behind the replacement. Eyes marks the pending restart; `+1` replaces it when the fresh session is ready. Success posts no comment. Trailing restart guidance is rejected. If restart fails or is interrupted before installation, the previous mapping is preserved but follow-ups fail explicitly instead of using it. Send `/restart` alone again, then resend blocked requests after it succeeds.
 
 Submitting hosted diff feedback hands the requested work to the persistent PR conversation. That work uses the conversation's settings instead of the hosted discussion's settings. Posting a command or submitting feedback can start autonomous work, so do not treat these examples as permission to trigger it.
 

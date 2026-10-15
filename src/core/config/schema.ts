@@ -5,11 +5,12 @@ import {
   loadModelResolver,
   type ModelResolver,
 } from "../models/catalog.js";
+import { parseModelId } from "../models/model_id.js";
 import { normalizeNookDomain } from "../nook/validation.js";
 import { formatPersonaReference, parsePersonaReference } from "../persona_reference.js";
 import { parseSubagentLaunchModelList } from "../subagents/launch_model.js";
 import { REASONING_LEVELS } from "../types.js";
-import { normalizeModelNoticeKey, parseModelNoticeKey } from "../utils/model_notices.js";
+import { normalizeModelNoticeKey } from "../utils/model_notices.js";
 import {
   normalizeSpeechToTextKeywords,
   speechToTextKeywordSchema,
@@ -578,12 +579,12 @@ function parseModelNoticeTarget(
   rawKey: string,
   modelResolver: ModelResolver,
 ): { normalizedKey?: string; error?: string } {
-  const parsedKey = parseModelNoticeKey(rawKey);
+  const parsedKey = parseModelId(rawKey.trim());
   if (!parsedKey) {
     return { error: "must use keys in format '<provider>/<model>'" };
   }
 
-  const provider = parsedKey.provider;
+  const provider = parsedKey.provider.toLowerCase();
   if (!listProviders().includes(provider)) {
     return { error: `unknown provider '${parsedKey.provider}'` };
   }

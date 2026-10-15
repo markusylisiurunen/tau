@@ -101,7 +101,7 @@ Use notices for guidance that applies to one model. Behavior that belongs to a p
 {
   "markdownExport": {
     "url": "https://example.com/api/documents",
-    "tokenEnv": "INKO_API_TOKEN"
+    "tokenEnv": "MARKDOWN_EXPORT_TOKEN"
   }
 }
 ```

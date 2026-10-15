@@ -261,11 +261,45 @@ describe("config paths", () => {
     }
   });
 
+  it.each([undefined, [], [" Tau ", "Nearest", "TAU"]])(
+    "merges speech vocabulary from nearest project to global (%j)",
+    (vocabulary) => {
+      const fx = setupFixture();
+      try {
+        const repo = join(fx.home, "repo");
+        const nested = join(repo, "nested");
+        for (const [directory, speech] of [
+          [join(fx.home, ".config", "tau"), { vocabulary: ["tau", "Global"], voiceId: "global" }],
+          [join(repo, ".tau"), { vocabulary: ["Parent", "Tau"], voiceId: "project" }],
+          [join(nested, ".tau"), { vocabulary }],
+        ]) {
+          mkdirSync(directory, { recursive: true });
+          writeFileSync(join(directory, "config.json"), JSON.stringify({ speech }));
+        }
+        const deps = createConfigDeps({ cwd: nested, home: fx.home, env: {} });
+        expect(loadConfig(nested, deps).speech).toEqual({
+          voiceId: "project",
+          vocabulary: vocabulary?.length
+            ? ["Tau", "Nearest", "Parent", "Global"]
+            : ["Parent", "Tau", "Global"],
+        });
+      } finally {
+        fx.cleanup();
+      }
+    },
+  );
+
   it.each([
     null,
     "voice",
     { voiceId: " " },
     { voiceId: 42 },
+    { vocabulary: "Tau" },
+    { vocabulary: [42] },
+    { vocabulary: [" "] },
+    { vocabulary: ["a".repeat(101)] },
+    { vocabulary: ["bad\nterm"] },
+    { vocabulary: ["<instruction>"] },
     { recordingShortcut: { key: "§" } },
     { recordingShortcut: { key: "abc", gesture: "press" } },
     { recordingShortcut: { key: "§", gesture: "hold" } },

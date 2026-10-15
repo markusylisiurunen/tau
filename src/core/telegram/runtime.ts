@@ -24,6 +24,7 @@ export type StartTelegramRuntimeOptions = {
   openAIApiKey?: string;
   elevenLabsApiKey?: string;
   speechVoiceId?: string;
+  speechVocabulary?: string[];
   createSessionClient: (options: TelegramSessionClientOptions) => Promise<TelegramSessionClient>;
   onLog?: (line: string) => void;
   deps?: Partial<TelegramRuntimeDependencies>;
@@ -200,6 +201,7 @@ export async function startTelegramRuntime(
         openAIApiKey: options.openAIApiKey,
         elevenLabsApiKey: options.elevenLabsApiKey,
         speechVoiceId: options.speechVoiceId,
+        speechVocabulary: options.speechVocabulary,
         sessionManager,
         projectPreferences,
         onLog: (entry) => {

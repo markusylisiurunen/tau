@@ -11,6 +11,13 @@ export const SPEECH_TO_TEXT_KEYWORD_INSTRUCTIONS = [
 const SPEECH_TO_TEXT_MAX_KEYWORDS = 100;
 const SPEECH_TO_TEXT_MAX_KEYWORD_CHARACTERS = 100;
 
+export const speechToTextKeywordSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .refine((value) => [...value].length <= SPEECH_TO_TEXT_MAX_KEYWORD_CHARACTERS)
+  .refine((value) => !/[<>\r\n]/.test(value));
+
 export function normalizeSpeechToTextKeywords(
   keywords: string[],
   options: { maxTotalCharacters: number },
@@ -20,16 +27,12 @@ export function normalizeSpeechToTextKeywords(
   let totalCharacters = 0;
 
   for (const value of keywords) {
-    const keyword = value.trim();
+    const parsed = speechToTextKeywordSchema.safeParse(value);
+    if (!parsed.success) continue;
+    const keyword = parsed.data;
     const characters = [...keyword].length;
     const identity = keyword.toLowerCase();
-    if (
-      !keyword ||
-      characters > SPEECH_TO_TEXT_MAX_KEYWORD_CHARACTERS ||
-      /[<>\r\n]/.test(keyword) ||
-      seen.has(identity) ||
-      totalCharacters + characters > options.maxTotalCharacters
-    ) {
+    if (seen.has(identity) || totalCharacters + characters > options.maxTotalCharacters) {
       continue;
     }
 
@@ -57,12 +60,16 @@ const keywordsSchema = z.object({ keywords: z.array(z.string()) }).strict();
 export async function prepareSpeechToTextKeywords(args: {
   apiKey?: string;
   context?: SpeechToTextContext;
+  vocabulary?: string[];
   signal?: AbortSignal;
   fetchImpl?: typeof fetch;
 }): Promise<string[]> {
   const apiKey = args.apiKey?.trim();
   const context = formatSpeechToTextContext(args.context);
-  if (!apiKey || !context) return [];
+  const vocabulary = normalizeSpeechToTextKeywords(args.vocabulary ?? [], {
+    maxTotalCharacters: 10_000,
+  });
+  if (!apiKey || !context) return vocabulary;
 
   try {
     const signals = [AbortSignal.timeout(15_000)];
@@ -95,18 +102,20 @@ export async function prepareSpeechToTextKeywords(args: {
     });
     if (!response.ok) {
       await response.body?.cancel().catch(() => {});
-      return [];
+      return vocabulary;
     }
     const payload = keywordResponseSchema.safeParse(await response.json());
-    if (!payload.success) return [];
+    if (!payload.success) return vocabulary;
     const text = payload.data.output
       .flatMap((item) => item.content.map((part) => part.text))
       .join("");
     const keywords = keywordsSchema.safeParse(JSON.parse(text));
     return keywords.success
-      ? normalizeSpeechToTextKeywords(keywords.data.keywords, { maxTotalCharacters: 10_000 })
-      : [];
+      ? normalizeSpeechToTextKeywords([...vocabulary, ...keywords.data.keywords], {
+          maxTotalCharacters: 10_000,
+        })
+      : vocabulary;
   } catch {
-    return [];
+    return vocabulary;
   }
 }

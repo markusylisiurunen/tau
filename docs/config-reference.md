@@ -22,7 +22,7 @@ Project and global content can change which persona ids exist. A configured defa
 | --- | --- | --- | --- | --- |
 | `apiKeys` | Object of string values | Global only | Provider-keyed map | Owning host or feature process; restart after changes |
 | `defaultPersona` | Non-empty string | Global, project | Most-specific wins | Session host; new session |
-| `speech` | Object with optional `voiceId` and `recordingShortcut` | Global, project | Merge by field | TUI client or Telegram runner; process restart |
+| `speech` | Object with optional `voiceId`, `recordingShortcut`, and `vocabulary` | Global, project | Merge by field; vocabulary is additive | TUI client or Telegram runner; process restart |
 | `defaultTheme` | Non-empty string | Global, project | Most-specific wins | TUI client; client restart |
 | `clientTools` | Array of objects | Global only | One global definition list | Owning client; TUI restart or new Telegram session client |
 | `enabledClientTools` | String array | Project only | Most-specific project list | Owning client; TUI restart or new Telegram session client |
@@ -136,13 +136,29 @@ For terminal recording, `recordingShortcut` replaces Ctrl+Y. Its required `key` 
 
 A double tap must arrive within 300 ms. For printable double-tap bindings, an unmatched first tap inserts the character after that delay; another key inserts it immediately before processing the new input. A single-press binding reserves its character, so it can no longer be typed. Bracketed paste never triggers recording. Keyboard auto-repeat can count as repeated taps. Recording shortcuts apply only to the TUI, not Telegram.
 
+For dictation, `vocabulary` supplies spelling hints for recurring names, identifiers, and short phrases:
+
+```json
+{
+  "speech": {
+    "vocabulary": ["Tau", "PostgreSQL", "ChatRuntime"]
+  }
+}
+```
+
+Define personal terms in `~/.config/tau/config.json` and project terms in `.tau/config.json`. Tau combines the nearest project's entries first, then parent projects, then global entries, preserving each list's order. An omitted list or `[]` adds nothing and does not clear inherited terms. Entries are trimmed and deduplicated case-insensitively, preserving the first spelling. Invalid entries produce a configuration warning: each entry must be a non-empty string of at most 100 Unicode characters, without angle brackets or internal line breaks.
+
+Tau appends keywords extracted from the recent conversation after configured terms. The combined list is limited to 100 terms and 10,000 Unicode characters, so explicit project terms take priority. These are Tau's limits. [Gemini's custom vocabulary](https://ai.google.dev/gemini-api/docs/transcribe) supports up to 1,000 terms and recommends up to 100 for best results; it cannot be combined with speaker diarization or word-level timestamps, which Tau does not request.
+
+Vocabulary goes directly to Gemini as transcription hints for live dictation, recording retries, and Telegram audio. It does not instruct the model to insert words or replace text afterward. Configured terms still work without conversation context, without OpenAI credentials, or when keyword extraction fails. With no vocabulary configured, Tau uses only context-derived hints.
+
 Without an override, Tau looks up Maisie (`QtY3JBOUKEB5xzrRfOKc`) before synthesis and tries Caleb (`AaOhDHYJ1XLZk74lXhdE`) only if ElevenLabs reports that Maisie was not found. If neither is available, speech fails. A configured voice is the only voice Tau tries. If it is unavailable, speech fails without falling back to a default.
 
 Authentication, permission, rate-limit, and network errors during voice lookup do not trigger the fallback. Once lookup succeeds, that voice is used for the whole reply, although synthesis can still be refused. Synthesis failures never switch voices, and Tau never retries synthesis automatically because each request may be billed.
 
 Speech uses Eleven v4 Turbo, the delivery note `[Brisk but relaxed, speaking naturally to a colleague]`, and a 1.15× tempo adjustment. GPT-6 Luna rewrites the text with reasoning disabled before ElevenLabs synthesis, so both OpenAI and ElevenLabs credentials are required. Voice Library API access may require a paid ElevenLabs plan, and shared voices can become unavailable.
 
-The TUI reads this setting from its own client configuration, also when attached to a remote host. Telegram reads it from the runner's startup configuration, not from session workspaces. Restart the respective process after changes. This setting does not affect the explicit voices supplied to `tau tool speech-generate`.
+The TUI reads these speech settings from its own client configuration, including project configuration discovered from its startup directory, also when attached to a remote host. It does not load vocabulary from the remote session's repository. Telegram reads it from the runner's startup configuration, not from session workspaces. Restart the respective process after changes. This setting does not affect the explicit voices supplied to `tau tool speech-generate`.
 
 ### `nook`
 

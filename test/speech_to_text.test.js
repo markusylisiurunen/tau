@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import { createSpeechToTextTranscription } from "../dist/core/utils/speech_to_text.js";
+import { createListenTranscription } from "../dist/tui/listen_capture.js";
 
 describe("speech-to-text transcription", () => {
   it("returns the live transcript without a quiet delay when the final activity covers the recording", async () => {
@@ -9,15 +10,19 @@ describe("speech-to-text transcription", () => {
     socket.send = vi.fn((_data, callback) => callback?.());
     socket.close = vi.fn();
     socket.terminate = vi.fn();
-    const transcription = createSpeechToTextTranscription({
+    const transcription = createListenTranscription({
       mode: "streaming",
-      apiKey: "key",
-      deps: { webSocketFactory: () => socket },
+      config: { apiKeys: { google: "key" }, speech: { vocabulary: ["Tau"] } },
+      deps: { env: { env: () => ({}) } },
+      speechToTextDeps: { webSocketFactory: () => socket },
     });
     const emit = (event) => socket.emit("message", JSON.stringify(event));
     try {
       socket.emit("open");
       await vi.advanceTimersByTimeAsync(0);
+      expect(
+        JSON.parse(socket.send.mock.calls[0][0]).setup.inputAudioTranscription.customVocabulary,
+      ).toEqual(["Tau"]);
       emit({ setupComplete: {} });
       transcription.appendAudio(Buffer.alloc(32000));
       emit({ serverContent: { interimInputTranscription: { text: "the last" } } });

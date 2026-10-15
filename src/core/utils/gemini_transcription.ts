@@ -74,6 +74,7 @@ export type GeminiTranscriptionOptions = {
   audio: Buffer;
   mimeType?: string;
   context?: SpeechToTextContext;
+  vocabulary?: string[];
   signal?: AbortSignal;
   fetchImpl?: typeof fetch;
 };
@@ -82,6 +83,7 @@ export type StartGeminiTranscriptionOptions = {
   apiKey: string;
   openAIApiKey?: string;
   context?: SpeechToTextContext;
+  vocabulary?: string[];
   fetchImpl?: typeof fetch;
   webSocketFactory?: SpeechToTextWebSocketFactory;
   onProgress?: (text: string) => void;
@@ -137,6 +139,7 @@ class GeminiStreamingTranscriptionImpl implements GeminiStreamingTranscription {
     this.keywordsPromise = prepareSpeechToTextKeywords({
       apiKey: options.openAIApiKey,
       context: options.context,
+      vocabulary: options.vocabulary,
       signal: this.keywordAbortController.signal,
       fetchImpl: options.fetchImpl,
     });
@@ -441,6 +444,7 @@ export async function transcribeGeminiAudio(options: GeminiTranscriptionOptions)
     prepareSpeechToTextKeywords({
       apiKey: options.openAIApiKey,
       context: options.context,
+      vocabulary: options.vocabulary,
       signal: options.signal,
       fetchImpl: fetchFn,
     }),

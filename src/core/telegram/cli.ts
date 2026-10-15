@@ -136,6 +136,7 @@ export async function runTelegramCommand(
         openAIApiKey: getOpenAIApiKey(config, env),
         elevenLabsApiKey: getElevenLabsApiKey(config, env),
         speechVoiceId: config.speech?.voiceId,
+        speechVocabulary: config.speech?.vocabulary,
         createSessionClient,
         onLog: stdout,
       });

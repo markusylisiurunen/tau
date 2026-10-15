@@ -110,8 +110,8 @@ Observing controls which updates you receive; it does not make you the owner. `s
 
 Both auto-compaction fields in `settings` are required:
 
-- `autoCompactThresholdTokens` is the configured value: a safe integer of at least 50,000, or `null` for the model-based default.
-- `effectiveAutoCompactThresholdTokens` is the integer threshold clients should display. It is the model's context window minus 16,384 tokens, or the configured value if that is smaller.
+- `autoCompactThresholdTokens` is the configured value: a safe integer of at least 50,000, or `null` to use the persona default, falling back to the model-based default.
+- `effectiveAutoCompactThresholdTokens` is the integer threshold clients should display. It resolves the session override, then the persona default, then the model's context window minus 16,384 tokens, and is capped at that model-based limit.
 
 `bootstrap.model.contextWindow` is the full model window, regardless of the compaction threshold.
 

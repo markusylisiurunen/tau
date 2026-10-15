@@ -43,6 +43,8 @@ export interface Persona {
   settings: PersonaSettings;
   allowedReasoningLevels?: ReasoningEffort[];
   subagentLaunchModels: string[];
+  autoCompactThresholdTokens?: number;
+  subagentAutoCompactThresholdTokens?: Record<string, number>;
   tools: ToolName[];
   source: PersonaSource;
 }

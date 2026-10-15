@@ -90,7 +90,7 @@ Then use Shift+Tab to choose a reasoning level. A newly added persona appears on
 | `/exit` | Close this TUI. On a long-running remote host, this detaches; the session is not deleted. |
 | `/rewind` | Pick an earlier user message, remove it and everything after it, and put its text back in the editor. |
 | `/diff [git diff args...]` | Open the local diff review tool on a snapshot taken from the execution environment. |
-| `/auto-compact [tokens\|default]` | Show the automatic-compaction threshold. Pass `50k` or `50000` to set it (minimum 50,000 tokens), or `default` to restore the model-based threshold. |
+| `/auto-compact [tokens\|default]` | Show the automatic-compaction threshold. Pass `50k` or `50000` to set it (minimum 50,000 tokens), or `default` to restore the persona default (or the model-based threshold when none is configured). |
 | `/compact-all [guidance]` | Replace the model's context with a generated summary. |
 | `/compact-keep-last [guidance]` | Same, and include the last assistant response in the summary when there is one. |
 | `/reload` | Reload session configuration and content from the execution environment. |

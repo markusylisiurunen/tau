@@ -1,5 +1,6 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { listProviders } from "../models/catalog.js";
+import { parseModelId } from "../models/model_id.js";
 import { REASONING_LEVELS, ReasoningEffortSchema } from "../types.js";
 import { CLAUDE_CODE_PROVIDER, resolveClaudeCodeModel } from "./claude_code_models.js";
 import type { SubagentLaunchModel } from "./types.js";
@@ -42,17 +43,12 @@ export function parseSubagentLaunchModel(
     .trim()
     .toLowerCase();
 
-  const providerSeparator = modelPart.indexOf("/");
-  if (providerSeparator <= 0 || providerSeparator >= modelPart.length - 1) {
+  const target = parseModelId(modelPart);
+  if (!target) {
     return { error: "must use format <provider>/<model>:<effort>" };
   }
 
-  const providerPart = modelPart.slice(0, providerSeparator);
-  const modelIdPart = modelPart.slice(providerSeparator + 1).trim();
-
-  if (!modelIdPart) {
-    return { error: "model id is required" };
-  }
+  const { provider: providerPart, modelId: modelIdPart } = target;
 
   const provider = parseProvider(providerPart);
   if (!provider) {

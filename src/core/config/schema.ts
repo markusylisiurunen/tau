@@ -22,6 +22,7 @@ import {
   selectCommandClientTools,
 } from "./client_tools.js";
 import type { ConfigDeps } from "./deps.js";
+import { type MarkdownExportConfig, markdownExportConfigSchema } from "./markdown_export.js";
 import { type McpServersConfig, parseMcpServersConfig, resolveMcpServersConfig } from "./mcp.js";
 import type { ConfigLevel } from "./paths.js";
 import { resolveConfigLevels } from "./paths.js";
@@ -29,6 +30,7 @@ import { getVirtualConfigDefaults } from "./virtual_defaults.js";
 
 export interface Config {
   apiKeys?: Record<string, string>;
+  markdownExport?: MarkdownExportConfig;
   speech?: { voiceId?: string; recordingShortcut?: RecordingShortcut; vocabulary?: string[] };
   defaultPersona?: string;
   defaultTheme?: string;
@@ -308,6 +310,21 @@ function validateConfigData(
   } else {
     const apiKeysResult = parseApiKeysConfig(data.apiKeys, sourceLabel);
     assignParsedConfigValue(config, errors, "apiKeys", apiKeysResult.config, apiKeysResult.errors);
+  }
+
+  if (data.markdownExport !== undefined) {
+    if (options.scope !== "global") {
+      errors.push(`${sourceLabel}: 'markdownExport' may only be configured in the global config.`);
+    } else {
+      const parsed = markdownExportConfigSchema.safeParse(data.markdownExport);
+      if (parsed.success) {
+        config.markdownExport = parsed.data;
+      } else {
+        errors.push(
+          `${sourceLabel}: 'markdownExport' requires an HTTPS endpoint (HTTP is allowed on loopback) and optional non-empty token or tokenEnv.`,
+        );
+      }
+    }
   }
 
   const defaultPersonaResult = parseDefaultPersona(data.defaultPersona, sourceLabel);
@@ -728,6 +745,9 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[], home: strin
     const config = configs[i] ?? {};
 
     apiKeys = mergeOptionalObject(apiKeys, config.apiKeys);
+    if (config.markdownExport !== undefined) {
+      merged.markdownExport = { ...config.markdownExport };
+    }
     if (config.speech !== undefined) {
       const vocabulary =
         config.speech.vocabulary !== undefined || merged.speech?.vocabulary !== undefined

@@ -40,6 +40,7 @@ import { formatRewindCandidateAge } from "../dist/tui/chat_controller/history_la
 import { copyTextToClipboard } from "../dist/tui/clipboard.js";
 import * as listenCapture from "../dist/tui/listen_capture.js";
 import { LISTEN_CAPTURE_START_TIMEOUT_MS } from "../dist/tui/listen_capture.js";
+import { exportMarkdown } from "../dist/tui/markdown_export.js";
 import { createTuiClientTools, SessionChatApp } from "../dist/tui/session_chat_app.js";
 import { SessionChatController } from "../dist/tui/session_chat_controller.js";
 import { runSpeechPlaybackTask } from "../dist/tui/speech_playback.js";
@@ -53,6 +54,10 @@ import {
 
 vi.mock("../dist/tui/clipboard.js", () => ({
   copyTextToClipboard: vi.fn(async () => {}),
+}));
+
+vi.mock("../dist/tui/markdown_export.js", () => ({
+  exportMarkdown: vi.fn(async () => "https://example.com/document/1"),
 }));
 
 const bootstrap = createProtocolBootstrap();
@@ -964,6 +969,83 @@ describe("formatRewindCandidateAge", () => {
 });
 
 describe("SessionChatController", () => {
+  it.each(["in-process", "ws://host"])(
+    "exports only completed assistant Markdown from %s",
+    async (targetLabel) => {
+      const markdown = "  # Proposal\n\n```js\nconst value = 1;\n```\n";
+      const completed = createAssistantMessage(markdown);
+      completed.content.push({ type: "thinking", thinking: "private reasoning" });
+      const session = new FakeSession(
+        createSnapshot([
+          { id: "user", message: { role: "user", content: "private input", timestamp: 1 } },
+          { id: "completed", message: completed },
+          {
+            id: "failed",
+            message: { ...createAssistantMessage("partial failure"), stopReason: "error" },
+          },
+          {
+            id: "tool-call",
+            message: { ...createAssistantMessage("tool commentary"), stopReason: "toolUse" },
+          },
+        ]),
+      );
+      const before = structuredClone(await session.snapshot());
+      const config = { markdownExport: { url: "https://example.com/api", token: "local-token" } };
+      const { controller, view } = await createControllerHarness({ session, config, targetLabel });
+      vi.mocked(exportMarkdown).mockClear();
+      controller.start();
+      controller.getInputHandlers().onSubmit("/export-response");
+      await flush();
+      expect(exportMarkdown).toHaveBeenCalledTimes(1);
+      expect(exportMarkdown).toHaveBeenCalledWith(
+        expect.objectContaining({ config: config.markdownExport, markdown }),
+      );
+      expect(view.transcriptNotices.at(-1)).toEqual(
+        expect.objectContaining({ content: ["https://example.com/document/1"] }),
+      );
+      expect(await session.snapshot()).toEqual(before);
+      await controller.dispose();
+    },
+  );
+
+  it("does not export without configuration or completed text", async () => {
+    vi.mocked(exportMarkdown).mockClear();
+    for (const config of [{}, { markdownExport: { url: "https://example.com/api" } }]) {
+      const { controller } = await createControllerHarness({ config });
+      controller.start();
+      controller.getInputHandlers().onSubmit("/export-response");
+      await flush();
+      await controller.dispose();
+    }
+    expect(exportMarkdown).not.toHaveBeenCalled();
+  });
+
+  it("prevents duplicate exports and aborts on detach", async () => {
+    let signal;
+    vi.mocked(exportMarkdown).mockClear();
+    vi.mocked(exportMarkdown).mockImplementationOnce((options) => {
+      signal = options.signal;
+      return new Promise((_resolve, reject) =>
+        signal.addEventListener("abort", () => reject(new Error("cancelled")), { once: true }),
+      );
+    });
+    const session = new FakeSession(
+      createSnapshot([{ id: "reply", message: createAssistantMessage("reply") }]),
+    );
+    const { controller } = await createControllerHarness({
+      session,
+      config: { markdownExport: { url: "https://example.com/api" } },
+    });
+    controller.start();
+    controller.getInputHandlers().onSubmit("/export-response");
+    await flush();
+    controller.getInputHandlers().onSubmit("/export-response");
+    await flush();
+    expect(exportMarkdown).toHaveBeenCalledTimes(1);
+    await controller.dispose();
+    expect(signal.aborted).toBe(true);
+  });
+
   it.each([false, true])(
     "retains history diagnostics without writing through the renderer (blocked=%s)",
     async (quarantined) => {

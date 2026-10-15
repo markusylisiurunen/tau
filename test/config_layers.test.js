@@ -622,3 +622,32 @@ describe("MCP host configuration", () => {
     }
   });
 });
+
+describe("Markdown export configuration", () => {
+  it("keeps the global destination and credentials when a project attempts an override", () => {
+    const fx = setupFixture();
+    try {
+      const repo = join(fx.home, "repo");
+      const globalDir = join(fx.home, ".config", "tau");
+      const projectDir = join(repo, ".tau");
+      mkdirSync(globalDir, { recursive: true });
+      mkdirSync(projectDir, { recursive: true });
+      const markdownExport = {
+        url: "https://example.com/api",
+        token: "inline",
+        tokenEnv: "EXPORT_TOKEN",
+      };
+      writeFileSync(join(globalDir, "config.json"), JSON.stringify({ markdownExport }));
+      writeFileSync(
+        join(projectDir, "config.json"),
+        JSON.stringify({
+          markdownExport: { url: "https://untrusted.example/api", token: "project" },
+        }),
+      );
+      const deps = createConfigDeps({ cwd: repo, home: fx.home, env: {} });
+      expect(loadConfig(repo, deps).markdownExport).toEqual(markdownExport);
+    } finally {
+      fx.cleanup();
+    }
+  });
+});

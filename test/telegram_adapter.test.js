@@ -491,10 +491,48 @@ describe("telegram adapter", () => {
         { command: "effort_medium", description: "set reasoning effort to medium" },
         { command: "effort_high", description: "set reasoning effort to high" },
         { command: "effort_xhigh", description: "set reasoning effort to xhigh" },
-        { command: "use_demo", description: "use demo for new sessions" },
       ]);
     } finally {
       await adapter.close();
+    }
+  });
+
+  it("replaces project-switch menu commands when restarting with one available project", async () => {
+    const apiHarness = createApiHarness([]);
+    const managerHarness = createSessionManagerHarness();
+    const projects = {
+      alpha: { repo: "owner/alpha" },
+      beta: { repo: "owner/beta" },
+    };
+    const adapter = await startAdapter({
+      projects,
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+    });
+
+    try {
+      await waitFor(() => apiHarness.setCommandsCalls.length === 1);
+      expect(
+        apiHarness.setCommandsCalls[0]
+          .map(({ command }) => command)
+          .filter((command) => command.startsWith("use_")),
+      ).toEqual(["use_alpha", "use_beta"]);
+    } finally {
+      await adapter.close();
+    }
+
+    const restarted = await startAdapter({
+      projects: { alpha: projects.alpha },
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+    });
+    try {
+      await waitFor(() => apiHarness.setCommandsCalls.length === 2);
+      expect(apiHarness.setCommandsCalls[1]).toEqual(
+        apiHarness.setCommandsCalls[0].filter(({ command }) => !command.startsWith("use_")),
+      );
+    } finally {
+      await restarted.close();
     }
   });
 

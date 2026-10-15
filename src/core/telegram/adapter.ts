@@ -320,6 +320,7 @@ type TelegramCommandDefinition = {
   command: `/${string}`;
   description: string;
   callbackAction?: QuickAction;
+  hiddenFromMenu?: boolean;
   handler: TelegramCommandHandler;
 };
 
@@ -1491,6 +1492,7 @@ class TelegramAdapterImpl {
       definitions.push({
         command: `/use_${projectId}`,
         description: `use ${projectId} for new sessions`,
+        hiddenFromMenu: this.allowedProjectIds.length === 1,
         handler: async (chatId, args) => this.handleUseProject(chatId, projectId, args),
       });
     }
@@ -1499,10 +1501,12 @@ class TelegramAdapterImpl {
   }
 
   private async syncCommands(): Promise<void> {
-    const commands: TelegramBotCommand[] = this.commandDefinitions.map((definition) => ({
-      command: definition.command.slice(1),
-      description: definition.description,
-    }));
+    const commands: TelegramBotCommand[] = this.commandDefinitions
+      .filter((definition) => !definition.hiddenFromMenu)
+      .map((definition) => ({
+        command: definition.command.slice(1),
+        description: definition.description,
+      }));
 
     try {
       await this.api.setCommands(commands);

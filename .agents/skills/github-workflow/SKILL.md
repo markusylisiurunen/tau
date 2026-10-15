@@ -34,6 +34,8 @@ Keep commit subjects short, imperative, and lowercase, without a prefix or trail
 
 ## Pull requests
 
+Open pull requests ready for review by default. Reserve drafts for an explicit user request or work that is not yet ready for review. Pending CI or human review alone does not justify draft status.
+
 Use a concise sentence-case title describing the change. Write the body in prose with these sections:
 
 ```markdown

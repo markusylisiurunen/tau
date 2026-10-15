@@ -47,7 +47,7 @@ export class NativeSubagentRuntime implements SubagentRuntime {
     this.agent = new AgentRuntime({
       agentId: options.id,
       spec: createAgentSpec({
-        autoCompactThresholdTokens: null,
+        autoCompactThresholdTokens: config.autoCompactThresholdTokens,
         ...resolveAgentModel(
           {
             id: `${options.personaId ?? "agent"}-subagent`,

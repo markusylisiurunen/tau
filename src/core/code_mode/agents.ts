@@ -5,6 +5,7 @@ import type { Config } from "../config/index.js";
 import type { HistoryQuery } from "../history/types.js";
 import type { McpManager } from "../mcp/manager.js";
 import type { ModelResolver } from "../models/catalog.js";
+import { getEffectiveAutoCompactThresholdTokens } from "../session/auto_compaction_threshold.js";
 import type { AgentSupervisor } from "../subagents/agent_supervisor.js";
 import { AgentRequestError } from "../subagents/errors.js";
 import { parseSubagentLaunchModel } from "../subagents/launch_model.js";
@@ -24,6 +25,7 @@ export type AgentsCapabilityOptions = {
   jobs: AgentJobRegistry;
   supervisor: AgentSupervisor;
   persona: Persona;
+  autoCompactThresholdTokens: number | null;
   config: Config;
   modelResolver: ModelResolver;
   subagentSystemPrompt: string | undefined;
@@ -376,7 +378,19 @@ export function createAgentsCapability(
             : await options.resolveSubagentPrompt?.({ cwd, persona: options.persona });
         if (!systemPrompt)
           throw new Error("Subagent working-directory instructions are unavailable");
-        runtimeConfig = { ...settings, workingDirectory: cwd, systemPrompt };
+        runtimeConfig = {
+          ...settings,
+          workingDirectory: cwd,
+          systemPrompt,
+          autoCompactThresholdTokens: getEffectiveAutoCompactThresholdTokens(
+            settings.model.contextWindow,
+            launchModel
+              ? (options.persona.subagentAutoCompactThresholdTokens?.[
+                  `${settings.model.provider}/${settings.model.id}`
+                ] ?? null)
+              : options.autoCompactThresholdTokens,
+          ),
+        };
       }
       context.signal.throwIfAborted();
       return supervisor.spawn({

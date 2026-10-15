@@ -122,7 +122,7 @@ The runner loads its speech credentials and `speech.voiceId` at startup, from it
 | `/effort_high` | Selects high reasoning for future turns. |
 | `/effort_xhigh` | Selects xhigh reasoning for future turns. |
 | `/prompt` | [Records a saved prompt](prompts-and-project-context.md#telegram-prompt-picker) while idle, without starting a turn. |
-| `/auto_compact [tokens\|default]` | Shows the automatic-compaction threshold. Pass `50k` or `50000` to set it (minimum 50,000 tokens), or `default` to restore the model-based threshold. |
+| `/auto_compact [tokens\|default]` | Shows the automatic-compaction threshold. Pass `50k` or `50000` to set it (minimum 50,000 tokens), or `default` to restore the persona default (or the model-based threshold when none is configured). |
 | `/compact` | Runs summary-only compaction while idle. |
 | `/interrupt` | Interrupts the active Tau turn. |
 | `/tts_on` | Sends a voice note after each final assistant response. |

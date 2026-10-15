@@ -92,6 +92,18 @@ Each custom persona is complete on its own. It does not inherit a provider, mode
 | `serviceTier` | `priority` or `flex`. Used only by `openai` and `openai-codex`. |
 | `allowedReasoningLevels` | Array of reasoning efforts offered by the TUI selector. |
 | `tools` | List of persona-selectable tools. |
+| `autoCompactThresholdTokens` | Default automatic-compaction threshold: a safe integer of at least 50,000 tokens. |
+| `subagentAutoCompactThresholdTokens` | Map from exact `<provider>/<model>` IDs (without reasoning effort) to safe integer thresholds of at least 50,000 tokens for explicit subagent model launches. |
+
+For example, these optional frontmatter fields give the main conversation a 200,000-token default and explicit launches of one subagent model an 80,000-token default:
+
+```yaml
+autoCompactThresholdTokens: 200000
+subagentAutoCompactThresholdTokens:
+  openai/gpt-6.1-sol: 80000
+```
+
+Thresholds are capped at the selected model's context window minus 16,384 tokens. A session's `/auto-compact` override takes precedence over the persona default. See [sessions](sessions.md) and [subagents](subagents.md) for inheritance and reset behavior.
 
 Every persona can use all discovered skills. If a custom persona omits `tools`, Tau enables the standard tools and `agents`. A `tools` list without `agents` prevents the agent from starting or managing subagents. See [skills](skills.md) and [subagents](subagents.md) for those contracts.
 

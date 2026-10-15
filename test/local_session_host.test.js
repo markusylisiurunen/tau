@@ -422,6 +422,44 @@ describe("HostedEphemeralAgentSession", () => {
 });
 
 describe("LocalSessionHost", () => {
+  it("projects persona compaction defaults without persisting them as overrides", async () => {
+    const persona = { ...personas[0], autoCompactThresholdTokens: 80000 };
+    const store = new MemorySessionStore();
+    const host = createHost(store, { persona, personas: [persona] });
+    try {
+      const session = await host.createSession(localCreateInput);
+      const snapshot = await session.snapshot();
+      expect(snapshot.settings.autoCompactThresholdTokens).toBeNull();
+      expect(snapshot.settings.effectiveAutoCompactThresholdTokens).toBe(
+        Math.min(80000, persona.model.contextWindow - 16384),
+      );
+      await session.setAutoCompactThreshold(50000);
+      const before = await session.snapshot();
+      const deltas = [];
+      session.onDelta((delta) => deltas.push(delta));
+      await session.setAutoCompactThreshold(null);
+      const after = await session.snapshot();
+      expect(deltas.reduce(applySessionProtocolDelta, before)).toEqual(after);
+      expect(after.settings).toEqual(snapshot.settings);
+      const { contextId } = await session.createEphemeralContext({
+        instructions: "independent",
+        tools: [],
+      });
+      const thread = await session.ephemeralAgentSessions.get(contextId).createThread("thread");
+      expect(thread.runtime.spec.autoCompactThresholdTokens).toBe(80000);
+      await host.shutdown();
+      const recoveredHost = createHost(store, { persona, personas: [persona] });
+      try {
+        const recovered = await recoveredHost.observeSession(snapshot.sessionId);
+        expect((await recovered.snapshot()).settings).toEqual(snapshot.settings);
+      } finally {
+        await recoveredHost.shutdown();
+      }
+    } finally {
+      await host.shutdown();
+    }
+  });
+
   it.each([false, true])(
     "recovers the auto-compaction setting from disk (legacy: %s)",
     async (legacy) => {

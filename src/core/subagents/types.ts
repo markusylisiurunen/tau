@@ -139,6 +139,7 @@ export type SubagentEvent =
 
 export type NativeSubagentConfig = {
   kind: "native";
+  autoCompactThresholdTokens: number;
   systemPrompt: string;
   model: Model<Api>;
   settings: PersonaSettings;

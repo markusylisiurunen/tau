@@ -117,7 +117,7 @@ export class HostedEphemeralAgentSession {
     });
     const systemPrompt = [composition.baseSystemPrompt, options.instructions].join("\n\n");
     const spec = createAgentSpec({
-      autoCompactThresholdTokens: null,
+      autoCompactThresholdTokens: options.persona.autoCompactThresholdTokens ?? null,
       ...resolveAgentModel(
         createEphemeralPersona(options.persona, systemPrompt, options.tools, options.reasoning),
         options.config,

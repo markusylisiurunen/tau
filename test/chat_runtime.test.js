@@ -59,6 +59,43 @@ function createRuntime(overrides = {}) {
 }
 
 describe("ChatRuntime", () => {
+  it("resolves persona defaults separately from session overrides and captures launch budgets", async () => {
+    const runtime = createRuntime({
+      persona: createPersona({ autoCompactThresholdTokens: 200000 }),
+    });
+    const spawn = vi
+      .spyOn(runtime.supervisor, "spawn")
+      .mockReturnValue({ ok: false, reason: "test" });
+    try {
+      expect(runtime.autoCompactThresholdTokens).toBeNull();
+      expect(runtime.agent.spec.autoCompactThresholdTokens).toBe(200000);
+      runtime.setAutoCompactThreshold(120000);
+      const launchingTools = runtime.agent.spec.tools;
+      runtime.setAutoCompactThreshold(60000);
+      await launchingTools.get("spawn_agent").execute(
+        { id: "spawn", name: "spawn_agent", arguments: { title: "child", prompt: "work" } },
+        {
+          agentId: "parent",
+          turnId: "turn",
+          assistantMessageId: "assistant",
+          emitActivity: async () => {},
+        },
+      );
+      expect(spawn.mock.calls[0][0].runtimeConfig.autoCompactThresholdTokens).toBe(
+        Math.min(120000, runtime.persona.model.contextWindow - 16384),
+      );
+      runtime.setPersona(createPersona({ autoCompactThresholdTokens: 80000 }));
+      expect(runtime.agent.spec.autoCompactThresholdTokens).toBe(60000);
+      runtime.setAutoCompactThreshold(null);
+      expect(runtime.autoCompactThresholdTokens).toBeNull();
+      expect(runtime.agent.spec.autoCompactThresholdTokens).toBe(80000);
+      runtime.setPersona(createPersona());
+      expect(runtime.agent.spec.autoCompactThresholdTokens).toBeNull();
+    } finally {
+      runtime.dispose();
+    }
+  });
+
   it("keeps startup credentials independent of reloaded config", () => {
     const apiKeys = { openai: "host-key", exa: "host-tool-key" };
     const runtime = createRuntime({ config: { apiKeys } });

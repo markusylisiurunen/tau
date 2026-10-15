@@ -28,6 +28,7 @@ export type SpeechToTextTranscriptionOptions = {
   apiKey: string;
   openAIApiKey?: string;
   context?: SpeechToTextContext;
+  vocabulary?: string[];
   deps?: SpeechToTextDependencies;
   onProgress?: (text: string) => void;
 };
@@ -67,6 +68,7 @@ export function createSpeechToTextTranscription(
         apiKey: options.apiKey,
         openAIApiKey: options.openAIApiKey,
         context: options.context,
+        vocabulary: options.vocabulary,
         fetchImpl: options.deps?.fetchImpl,
         webSocketFactory: options.deps?.webSocketFactory,
       }),
@@ -80,6 +82,7 @@ export function createSpeechToTextTranscription(
       audio: recording.audio,
       mimeType: recording.mimeType,
       context: options.context,
+      vocabulary: options.vocabulary,
       signal,
       fetchImpl: options.deps?.fetchImpl,
     });

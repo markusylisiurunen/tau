@@ -10,6 +10,10 @@ import { formatPersonaReference, parsePersonaReference } from "../persona_refere
 import { parseSubagentLaunchModelList } from "../subagents/launch_model.js";
 import { REASONING_LEVELS } from "../types.js";
 import { normalizeModelNoticeKey, parseModelNoticeKey } from "../utils/model_notices.js";
+import {
+  normalizeSpeechToTextKeywords,
+  speechToTextKeywordSchema,
+} from "../utils/speech_to_text_keywords.js";
 import type { CommandClientToolConfig } from "./client_tools.js";
 import {
   parseCommandClientToolsConfig,
@@ -25,7 +29,7 @@ import { getVirtualConfigDefaults } from "./virtual_defaults.js";
 
 export interface Config {
   apiKeys?: Record<string, string>;
-  speech?: { voiceId?: string; recordingShortcut?: RecordingShortcut };
+  speech?: { voiceId?: string; recordingShortcut?: RecordingShortcut; vocabulary?: string[] };
   defaultPersona?: string;
   defaultTheme?: string;
   clientTools?: CommandClientToolConfig[];
@@ -322,6 +326,7 @@ function validateConfigData(
       z
         .object({
           voiceId: NonEmptyStringSchema.optional(),
+          vocabulary: z.array(speechToTextKeywordSchema).optional(),
           recordingShortcut: z
             .object({
               key: z
@@ -335,7 +340,7 @@ function validateConfigData(
             .optional(),
         })
         .strip(),
-      "'speech' must contain a non-empty voiceId or a recordingShortcut with a printable key, ctrl+y, or f1–f12 and a press or double-tap gesture.",
+      "'speech' must contain a non-empty voiceId, a vocabulary array of non-empty terms of at most 100 characters without angle brackets or line breaks, or a recordingShortcut with a printable key, ctrl+y, or f1–f12 and a press or double-tap gesture.",
     ],
   ]);
   Object.assign(config as Record<string, unknown>, scalarResult.values);
@@ -724,7 +729,15 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[], home: strin
 
     apiKeys = mergeOptionalObject(apiKeys, config.apiKeys);
     if (config.speech !== undefined) {
+      const vocabulary =
+        config.speech.vocabulary !== undefined || merged.speech?.vocabulary !== undefined
+          ? normalizeSpeechToTextKeywords(
+              [...(config.speech.vocabulary ?? []), ...(merged.speech?.vocabulary ?? [])],
+              { maxTotalCharacters: 10_000 },
+            )
+          : undefined;
       merged.speech = mergeOptionalObject(merged.speech, config.speech);
+      if (vocabulary !== undefined) merged.speech!.vocabulary = vocabulary;
     }
     if (config.clientTools !== undefined) {
       clientTools = resolveCommandClientToolsConfig(level, config.clientTools);

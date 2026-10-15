@@ -162,6 +162,7 @@ export type TelegramAdapterOptions = {
   openAIApiKey?: string;
   elevenLabsApiKey?: string;
   speechVoiceId?: string;
+  speechVocabulary?: string[];
   speechToTextDeps?: SpeechToTextDependencies;
   sessionManager: TelegramSessionManager;
   projectPreferences: TelegramProjectPreferenceStore;
@@ -1278,6 +1279,7 @@ class TelegramAdapterImpl {
   private readonly openAIApiKey?: string;
   private readonly elevenLabsApiKey?: string;
   private readonly speechVoiceId?: string;
+  private readonly speechVocabulary?: string[];
   private readonly speechToTextDeps?: SpeechToTextDependencies;
   private readonly sessionManager: TelegramSessionManager;
   private readonly projectPreferences: TelegramProjectPreferenceStore;
@@ -1355,6 +1357,7 @@ class TelegramAdapterImpl {
     this.openAIApiKey = options.openAIApiKey?.trim() || undefined;
     this.elevenLabsApiKey = options.elevenLabsApiKey?.trim() || undefined;
     this.speechVoiceId = options.speechVoiceId;
+    this.speechVocabulary = options.speechVocabulary;
     this.speechToTextDeps = options.speechToTextDeps;
     this.sessionManager = options.sessionManager;
     this.projectPreferences = options.projectPreferences;
@@ -2848,6 +2851,7 @@ class TelegramAdapterImpl {
         apiKey,
         openAIApiKey: this.openAIApiKey,
         context: await this.resolveSpeechToTextContext(chatId),
+        vocabulary: this.speechVocabulary,
         deps: {
           ...this.speechToTextDeps,
           fetchImpl: this.fetchImpl,

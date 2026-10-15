@@ -178,6 +178,7 @@ export function createListenTranscription(args: {
     apiKey,
     openAIApiKey: getOpenAIApiKey(args.config, args.deps.env.env()),
     context: args.context,
+    vocabulary: args.config.speech?.vocabulary,
     deps: args.speechToTextDeps,
   });
 }

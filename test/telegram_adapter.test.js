@@ -2644,6 +2644,7 @@ describe("telegram adapter", () => {
 
     const adapter = await startAdapter({
       geminiApiKey: "gemini-key",
+      speechVocabulary: ["Tau", "ChatRuntime"],
       elevenLabsApiKey: "eleven-key",
       openAIApiKey: "openai-key",
       sessionManager: managerHarness.manager,
@@ -2677,6 +2678,12 @@ describe("telegram adapter", () => {
       expect(geminiFetch.mock.calls.map(([input]) => getRequestUrl(input))).toContain(
         "https://generativelanguage.googleapis.com/v1beta/interactions",
       );
+      const interaction = geminiFetch.mock.calls.find(([input]) =>
+        getRequestUrl(input).endsWith("/interactions"),
+      );
+      expect(
+        JSON.parse(interaction[1].body).generation_config.transcription_config.custom_vocabulary,
+      ).toEqual(["Tau", "ChatRuntime"]);
       await waitFor(() =>
         apiHarness.setMessageReactions.some(
           (entry) => entry.chatId === 210 && entry.messageId === 902,

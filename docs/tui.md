@@ -204,7 +204,7 @@ A submitted draft that contains dictation carries hidden guidance saying that so
 
 The editor is locked from the start of recording until finalization. Escape cancels voice input at any stage: startup, recording, microphone shutdown, transcription, or retry. Cancelling removes the preview at once, restores the original draft, and unlocks the editor without inserting or submitting anything. The cancelled recording is deleted once pending file work finishes. A failure also restores the original draft. A recording or retry cannot start while another editor update is pending.
 
-For live transcription, GPT-6 Luna, with reasoning disabled, extracts spelling hints from the recent conversation while recording starts. Tau buffers audio until the transcription session is ready, then streams it. Gemini uses `gemini-3.5-transcribe-live` in verbatim mode with English (`en-US`) and Finnish (`fi-FI`) language hints. Missing OpenAI credentials or a failed hint extraction do not stop transcription.
+For live transcription, GPT-6 Luna, with reasoning disabled, extracts spelling hints from the recent conversation while recording starts. Tau buffers audio until the transcription session is ready, then streams it. Gemini uses `gemini-3.5-transcribe-live` in verbatim mode with English (`en-US`) and Finnish (`fi-FI`) language hints. Missing OpenAI credentials or a failed hint extraction do not stop transcription. Configured [`speech.vocabulary`](config-reference.md#speech) terms take priority over extracted hints and remain available when extraction fails.
 
 If transcription fails, Tau keeps the local WAV file and reports its path:
 

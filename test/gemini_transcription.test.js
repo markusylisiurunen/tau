@@ -4,6 +4,7 @@ import {
   startGeminiTranscription,
   transcribeGeminiAudio,
 } from "../dist/core/utils/gemini_transcription.js";
+import { prepareSpeechToTextKeywords } from "../dist/core/utils/speech_to_text_keywords.js";
 
 function createJsonResponse(payload, status = 200, headers = {}) {
   return new Response(JSON.stringify(payload), {
@@ -71,6 +72,24 @@ function getCall(fetchMock, suffix) {
 }
 
 describe("gemini transcription", () => {
+  it("bounds combined hints with configured vocabulary first", async () => {
+    const vocabulary = Array.from({ length: 99 }, (_, index) => `${index}`.padEnd(100, "x"));
+    const fetchImpl = createGeminiFetchMock({
+      keywords: [vocabulary[0], "😀".repeat(100), "overflow"],
+    });
+    const result = await prepareSpeechToTextKeywords({
+      apiKey: "key",
+      vocabulary: ["x".repeat(101), "bad\nterm", ...vocabulary],
+      context: { messages: [{ role: "user", text: "context" }] },
+      fetchImpl,
+    });
+    expect(result).toEqual([...vocabulary, "😀".repeat(100)]);
+    expect(result.reduce((total, term) => total + [...term].length, 0)).toBe(10_000);
+    expect(await prepareSpeechToTextKeywords({ vocabulary: [...result, "overflow"] })).toEqual(
+      result,
+    );
+  });
+
   it.each(["mid-speech", "paused", "silent", "late-activity"])(
     "drains the live transcript after stopping %s without a second transcription request",
     async (state) => {
@@ -342,47 +361,58 @@ describe("gemini transcription", () => {
     },
   );
 
-  it.each(["missing key", "provider error", "incomplete", "refusal", "malformed"])(
-    "transcribes without hints after keyword extraction %s",
-    async (outcome) => {
-      const providerFetch = createGeminiFetchMock();
-      const fetchMock = vi.fn(async (url, options) => {
-        if (url !== "https://api.openai.com/v1/responses") return providerFetch(url, options);
-        if (outcome === "provider error") return new Response(null, { status: 503 });
-        return createJsonResponse({
-          status: outcome === "incomplete" ? "incomplete" : "completed",
-          output: [
-            {
-              type: "message",
-              status: "completed",
-              content: [
-                outcome === "refusal"
-                  ? { type: "refusal", refusal: "declined" }
-                  : {
-                      type: "output_text",
-                      text: outcome === "malformed" ? "not JSON" : '{"keywords":["Tau"]}',
-                    },
-              ],
-            },
-          ],
-        });
+  it.each([
+    "missing key",
+    "no context",
+    "provider error",
+    "incomplete",
+    "refusal",
+    "malformed",
+    "network error",
+  ])("preserves configured hints after keyword extraction %s", async (outcome) => {
+    const providerFetch = createGeminiFetchMock();
+    const fetchMock = vi.fn(async (url, options) => {
+      if (url !== "https://api.openai.com/v1/responses") return providerFetch(url, options);
+      if (outcome === "network error") throw new Error("offline");
+      if (outcome === "provider error") return new Response(null, { status: 503 });
+      return createJsonResponse({
+        status: outcome === "incomplete" ? "incomplete" : "completed",
+        output: [
+          {
+            type: "message",
+            status: "completed",
+            content: [
+              outcome === "refusal"
+                ? { type: "refusal", refusal: "declined" }
+                : {
+                    type: "output_text",
+                    text: outcome === "malformed" ? "not JSON" : '{"keywords":["Tau"]}',
+                  },
+            ],
+          },
+        ],
       });
-      await expect(
-        transcribeGeminiAudio({
-          apiKey: "google-key",
-          openAIApiKey: outcome === "missing key" ? undefined : "openai-key",
-          audio: Buffer.from("audio"),
-          context: { messages: [{ role: "user", text: "Use Tau" }] },
-          fetchImpl: fetchMock,
-        }),
-      ).resolves.toBe("ship the fix");
-      const request = JSON.parse(getCall(providerFetch, "/v1beta/interactions")[1].body);
-      expect(request.generation_config.transcription_config.custom_vocabulary).toBeUndefined();
-      expect(getCall(fetchMock, "https://api.openai.com/v1/responses") !== undefined).toBe(
-        outcome !== "missing key",
-      );
-    },
-  );
+    });
+    await expect(
+      transcribeGeminiAudio({
+        apiKey: "google-key",
+        openAIApiKey: outcome === "missing key" ? undefined : "openai-key",
+        audio: Buffer.from("audio"),
+        vocabulary: [" Tau ", "tau", "ChatRuntime"],
+        context:
+          outcome === "no context" ? undefined : { messages: [{ role: "user", text: "Use Tau" }] },
+        fetchImpl: fetchMock,
+      }),
+    ).resolves.toBe("ship the fix");
+    const request = JSON.parse(getCall(providerFetch, "/v1beta/interactions")[1].body);
+    expect(request.generation_config.transcription_config.custom_vocabulary).toEqual([
+      "Tau",
+      "ChatRuntime",
+    ]);
+    expect(getCall(fetchMock, "https://api.openai.com/v1/responses") !== undefined).toBe(
+      outcome !== "missing key" && outcome !== "no context",
+    );
+  });
 
   it("transcribes uploaded audio with Gemini 3.5 Transcribe verbatim mode and context keywords", async () => {
     const fetchMock = createGeminiFetchMock();
@@ -392,6 +422,7 @@ describe("gemini transcription", () => {
       openAIApiKey: "openai-key",
       audio: Buffer.from("audio payload"),
       mimeType: "audio/ogg",
+      vocabulary: ["Tau", "oauth"],
       fetchImpl: fetchMock,
       context: {
         messages: [
@@ -434,7 +465,7 @@ describe("gemini transcription", () => {
       generation_config: {
         transcription_config: {
           language_codes: ["en-US", "fi-FI"],
-          custom_vocabulary: ["Acme SSO", "OAuth"],
+          custom_vocabulary: ["Tau", "oauth", "Acme SSO"],
           mode: { type: "verbatim" },
         },
       },
@@ -489,6 +520,7 @@ describe("gemini transcription", () => {
         apiKey: "gemini key",
         openAIApiKey: "openai-key",
         onProgress,
+        vocabulary: ["Tau", "oauth"],
         context: { messages: [{ role: "user", text: "Configure Acme SSO" }] },
         fetchImpl: fetchMock,
         webSocketFactory,
@@ -507,7 +539,7 @@ describe("gemini transcription", () => {
           generationConfig: { responseModalities: ["TEXT"] },
           inputAudioTranscription: {
             languageCodes: ["en-US", "fi-FI"],
-            customVocabulary: ["Acme SSO", "OAuth"],
+            customVocabulary: ["Tau", "oauth", "Acme SSO"],
             mode: "VERBATIM",
           },
         },

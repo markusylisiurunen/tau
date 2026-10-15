@@ -2,6 +2,7 @@ import { basename, join } from "node:path";
 import { z } from "zod";
 import { MIN_AUTO_COMPACT_THRESHOLD_TOKENS } from "../../protocol/session_protocol.js";
 import type { ModelResolver } from "../models/catalog.js";
+import { parseModelId } from "../models/model_id.js";
 import type { PromptTemplate } from "../prompts.js";
 import {
   TOOL_NAME_BASH,
@@ -171,7 +172,7 @@ const personaFrontMatterSchema = z
       .optional(),
     subagentAutoCompactThresholdTokens: z
       .record(
-        z.string().regex(/^[^/:\s]+\/[^:\s]+$/),
+        z.string().refine((key) => parseModelId(key) !== undefined),
         z.number().int().min(MIN_AUTO_COMPACT_THRESHOLD_TOKENS).max(Number.MAX_SAFE_INTEGER),
       )
       .optional(),

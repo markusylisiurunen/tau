@@ -62,14 +62,14 @@ describe("custom personas", () => {
 
   it.each([
     [
-      "autoCompactThresholdTokens: 80000\nsubagentAutoCompactThresholdTokens: {openai/gpt-5.4: 60000}",
+      "autoCompactThresholdTokens: 80000\nsubagentAutoCompactThresholdTokens: {openai/gpt-5.4: 60000, amazon-bedrock/amazon.nova-2-lite-v1:0: 80000}",
       true,
     ],
     ["autoCompactThresholdTokens: 49999", false],
     ["autoCompactThresholdTokens: 50000.5", false],
     ["autoCompactThresholdTokens: '80k'", false],
     ["autoCompactThresholdTokens: null", false],
-    ["subagentAutoCompactThresholdTokens: {openai/gpt-5.4:high: 60000}", false],
+    ["subagentAutoCompactThresholdTokens: {openai/: 60000}", false],
     ["subagentAutoCompactThresholdTokens: {openai/gpt-5.4: 49999}", false],
   ])("validates persona compaction policy %s", async (fields, valid) => {
     const fx = setupFixture();
@@ -90,7 +90,10 @@ describe("custom personas", () => {
       if (valid)
         expect(persona).toMatchObject({
           autoCompactThresholdTokens: 80000,
-          subagentAutoCompactThresholdTokens: { "openai/gpt-5.4": 60000 },
+          subagentAutoCompactThresholdTokens: {
+            "openai/gpt-5.4": 60000,
+            "amazon-bedrock/amazon.nova-2-lite-v1:0": 80000,
+          },
         });
     } finally {
       fx.cleanup();

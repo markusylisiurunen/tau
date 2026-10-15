@@ -40,6 +40,7 @@ export const ToolCatalog = {
       mcp: new McpManager(options.config.mcpServers),
       bashJobs: new BashJobRegistry(),
       subagentSystemPrompt: undefined,
+      autoCompactThresholdTokens: options.persona.autoCompactThresholdTokens ?? null,
       supervisor: new AgentSupervisor({ onEvent: () => {} }),
     });
   },
@@ -50,6 +51,7 @@ export const ToolCatalog = {
     config: Config;
     persona: Persona;
     subagentSystemPrompt: string | undefined;
+    autoCompactThresholdTokens: number | null;
     modelResolver: ModelResolver;
     supervisor: AgentSupervisor;
     bashJobs: BashJobRegistry;
@@ -67,6 +69,7 @@ export const ToolCatalog = {
         supervisor: options.supervisor,
         bashJobs: options.bashJobs,
         persona: options.persona,
+        autoCompactThresholdTokens: options.autoCompactThresholdTokens,
         config: options.config,
         modelResolver: options.modelResolver,
         subagentSystemPrompt: options.subagentSystemPrompt,

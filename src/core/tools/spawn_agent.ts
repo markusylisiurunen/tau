@@ -6,6 +6,7 @@ import type { Config } from "../config/index.js";
 import type { HistoryQuery } from "../history/types.js";
 import type { McpManager } from "../mcp/manager.js";
 import type { ModelResolver } from "../models/catalog.js";
+import { getEffectiveAutoCompactThresholdTokens } from "../session/auto_compaction_threshold.js";
 import type { AgentSupervisor } from "../subagents/agent_supervisor.js";
 import { formatSpawnAgentResult } from "../subagents/format.js";
 import { parseSubagentLaunchModel } from "../subagents/launch_model.js";
@@ -127,6 +128,7 @@ export function createSpawnAgentToolDefinition(options: {
   bashJobs: BashJobRegistry;
   supervisor: AgentSupervisor;
   persona: Persona;
+  autoCompactThresholdTokens: number | null;
   config: Config;
   modelResolver: ModelResolver;
   subagentSystemPrompt: string | undefined;
@@ -273,6 +275,14 @@ export function createSpawnAgentToolDefinition(options: {
         systemPrompt,
         workingDirectory: cwd,
         ...effectiveSettings,
+        autoCompactThresholdTokens: getEffectiveAutoCompactThresholdTokens(
+          effectiveSettings.model.contextWindow,
+          launchModelOverride
+            ? (persona.subagentAutoCompactThresholdTokens?.[
+                `${effectiveSettings.model.provider}/${effectiveSettings.model.id}`
+              ] ?? null)
+            : options.autoCompactThresholdTokens,
+        ),
       };
 
       const modelLabel = `${runtimeConfig.model.provider}/${runtimeConfig.model.id}:${runtimeConfig.settings.reasoning ?? "none"}`;

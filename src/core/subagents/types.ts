@@ -140,6 +140,7 @@ export type SubagentEvent =
   | { type: "subagent_finished"; state: SubagentStateSnapshot };
 
 export type SubagentRuntimeConfig = {
+  autoCompactThresholdTokens: number;
   systemPrompt: string;
   model: Model<Api>;
   settings: PersonaSettings;

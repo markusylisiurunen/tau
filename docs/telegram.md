@@ -80,7 +80,7 @@ A missing or empty `allowedUserIds` allows every user. A missing or empty `allow
 
 Use both lists for a private bot. `allowedUserIds` decides who can start work, but in an allowed group, messages from other users can still become context, labeled with their sender. Add the bot only to groups whose conversation is fine to send to the model.
 
-A bot sees only its `allowedProjectIds`, or every project if the field is missing. If only one project is allowed, it is selected automatically. Otherwise a chat needs `defaultProjectId` or a `/use_<project>` choice before `/new`.
+A bot sees only its `allowedProjectIds`, or every project if the field is missing. If only one project is allowed, it is selected automatically and the command palette omits `/use_<project>` commands. The command still works when typed directly. Otherwise the palette includes project-switch commands, and a chat needs `defaultProjectId` or a `/use_<project>` choice before `/new`. Each startup replaces the palette, removing switch commands if the bot now has only one available project.
 
 Telegram allows 100 commands per bot: twelve built-ins and up to 88 `/use_<projectId>` commands.
 

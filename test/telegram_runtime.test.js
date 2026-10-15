@@ -2,6 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
+import { startTelegramAdapter } from "../dist/core/telegram/adapter.js";
 import {
   createTelegramProjectPreferenceStore,
   resolveTelegramProjectPreferencesPath,
@@ -34,6 +35,40 @@ function createTelegramConfig(overrides = {}) {
 }
 
 describe("telegram runtime", () => {
+  it("advertises project switches based on each bot's available projects", async () => {
+    const menus = new Map();
+    const runtime = await startTelegramRuntime({
+      config: createTelegramConfig({
+        bots: {
+          single: { botToken: "single-token", allowedProjectIds: ["alpha"] },
+          multiple: { botToken: "multiple-token" },
+        },
+      }),
+      createSessionClient: vi.fn(),
+      deps: {
+        startTelegramAdapter: (options) =>
+          startTelegramAdapter({
+            ...options,
+            api: {
+              getMe: async () => ({ username: `${options.botId}_bot` }),
+              setCommands: async (commands) => menus.set(options.botId, commands),
+              getUpdates: async () => new Promise(() => {}),
+            },
+          }),
+      },
+    });
+    try {
+      expect(menus.size).toBe(2);
+      for (const [botId, commands] of menus) {
+        expect(
+          commands.map(({ command }) => command).filter((command) => command.startsWith("use_")),
+        ).toEqual(botId === "single" ? [] : ["use_alpha", "use_beta"]);
+      }
+    } finally {
+      await runtime.close();
+    }
+  });
+
   it("binds file tools to each session's owning bot and chat", async () => {
     const root = await mkdtemp(join(tmpdir(), "tau-file-routing-"));
     const clients = [];

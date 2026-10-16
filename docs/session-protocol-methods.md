@@ -300,7 +300,7 @@ params: {
 result: { message: AssistantMessage }
 ```
 
-`context.messages` and the returned message use Tau's provider-independent message format. System messages after the first use the plain-text format with versioned metadata described in the [session protocol](session-protocol.md); the metadata is not sent to the provider. Sections and tool changes are rejected. Tool calls in the response are returned as data and never run. Samples can run at the same time, and `session.interrupt`, transport shutdown, or host shutdown cancels them.
+`context.messages` and the returned message use Tau's provider-independent message format. System messages after the first use the plain-text format with versioned metadata described in the [session protocol](session-protocol.md); the metadata is not sent to the provider. Sections and tool changes are rejected. Assistant messages retain optional `providerThinkingLevel` strings and tool-call `argumentsError` diagnostics when passed into later sampling contexts. Tool calls in the response are returned as data and never run. Samples can run at the same time, and `session.interrupt`, transport shutdown, or host shutdown cancels them.
 
 ## Read and change session state
 

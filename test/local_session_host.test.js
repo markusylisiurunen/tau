@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { convertResponsesMessages } from "@earendil-works/pi-ai/api/openai-responses-shared";
 import { describe, expect, it, vi } from "vitest";
 import { HistoryManager } from "../dist/core/history/history_manager.js";
 import { LocalHistoryStore } from "../dist/core/history/local_history_store.js";
@@ -544,6 +545,71 @@ describe("LocalSessionHost", () => {
     );
 
     await host.shutdown();
+  });
+
+  it("preserves provider thinking levels through disk recovery and request reconstruction", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "tau-thinking-recovery-"));
+    const store = new FileSessionStore({ directory });
+    const originalHost = createHost(store);
+    let recoveredHost;
+    try {
+      const session = await originalHost.createSession(localCreateInput);
+      const model = resolveModel("openai", "gpt-6-luna");
+      const reply = {
+        ...fauxAssistantMessage("answer"),
+        api: model.api,
+        provider: model.provider,
+        model: model.id,
+        providerThinkingLevel: "high",
+      };
+      session.runtime.agent.spec.model.stream = () => ({
+        async *[Symbol.asyncIterator]() {},
+        async result() {
+          return reply;
+        },
+      });
+      const before = await session.snapshot();
+      const deltas = [];
+      session.onDelta((delta) => deltas.push(delta));
+      await session.record({ text: "question" });
+      await session.runTurn();
+      const snapshot = await session.snapshot();
+      expect(deltas.reduce(applySessionProtocolDelta, before)).toEqual(snapshot);
+      const stored = await store.loadSession(session.sessionId);
+      expect(stored.messages.find((entry) => entry.message.role === "assistant").message).toEqual(
+        reply,
+      );
+      await originalHost.shutdown();
+      recoveredHost = createHost(new FileSessionStore({ directory }));
+      const recovered = await recoveredHost.observeSession(session.sessionId);
+      let input;
+      recovered.runtime.agent.spec.model.stream = (context) => {
+        input = convertResponsesMessages(model, context, new Set(["openai"]), {
+          configurationUpdateEffort: "low",
+        });
+        return {
+          async *[Symbol.asyncIterator]() {},
+          async result() {
+            return fauxAssistantMessage("continued");
+          },
+        };
+      };
+      await recovered.record({ text: "continue" });
+      await recovered.runTurn();
+      expect(input.filter((item) => item.type === "configuration_update")).toEqual([
+        { type: "configuration_update", reasoning: { effort: "high" } },
+        { type: "configuration_update", reasoning: { effort: "low" } },
+      ]);
+      const replyIndex = input.findIndex((item) => item.role === "assistant");
+      expect(input[replyIndex - 1]).toEqual({
+        type: "configuration_update",
+        reasoning: { effort: "high" },
+      });
+    } finally {
+      await recoveredHost?.shutdown();
+      await originalHost.shutdown();
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it("persists intermediate system messages and replays them after host recovery", async () => {

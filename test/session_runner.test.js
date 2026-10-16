@@ -11,6 +11,7 @@ import { scopeToolExecutionBackend } from "../dist/core/tools/execution_backend.
 import { buildToolRunPresentation } from "../dist/core/tools/presentation.js";
 import { ToolRegistry } from "../dist/core/tools/registry.js";
 import { autocompleteProjectPathsWithBackend } from "../dist/core/utils/project_files.js";
+import { ClientToolBroker } from "../dist/host/client_tool_broker.js";
 import {
   createSdkDiffSnapshotDeps,
   createSdkToolExecutionBackend,
@@ -437,6 +438,64 @@ describe("session runner", () => {
     } finally {
       now.mockRestore();
     }
+  });
+
+  it("blocks malformed optional client-tool arguments before dispatch", async () => {
+    const broker = new ClientToolBroker();
+    const sendCall = vi.fn();
+    const registration = broker.registerClient({
+      tools: [
+        {
+          name: "local_action",
+          description: "Perform a local action.",
+          parameters: {
+            type: "object",
+            properties: { dryRun: { type: "boolean" }, label: { type: "string" } },
+            additionalProperties: false,
+          },
+        },
+      ],
+      sendCall,
+      sendCancel: vi.fn(),
+    });
+    registration.attachSession("session-1");
+    const runner = new SequentialToolCallRunner(
+      {
+        toolRegistry: new ToolRegistry(broker.getToolDefinitions("session-1")),
+        executionContext: {
+          agentId: "agent-1",
+          turnId: "turn-1",
+          assistantMessageId: "assistant-1",
+        },
+      },
+      new AbortController().signal,
+    );
+    const call = {
+      id: "malformed-call",
+      type: "toolCall",
+      name: "local_action",
+      arguments: {},
+      argumentsError: 'Invalid JSON: {"dryRun":true,"label": broken}',
+    };
+    const admission = runner.prepare(call);
+    expect(admission.lifecycleEvent.type).toBe("tool_run_blocked");
+    admission.start();
+    const completion = runner.finish();
+    const events = [];
+    for await (const event of runner) {
+      events.push(event);
+      event.acknowledge?.();
+    }
+    await completion;
+    expect(sendCall).not.toHaveBeenCalled();
+    expect(events).toContainEqual({
+      type: "tool_result",
+      message: expect.objectContaining({
+        toolCallId: call.id,
+        isError: true,
+        content: [{ type: "text", text: call.argumentsError }],
+      }),
+    });
   });
 
   it("releases pending tool acknowledgements when event consumption stops", async () => {

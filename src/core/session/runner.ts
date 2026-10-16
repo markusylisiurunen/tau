@@ -470,6 +470,10 @@ function prepareToolCall(
   toolCall: ToolCall,
   options: SequentialToolCallRunnerOptions,
 ): PreparedToolCall {
+  if (toolCall.argumentsError !== undefined) {
+    return { type: "rejected", toolCall, message: toolCall.argumentsError };
+  }
+
   const definition = options.toolRegistry.get(toolCall.name);
   if (!definition) {
     return {

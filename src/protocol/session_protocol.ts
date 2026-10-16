@@ -1521,6 +1521,7 @@ const modelToolCallSchema = z
     id: nonEmptyStringSchema,
     name: nonEmptyStringSchema,
     arguments: z.record(z.string(), z.unknown()),
+    argumentsError: z.string().optional(),
     thoughtSignature: z.string().optional(),
   })
   .strip();
@@ -1581,6 +1582,7 @@ const modelAssistantMessageSchema = z
     model: nonEmptyStringSchema,
     responseModel: nonEmptyStringSchema.optional(),
     responseId: nonEmptyStringSchema.optional(),
+    providerThinkingLevel: z.string().optional(),
     diagnostics: z.array(modelDiagnosticSchema).optional(),
     usage: modelUsageSchema,
     stopReason: z.enum(["stop", "length", "toolUse", "error", "aborted"]),

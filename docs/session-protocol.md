@@ -123,6 +123,8 @@ Render active transcript order from `timeline.items`, not by sorting or filterin
 
 The timeline has an `epoch`, a per-epoch sequence high-water mark, and ordered items. Successful compaction replaces the active recoverable timeline and advances the epoch. Rewind stays in the same epoch, removes later items, and preserves the sequence high-water mark so sequence numbers are not reused.
 
+Assistant messages preserve optional `providerThinkingLevel` strings for provider request reconstruction and prompt-cache reuse after recovery. Tool calls preserve optional `argumentsError` diagnostics; calls with this field are blocked before execution and return the diagnostic as an error result.
+
 User message text is stored raw. Before showing it, remove Tau metadata and any leading `<system>...</system>\n` blocks; the Node SDK exports helpers for this. Apply this only to user messages, never to assistant, tool-result, or system messages.
 
 The first system message is the persona's base prompt. Later system messages are history records, in order, with plain-text `content`, a `timestamp`, and required `metadata`: `{ type: "instruction" | "auto-compaction-continuation", version: 1 }`. The model sees them and they are recoverable. The TUI hides them, and searchable history includes them as system entries. Tau metadata is removed before sending to the provider. System messages cannot contain text-block arrays, named sections, or tool changes.

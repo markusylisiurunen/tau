@@ -317,12 +317,20 @@ describe("session_protocol", () => {
       content: [
         { type: "thinking", thinking: "Classifying the request..." },
         { type: "text", text: "authentication" },
+        {
+          type: "toolCall",
+          id: "malformed-call",
+          name: "lookup_ticket",
+          arguments: {},
+          argumentsError: "Invalid JSON",
+        },
       ],
       api: "openai-responses",
       provider: "openai",
       model: "gpt-5.6-sol",
       responseModel: "gpt-5.6-sol-2026-07-01",
       responseId: "response-1",
+      providerThinkingLevel: "high",
       diagnostics: [
         {
           type: "provider-retry",

@@ -82,6 +82,7 @@ function createFixture(overrides = {}) {
     config: {},
     modelResolver,
     subagentSystemPrompt: "subagent prompt",
+    autoCompactThresholdTokens: 120000,
     history: {
       search: vi.fn(),
       read: vi.fn(),
@@ -768,3 +769,32 @@ it.each([
 function failSupervisorCall() {
   throw new Error("supervisor unavailable");
 }
+
+describe("subagent compaction thresholds", () => {
+  it.each([
+    [undefined, undefined, 120000],
+    [undefined, 80000, 120000],
+    ["anthropic/claude-opus-5:high", 80000, 80000],
+    ["anthropic/claude-opus-5:medium", undefined, null],
+    ["openai/gpt-5.6-sol:high", 70000, 70000],
+    ["amazon-bedrock/amazon.nova-2-lite-v1:0:high", 80000, 80000],
+    ["openai/gpt-5.6-sol:high", undefined, null],
+    ["openai/gpt-5.6-sol:high", 9000000, null],
+  ])("resolves launch %s with configured budget %s", async (model, budget, expected) => {
+    const fixture = createFixture();
+    fixture.persona.subagentLaunchModels.push(
+      "anthropic/claude-opus-5:high",
+      "anthropic/claude-opus-5:medium",
+      "amazon-bedrock/amazon.nova-2-lite-v1:0:high",
+    );
+    fixture.persona.autoCompactThresholdTokens = 200000;
+    const key = model?.slice(0, model.lastIndexOf(":")) ?? "anthropic/claude-opus-5";
+    fixture.persona.subagentAutoCompactThresholdTokens =
+      budget === undefined ? {} : { [key]: budget };
+    await execute(fixture.tool, { ...baseArguments, ...(model ? { model } : {}) });
+    const config = fixture.supervisor.spawn.mock.calls[0][0].runtimeConfig;
+    expect(config.autoCompactThresholdTokens).toBe(
+      Math.min(expected ?? Infinity, config.model.contextWindow - 16384),
+    );
+  });
+});

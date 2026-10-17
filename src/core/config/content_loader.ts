@@ -1,6 +1,8 @@
 import { basename, join } from "node:path";
 import { z } from "zod";
+import { MIN_AUTO_COMPACT_THRESHOLD_TOKENS } from "../../protocol/session_protocol.js";
 import type { ModelResolver } from "../models/catalog.js";
+import { parseModelId } from "../models/model_id.js";
 import type { PromptTemplate } from "../prompts.js";
 import {
   TOOL_NAME_BASH,
@@ -162,6 +164,18 @@ const personaFrontMatterSchema = z
     serviceTier: ServiceTierSchema.optional(),
     allowedReasoningLevels: z.array(ReasoningEffortSchema).optional(),
     tools: z.unknown().optional(),
+    autoCompactThresholdTokens: z
+      .number()
+      .int()
+      .min(MIN_AUTO_COMPACT_THRESHOLD_TOKENS)
+      .max(Number.MAX_SAFE_INTEGER)
+      .optional(),
+    subagentAutoCompactThresholdTokens: z
+      .record(
+        z.string().refine((key) => parseModelId(key) !== undefined),
+        z.number().int().min(MIN_AUTO_COMPACT_THRESHOLD_TOKENS).max(Number.MAX_SAFE_INTEGER),
+      )
+      .optional(),
   })
   .strip();
 
@@ -217,7 +231,9 @@ function parsePersona(
 
   const parsedFrontMatter = personaFrontMatterSchema.safeParse(markdownResult.frontMatter);
   if (!parsedFrontMatter.success) {
-    return { error: `${file}: missing required fields (id, provider, model). skipped.` };
+    return {
+      error: `${file}: invalid persona frontmatter: ${parsedFrontMatter.error.message}. skipped.`,
+    };
   }
 
   const { id, label, provider, model, description } = parsedFrontMatter.data;
@@ -274,6 +290,15 @@ function parsePersona(
     ...(finalDescription && { description: finalDescription }),
     ...(finalAllowedReasoningLevels ? { allowedReasoningLevels: finalAllowedReasoningLevels } : {}),
     subagentLaunchModels: [],
+    ...(parsedFrontMatter.data.autoCompactThresholdTokens !== undefined
+      ? { autoCompactThresholdTokens: parsedFrontMatter.data.autoCompactThresholdTokens }
+      : {}),
+    ...(parsedFrontMatter.data.subagentAutoCompactThresholdTokens !== undefined
+      ? {
+          subagentAutoCompactThresholdTokens:
+            parsedFrontMatter.data.subagentAutoCompactThresholdTokens,
+        }
+      : {}),
     source,
   };
 

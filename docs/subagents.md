@@ -50,6 +50,14 @@ The configured list of launch models is an allowlist. It does not choose a defau
 
 A model ID may be missing from the catalog if its provider is known (see [models](models.md)). An entry with an invalid provider, model, effort, or format makes the configuration field invalid. Duplicate entries are removed.
 
+### Automatic compaction
+
+When `model` is omitted, a subagent inherits the effective threshold of the parent's launching turn, including any session `/auto-compact` override. A setting change during that turn affects only later turns and their launches.
+
+When `model` is specified, the threshold comes from the persona's `subagentAutoCompactThresholdTokens` entry for the exact `<provider>/<model>`, without reasoning effort. If there is no entry, it uses the selected model's context window minus 16,384 tokens. This applies even when the explicit model matches the parent or only changes reasoning effort. The parent's threshold is not inherited in this case.
+
+All thresholds are capped at the selected model's context window minus 16,384 tokens. Each child measures its own usage and keeps its launch threshold for follow-ups. These optional settings do not change the launch allowlist. See [personas](personas.md) for a configuration example.
+
 ### Allowing model overrides
 
 Configure the allowlist with `subagents.launchModels` in `config.json`:

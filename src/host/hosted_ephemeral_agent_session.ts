@@ -220,7 +220,7 @@ class EphemeralAgentThread {
     const spec =
       options.forkFrom?.spec ??
       createAgentSpec({
-        autoCompactThresholdTokens: null,
+        autoCompactThresholdTokens: options.persona.autoCompactThresholdTokens ?? null,
         ...resolveAgentModel(
           createEphemeralPersona(
             options.persona,

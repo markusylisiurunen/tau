@@ -69,6 +69,7 @@ export class ChatRuntime {
   readonly bashJobs = new BashJobRegistry();
   readonly supervisor: AgentSupervisor;
   private currentPersona: Persona;
+  private autoCompactOverride: number | null = null;
   private currentConfig: Config;
   private readonly hostApiKeys: Config["apiKeys"];
   private currentModelResolver: ModelResolver;
@@ -130,7 +131,7 @@ export class ChatRuntime {
       agentId: options.sessionId,
       spec: createAgentSpec({
         ...this.resolvedModel,
-        autoCompactThresholdTokens: null,
+        autoCompactThresholdTokens: this.currentPersona.autoCompactThresholdTokens ?? null,
         systemPrompt: composition.baseSystemPrompt,
         tools,
       }),
@@ -283,8 +284,17 @@ export class ChatRuntime {
     this.refreshSpec();
   }
 
+  get autoCompactThresholdTokens(): number | null {
+    return this.autoCompactOverride;
+  }
+
+  private get resolvedAutoCompactThresholdTokens(): number | null {
+    return this.autoCompactOverride ?? this.currentPersona.autoCompactThresholdTokens ?? null;
+  }
+
   setAutoCompactThreshold(thresholdTokens: number | null): void {
-    this.agent.updateSpec({ ...this.agent.spec, autoCompactThresholdTokens: thresholdTokens });
+    this.autoCompactOverride = thresholdTokens;
+    this.refreshSpec();
   }
 
   setReasoning(reasoning: ReasoningEffort): void {
@@ -322,7 +332,7 @@ export class ChatRuntime {
     this.agent.updateSpec(
       createAgentSpec({
         ...this.resolvedModel,
-        autoCompactThresholdTokens: this.agent.spec.autoCompactThresholdTokens,
+        autoCompactThresholdTokens: this.resolvedAutoCompactThresholdTokens,
         systemPrompt: this.latestPromptComposition.baseSystemPrompt,
         tools: this.buildToolRegistry(this.latestPromptComposition),
       }),
@@ -335,6 +345,7 @@ export class ChatRuntime {
       cwd: this.promptContext.cwd,
       config: this.config,
       persona: this.currentPersona,
+      autoCompactThresholdTokens: this.resolvedAutoCompactThresholdTokens,
       subagentSystemPrompt: composition.subagentSystemPrompt,
       modelResolver: this.currentModelResolver,
       supervisor: this.supervisor,

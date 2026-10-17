@@ -332,13 +332,13 @@ result: {
 }
 ```
 
-`thresholdTokens` must be a safe integer of at least 50,000, or `null` to restore the model-based default. Numeric strings are rejected. Session creation accepts the same values in the optional `autoCompactThresholdTokens` field, which defaults to `null`.
+`thresholdTokens` must be a safe integer of at least 50,000, or `null` to restore the persona default (or the model-based default when none is configured). Numeric strings are rejected. Session creation accepts the same values in the optional `autoCompactThresholdTokens` field, which defaults to `null`.
 
-The default threshold is the model's context window minus 16,384 tokens. With an override, the effective threshold is the smaller of the configured value and that default. A model with a small context window can therefore have an effective threshold below 50,000.
+The effective threshold uses the session override, then the persona default, then the model's context window minus 16,384 tokens. It cannot exceed that model-based limit. A model with a small context window can therefore have an effective threshold below 50,000.
 
 The host saves the setting and publishes a `settings.set` delta to observers. Changing it does not start compaction. A running turn and its steering continuations keep their original threshold.
 
-Reloads, persona changes, and recovery preserve the configured value. The effective threshold is recalculated for the selected model. Subagents and ephemeral threads use their model-based defaults. See [automatic compaction](sessions.md#automatic-compaction) for request-size limits and costs.
+Reloads, persona changes, and recovery preserve the configured value. The effective threshold is recalculated for the selected persona and model. Subagents launched without a model override inherit the parent's launching-turn threshold; explicit model launches use their configured subagent threshold or the selected model's default. Ephemeral threads use the persona default without the main session override. See [automatic compaction](sessions.md#automatic-compaction) for request-size limits and costs.
 
 ### `session.setReasoning`
 

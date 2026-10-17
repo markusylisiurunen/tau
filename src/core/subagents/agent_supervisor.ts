@@ -161,7 +161,7 @@ export class AgentSupervisor {
     };
     const runtime = new AgentRuntime({
       spec: createAgentSpec({
-        autoCompactThresholdTokens: null,
+        autoCompactThresholdTokens: runtimeConfig.autoCompactThresholdTokens,
         ...resolveAgentModel(persona, options.config, {
           includeModelNotice: true,
           deps: this.deps,

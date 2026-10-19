@@ -51,6 +51,7 @@ const SEARCH_CATEGORIES = [
 ] as const;
 const searchOptionsSchema = z
   .object({
+    objective: nonEmptyStringSchema.max(4_096).optional(),
     numResults: z.number().int().min(1).max(100).optional(),
     includeDomains: domainFilterSchema.optional(),
     excludeDomains: domainFilterSchema.optional(),
@@ -142,6 +143,7 @@ async function requestExa(
       "Content-Type": "application/json",
       "User-Agent": "tau-web",
       "x-api-key": apiKey,
+      ...(endpoint === "/search" ? { "Exa-Beta": "dynamic-highlights-2026-08-28" } : {}),
     },
     body: JSON.stringify(body),
     signal,
@@ -213,6 +215,7 @@ function normalizeSearchArguments(args: unknown): [string, Record<string, unknow
     query,
     {
       type: "auto",
+      ...(options.objective ? { objective: options.objective } : {}),
       ...(options.numResults !== undefined ? { numResults: options.numResults } : {}),
       ...(options.includeDomains ? { includeDomains: options.includeDomains } : {}),
       ...(options.excludeDomains ? { excludeDomains: options.excludeDomains } : {}),
@@ -221,7 +224,7 @@ function normalizeSearchArguments(args: unknown): [string, Record<string, unknow
       ...(options.category ? { category: options.category } : {}),
       ...(options.userLocation ? { userLocation: options.userLocation } : {}),
       contents: {
-        highlights: true,
+        highlights: { dynamic: true },
         ...(options.maxAgeHours !== undefined ? { maxAgeHours: options.maxAgeHours } : {}),
       },
     },
@@ -309,10 +312,19 @@ const exaStatusSchema = z
       .optional(),
   })
   .strip();
+const exaNoticeSchema = z
+  .object({
+    code: z.string(),
+    path: z.string(),
+    message: z.string(),
+    details: z.record(z.string(), z.unknown()).optional(),
+  })
+  .strip();
 const exaResponseSchema = z
   .object({
     results: z.array(exaResultSchema),
     statuses: z.array(exaStatusSchema).default([]),
+    notices: z.array(exaNoticeSchema).default([]),
   })
   .strip();
 
@@ -350,6 +362,7 @@ function normalizeResult(result: ExaResult): Record<string, unknown> {
 function normalizeResponse(value: unknown): {
   results: Record<string, unknown>[];
   statuses: Record<string, unknown>[];
+  notices: z.infer<typeof exaNoticeSchema>[];
 } {
   const parsed = exaResponseSchema.safeParse(value);
   if (!parsed.success) {
@@ -358,6 +371,7 @@ function normalizeResponse(value: unknown): {
   return {
     results: parsed.data.results.map(normalizeResult),
     statuses: parsed.data.statuses.map(normalizeStatus),
+    notices: parsed.data.notices,
   };
 }
 

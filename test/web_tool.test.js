@@ -302,7 +302,7 @@ describe("Exa web code-mode tool", () => {
     const tool = createWebTool(backend, createDeps(client));
     const { result } = await runTool(tool, {
       code: [
-        "const search = await tau.web.search('tau', { numResults: 2, userLocation: 'fi' });",
+        "const search = await tau.web.search('tau', { objective: ' Find official Tau documentation ', numResults: 2, userLocation: 'fi' });",
         "printText(search.results[0].title);",
         "const text = await tau.web.fetch(['https://example.com'], { mode: 'text', maxCharacters: 123, links: 2 });",
         "printText(text.results[0].title);",
@@ -322,9 +322,10 @@ describe("Exa web code-mode tool", () => {
       "tau",
       {
         type: "auto",
+        objective: "Find official Tau documentation",
         numResults: 2,
         userLocation: "FI",
-        contents: { highlights: true },
+        contents: { highlights: { dynamic: true } },
       },
       expect.any(AbortSignal),
     );
@@ -362,17 +363,88 @@ describe("Exa web code-mode tool", () => {
         "https://api.exa.ai/search",
         expect.objectContaining({
           method: "POST",
+          headers: expect.objectContaining({ "Exa-Beta": "dynamic-highlights-2026-08-28" }),
           body: JSON.stringify({
             query: "tau",
             type: "auto",
-            contents: { highlights: true },
+            contents: { highlights: { dynamic: true } },
           }),
           signal: expect.any(AbortSignal),
         }),
       );
+      fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ results: [] })));
+      const fetched = await runTool(tool, {
+        code: "await tau.web.fetch('https://example.com')",
+      });
+      expect(fetched.result.toolResult.outcome).toBe("succeeded");
+      const [url, request] = fetchMock.mock.calls[1];
+      expect(url).toBe("https://api.exa.ai/contents");
+      expect(request.headers).not.toHaveProperty("Exa-Beta");
+      expect(JSON.parse(request.body)).toEqual({
+        urls: ["https://example.com"],
+        highlights: true,
+      });
     } finally {
       fetchMock.mockRestore();
     }
+  });
+
+  it("preserves notices through code mode without exposing provider warnings", async () => {
+    const notices = [
+      {
+        code: "RESTRICTIONS_RELAXED",
+        path: "/query",
+        message: "The quoted phrase was removed.",
+        details: { relaxed: [{ kind: "phrase", operator: '"tau"' }] },
+      },
+      { code: "FUTURE_NOTICE", path: "/query", message: "Additional retrieval context." },
+    ];
+    const client = {
+      search: vi.fn(async () => ({
+        results: [],
+        notices,
+        warnings: [{ code: "IGNORED_FIELD", path: "/unused", message: "Unused field." }],
+      })),
+      getContents: vi.fn(async () => ({ results: [] })),
+    };
+    const tool = createWebTool(createBackend(), createDeps(client));
+    const { result } = await runTool(tool, {
+      code: [
+        "printText(JSON.stringify(await tau.web.search('tau')));",
+        "printText(JSON.stringify(await tau.web.fetch('https://example.com')));",
+      ].join("\n"),
+    });
+    expect(result.toolResult.outcome).toBe("succeeded");
+    const responses = getToolText(result)
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(responses).toEqual([
+      { results: [], statuses: [], notices },
+      { results: [], statuses: [], notices: [] },
+    ]);
+  });
+
+  it.each([" ", "x".repeat(4097), 42])(
+    "rejects invalid objectives before searching",
+    async (objective) => {
+      const client = { search: vi.fn() };
+      const tool = createWebTool(createBackend(), createDeps(client));
+      const { result } = await runTool(tool, {
+        code: `await tau.web.search('tau', { objective: ${JSON.stringify(objective)} })`,
+      });
+      expect(result.toolResult.outcome).toBe("failed");
+      expect(client.search).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects malformed provider notices", async () => {
+    const client = {
+      search: vi.fn(async () => ({ results: [], notices: [{ code: "INCOMPLETE" }] })),
+    };
+    const tool = createWebTool(createBackend(), createDeps(client));
+    const { result } = await runTool(tool, { code: "await tau.web.search('tau')" });
+    expect(result.toolResult.outcome).toBe("failed");
   });
 
   it("rejects oversized provider responses", async () => {

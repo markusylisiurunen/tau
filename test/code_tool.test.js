@@ -1,12 +1,14 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { McpClient } from "@earendil-works/pi-mcp";
 import sharp from "sharp";
 import { describe, expect, it, vi } from "vitest";
 import { runTauCodeMode } from "../dist/code_mode/runtime.js";
 import { createBashCapability } from "../dist/core/code_mode/bash.js";
 import { createModelsCapability } from "../dist/core/code_mode/models.js";
 import { bindCodeModeSdk } from "../dist/core/code_mode/sdk.js";
+import { McpManager } from "../dist/core/mcp/manager.js";
 import { requestOpenRouterChat } from "../dist/core/models/openrouter.js";
 import { BashJobRegistry } from "../dist/core/tools/bash_jobs.js";
 import { ToolCatalog } from "../dist/core/tools/catalog.js";
@@ -200,13 +202,83 @@ describe("code composition", () => {
     },
   );
 
+  it("exposes only enabled MCP summaries before execution without connecting", async () => {
+    const connect = vi.spyOn(McpClient.prototype, "connect");
+    const servers = {
+      issues: {
+        type: "stdio",
+        command: "private-command",
+        args: ["private-argument"],
+        cwd: "/private-directory",
+        env: { TOKEN: "private-token" },
+        description: 'Search "issues".\nUpdate milestones.',
+      },
+      remote: {
+        type: "http",
+        url: "https://private.example/mcp",
+        headers: { Authorization: "private-header" },
+      },
+      disabled: {
+        type: "stdio",
+        command: "unused",
+        enabled: false,
+        description: "hidden-summary",
+      },
+    };
+    const mcp = new McpManager(servers);
+    const empty = new McpManager({ disabled: servers.disabled });
+    const options = {
+      backend: createLocalToolExecutionBackend(),
+      cwd: process.cwd(),
+      config: {},
+      bashJobs: new BashJobRegistry(),
+      mcp,
+    };
+    try {
+      const catalog = [
+        { name: "issues", description: servers.issues.description },
+        { name: "remote" },
+      ];
+      expect(mcp.listServers()).toEqual(catalog);
+      const tool = createCodeToolDefinition({ ...options, allowedTools: ["mcp"] });
+      const child = ToolCatalog.createSubagentRegistry(
+        ["mcp"],
+        options.backend,
+        options.cwd,
+        {},
+        options.bashJobs,
+        undefined,
+        mcp,
+      ).get("code");
+      for (const definition of [tool, child]) {
+        const entries = definition.schema.description
+          .split("\n")
+          .filter((line) => line.startsWith("{"));
+        expect(entries.map((line) => JSON.parse(line))).toEqual(catalog);
+        expect(definition.schema.description).not.toMatch(
+          /private-|private\.example|disabled|hidden-summary/,
+        );
+      }
+      const denied = createCodeToolDefinition({ ...options, allowedTools: ["bash"] });
+      expect(denied.schema.description).not.toContain("tau.mcp");
+      expect(denied.schema.description).not.toContain("milestones");
+      expect(
+        createCodeToolDefinition({ ...options, allowedTools: ["mcp"], mcp: empty }),
+      ).toBeUndefined();
+      expect(connect).not.toHaveBeenCalled();
+    } finally {
+      await Promise.all([mcp.close(), empty.close()]);
+      connect.mockRestore();
+    }
+  });
+
   it("scopes default capability policies without restricting the composition tool", () => {
     const tool = createCodeToolDefinition({
       backend: createLocalToolExecutionBackend(),
       cwd: process.cwd(),
       allowedTools: ["bash", "web", "history", "nook", "mcp", "models"],
       history: {},
-      mcp: { available: true },
+      mcp: { available: true, listServers: () => [{ name: "test" }] },
       config: { nook: { domain: "nook.example.com" } },
       bashJobs: new BashJobRegistry(),
     });

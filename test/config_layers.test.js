@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { builtinThemes } from "../dist/core/config/builtin_themes.js";
+import { parseMcpServersConfig } from "../dist/core/config/mcp.js";
 import { resolveConfigLevels } from "../dist/core/config/paths.js";
 import { loadRuntimeConfig } from "../dist/core/config/runtime.js";
 import {
@@ -558,6 +559,28 @@ describe("config paths", () => {
 });
 
 describe("MCP host configuration", () => {
+  it.each(["stdio", "http"])("validates optional %s server summaries", (type) => {
+    const connection =
+      type === "stdio" ? { type, command: "server" } : { type, url: "https://example.com/mcp" };
+    const valid = parseMcpServersConfig(
+      {
+        omitted: connection,
+        trimmed: { ...connection, description: "  Search issues.  " },
+        boundary: { ...connection, description: "x".repeat(512) },
+      },
+      "test",
+    );
+    expect(valid.errors).toEqual([]);
+    expect(valid.config.omitted).not.toHaveProperty("description");
+    expect(valid.config.trimmed.description).toBe("Search issues.");
+    expect(valid.config.boundary.description).toHaveLength(512);
+    for (const description of ["", "  ", 42, null, "x".repeat(513)]) {
+      const invalid = parseMcpServersConfig({ invalid: { ...connection, description } }, "test");
+      expect(invalid.config).toEqual({});
+      expect(invalid.errors).toHaveLength(1);
+    }
+  });
+
   it("merges host launch-directory layers by server name and resolves paths at their defining layer", () => {
     const fx = setupFixture();
     try {
@@ -571,12 +594,14 @@ describe("MCP host configuration", () => {
             local: {
               type: "stdio",
               command: "./bin/mcp",
+              description: "Inherited summary",
               cwd: "~/services",
               env: { TOKEN: `\${HOST_TOKEN}` },
             },
             remote: {
               type: "http",
               url: "https://example.com/mcp",
+              description: "Remote service",
               headers: { Authorization: `Bearer \${HOST_TOKEN}` },
             },
             disabled: { type: "stdio", command: "uvx", enabled: false },
@@ -610,6 +635,7 @@ describe("MCP host configuration", () => {
         remote: {
           type: "http",
           url: "https://example.com/mcp",
+          description: "Remote service",
           headers: { Authorization: `Bearer \${HOST_TOKEN}` },
         },
         disabled: { type: "stdio", command: "disabled-project", cwd: repo, enabled: false },

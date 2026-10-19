@@ -4,6 +4,7 @@ import type { ConfigLevel } from "./paths.js";
 
 const stringMap = z.record(z.string().min(1), z.string());
 const common = {
+  description: z.string().trim().min(1).max(512).optional(),
   enabled: z.boolean().optional(),
   timeoutMs: z.number().int().positive().max(900_000).optional(),
   discoveryTimeoutMs: z.number().int().positive().max(60_000).optional(),

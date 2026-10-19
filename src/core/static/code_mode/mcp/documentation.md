@@ -6,7 +6,7 @@ Use connected MCP services when they provide data or actions relevant to the tas
 
 ```ts
 type McpApi = {
-  listServers(): Promise<Array<{ name: string }>>;
+  listServers(): Promise<Array<{ name: string; description?: string }>>;
   searchTools(query: string, options?: SearchOptions): Promise<SearchResult>;
   listTools(server: string, options?: ListOptions): Promise<ToolList>;
   describeTool(server: string, name: string): Promise<ToolDescription>;
@@ -21,7 +21,7 @@ type McpApi = {
 
 ### `tau.mcp.listServers()`
 
-Takes no arguments and returns `Array<{ name: string }>`. These are the enabled server names used by every other method.
+Takes no arguments and returns `Array<{ name: string; description?: string }>`. These are the enabled server names used by every other method and their optional configured capability summaries. The same catalog appears in the initial tool description. Listing servers does not open connections or fetch server instructions.
 
 ### `tau.mcp.searchTools(query, options?)`
 

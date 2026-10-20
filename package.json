@@ -57,7 +57,7 @@
     "prettier": "^3.9.10",
     "typescript": "^7.0.2",
     "vitest": "^5.0.5",
-    "wrangler": "^4.151.1"
+    "wrangler": "^4.151.2"
   },
   "engines": {
     "node": ">=24.0.0"
@@ -67,6 +67,6 @@
     "protobufjs@7.6.6": false,
     "fsevents@2.3.3": true,
     "@google/genai@2.21.0": false,
-    "workerd@1.20261012.1": true
+    "workerd@1.20261019.1": true
   }
 }

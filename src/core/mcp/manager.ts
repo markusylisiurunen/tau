@@ -46,7 +46,10 @@ export class McpManager {
     this.assertOpen();
     return Object.entries(this.servers)
       .filter(([, server]) => server.enabled !== false)
-      .map(([name]) => ({ name }));
+      .map(([name, server]) => ({
+        name,
+        ...(server.description ? { description: server.description } : {}),
+      }));
   }
 
   async listTools(

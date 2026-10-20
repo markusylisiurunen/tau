@@ -240,6 +240,7 @@ The host reads MCP servers once at startup, from the global config and the proje
     "issues": {
       "type": "stdio",
       "command": "uvx",
+      "description": "Search and update engineering issues and milestones.",
       "args": ["example-mcp-server"],
       "env": { "API_TOKEN": "${ISSUES_TOKEN}" }
     },
@@ -257,6 +258,8 @@ Server names use letters, digits, `_`, and `-`. Every entry requires an explicit
 - `stdio`: requires a non-empty `command`; accepts optional literal `args`, `cwd`, and string-valued `env`.
 - `http`: requires an HTTP(S) `url` without embedded username/password; accepts optional string-valued `headers`. This is streamable HTTP, not the legacy SSE transport.
 - Both accept `enabled` (default `true`), `timeoutMs` for tool calls and resource reads (integer from 1 to 900,000, default 300,000), and `discoveryTimeoutMs` for connection startup and discovery requests (integer from 1 to 60,000, default 30,000). The outer MCP code-mode program has a 15-minute deadline. All calls remain interruptible.
+
+Both types accept an optional `description`: a nonblank capability summary of at most 512 UTF-16 code units after trimming surrounding whitespace. Enabled server names and configured descriptions appear in the model's initial `code` tool description when its persona allows `mcp`. Servers without descriptions appear by name; disabled servers are omitted. This catalog contains no connection settings and requires no server connections. Descriptions are capability summaries, not instructions or permission grants. Do not put secrets in them. Full server instructions and tool schemas remain available through discovery.
 
 Stdio executables run directly, without a shell. Bare commands resolve through the host's `PATH`. Commands that contain `/`, and relative `cwd` values, resolve from the directory of the config level that defines the server. `~/` resolves from the host user's home. Without `cwd`, the server starts in the defining level's directory. Arguments are passed literally, with no interpolation or shell expansion.
 

@@ -55,6 +55,7 @@ function createSpawnOptions(overrides = {}) {
   return {
     runtimeConfig: {
       systemPrompt: "child system",
+      autoCompactThresholdTokens: 80000,
       description: "child",
       workingDirectory: "/repo",
       model: personas[0].model,
@@ -317,7 +318,7 @@ describe("AgentSupervisor", () => {
       exitCode: 0,
       truncated: false,
     });
-    const model = { ...personas[0].model, contextWindow: 16_474 };
+    const model = { ...personas[0].model, contextWindow: 100_000 };
     const events = [];
     const supervisor = new AgentSupervisor({
       onEvent: async (event) => events.push(event),
@@ -329,6 +330,7 @@ describe("AgentSupervisor", () => {
         runtimeConfig: {
           ...createSpawnOptions().runtimeConfig,
           model,
+          autoCompactThresholdTokens: 90,
           tools: ["bash"],
         },
       }),

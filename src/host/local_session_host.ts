@@ -1440,38 +1440,43 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     options: Omit<SessionProtocolEphemeralCreateParams, "sessionId">,
   ): Promise<SessionProtocolEphemeralCreateResult> {
     this.assertActive();
-    const contextId = `ephemeral-${randomUUID()}`;
-    const session = new HostedEphemeralAgentSession({
-      cwd: resolve(this.executionEnvironment.snapshot().cwd, options.workingDirectory ?? "."),
-      bashJobs: this.runtime.bashJobs,
-      contextId,
-      sessionId: this.sessionId,
-      sessionStartedAt: this.createdAt,
-      persona: this.runtime.persona,
-      config: this.runtime.config,
-      discoveredSkills: this.bootstrap.discoveredSkills,
-      includeAgentContext: this.includeAgentContext,
-      executionEnvironment: this.executionEnvironment,
-      instructions: options.instructions,
-      tools: options.tools,
-      reasoning: options.reasoning ?? this.runtime.agent.spec.attribution.reasoningEffort,
-      recordUsage: this.recordUsage,
-      emitUpdate: (threadId, update) => {
-        this.emitEphemeral(
-          createSessionProtocolEphemeralMessage({
-            sessionId: this.session.sessionId,
-            event: {
-              type: "ephemeral-agent.thread-update",
-              contextId,
-              threadId,
-              update,
-            },
-          }),
-        );
-      },
+    return await this.runActiveWork(async (signal) => {
+      const contextId = `ephemeral-${randomUUID()}`;
+      const session = await HostedEphemeralAgentSession.create({
+        cwd: resolve(this.executionEnvironment.snapshot().cwd, options.workingDirectory ?? "."),
+        bashJobs: this.runtime.bashJobs,
+        contextId,
+        sessionId: this.sessionId,
+        sessionStartedAt: this.createdAt,
+        persona: this.runtime.persona,
+        config: this.runtime.config,
+        includeAgentContext: this.includeAgentContext,
+        executionEnvironment: this.executionEnvironment,
+        instructions: options.instructions,
+        tools: options.tools,
+        reasoning: options.reasoning ?? this.runtime.agent.spec.attribution.reasoningEffort,
+        recordUsage: this.recordUsage,
+        emitUpdate: (threadId, update) => {
+          this.emitEphemeral(
+            createSessionProtocolEphemeralMessage({
+              sessionId: this.session.sessionId,
+              event: {
+                type: "ephemeral-agent.thread-update",
+                contextId,
+                threadId,
+                update,
+              },
+            }),
+          );
+        },
+      });
+      if (signal.aborted) {
+        session.dispose();
+        signal.throwIfAborted();
+      }
+      this.ephemeralAgentSessions.set(contextId, session);
+      return { contextId };
     });
-    this.ephemeralAgentSessions.set(contextId, session);
-    return { contextId };
   }
 
   async submitEphemeralThread(

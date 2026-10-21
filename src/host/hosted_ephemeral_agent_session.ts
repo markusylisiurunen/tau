@@ -16,7 +16,7 @@ import { createAutoCompactionArchiver } from "../core/session/auto_compaction_ar
 import type { SubagentToolName } from "../core/subagents/types.js";
 import type { BashJobRegistry } from "../core/tools/bash_jobs.js";
 import { ToolCatalog } from "../core/tools/catalog.js";
-import type { Persona, ReasoningEffort, Skill } from "../core/types.js";
+import type { Persona, ReasoningEffort } from "../core/types.js";
 import {
   appendUsageLogEntry,
   getUsageCostTotal,
@@ -66,7 +66,6 @@ export type HostedEphemeralAgentSessionOptions = {
   sessionStartedAt: number;
   persona: Persona;
   config: Config;
-  discoveredSkills: Skill[];
   includeAgentContext: boolean;
   executionEnvironment: ExecutionEnvironment;
   instructions: string;
@@ -84,7 +83,56 @@ export class HostedEphemeralAgentSession {
   private readonly activeThreadIds = new Set<string>();
   private disposed = false;
 
-  constructor(private readonly options: HostedEphemeralAgentSessionOptions) {}
+  private constructor(
+    private readonly options: HostedEphemeralAgentSessionOptions,
+    private readonly spec: AgentSpec,
+  ) {}
+
+  static async create(
+    options: HostedEphemeralAgentSessionOptions,
+  ): Promise<HostedEphemeralAgentSession> {
+    const environment = options.executionEnvironment;
+    const { skills } = await loadSkillsFromToolBackend({
+      backend: environment.getToolExecutionBackend(),
+      cwd: options.cwd,
+      home: environment.snapshot().home,
+    });
+    const { promptBootstrap } = await environment.resolveRuntimeContext({
+      cwd: options.cwd,
+      discoveredSkills: skills,
+      includeAgentContext: options.includeAgentContext,
+    });
+    const promptContext = promptBootstrap.promptContext;
+    const composition = composeSessionPrompts({
+      persona: options.persona,
+      sessionId: options.sessionId,
+      cwd: promptContext.cwd,
+      repoRoot: promptContext.repoRoot,
+      repository: promptContext.repository,
+      sessionStartedAt: new Date(options.sessionStartedAt).toISOString(),
+      platform: promptContext.platform,
+      skillsBlock: promptContext.skillsBlock,
+      projectContextBlock: promptContext.projectContextBlock,
+    });
+    const systemPrompt = [composition.baseSystemPrompt, options.instructions].join("\n\n");
+    const spec = createAgentSpec({
+      autoCompactThresholdTokens: null,
+      ...resolveAgentModel(
+        createEphemeralPersona(options.persona, systemPrompt, options.tools, options.reasoning),
+        options.config,
+        { includeModelNotice: false, deps: createDefaultCoreDeps() },
+      ),
+      systemPrompt,
+      tools: ToolCatalog.createSubagentRegistry(
+        options.tools,
+        environment.getToolExecutionBackend(),
+        promptContext.cwd,
+        options.config,
+        options.bashJobs,
+      ),
+    });
+    return new HostedEphemeralAgentSession(options, spec);
+  }
 
   async submitThreadMessage(
     options: Omit<SessionProtocolEphemeralSubmitParams, "sessionId">,
@@ -153,47 +201,11 @@ export class HostedEphemeralAgentSession {
     threadId: string,
     forkFrom?: EphemeralAgentThreadForkSource,
   ): Promise<EphemeralAgentThread> {
-    const cwd = this.options.cwd;
-    const environment = this.options.executionEnvironment;
-    const discoveredSkills =
-      cwd === environment.snapshot().cwd
-        ? this.options.discoveredSkills
-        : (
-            await loadSkillsFromToolBackend({
-              backend: environment.getToolExecutionBackend(),
-              cwd,
-              home: environment.snapshot().home,
-            })
-          ).skills;
-    const runtimeContext = await this.options.executionEnvironment.resolveRuntimeContext({
-      cwd,
-      discoveredSkills,
-      includeAgentContext: this.options.includeAgentContext,
-    });
-    const deps = createDefaultCoreDeps();
-    const promptContext = runtimeContext.promptBootstrap.promptContext;
-    const composition = composeSessionPrompts({
-      persona: this.options.persona,
-      sessionId: this.options.sessionId,
-      cwd: promptContext.cwd,
-      repoRoot: promptContext.repoRoot,
-      repository: promptContext.repository,
-      sessionStartedAt: new Date(this.options.sessionStartedAt).toISOString(),
-      platform: promptContext.platform,
-      skillsBlock: promptContext.skillsBlock,
-      projectContextBlock: promptContext.projectContextBlock,
-    });
     return new EphemeralAgentThread({
       threadId,
-      bashJobs: this.options.bashJobs,
-      persona: this.options.persona,
-      systemPrompt: [composition.baseSystemPrompt, this.options.instructions].join("\n\n"),
-      config: this.options.config,
-      reasoning: this.options.reasoning,
-      deps,
+      spec: forkFrom?.spec ?? this.spec,
+      deps: createDefaultCoreDeps(),
       backend: this.options.executionEnvironment.getToolExecutionBackend(),
-      tools: this.options.tools,
-      cwd: promptContext.cwd,
       ...(forkFrom ? { forkFrom } : {}),
       onUpdate: (update) => this.options.emitUpdate(threadId, update),
       ...(this.options.recordUsage ? { recordUsage: this.options.recordUsage } : {}),
@@ -206,16 +218,10 @@ export class HostedEphemeralAgentSession {
 }
 
 type EphemeralAgentThreadOptions = {
-  bashJobs: BashJobRegistry;
   threadId: string;
-  persona: Persona;
-  systemPrompt: string;
-  config: Config;
-  reasoning: ReasoningEffort;
+  spec: AgentSpec;
   deps: ReturnType<typeof createDefaultCoreDeps>;
   backend: ReturnType<ExecutionEnvironment["getToolExecutionBackend"]>;
-  tools: SubagentToolName[];
-  cwd: string;
   forkFrom?: EphemeralAgentThreadForkSource;
   onUpdate?: (update: EphemeralAgentThreadUpdate) => void;
   recordUsage?: UsageRecorder;
@@ -230,29 +236,7 @@ class EphemeralAgentThread {
   private lastActivityText?: string;
 
   constructor(options: EphemeralAgentThreadOptions) {
-    const spec =
-      options.forkFrom?.spec ??
-      createAgentSpec({
-        autoCompactThresholdTokens: null,
-        ...resolveAgentModel(
-          createEphemeralPersona(
-            options.persona,
-            options.systemPrompt,
-            options.tools,
-            options.reasoning,
-          ),
-          options.config,
-          { includeModelNotice: false, deps: options.deps },
-        ),
-        systemPrompt: options.systemPrompt,
-        tools: ToolCatalog.createSubagentRegistry(
-          options.tools,
-          options.backend,
-          options.cwd,
-          options.config,
-          options.bashJobs,
-        ),
-      });
+    const spec = options.spec;
     this.onUpdate = options.onUpdate;
     this.recordUsage = options.recordUsage ?? appendUsageLogEntry;
     this.usage = options.forkFrom?.usageBaseline ?? {

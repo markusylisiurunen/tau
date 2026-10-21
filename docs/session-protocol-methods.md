@@ -486,6 +486,8 @@ result: {
 
 The context uses the session's persona and execution environment, with the given instructions and exactly the given tools. `workingDirectory` selects the directory for project instructions, skills, and tool defaults. Relative paths resolve against the session directory; omitting it uses the session directory. The main session stays unchanged. `reasoning` sets the starting effort for new threads. Without it, the context uses the session's effort at creation time. Later changes to the session's settings do not affect the context. It does not survive a host restart.
 
+Project instructions and skills are captured when the context is created and shared by its threads. Forks retain the source thread's system prompt, tools, and conversation prefix without reloading project files. This preserves the prefix for provider prompt caching; cache hits depend on the provider.
+
 ### `session.ephemeral.submit`
 
 Runs or continues one thread in an ephemeral context.

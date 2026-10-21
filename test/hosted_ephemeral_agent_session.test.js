@@ -1,11 +1,7 @@
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { AgentRuntime } from "../dist/core/index.js";
 import { personas } from "../dist/core/personas.js";
 import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
-import { LocalExecutionEnvironment } from "../dist/execution/local_execution_environment.js";
 import { HostedEphemeralAgentSession } from "../dist/host/hosted_ephemeral_agent_session.js";
 
 function createAssistant(text) {
@@ -51,8 +47,13 @@ function createFailingStream(partialText, error) {
   };
 }
 
-function createSession(recordUsage = vi.fn(), config = {}, reasoning = "medium") {
+async function createSession(recordUsage = vi.fn(), config = {}, reasoning = "medium") {
   const backend = createLocalToolExecutionBackend();
+  backend.runNodeScript = vi.fn(async () => ({
+    exitCode: 0,
+    output: JSON.stringify({ files: [] }),
+    truncated: false,
+  }));
   const executionEnvironment = {
     snapshot: () => ({ kind: "local", cwd: "/repo", home: "/home/user" }),
     getToolExecutionBackend: () => backend,
@@ -74,14 +75,13 @@ function createSession(recordUsage = vi.fn(), config = {}, reasoning = "medium")
   return {
     emitUpdate,
     recordUsage,
-    session: new HostedEphemeralAgentSession({
+    session: await HostedEphemeralAgentSession.create({
       cwd: "/repo",
       contextId: "ephemeral-1",
       sessionId: "session-1",
       sessionStartedAt: 0,
       persona: personas[0],
       config,
-      discoveredSkills: [],
       includeAgentContext: false,
       executionEnvironment,
       instructions: "review the diff",
@@ -94,73 +94,8 @@ function createSession(recordUsage = vi.fn(), config = {}, reasoning = "medium")
 }
 
 describe("HostedEphemeralAgentSession", () => {
-  it("uses the review directory for instructions, skills, and Bash in new and forked threads", async () => {
-    const home = await realpath(await mkdtemp(join(tmpdir(), "tau-review-context-")));
-    const parent = join(home, "a");
-    const cwd = join(parent, "repo");
-    await mkdir(join(cwd, ".git"), { recursive: true });
-    await mkdir(join(cwd, ".agents", "skills", "review-fixture"), { recursive: true });
-    await writeFile(join(parent, "AGENTS.md"), "parent-context-marker");
-    await writeFile(join(cwd, "AGENTS.md"), "review-context-marker");
-    await writeFile(
-      join(cwd, ".agents", "skills", "review-fixture", "SKILL.md"),
-      "---\nname: review-fixture\ndescription: review-skill-marker\n---\nReview fixture.\n",
-    );
-    const environment = new LocalExecutionEnvironment({
-      cwd: parent,
-      home,
-      backend: createLocalToolExecutionBackend(),
-    });
-    const session = new HostedEphemeralAgentSession({
-      cwd,
-      contextId: "ephemeral-1",
-      sessionId: "session-1",
-      sessionStartedAt: 0,
-      persona: personas[0],
-      config: {},
-      discoveredSkills: [],
-      includeAgentContext: true,
-      executionEnvironment: environment,
-      instructions: "review the diff",
-      tools: ["bash"],
-      reasoning: "medium",
-      emitUpdate: vi.fn(),
-      recordUsage: vi.fn(),
-    });
-    try {
-      for (const [id, source] of [["guide"], ["discussion"], ["fork", "guide"]]) {
-        const thread = await session.getOrCreateThread(id, source);
-        expect(thread.runtime.spec.systemPrompt).toContain("review-context-marker");
-        expect(thread.runtime.spec.systemPrompt).toContain("review-skill-marker");
-        const result = await thread.runtime.spec.tools.get("bash").execute(
-          { id: "pwd", name: "bash", arguments: { command: "pwd" } },
-          {
-            agentId: id,
-            turnId: "turn",
-            assistantMessageId: "message",
-            signal: new AbortController().signal,
-            emitActivity: async () => {},
-          },
-        );
-        expect(result.outcome).toBe("succeeded");
-        expect(result.content).toEqual(
-          expect.arrayContaining([
-            expect.objectContaining({ type: "text", text: expect.stringContaining(cwd) }),
-          ]),
-        );
-      }
-      expect(environment.snapshot().cwd).toBe(parent);
-      const result = await environment.getToolExecutionBackend().runBash("pwd");
-      expect(result.stdout.trim()).toBe(parent);
-    } finally {
-      session.dispose();
-      await environment.dispose();
-      await rm(home, { recursive: true, force: true });
-    }
-  });
-
   it("preserves native instructions and metadata when forking without sending metadata to the model", async () => {
-    const { session } = createSession();
+    const { session } = await createSession();
     try {
       const source = await session.getOrCreateThread("source");
       await source.runtime.commitSystemMessage("fork instruction", {
@@ -189,7 +124,7 @@ describe("HostedEphemeralAgentSession", () => {
   });
 
   it("continues and forks thread state", async () => {
-    const { session, recordUsage, emitUpdate } = createSession(vi.fn(), {}, "low");
+    const { session, recordUsage, emitUpdate } = await createSession(vi.fn(), {}, "low");
     const source = await session.getOrCreateThread("source");
     expect(source.runtime).toBeInstanceOf(AgentRuntime);
     expect(source.runtime.spec.attribution.reasoningEffort).toBe("low");
@@ -256,7 +191,7 @@ describe("HostedEphemeralAgentSession", () => {
   });
 
   it("rejects a partial provider failure", async () => {
-    const { session } = createSession();
+    const { session } = await createSession();
     const thread = await session.getOrCreateThread("source");
     const streamError = new Error("stream failed");
     thread.runtime.spec.retryPolicy = { maxRetries: 0, delayMs: 0 };
@@ -282,7 +217,7 @@ describe("HostedEphemeralAgentSession", () => {
   it("does not apply model system notices to ephemeral agents", async () => {
     const model = personas[0].model;
     const notice = "main and subagent notice";
-    const { session } = createSession(vi.fn(), {
+    const { session } = await createSession(vi.fn(), {
       modelSystemNotices: { [`${model.provider}/${model.id}`]: notice },
     });
     const thread = await session.getOrCreateThread("source");

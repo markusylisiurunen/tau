@@ -13,10 +13,14 @@ import { CommentEditor } from "../threads/comment_editor.js";
 import { DiffStats } from "./diff_stats.js";
 import { ThreadCard } from "../threads/thread_card.js";
 import "./file_section.css";
-import { DIFF_CODE_THEME } from "./use_diff_renderer_ready.js";
+import {
+  DIFF_CODE_THEME,
+  DIFF_HIGHLIGHTER,
+} from "./use_diff_renderer_ready.js";
 import { Button } from "../../ui/button.js";
 
 const baseDiffOptions = {
+  preferredHighlighter: DIFF_HIGHLIGHTER,
   theme: DIFF_CODE_THEME,
   themeType: "dark",
   diffStyle: "unified",

@@ -202,6 +202,8 @@ A snapshot's patch can be at most 16 MiB. Narrow the Git arguments if a larger d
 
 The tool opens in **Guide** mode and starts preparing an orientation, focused topics, and likely reviewer questions as soon as the review context is ready. You can comment on the guide, ask for another topic or question, or switch to **Diff** mode for review threads on files and lines.
 
+Diff syntax highlighting uses Pierre Highlights and requires a browser with WebAssembly SIMD support. Languages outside its bundled lexer set render as plain text. Markdown code blocks in guides and comments use Shiki.
+
 Guide comments and unresolved diff threads go into the returned Markdown, which stands on its own: it names the reviewed scope, gives change-level comments their context, and explains who took part in each discussion and in what role. **Submit** first opens a preview of the exact text to be returned, where you can exclude feedback and copy the full review before submitting. **Approve** returns right away when no feedback remains. If feedback appears while approval is being checked, the preview opens instead.
 
 The session host provides temporary review agents, and the local tool runs the browser interface. The returned review is added to the session as a user message, but Tau does not start an assistant turn when the tool closes. Send a follow-up message when the review should lead to more work.

@@ -1837,7 +1837,7 @@ describe("LocalSessionHost", () => {
   it("opens older stored conversations containing removed service tool names", async () => {
     const directory = mkdtempSync(join(tmpdir(), "tau-old-service-session-"));
     const store = new FileSessionStore({ directory });
-    const names = ["web", "history", "nook", "mcp"];
+    const names = ["web", "history", "mcp"];
     const historyEntries = names.flatMap((name) => [
       {
         id: `assistant-${name}`,

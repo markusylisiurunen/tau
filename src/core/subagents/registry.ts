@@ -4,7 +4,6 @@ import {
   TOOL_NAME_HISTORY,
   TOOL_NAME_MCP,
   TOOL_NAME_MODELS,
-  TOOL_NAME_NOOK,
   TOOL_NAME_SPAWN_AGENT,
   TOOL_NAME_VIEW_IMAGE,
   TOOL_NAME_WEB,
@@ -22,7 +21,6 @@ const INHERITABLE_TOOL_NAMES = new Set<SubagentToolName>([
   TOOL_NAME_HISTORY,
   TOOL_NAME_MCP,
   TOOL_NAME_MODELS,
-  TOOL_NAME_NOOK,
 ]);
 
 function normalizeTools(tools: SubagentToolName[]): SubagentToolName[] {

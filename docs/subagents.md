@@ -26,7 +26,6 @@ A subagent can receive these tools:
 - `view_image`
 - `web`
 - `history`
-- `nook`, when Nook is configured
 - `mcp`, when the host has enabled MCP servers
 - `models`
 

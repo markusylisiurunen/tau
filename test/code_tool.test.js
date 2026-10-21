@@ -276,16 +276,15 @@ describe("code composition", () => {
     const tool = createCodeToolDefinition({
       backend: createLocalToolExecutionBackend(),
       cwd: process.cwd(),
-      allowedTools: ["bash", "web", "history", "nook", "mcp", "models"],
+      allowedTools: ["bash", "web", "history", "mcp", "models"],
       history: {},
       mcp: { available: true, listServers: () => [{ name: "test" }] },
-      config: { nook: { domain: "nook.example.com" } },
       bashJobs: new BashJobRegistry(),
     });
     const description = tool.schema.description;
-    for (const name of ["bash", "web", "history", "nook", "mcp", "models"])
+    for (const name of ["bash", "web", "history", "mcp", "models"])
       expect(description).toContain(`tau.${name}:`);
-    for (const name of ["web", "history", "nook"])
+    for (const name of ["web", "history"])
       expect(description.toLowerCase()).toContain(`use tau.${name} only`);
     expect(description).not.toMatch(/(?:use this tool only|the tool is read-only)/i);
     expect(description).toContain("tau.history is read-only");

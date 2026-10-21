@@ -35,7 +35,6 @@ These pages describe how to install, configure, operate, and integrate the versi
 - [Sessions](sessions.md): creating sessions, turns, queueing, compaction, rewind, recovery, and storage.
 - [Remote sessions](remote-sessions.md): `serve`, `attach`, remote paths, and authentication.
 - [History](history.md): searchable local history, optional remote replication, and the history tool.
-- [Nook](nook.md): setting up and running the optional static mini-app platform.
 - [Telegram](telegram.md): running the Telegram runner, bot access, chat commands, attachments, and recovery.
 - [Telegram projects and workspaces](telegram-projects.md): repository, persistent-directory, and composite projects, workspace lifecycle, and provision hooks.
 

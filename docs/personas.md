@@ -97,12 +97,12 @@ Every persona can use all discovered skills. If a custom persona omits `tools`, 
 
 The selectable tool names are:
 
-- `bash`, `write`, `edit`, `view_image`, `web`, `nook`, `history`, `mcp`, and `models`;
+- `bash`, `write`, `edit`, `view_image`, `web`, `history`, `mcp`, and `models`;
 - `spawn_agent`, `send_input_to_agent`, `wait_for_agents`, `list_agents`, and `interrupt_agent`.
 
-Names such as `web`, `nook`, `history`, `mcp`, and `models` enable capabilities inside the `code` tool, and `bash` also enables `tau.bash`. Tau builds the `code` tool from whichever of these capabilities are selected and usable.
+Names such as `web`, `history`, `mcp`, and `models` enable capabilities inside the `code` tool, and `bash` also enables `tau.bash`. Tau builds the `code` tool from whichever of these capabilities are selected and usable.
 
-A `tools` list replaces the defaults. Names are lowercased and duplicates removed. An unknown name makes the persona invalid. `tools: []` gives the persona none of these tools. The built-in `tau_docs` tool is always available, independent of this list. `nook` works only when Nook is configured, and `mcp` only when the host has enabled MCP servers. [Tools](tools.md) explains eligibility and ownership.
+A `tools` list replaces the defaults. Names are lowercased and duplicates removed. An unknown name makes the persona invalid. `tools: []` gives the persona none of these tools. The built-in `tau_docs` tool is always available, independent of this list. `mcp` works only when the host has enabled MCP servers. [Tools](tools.md) explains eligibility and ownership.
 
 ## Selecting a persona
 

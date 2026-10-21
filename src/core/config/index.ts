@@ -13,7 +13,6 @@ export type {
   Config,
   FlySpritesConfig,
   HistoryConfig,
-  NookConfig,
   TelegramBotConfig,
   TelegramBotConfigMap,
   TelegramProjectConfig,
@@ -25,7 +24,6 @@ export {
   getGoogleApiKey,
   getHistoryApiKey,
   getMistralApiKey,
-  getNookAccessClientSecret,
   getOpenAIApiKey,
   loadConfig,
 } from "./schema.js";

@@ -14,7 +14,6 @@ The host makes model calls and runs services such as web search and remote histo
 | OpenAI Codex OAuth accounts | Session host home |
 | Exa-backed `web.search` and `web.fetch` | Session host |
 | Remote history replication and queries | Session host |
-| Nook host tool | Session host |
 | Fly Sprite API | Session host startup |
 | `/listen` and `/speak` | TUI client |
 | Telegram transcription and voice responses | Telegram runner |
@@ -89,9 +88,9 @@ tau auth logout codex --account developer@example.com
 
 Every new request reads the current auth storage, in every session. Switching accounts takes effect without a host restart and does not affect a request already in progress.
 
-## History and Nook indirection
+## History indirection
 
-History and Nook can name environment variables instead of embedding secrets in configuration.
+History can name environment variables instead of embedding secrets in configuration.
 
 Remote history is global-only configuration:
 
@@ -111,20 +110,6 @@ History resolves its API key in this order:
 3. Inline `history.apiKey`
 
 If `history` is configured but no key is found, the host fails to start. Without `history`, history stays on the host machine. See [history](history.md) for service behavior.
-
-A Nook Access service token uses an ID plus a secret:
-
-```json
-{
-  "nook": {
-    "domain": "apps.example.net",
-    "accessClientId": "service-token-id.access",
-    "accessClientSecretEnv": "NOOK_ACCESS_CLIENT_SECRET"
-  }
-}
-```
-
-If the variable named by `accessClientSecretEnv` has a non-empty value, it wins over inline `accessClientSecret`. Otherwise Tau uses the inline value. The process that performs the Nook operation reads the secret: the host for the session tool, and the CLI process for `tau nook` commands. Nook setup and destroy also accept the command flags and environment variables listed in [Nook](nook.md). See [Nook](nook.md).
 
 ## Hosted execution credentials
 
@@ -150,7 +135,7 @@ Check a credential by using it, without printing its value:
 - Run `tau auth list` to check Codex identities, the active account, refresh status, and usage windows.
 - Restart the process that uses `apiKeys` after changing them.
 - Make a small request with the intended persona to verify model authentication and endpoint access.
-- After setting Exa, speech, history, Nook, or Fly credentials, use that feature. If a credential is missing, the error names where Tau looks for it.
+- After setting Exa, speech, history, or Fly credentials, use that feature. If a credential is missing, the error names where Tau looks for it.
 - For remote sessions, first confirm which machine is the host and which process runs the feature.
 
 Do not check by printing the environment, `config.json`, or `auth.json` into a transcript. If a secret ends up in shell history, logs, a session, or version control, rotate it at the provider and replace it. Broader handling guidance is in [security](security.md) and failure checks are in [troubleshooting](troubleshooting.md).

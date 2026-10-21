@@ -126,55 +126,6 @@ describe("ChatRuntime", () => {
     expect(runtime.agent.spec.systemPrompt).toContain("- Repository: `github.com/example/repo`");
   });
 
-  it("requires both persona selection and config to expose Nook", () => {
-    const configuredWithoutPersona = createRuntime({
-      persona: createPersona({ tools: ["bash"] }),
-      config: { nook: { domain: "nook.example.com" } },
-    });
-    const personaWithoutConfig = createRuntime({
-      persona: createPersona({ tools: ["bash", "nook"] }),
-    });
-    const enabled = createRuntime({
-      persona: createPersona({ tools: ["bash", "nook"] }),
-      config: { nook: { domain: "nook.example.com" } },
-    });
-
-    expect(configuredWithoutPersona.agent.spec.tools.get("code").schema.description).not.toContain(
-      "tau.nook",
-    );
-    expect(personaWithoutConfig.agent.spec.tools.get("code").schema.description).not.toContain(
-      "tau.nook",
-    );
-    expect(enabled.agent.spec.tools.get("code").schema.description).toContain("tau.nook");
-    expect(configuredWithoutPersona.agent.spec.tools.schemas.map((tool) => tool.name)).toEqual([
-      "bash",
-      "code",
-      "list_bash_jobs",
-      "read_bash_job",
-      "stop_bash_job",
-      "wait_for_bash_jobs",
-      "tau_docs",
-    ]);
-    expect(personaWithoutConfig.agent.spec.tools.schemas.map((tool) => tool.name)).toEqual([
-      "bash",
-      "code",
-      "list_bash_jobs",
-      "read_bash_job",
-      "stop_bash_job",
-      "wait_for_bash_jobs",
-      "tau_docs",
-    ]);
-    expect(enabled.agent.spec.tools.schemas.map((tool) => tool.name)).toEqual([
-      "bash",
-      "code",
-      "list_bash_jobs",
-      "read_bash_job",
-      "stop_bash_job",
-      "wait_for_bash_jobs",
-      "tau_docs",
-    ]);
-  });
-
   it("samples with the current persona model settings without changing agent state", async () => {
     const runtime = createRuntime({
       persona: createPersona({ settings: { reasoning: "low" } }),

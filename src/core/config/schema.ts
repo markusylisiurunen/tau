@@ -5,7 +5,6 @@ import {
   loadModelResolver,
   type ModelResolver,
 } from "../models/catalog.js";
-import { normalizeNookDomain } from "../nook/validation.js";
 import { formatPersonaReference, parsePersonaReference } from "../persona_reference.js";
 import { parseSubagentLaunchModelList } from "../subagents/launch_model.js";
 import { REASONING_LEVELS } from "../types.js";
@@ -41,7 +40,6 @@ export interface Config {
   };
   modelSystemNotices?: Record<string, string>;
   flySprites?: FlySpritesConfig;
-  nook?: NookConfig;
   history?: HistoryConfig;
   mcpServers?: McpServersConfig;
 }
@@ -56,13 +54,6 @@ export type FlySpritesConfig = {
   token?: string;
   tokenEnv?: string;
   home?: string;
-};
-
-export type NookConfig = {
-  domain: string;
-  accessClientId?: string;
-  accessClientSecret?: string;
-  accessClientSecretEnv?: string;
 };
 
 export type HistoryConfig = {
@@ -126,14 +117,6 @@ const FlySpritesConfigSchema = z
     token: NonEmptyStringSchema.optional(),
     tokenEnv: NonEmptyStringSchema.optional(),
     home: NonEmptyStringSchema.optional(),
-  })
-  .strip();
-const NookConfigSchema = z
-  .object({
-    domain: NonEmptyStringSchema,
-    accessClientId: NonEmptyStringSchema.optional(),
-    accessClientSecret: NonEmptyStringSchema.optional(),
-    accessClientSecretEnv: NonEmptyStringSchema.optional(),
   })
   .strip();
 const HistoryConfigSchema = z
@@ -423,9 +406,6 @@ function validateConfigData(
     flySpritesResult.errors,
   );
 
-  const nookResult = parseNookConfig(data.nook, sourceLabel);
-  assignParsedConfigValue(config, errors, "nook", nookResult.config, nookResult.errors);
-
   if (data.history !== undefined && options.scope !== "global") {
     errors.push(`${sourceLabel}: 'history' may only be configured in the global config.`);
   } else {
@@ -455,51 +435,6 @@ function parseFlySpritesConfig(
   }
 
   return { config: parsed.data, errors: [] };
-}
-
-function parseNookConfig(
-  raw: unknown,
-  sourceLabel: string,
-): { config?: NookConfig; errors: string[] } {
-  if (raw === undefined) {
-    return { errors: [] };
-  }
-
-  const parsed = NookConfigSchema.safeParse(raw);
-  if (!parsed.success) {
-    return {
-      errors: [
-        `${sourceLabel}: 'nook' must be an object with domain and optional Access service token credentials.`,
-      ],
-    };
-  }
-
-  let domain: string;
-  try {
-    domain = normalizeNookDomain(parsed.data.domain);
-  } catch (error) {
-    return {
-      errors: [
-        `${sourceLabel}: ${error instanceof Error ? error.message : "nook.domain must be a DNS hostname without a path."}`,
-      ],
-    };
-  }
-
-  return {
-    config: {
-      domain,
-      ...(parsed.data.accessClientId !== undefined
-        ? { accessClientId: parsed.data.accessClientId }
-        : {}),
-      ...(parsed.data.accessClientSecret !== undefined
-        ? { accessClientSecret: parsed.data.accessClientSecret }
-        : {}),
-      ...(parsed.data.accessClientSecretEnv !== undefined
-        ? { accessClientSecretEnv: parsed.data.accessClientSecretEnv }
-        : {}),
-    },
-    errors: [],
-  };
 }
 
 function parseHistoryConfig(
@@ -737,7 +672,6 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[], home: strin
   let subagents: Config["subagents"] | undefined;
   let modelSystemNotices: Config["modelSystemNotices"] | undefined;
   let flySprites: FlySpritesConfig | undefined;
-  let nook: NookConfig | undefined;
   let history: HistoryConfig | undefined;
 
   for (let i = 0; i < levels.length; i += 1) {
@@ -768,9 +702,6 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[], home: strin
     subagents = mergeSubagentsConfig(subagents, config.subagents);
     modelSystemNotices = mergeOptionalObject(modelSystemNotices, config.modelSystemNotices);
     flySprites = mergeOptionalObject(flySprites, config.flySprites);
-    if (config.nook !== undefined) {
-      nook = { ...config.nook };
-    }
     if (config.history !== undefined) {
       history = { ...config.history };
     }
@@ -811,10 +742,6 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[], home: strin
 
   if (flySprites) {
     merged.flySprites = flySprites;
-  }
-
-  if (nook) {
-    merged.nook = nook;
   }
 
   if (history) {
@@ -944,19 +871,4 @@ export function getHistoryApiKey(
     if (envSecret) return envSecret;
   }
   return config.apiKey?.trim() || undefined;
-}
-
-export function getNookAccessClientSecret(
-  config: NookConfig,
-  env?: NodeJS.ProcessEnv,
-): string | undefined {
-  const envName = config.accessClientSecretEnv?.trim();
-  if (envName) {
-    const envSecret = getTrimmedEnvValue(envName, env);
-    if (envSecret) {
-      return envSecret;
-    }
-  }
-
-  return config.accessClientSecret?.trim() || undefined;
 }

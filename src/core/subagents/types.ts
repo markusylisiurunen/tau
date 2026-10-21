@@ -6,7 +6,6 @@ import {
   TOOL_NAME_HISTORY,
   TOOL_NAME_MCP,
   TOOL_NAME_MODELS,
-  TOOL_NAME_NOOK,
   TOOL_NAME_VIEW_IMAGE,
   TOOL_NAME_WEB,
   TOOL_NAME_WRITE,
@@ -22,7 +21,6 @@ export const SUBAGENT_TOOL_NAMES = [
   TOOL_NAME_HISTORY,
   TOOL_NAME_MCP,
   TOOL_NAME_MODELS,
-  TOOL_NAME_NOOK,
 ] as const;
 
 export type SubagentToolName = (typeof SUBAGENT_TOOL_NAMES)[number];

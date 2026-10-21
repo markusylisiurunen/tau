@@ -57,11 +57,6 @@ export {
 export { printDebugInfo } from "./debug.js";
 export * from "./diff_review/index.js";
 export * from "./modes/index.js";
-export {
-  NookCliError,
-  printNookHelp,
-  runNookCommand,
-} from "./nook/index.js";
 export { personas } from "./personas.js";
 export type { PromptTemplate } from "./prompts.js";
 export type {

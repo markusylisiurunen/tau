@@ -610,7 +610,7 @@ describe("spawn_agent tool", () => {
       mcp,
       persona: {
         ...persona,
-        tools: ["bash", "edit", "spawn_agent", "list_agents", "nook", "history", "mcp"],
+        tools: ["bash", "edit", "spawn_agent", "list_agents", "history", "mcp"],
       },
     });
     const { result } = await execute(tool, baseArguments);
@@ -619,7 +619,7 @@ describe("spawn_agent tool", () => {
     expect(supervisor.spawn).toHaveBeenCalledWith(
       expect.objectContaining({
         runtimeConfig: expect.objectContaining({
-          tools: ["bash", "edit", "nook", "history", "mcp"],
+          tools: ["bash", "edit", "history", "mcp"],
         }),
         mcp,
       }),

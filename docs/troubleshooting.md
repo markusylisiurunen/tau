@@ -13,11 +13,10 @@ tau --help
 tau attach --help
 tau auth --help
 tau history --help
-tau nook --help
 tau telegram --help
 ```
 
-Help describes that installed binary, and `tau_docs` describes the host's installed version. An attached TUI, a remote host, and deployed history or Nook services can each run a different version, so the host's documentation may not match an older client's flags or a separately deployed service.
+Help describes that installed binary, and `tau_docs` describes the host's installed version. An attached TUI, a remote host, and deployed history services can each run a different version, so the host's documentation may not match an older client's flags or a separately deployed service.
 
 For a local startup, `tau --debug` loads configuration and content from the current directory, prints warnings and catalog information, and exits without opening the TUI:
 
@@ -114,7 +113,7 @@ Check the exact built-in theme ID and the client's `defaultTheme`. Use `/theme:<
 
 Work out which kind of tool is missing before changing configuration.
 
-For a host tool, check the active persona's `tools` list. A list replaces the defaults. Run `tau --debug --persona <id>` for a new local session, or reload the current session while idle. Missing credentials make a tool fail but usually do not remove it. Nook is the exception: it also needs `nook` configuration.
+For a host tool, check the active persona's `tools` list. A list replaces the defaults. Run `tau --debug --persona <id>` for a new local session, or reload the current session while idle. Missing credentials make a tool fail but usually do not remove it.
 
 For subagents, check three things:
 
@@ -147,13 +146,13 @@ When the client detaches, its tools disappear and running calls are cancelled. R
 
 Find the process that makes the request:
 
-| Operation | Where the credential belongs |
-| --- | --- |
-| Model calls, host `web`, `history`, or `nook` | Host |
-| `/listen`, `/speak`, or TUI client tools | Client |
-| Telegram bot or transcription | Runner |
-| `tau nook`, `tau history`, or `tau tool` commands | The machine running the command |
-| Fly Sprite connection | Host startup configuration |
+| Operation                                | Where the credential belongs    |
+| ---------------------------------------- | ------------------------------- |
+| Model calls, host `web`, or `history`    | Host                            |
+| `/listen`, `/speak`, or TUI client tools | Client                          |
+| Telegram bot or transcription            | Runner                          |
+| `tau history` or `tau tool` commands     | The machine running the command |
+| Fly Sprite connection                    | Host startup configuration      |
 
 A variable set on the laptop does not reach a remote host. After changing environment variables or `apiKeys`, restart the process that uses them. `apiKeys` in a project file are rejected; check the process's environment and its global configuration.
 
@@ -223,11 +222,10 @@ A WebSocket client disconnecting does not interrupt a long-running host, but a s
 
 A session saved in a newer storage format needs that Tau version or later. Newer Tau versions upgrade supported older sessions automatically. For invalid JSON, snapshot, or ID errors, keep the file and the exact error, stop other hosts using the same store, and investigate through normal recovery. Do not edit or delete the file first.
 
-## History, Nook, or Telegram
+## History or Telegram
 
 These features have their own troubleshooting sections:
 
 - [History](history.md#troubleshooting): missing API key, service errors, sessions missing from remote search, and local history failures.
-- [Nook](nook.md#common-errors): configuration, Access and authorization errors, wrong visibility, and deploy rejections.
 - [Telegram](telegram.md#troubleshooting): ignored messages, project selection, audio, voice replies, and late or missing replies.
 - [Telegram projects and workspaces](telegram-projects.md#troubleshooting): repository preparation, provisioning, and workspace recovery.

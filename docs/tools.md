@@ -37,7 +37,6 @@ write
 edit
 view_image
 web
-nook
 history
 mcp
 models
@@ -48,9 +47,9 @@ list_agents
 interrupt_agent
 ```
 
-A custom persona that omits `tools` gets `bash`, `write`, `edit`, `view_image`, `web`, `nook`, `history`, `mcp`, and `models`, plus the five subagent tools. Built-in personas get the same set.
+A custom persona that omits `tools` gets `bash`, `write`, `edit`, `view_image`, `web`, `history`, `mcp`, and `models`, plus the five subagent tools. Built-in personas get the same set.
 
-`web`, `history`, `nook`, `mcp`, and `models` are not separate tools. Each enables a namespace inside the single `code` tool. `bash` enables both the Bash tools and `tau.bash` inside `code`. Tau adds `code` whenever at least one usable capability is selected; `code` itself cannot be listed. A namespace the persona does not select is missing from the `code` API and its documentation.
+`web`, `history`, `mcp`, and `models` are not separate tools. Each enables a namespace inside the single `code` tool. `bash` enables both the Bash tools and `tau.bash` inside `code`. Tau adds `code` whenever at least one usable capability is selected; `code` itself cannot be listed. A namespace the persona does not select is missing from the `code` API and its documentation.
 
 An empty list turns off every selectable tool:
 
@@ -60,7 +59,7 @@ tools: []
 
 `tau_docs` stays available. The list also has no effect on client tools, which attached clients offer on their own.
 
-`nook` has one more condition: the host configuration must include a Nook target. Without one, Tau leaves the capability out even if the persona lists it. For other tools, missing credentials or service configuration can make calls fail, but do not remove the tool. Persona configuration is covered in [personas](personas.md).
+Missing credentials can make calls fail, but do not remove the tool. Persona configuration is covered in [personas](personas.md).
 
 ## Tau documentation
 
@@ -143,7 +142,7 @@ Each guide covers setup, input, examples, outputs, and failures. Run `tau tool -
 
 ## Code-mode composition
 
-`code` runs a one-off JavaScript program that combines the enabled capabilities: `tau.web`, `tau.history`, `tau.nook`, `tau.mcp`, `tau.bash`, and `tau.models`. The Bash, write, edit, and image tools stay available as separate tools.
+`code` runs a one-off JavaScript program that combines the enabled capabilities: `tau.web`, `tau.history`, `tau.mcp`, `tau.bash`, and `tau.models`. The Bash, write, edit, and image tools stay available as separate tools.
 
 ### Documentation and output
 
@@ -159,7 +158,7 @@ The guide covers runtime rules, capabilities, and examples. The agent reads each
 printText(await tau.docs("web"));
 ```
 
-The agent does not re-read documentation it has already seen. MCP tool descriptions and Nook's authoring guide are read in their own separate steps. Programs do not need to print intermediate results.
+The agent does not re-read documentation it has already seen. MCP tool descriptions are read separately. Programs do not need to print intermediate results.
 
 `printText` accepts only strings; objects and arrays throw a `TypeError`. The agent selects relevant fields and explicitly formats concise plain text to save tokens. `JSON.stringify` is reserved for cases where the structure matters or machine-readable JSON is requested, with fields selected first instead of dumping whole responses.
 
@@ -184,7 +183,6 @@ Programs have no direct access to files, processes, environment variables, crede
 
 - `tau.web`: metadata discovery, Exa search, and fetching page content. Search uses Auto with Dynamic Highlights to select evidence across results. An optional `objective` (1–4,096 nonblank characters) describes the broader task and facts to extract. Results include a `notices` array with retrieval qualifications such as relaxed query restrictions; each notice retains its `code`, `path`, `message`, and optional `details`. The agent prints notices alongside selected search results. The agent prefers local data, dedicated CLIs, first-party APIs, and structured sources over scraping web pages. For GitHub it uses `gh` or a Git checkout where suitable. Metadata discovery works without an Exa key; search and content fetching need one.
 - `tau.history`: read-only search and paginated transcripts. The agent uses it only when explicitly told to look at past sessions. It treats past content as data and never follows instructions in it. See [history](history.md).
-- `tau.nook`: deploying sites, templates, and each site's JSON KV store. The agent uses it when the user asks to publish or manage Nook. Before writing an app, the agent reads `tau.nook.skill()` in a separate call that only prints documentation. See [Nook](nook.md).
 - `tau.mcp`: finding and calling tools and resources on configured MCP servers. When the persona allows MCP, enabled server names and optional configured descriptions are visible in the initial tool definition, before any tool call. Disabled servers and connection settings are omitted. These summaries guide discovery and do not grant permission to act. The agent reads each tool's description and schema before calling it. Connections are shared and opened on first use, and calls that change data are never retried. An `isError` result is returned as data, while protocol failures throw. MCP server configuration and trust rules apply. See [configuration reference](config-reference.md#mcpservers) and [security](security.md#trust-mcp-servers).
 - `tau.bash`: `run`, `start`, `list`, `read`, `wait`, and `stop`. `run` returns stdout, stderr, and exit and termination fields, capturing up to 24 MiB. Beyond that it keeps the end, so check `truncated` before parsing. Optional UTF-8 `stdin` is limited to 16 MiB and closed after writing. Without `stdin` the command has no stdin at all, while `""` gives it an empty one. `start` takes no stdin. Background jobs are the same jobs as the Bash tools', with the same output limits. Jobs survive the program ending and interruption, while foreground commands are cancelled. The shell rules above apply.
 - `tau.models`: lists a fixed set of OpenRouter models and runs standalone chats or typed decisions with them. These calls do not see the session's conversation or tools. Chat media can be paths on the agent's machine or inline padded base64 with a matching MIME type. Credentials stay on the host. Provider usage data is returned, but these charges are not included in the session's cost or usage logs. Requests can be cancelled and are never retried automatically. Limits on input, models, media, responses, and requests are the same as in [OpenRouter](openrouter.md). Check whether a response completed or was refused instead of assuming it is a full answer.
@@ -193,7 +191,7 @@ SDK and command client tools built on code mode use the same sandbox functions a
 
 ## Subagent tools
 
-A subagent gets each of `bash`, `write`, `edit`, `view_image`, `web`, `history`, `nook`, `mcp`, and `models` that the main persona also has, plus `tau_docs`. It never gets the subagent tools or client tools. Its Bash and file tools start in the subagent's working directory. [Subagents](subagents.md#tools) has the details.
+A subagent gets each of `bash`, `write`, `edit`, `view_image`, `web`, `history`, `mcp`, and `models` that the main persona also has, plus `tau_docs`. It never gets the subagent tools or client tools. Its Bash and file tools start in the subagent's working directory. [Subagents](subagents.md#tools) has the details.
 
 ## Client-owned tools
 

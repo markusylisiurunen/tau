@@ -365,6 +365,7 @@ describe("HostedEphemeralAgentSession", () => {
       dispose: vi.fn(),
     };
     const session = new HostedEphemeralAgentSession({
+      cwd: "/repo",
       contextId: "context-1",
       sessionId: "session-1",
       sessionStartedAt: 0,

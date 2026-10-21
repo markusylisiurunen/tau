@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import type { Api, AssistantMessage, Message, Model, ToolCall } from "@earendil-works/pi-ai";
 import type { AgentStateRecovery, AgentSubturnResult } from "../core/agent/agent_runtime.js";
@@ -1441,6 +1442,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     this.assertActive();
     const contextId = `ephemeral-${randomUUID()}`;
     const session = new HostedEphemeralAgentSession({
+      cwd: resolve(this.executionEnvironment.snapshot().cwd, options.workingDirectory ?? "."),
       bashJobs: this.runtime.bashJobs,
       contextId,
       sessionId: this.sessionId,

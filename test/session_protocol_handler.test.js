@@ -799,6 +799,7 @@ describe("SessionProtocolHandler", () => {
     const create = connection.handleRequest(
       request("ephemeral-create", "session.ephemeral.create", {
         sessionId: "session-1",
+        workingDirectory: "../review",
         instructions: "review this",
         tools: ["bash"],
       }),
@@ -833,6 +834,7 @@ describe("SessionProtocolHandler", () => {
     await harness.connection.handleRequest(
       request("ephemeral-create", "session.ephemeral.create", {
         sessionId: "session-1",
+        workingDirectory: "../review",
         instructions: "review this",
         tools: ["bash"],
         reasoning: "high",
@@ -856,6 +858,7 @@ describe("SessionProtocolHandler", () => {
 
     expect(harness.seededSession.isTurnRunning).toBe(true);
     expect(harness.seededSession.createEphemeralContext).toHaveBeenCalledWith({
+      workingDirectory: "../review",
       instructions: "review this",
       tools: ["bash"],
       reasoning: "high",

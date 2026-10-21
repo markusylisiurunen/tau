@@ -5552,6 +5552,7 @@ describe("SessionChatController", () => {
       expect.objectContaining({ args: ["git", "diff", "--", "src/main.ts"] }),
     );
     expect(session.createEphemeralContext).toHaveBeenCalledWith({
+      workingDirectory: "/session/repo",
       instructions: expect.stringContaining("src/main.ts"),
       tools: ["bash", "view_image"],
     });
@@ -5890,6 +5891,9 @@ describe("SessionChatController", () => {
     expect(executionEnvironment.exec).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({ cwd: "/session/other repo" }),
+    );
+    expect(session.createEphemeralContext).toHaveBeenCalledWith(
+      expect.objectContaining({ workingDirectory: "/session/other repo" }),
     );
     await expect(result).resolves.toContain("Reviewed scope: git diff -- src/main.ts");
     await expect(result).resolves.toContain("returned review from local diff tool");

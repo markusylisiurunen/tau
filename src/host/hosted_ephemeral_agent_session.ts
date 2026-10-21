@@ -8,6 +8,7 @@ import {
 } from "../core/agent/agent_runtime.js";
 import type { AgentEvent } from "../core/agent/events.js";
 import type { Config } from "../core/config/index.js";
+import { loadSkillsFromToolBackend } from "../core/config/runtime_config_snapshot.js";
 import { resolveAgentModel } from "../core/runtime/agent_model.js";
 import { createDefaultCoreDeps } from "../core/runtime/deps.js";
 import { composeSessionPrompts } from "../core/runtime/session_prompt_composer.js";
@@ -58,6 +59,7 @@ type EphemeralAgentThreadForkSource = {
 };
 
 export type HostedEphemeralAgentSessionOptions = {
+  cwd: string;
   bashJobs: BashJobRegistry;
   contextId: string;
   sessionId: string;
@@ -151,10 +153,21 @@ export class HostedEphemeralAgentSession {
     threadId: string,
     forkFrom?: EphemeralAgentThreadForkSource,
   ): Promise<EphemeralAgentThread> {
-    const cwd = this.options.executionEnvironment.snapshot().cwd;
+    const cwd = this.options.cwd;
+    const environment = this.options.executionEnvironment;
+    const discoveredSkills =
+      cwd === environment.snapshot().cwd
+        ? this.options.discoveredSkills
+        : (
+            await loadSkillsFromToolBackend({
+              backend: environment.getToolExecutionBackend(),
+              cwd,
+              home: environment.snapshot().home,
+            })
+          ).skills;
     const runtimeContext = await this.options.executionEnvironment.resolveRuntimeContext({
       cwd,
-      discoveredSkills: this.options.discoveredSkills,
+      discoveredSkills,
       includeAgentContext: this.options.includeAgentContext,
     });
     const deps = createDefaultCoreDeps();

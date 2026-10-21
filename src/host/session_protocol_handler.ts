@@ -1326,6 +1326,9 @@ export class SessionProtocolHandler {
     }
 
     const result = await state.session.createEphemeralContext({
+      ...(request.params.workingDirectory !== undefined
+        ? { workingDirectory: request.params.workingDirectory }
+        : {}),
       instructions: request.params.instructions,
       tools: request.params.tools,
       ...(request.params.reasoning !== undefined ? { reasoning: request.params.reasoning } : {}),

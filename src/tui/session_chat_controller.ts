@@ -2943,6 +2943,7 @@ export class SessionChatController {
       deps: createSdkDiffSnapshotDeps({ backend, cwd }),
     });
     const ephemeral = await session.createEphemeralContext({
+      workingDirectory: snapshot.cwd,
       instructions: buildDiffReviewInstructions(snapshot),
       tools: ["bash", "view_image"],
     });

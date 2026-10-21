@@ -277,6 +277,6 @@ The server accepts new requests before earlier ones finish, so responses and str
 - Session changes run one at a time, in arrival order across all clients. Changes that replace the context can interrupt running work and reject pending input. `session.rewind` instead requires an idle session with no pending input.
 - `session.setReasoning` and `session.setAutoCompactThreshold` wait their turn but do not interrupt the running turn. New settings apply from the next logical turn. The running turn and its steering continuations keep their original settings.
 - `session.exec` and `session.sample` run alongside everything else: turns, other changes, each other, and ephemeral agents. Clients must coordinate their own use of the workspace.
-- Ephemeral contexts are not part of that one-at-a-time ordering. Two submissions to the same ephemeral thread conflict, while different threads can run at once.
+- Ephemeral contexts can select a `workingDirectory` for project context and tool defaults without changing the main session directory (see [session.ephemeral.create](session-protocol-methods.md#sessionephemeralcreate)). They are not part of that one-at-a-time ordering. Two submissions to the same ephemeral thread conflict, while different threads can run at once.
 
 A success response may arrive before or after the deltas the request caused. Keep state from the observed streams, match completion by request ID, and call `session.snapshot` when unsure whether you missed something.

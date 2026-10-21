@@ -216,6 +216,7 @@ export type TauSdkSession = {
   rewindToHistoryEntryId(historyEntryId: string): Promise<TauSdkSessionRewindResult>;
   interruptSubagent(subagentId: string): Promise<TauSdkSessionInterruptSubagentResult>;
   createEphemeralContext(options: {
+    workingDirectory?: string;
     instructions: string;
     tools: TauSdkEphemeralAgentTool[];
     reasoning?: TauSdkReasoningEffort;

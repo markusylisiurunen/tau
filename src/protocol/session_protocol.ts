@@ -230,6 +230,7 @@ export type SessionProtocolInterruptSubagentParams = SessionProtocolSessionIdPar
 };
 export type SessionProtocolEphemeralAgentTool = "bash" | "write" | "edit" | "view_image" | "web";
 export type SessionProtocolEphemeralCreateParams = SessionProtocolSessionIdParams & {
+  workingDirectory?: string;
   instructions: string;
   tools: SessionProtocolEphemeralAgentTool[];
   reasoning?: SessionProtocolReasoningEffort;
@@ -1881,6 +1882,7 @@ const sessionProtocolEphemeralAgentToolSchema = z.enum([
 
 const sessionProtocolEphemeralCreateParamsSchema = z
   .object({
+    workingDirectory: nonEmptyStringSchema.optional(),
     sessionId: nonEmptyStringSchema,
     instructions: nonEmptyStringSchema,
     tools: z.array(sessionProtocolEphemeralAgentToolSchema),

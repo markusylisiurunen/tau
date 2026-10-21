@@ -257,6 +257,7 @@ describe("session_protocol", () => {
       "req-ephemeral-create",
       "session.ephemeral.create",
       {
+        workingDirectory: "../review",
         sessionId: "session-1",
         instructions: "review this",
         tools: ["bash", "view_image"],
@@ -924,6 +925,20 @@ describe("session_protocol", () => {
         validateSessionProtocolParams(method, {
           sessionId: "session-1",
           text: "   ",
+        }),
+      ).toMatchObject({
+        ok: false,
+        error: { code: SESSION_PROTOCOL_ERROR_CODES.invalidParams },
+      });
+    }
+
+    for (const workingDirectory of ["", "   ", 42, null]) {
+      expect(
+        validateSessionProtocolParams("session.ephemeral.create", {
+          sessionId: "session-1",
+          instructions: "review this",
+          tools: ["bash"],
+          workingDirectory,
         }),
       ).toMatchObject({
         ok: false,

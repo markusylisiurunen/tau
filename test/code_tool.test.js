@@ -585,48 +585,55 @@ describe("code composition", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it("composes ordered path and inline decision images through the scoped backend", async () => {
-    const image = createProtocolImage();
-    const bytes = await sharp({ create: { width: 8, height: 8, channels: 3, background: "blue" } })
-      .png()
-      .toBuffer();
-    const backend = {
-      readFileBinary: vi.fn(async () => ({ content: bytes })),
-      runNodeScript: vi.fn(),
-    };
-    const reply = {
-      model: "openai/gpt-6-luna-decisions",
-      answers: { same: { type: "noul", noul: 0.1 } },
-      usage: { input_tokens: 180, output_tokens: 0 },
-    };
-    const fetchImpl = vi.fn(async () => Response.json(reply));
-    const sdk = bindCodeModeSdk([
-      createModelsCapability(backend, { apiKeys: { openrouter: "secret" } }, fetchImpl),
-    ]);
-    const result = await runTauCodeMode({
-      name: "tau",
-      ...sdk,
-      code: `const result = await tau.models.decisions({
-        model: "openai/gpt-6-luna-decisions",
+  it.each(["openai/gpt-6-luna-decisions", "typesafe/jev-1.14"])(
+    "composes ordered path and inline %s images through the scoped backend",
+    async (model) => {
+      const bytes = await sharp({
+        create: { width: 280, height: 280, channels: 3, background: "blue" },
+      })
+        .png()
+        .toBuffer();
+      const image = { data: bytes.toString("base64"), mimeType: "image/png" };
+      const backend = {
+        readFileBinary: vi.fn(async () => ({ content: bytes })),
+        runNodeScript: vi.fn(),
+      };
+      const reply = {
+        model,
+        answers: { same: { type: "noul", noul: 0.1 } },
+        usage: { input_tokens: 180, output_tokens: 0 },
+      };
+      const fetchImpl = vi.fn(async () => Response.json(reply));
+      const sdk = bindCodeModeSdk([
+        createModelsCapability(backend, { apiKeys: { openrouter: "secret" } }, fetchImpl),
+      ]);
+      const result = await runTauCodeMode({
+        name: "tau",
+        ...sdk,
+        code: `const result = await tau.models.decisions({
+        model: ${JSON.stringify(model)},
         state: "Compare the two images.",
         questions: { same: { type: "noul", instructions: "Do the images look the same?" } },
         attachments: [{ type: "image", path: "screenshot.png" }, { type: "image", data: ${JSON.stringify(image.data)}, mimeType: ${JSON.stringify(image.mimeType)} }],
       }); printText(JSON.stringify(result.answers));`,
-    });
-    expect(result.status).toBe("succeeded");
-    expect(JSON.parse(text(result.result))).toEqual(reply.answers);
-    expect(backend.readFileBinary).toHaveBeenCalledWith("screenshot.png", { maxBytes: 5_000_000 });
-    expect(backend.runNodeScript).not.toHaveBeenCalled();
-    expect(JSON.parse(fetchImpl.mock.calls[0][1].body).state).toEqual([
-      { type: "text", text: "Compare the two images." },
-      {
-        type: "image_url",
-        image_url: { url: `data:image/png;base64,${bytes.toString("base64")}` },
-      },
-      { type: "image_url", image_url: { url: `data:${image.mimeType};base64,${image.data}` } },
-    ]);
-    expect(fetchImpl).toHaveBeenCalledOnce();
-  });
+      });
+      expect(result.status).toBe("succeeded");
+      expect(JSON.parse(text(result.result))).toEqual(reply.answers);
+      expect(backend.readFileBinary).toHaveBeenCalledWith("screenshot.png", {
+        maxBytes: 5_000_000,
+      });
+      expect(backend.runNodeScript).not.toHaveBeenCalled();
+      expect(JSON.parse(fetchImpl.mock.calls[0][1].body).state).toEqual([
+        "Compare the two images.",
+        {
+          type: "image_url",
+          image_url: { url: `data:image/png;base64,${bytes.toString("base64")}` },
+        },
+        { type: "image_url", image_url: { url: `data:${image.mimeType};base64,${image.data}` } },
+      ]);
+      expect(fetchImpl).toHaveBeenCalledOnce();
+    },
+  );
 
   it("rejects unsupported, ambiguous, invalid, and excessive decision images before file access or inference", async () => {
     const backend = { readFileBinary: vi.fn() };
@@ -657,8 +664,8 @@ describe("code composition", () => {
         [
           {
             ...input,
-            model: "typesafe/jev-1.13",
-            attachments: [{ type: "image", path: "missing.png" }],
+            model: "typesafe/jev-1.14",
+            attachments: [inline],
           },
         ],
         context(),

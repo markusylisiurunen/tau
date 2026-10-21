@@ -52,7 +52,7 @@ export const openRouterModels: Record<Operation, OpenRouterModel[]> = {
       id: "typesafe/jev-1.14",
       inputs: ["state", "questions", "image"],
       reasoning: [],
-      role: "High-volume text or JSON decisions when cost is the priority; experimental PNG/JPEG image input.",
+      role: "High-volume text, JSON, or PNG/JPEG image decisions when cost is the priority.",
     },
   ],
   chat: [

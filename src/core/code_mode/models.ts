@@ -209,7 +209,7 @@ type DecisionResult = {
 - \`choice\`: one supplied category; optional confidence and category probabilities are from 0 to 1.
 - \`score\`: position from 0 to the final rubric index, possibly fractional. Distribution and legend keys are rubric-index strings. Optional confidence and probabilities are from 0 to 1.
 
-Prefer \`openai/gpt-6-luna-decisions\` for decisions, including text, JSON, and image-based judgments. Choose \`typesafe/jev-1.14\` for high-volume text or JSON decisions when cost is the priority; its image input is experimental.
+Prefer \`openai/gpt-6-luna-decisions\` for decisions, including text, JSON, and image-based judgments. Choose \`typesafe/jev-1.14\` for high-volume text, JSON, or image decisions when cost is the priority.
 
 Luna supports at most 200 questions, 255 categories per choice question, and 2–10 rubric levels per score question. These limits are checked before sending the request. Jev also accepts a single-level score rubric.
 

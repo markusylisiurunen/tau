@@ -27,7 +27,7 @@ Every request needs an exact `--model` ID from this table. There is no default, 
 | Operation | Model | Inputs and suggested role | Reasoning efforts |
 | --- | --- | --- | --- |
 | `decisions` | `openai/gpt-6-luna-decisions` | Questions about text, structured state, or images; recommended first choice for decisions | Not supported |
-| `decisions` | `typesafe/jev-1.14` | Questions about text, structured state, or images (experimental); use for high-volume decisions when cost is the priority | Not supported |
+| `decisions` | `typesafe/jev-1.14` | Questions about text, structured state, or images; use for high-volume decisions when cost is the priority | Not supported |
 | `chat` | `google/gemini-3.8-flash` | Text, images, audio, video; first choice for audio/video and image-heavy analysis | `low`, `medium`, `high` |
 | `chat` | `openai/gpt-6-luna` | Text and images; cheap everyday extraction, summarization, and routine questions | `none`, `low`, `medium`, `high`, `xhigh`, `max` |
 | `chat` | `openai/gpt-6.1-sol` | Text and images; coding, debugging, technical reasoning | `low`, `medium`, `high`, `xhigh`, `max` |
@@ -94,7 +94,7 @@ tau tool openrouter decisions \
 
 Describe what to check in `questions` and supply images with `--image`. Images follow `state` in flag order and retain their original bytes. Objects and arrays in `state` are sent as JSON text, so image URLs inside `state` are treated as text.
 
-Jev accepts up to 16 PNG/JPEG images through the same flags. Each side must be 256–1,568 pixels, with at least 78,400 pixels in total (inclusive limits). A 256×256 image is too small; 280×280 meets the minimum area. WebP is unsupported. Tau checks these constraints before sending, without resizing or converting images. TypeSafe marks image input as experimental. EXIF orientation is not applied by Jev, so rotate photos before attaching them.
+Jev accepts up to 16 PNG/JPEG images through the same flags. Each side must be 256–1,568 pixels, with at least 78,400 pixels in total (inclusive limits). A 256×256 image is too small; 280×280 meets the minimum area. WebP is unsupported. Tau checks these constraints before sending, without resizing or converting images. EXIF orientation is not applied by Jev, so rotate photos before attaching them.
 
 Images also use the [same validation and limits as chat images](#outputs-and-recovery). Only local files are accepted; external URLs and file IDs are unsupported. Neither decision model accepts audio or video.
 

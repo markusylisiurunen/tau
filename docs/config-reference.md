@@ -232,7 +232,7 @@ The host reads MCP servers once at startup, from the global config and the proje
 - Set `enabled: false` to turn off an inherited server.
 - All sessions on the host share the same servers. Subagents have their parent's access, even in another working directory.
 - Configuration in a session's execution environment never adds servers.
-- Restart the host after changing definitions or credentials. `/reload` does not reload servers.
+- Restart the host after changing definitions or static credentials. `/reload` does not reload servers. OAuth credentials updated through `tau mcp login` take effect without restarting.
 
 ```json
 {
@@ -265,7 +265,7 @@ Stdio executables run directly, without a shell. Bare commands resolve through t
 
 Values in `env` and `headers` can reference host environment variables as `${NAME}`. A missing variable makes the connection fail. Command substitution is not supported. Stdio servers inherit the host environment, and `env` overrides matching names. Keep secrets in the host environment instead of committing them to JSON.
 
-An invalid entry is skipped with a diagnostic, and the other servers stay configured. OAuth sign-in, MCP prompts, subscriptions, elicitation, sampling, execution-environment servers, and user approval dialogs are not supported. See [tools](tools.md#capabilities) for discovery, calls, and result handling.
+An invalid entry is skipped with a diagnostic, and the other servers stay configured. HTTP OAuth sign-in is available through `tau mcp login`; see [credentials](credentials.md#mcp-oauth). MCP prompts, subscriptions, elicitation, sampling, execution-environment servers, and user approval dialogs are not supported. See [tools](tools.md#capabilities) for discovery, calls, and result handling.
 
 ## TUI presentation and diff review
 

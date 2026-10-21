@@ -25,6 +25,32 @@ const finiteNumberSchema = z.number().finite();
 
 const authStorageDataSchema = z
   .object({
+    mcp: z
+      .record(
+        z.url(),
+        z.object({
+          grantId: z.string().uuid(),
+          resourceMetadataUrl: z.url().optional(),
+          authorizationServerUrl: z.url(),
+          redirectUrl: z.url(),
+          clientInformation: z
+            .object({
+              client_id: nonEmptyStringSchema,
+              client_secret: z.string().optional(),
+            })
+            .passthrough(),
+          tokens: z.object({
+            access_token: nonEmptyStringSchema,
+            token_type: nonEmptyStringSchema,
+            refresh_token: z.string().optional(),
+            scope: z.string().optional(),
+            expires_in: finiteNumberSchema.optional(),
+            id_token: z.string().optional(),
+          }),
+          tokensExpireAt: finiteNumberSchema.optional(),
+        }),
+      )
+      .optional(),
     providers: z.record(
       z.string().refine((value) => value.trim().length > 0),
       z

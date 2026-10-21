@@ -1,5 +1,6 @@
 import { rankBm25 } from "../utils/bm25.js";
 import type { McpManager } from "./manager.js";
+import { McpAuthorizationError } from "./oauth.js";
 
 function schemaText(schema: unknown, parts: string[]): void {
   if (typeof schema !== "object" || schema === null || Array.isArray(schema)) return;
@@ -42,9 +43,13 @@ export async function searchMcpTools(
         const server = servers[index]!;
         try {
           catalogs[index] = await manager.listTools(server, signal);
-        } catch {
+        } catch (error) {
           signal.throwIfAborted();
-          failures[index] = { server, error: "failed to discover tools" };
+          failures[index] = {
+            server,
+            error:
+              error instanceof McpAuthorizationError ? error.message : "failed to discover tools",
+          };
         }
       }
     }),

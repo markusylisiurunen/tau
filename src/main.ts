@@ -528,6 +528,36 @@ let skills: Skill[];
 let themes: ThemeDefinition[] = [];
 let runtimeBootstrap: RuntimeBootstrap | undefined;
 
+if (argv[0] === "mcp") {
+  const { getAuthPath } = await import("./core/auth/auth_paths.js");
+  const { mcpHelp, parseMcpCliArgs, runMcpCommand } = await import("./core/mcp/cli.js");
+  const controller = new AbortController();
+  const onInterrupt = () => controller.abort(new Error("MCP login cancelled"));
+  process.once("SIGINT", onInterrupt);
+  process.once("SIGTERM", onInterrupt);
+  try {
+    const command = parseMcpCliArgs(argv.slice(1));
+    if (command.type === "help") console.log(mcpHelp);
+    else {
+      const config = loadConfig(cwd, configDeps);
+      await runMcpCommand({
+        command,
+        servers: config.mcpServers ?? {},
+        authPath: getAuthPath(hostHome),
+        signal: controller.signal,
+        log: console.log,
+      });
+    }
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : "MCP authorization failed");
+    process.exitCode = 1;
+  } finally {
+    process.removeListener("SIGINT", onInterrupt);
+    process.removeListener("SIGTERM", onInterrupt);
+  }
+  process.exit(process.exitCode ?? 0);
+}
+
 if (argv[0] === "auth") {
   const {
     AuthStorage,

@@ -1,3 +1,5 @@
+import type { OAuthClientInformationMixed, OAuthTokens } from "@earendil-works/pi-mcp/oauth";
+
 export type StoredApiKeyAccount = {
   type: "api_key";
   accountId: string;
@@ -23,8 +25,17 @@ export type ProviderAuthData = {
   accounts: StoredAccount[];
 };
 
+export type StoredMcpOAuth = {
+  authorizationServerUrl: string;
+  redirectUrl: string;
+  clientInformation: OAuthClientInformationMixed;
+  tokens: OAuthTokens;
+  tokensExpireAt?: number;
+};
+
 export type AuthStorageData = {
   providers: Record<string, ProviderAuthData>;
+  mcp?: Record<string, StoredMcpOAuth>;
 };
 
 export type AuthAccountUsageWindow = {

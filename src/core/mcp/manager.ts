@@ -1,5 +1,6 @@
 import {
   type ContentBlock,
+  McpAuthRequiredError,
   McpClient,
   type McpFetch,
   McpSessionExpiredError,
@@ -9,8 +10,10 @@ import {
 } from "@earendil-works/pi-mcp";
 import type { TSchema } from "typebox";
 import { Value } from "typebox/value";
+import { getAuthPath } from "../auth/auth_paths.js";
 import type { McpServerConfig, McpServersConfig } from "../config/mcp.js";
 import { APP_VERSION } from "../version.js";
+import { createMcpAuthProvider, McpAuthorizationError, McpOAuthStorage } from "./oauth.js";
 
 const DEFAULT_DISCOVERY_TIMEOUT_MS = 30_000;
 const DEFAULT_EXECUTION_TIMEOUT_MS = 300_000;
@@ -28,12 +31,14 @@ export class McpManager {
   private readonly connections = new Map<string, Connection>();
   private readonly startups = new Set<Promise<McpClient>>();
   private readonly cleanups = new Set<Promise<void>>();
+  private readonly authorization = new AbortController();
   private closed = false;
   private closePromise?: Promise<void>;
 
   constructor(
     servers: McpServersConfig = {},
     private readonly env: NodeJS.ProcessEnv = process.env,
+    private readonly authPath: string = getAuthPath(),
   ) {
     this.servers = structuredClone(servers);
   }
@@ -62,7 +67,7 @@ export class McpManager {
     signal.throwIfAborted();
     if (!connection.tools) {
       const revision = connection.revision;
-      const tools = await this.request(client, () => client.listTools({ signal }));
+      const tools = await this.request(server, client, () => client.listTools({ signal }));
       if (revision === connection.revision) connection.tools = tools;
       return { ...(client.instructions ? { instructions: client.instructions } : {}), tools };
     }
@@ -86,7 +91,7 @@ export class McpManager {
     }
     signal.throwIfAborted();
     const client = await waitForConnection(this.getConnection(server).ready, signal);
-    const result = await this.request(client, () =>
+    const result = await this.request(server, client, () =>
       client.callTool(name, args, {
         signal,
         timeoutMs: this.servers[server]!.timeoutMs ?? DEFAULT_EXECUTION_TIMEOUT_MS,
@@ -104,21 +109,23 @@ export class McpManager {
   async listResources(server: string, signal: AbortSignal) {
     signal.throwIfAborted();
     const client = await waitForConnection(this.getConnection(server).ready, signal);
-    const resources = await this.request(client, () => client.listResources({ signal }));
+    const resources = await this.request(server, client, () => client.listResources({ signal }));
     return resources.map(({ _meta, ...resource }) => resource);
   }
 
   async listResourceTemplates(server: string, signal: AbortSignal) {
     signal.throwIfAborted();
     const client = await waitForConnection(this.getConnection(server).ready, signal);
-    const templates = await this.request(client, () => client.listResourceTemplates({ signal }));
+    const templates = await this.request(server, client, () =>
+      client.listResourceTemplates({ signal }),
+    );
     return templates.map(({ _meta, ...template }) => template);
   }
 
   async readResource(server: string, uri: string, signal: AbortSignal) {
     signal.throwIfAborted();
     const client = await waitForConnection(this.getConnection(server).ready, signal);
-    const result = await this.request(client, () =>
+    const result = await this.request(server, client, () =>
       client.readResource(uri, {
         signal,
         timeoutMs: this.servers[server]!.timeoutMs ?? DEFAULT_EXECUTION_TIMEOUT_MS,
@@ -131,6 +138,7 @@ export class McpManager {
 
   close(): Promise<void> {
     this.closed = true;
+    this.authorization.abort();
     this.closePromise ??= this.closeConnections();
     return this.closePromise;
   }
@@ -151,10 +159,11 @@ export class McpManager {
     }
   }
 
-  private async request<T>(client: McpClient, run: () => Promise<T>): Promise<T> {
+  private async request<T>(server: string, client: McpClient, run: () => Promise<T>): Promise<T> {
     try {
       return await run();
     } catch (error) {
+      if (error instanceof McpAuthRequiredError) throw new McpAuthorizationError(server);
       if (error instanceof McpSessionExpiredError) await this.closeClient(client);
       throw error;
     }
@@ -207,7 +216,9 @@ export class McpManager {
           this.assertOpen();
           return client;
         },
-        () => {
+        (error) => {
+          if (error instanceof McpAuthorizationError) throw error;
+          if (error instanceof McpAuthRequiredError) throw new McpAuthorizationError(name);
           throw new Error(
             `failed to connect MCP server '${name}'; check its configuration and authentication`,
           );
@@ -240,6 +251,13 @@ export class McpManager {
       return new StreamableHttpTransport({
         url: server.url,
         headers: expand(server.headers),
+        authProvider: createMcpAuthProvider(
+          name,
+          new URL(server.url).href,
+          new McpOAuthStorage(this.authPath),
+          this.authorization.signal,
+          Object.keys(server.headers ?? {}).some((key) => key.toLowerCase() === "authorization"),
+        ),
         fetch: boundedFetch(
           Math.max(
             server.timeoutMs ?? DEFAULT_EXECUTION_TIMEOUT_MS,

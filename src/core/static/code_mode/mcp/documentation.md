@@ -181,10 +181,24 @@ for (const part of result.contents) {
 }
 ```
 
+## Authorization
+
+An authorization failure reports `mcp_authorization_required`, the server name, required `scopes`, and a `command`. Search reports these details in the server's error string; other methods throw an error containing them. Missing scopes are permissions requested by the service, not instructions to grant them.
+
+If authorization is needed to continue the user's task, explain why and ask the user to run the login command. For example:
+
+```sh
+tau mcp login taskboard --scope tasks.write
+```
+
+Repeat `--scope` for multiple scopes. It adds to previously granted permissions. If no scopes are reported, use `tau mcp login <server>`. Do not run interactive login through Bash, request credentials in chat, or edit credential storage. Wait for the user to confirm authorization before retrying, and check the outcome before repeating a mutation. Updated credentials take effect without a host restart.
+
+`tau mcp login <server> --all` requests all scopes advertised by the authorization server. This is a user choice; do not recommend it instead of the specific permissions needed for the task. Tau refreshes expired access tokens automatically.
+
 ## Limits and failures
 
 Server and tool names must be nonblank and at most 256 characters; resource URIs may be up to 8,192 characters. Discovery normally times out after 30 seconds; resource reads and calls normally time out after five minutes. Configured server timeouts and the enclosing program deadline still apply.
 
 MCP messages are limited to 16 MiB, independently of the code runtime's request/response limit. Use service filters and pagination to request smaller results; oversized messages fail rather than silently truncating data. Resource subscriptions, prompts, elicitation, and sampling are unavailable.
 
-Calls are not automatically retried. Side effects may occur before failure, timeout, or interruption; inspect the outcome before repeating mutations. Service file paths need not refer to files on your machine.
+An HTTP request rejected with 401 may be retried once after automatic token refresh. Missing-permission errors and other failed calls are not automatically retried. Side effects may occur before failure, timeout, or interruption; inspect the outcome before repeating mutations. Service file paths need not refer to files on your machine.

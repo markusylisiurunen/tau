@@ -208,6 +208,8 @@ The session host provides temporary review agents, and the local tool runs the b
 
 The TUI also offers diff review to the agent as a client tool, unless `--no-client-tools` is set. `/diff` works either way. See [client tools](client-tools.md) for what this means with several clients.
 
+The agent's `diff_review` call accepts an optional `workingDirectory` on the session's execution environment. It defaults to the session directory; relative paths resolve from that directory. Git discovery and relative `patchFiles` paths use the selected directory. A missing directory or a directory outside a Git repository fails the review. This setting applies only to that review and does not change the session directory or `/diff`.
+
 ## Use speech
 
 ### Dictation

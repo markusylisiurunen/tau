@@ -2926,6 +2926,7 @@ export class SessionChatController {
   private async startDiffReviewBridge(
     args: {
       source: DiffReviewSnapshotSource;
+      workingDirectory?: string;
       signal: AbortSignal;
     },
     session: TauSdkSession,
@@ -2937,6 +2938,7 @@ export class SessionChatController {
     const snapshot = await captureDiffReviewSnapshot({
       cwd,
       source: args.source,
+      ...(args.workingDirectory !== undefined ? { workingDirectory: args.workingDirectory } : {}),
       signal: args.signal,
       deps: createSdkDiffSnapshotDeps({ backend, cwd }),
     });

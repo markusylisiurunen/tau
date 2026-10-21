@@ -5860,7 +5860,7 @@ describe("SessionChatController", () => {
       exec: vi.fn((command, options) => session.exec(command, options)),
     };
     const result = controller.runClientDiffReview(
-      { source: "git_diff", diffArgs: ["--", "src/main.ts"] },
+      { source: "git_diff", diffArgs: ["--", "src/main.ts"], workingDirectory: "../other repo" },
       {
         sessionId: "session-1",
         callId: "diff-review-1",
@@ -5887,7 +5887,10 @@ describe("SessionChatController", () => {
     expect(session.steer).toHaveBeenCalledWith("adjust the review");
 
     await expect(result).resolves.toContain("Diff review completed.");
-    expect(executionEnvironment.exec).toHaveBeenCalled();
+    expect(executionEnvironment.exec).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ cwd: "/session/other repo" }),
+    );
     await expect(result).resolves.toContain("Reviewed scope: git diff -- src/main.ts");
     await expect(result).resolves.toContain("returned review from local diff tool");
     const diffReviewMessage = view.messages.find((message) => message.model.type === "diff_review");

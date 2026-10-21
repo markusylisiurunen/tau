@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { captureDiffReviewSnapshot } from "../src/core/diff_review/snapshot.ts";
 
@@ -61,6 +61,68 @@ function createSpawnResult(output, overrides = {}) {
 }
 
 describe("diff_review snapshot", () => {
+  it("selects another repository without changing the default directory", async () => {
+    const original = createRepoFixture();
+    const selected = createRepoFixture();
+    try {
+      for (const workingDirectory of [selected.repo, relative(original.repo, selected.repo)]) {
+        const snapshot = await captureDiffReviewSnapshot({
+          cwd: original.repo,
+          workingDirectory,
+          source: { kind: "git_diff", diffArgs: ["--staged"] },
+        });
+        expect(snapshot.cwd).toBe(selected.repo);
+        expect(snapshot.repoRoot).toBe(selected.gitRoot);
+        expect(snapshot.patch).toContain("+export const value = 2;");
+      }
+      const snapshot = await captureDiffReviewSnapshot({
+        cwd: original.repo,
+        source: { kind: "git_diff", diffArgs: [] },
+      });
+      expect(snapshot.cwd).toBe(original.repo);
+      expect(snapshot.repoRoot).toBe(original.gitRoot);
+    } finally {
+      original.cleanup();
+      selected.cleanup();
+    }
+  });
+
+  it("resolves patch files from the selected directory", async () => {
+    const fx = createRepoFixture();
+    try {
+      const patch = runGit(fx.repo, ["diff", "--staged"]);
+      writeFileSync(join(fx.repo, "packages", "app", "review.patch"), patch);
+      const snapshot = await captureDiffReviewSnapshot({
+        cwd: fx.repo,
+        workingDirectory: "packages/app",
+        source: { kind: "patch_files", patchFiles: ["review.patch"], scopeLabel: "selected" },
+      });
+      expect(snapshot.cwd).toBe(join(fx.repo, "packages", "app"));
+      expect(snapshot.repoRoot).toBe(fx.gitRoot);
+      expect(snapshot.files.map((file) => file.path)).toEqual(["src/bar.ts", "src/foo.ts"]);
+      expect(snapshot.getFilePatch("src/foo.ts")).toContain("+export const value = 2;");
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("rejects missing directories and non-directories", async () => {
+    const fx = createRepoFixture();
+    try {
+      for (const workingDirectory of ["missing", "src/foo.ts"]) {
+        await expect(
+          captureDiffReviewSnapshot({
+            cwd: fx.repo,
+            workingDirectory,
+            source: { kind: "git_diff", diffArgs: [] },
+          }),
+        ).rejects.toThrow();
+      }
+    } finally {
+      fx.cleanup();
+    }
+  });
+
   it("captures a frozen diff snapshot with manifest and per-file patches", async () => {
     const fx = createRepoFixture();
 

@@ -29,6 +29,8 @@ const authStorageDataSchema = z
       .record(
         z.url(),
         z.object({
+          grantId: z.string().uuid(),
+          resourceMetadataUrl: z.url().optional(),
           authorizationServerUrl: z.url(),
           redirectUrl: z.url(),
           clientInformation: z

@@ -20,6 +20,7 @@ const DEFAULT_EXECUTION_TIMEOUT_MS = 300_000;
 const MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
 
 interface Connection {
+  grantId: string | undefined;
   client: McpClient;
   ready: Promise<McpClient>;
   tools?: Tool[];
@@ -188,8 +189,16 @@ export class McpManager {
     const server = Object.hasOwn(this.servers, name) ? this.servers[name] : undefined;
     if (!server || server.enabled === false)
       throw new Error(`MCP server '${name}' is unavailable.`);
+    const grantId =
+      server.type === "http" &&
+      !Object.keys(server.headers ?? {}).some((key) => key.toLowerCase() === "authorization")
+        ? new McpOAuthStorage(this.authPath).read(new URL(server.url).href)?.grantId
+        : undefined;
     const existing = this.connections.get(name);
-    if (existing && existing.client.connectionState !== "closed") return existing;
+    if (existing && existing.client.connectionState !== "closed") {
+      if (existing.grantId === grantId) return existing;
+      void this.closeClient(existing.client).catch(() => {});
+    }
     const client = new McpClient({
       name: "tau",
       version: APP_VERSION,
@@ -197,6 +206,7 @@ export class McpManager {
     });
     const transport = this.createTransport(name, server);
     const connection: Connection = {
+      grantId,
       client,
       ready: Promise.resolve(client),
       revision: 0,

@@ -17,7 +17,7 @@ import { createCapabilityTool } from "./helpers/code_mode.js";
 
 const signal = () => new AbortController().signal;
 
-async function fixture() {
+async function fixture({ challengeOnly = false, scopedTools = false } = {}) {
   const directory = mkdtempSync(join(tmpdir(), "tau-mcp-oauth-"));
   const authPath = join(directory, "auth.json");
   const registrations = [];
@@ -35,14 +35,19 @@ async function fixture() {
       response.writeHead(status, { "content-type": "application/json" });
       response.end(JSON.stringify(body));
     };
-    if (request.url.startsWith("/.well-known/oauth-protected-resource")) {
+    if (
+      request.url === "/metadata" ||
+      (!challengeOnly && request.url.startsWith("/.well-known/oauth-protected-resource"))
+    ) {
       return json({
-        resource: `${issuer}/mcp`,
+        resource: url,
         authorization_servers: [issuer],
         scopes_supported: ["account.read"],
       });
     }
-    if (request.url.startsWith("/.well-known/oauth-authorization-server")) {
+    if (
+      request.url === `/.well-known/oauth-authorization-server${challengeOnly ? "/issuer" : ""}`
+    ) {
       return json({
         issuer,
         authorization_endpoint: `${issuer}/authorize`,
@@ -56,12 +61,12 @@ async function fixture() {
         ...(advertise ? { scopes_supported: ["account.read", "dns.write", "offline_access"] } : {}),
       });
     }
-    if (request.url === "/register") {
+    if (request.url === `${challengeOnly ? "/issuer" : ""}/register`) {
       const registration = JSON.parse(text);
       registrations.push(registration);
-      return json({ ...registration, client_id: "tau-client" });
+      return json({ ...registration, client_id: `tau-client-${registrations.length}` });
     }
-    if (request.url === "/token") {
+    if (request.url === `${challengeOnly ? "/issuer" : ""}/token`) {
       const params = new URLSearchParams(text);
       const refresh = params.get("grant_type") === "refresh_token";
       if (refresh) refreshes++;
@@ -77,6 +82,10 @@ async function fixture() {
         ? grants.get(params.get("refresh_token"))
         : auth.searchParams.get("scope");
       if (!scope) return json({ error: "invalid_grant" }, 400);
+      const registration = registrations[Number(params.get("client_id").split("-").at(-1)) - 1];
+      if (!scope.split(" ").every((value) => registration.scope.split(" ").includes(value))) {
+        return json({ error: "invalid_scope" }, 400);
+      }
       const access = `access-${grants.size}`;
       const refreshToken = `refresh-${grants.size}`;
       if (refresh) grants.delete(params.get("refresh_token"));
@@ -95,7 +104,7 @@ async function fixture() {
       const scopes = grants.get(token);
       if (!scopes) {
         response.writeHead(401, {
-          "www-authenticate": `Bearer resource_metadata="${issuer}/.well-known/oauth-protected-resource/mcp", scope="account.read"`,
+          "www-authenticate": `Bearer resource_metadata="${new URL(url).origin}${challengeOnly ? "/metadata" : "/.well-known/oauth-protected-resource/mcp"}", scope="account.read"`,
         });
         return response.end();
       }
@@ -122,7 +131,12 @@ async function fixture() {
           serverInfo: { name: "oauth-test", version: "1" },
         };
       else if (message.method === "tools/list")
-        result = { tools: [{ name: "dns", inputSchema: { type: "object" } }] };
+        result = {
+          tools:
+            scopedTools && !scopes.split(" ").includes("dns.write")
+              ? []
+              : [{ name: "dns", inputSchema: { type: "object" } }],
+        };
       else if (message.method === "tools/call") {
         calls++;
         result = { content: [{ type: "text", text: "done" }] };
@@ -135,6 +149,7 @@ async function fixture() {
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   issuer = `http://127.0.0.1:${server.address().port}`;
   const url = `${issuer}/mcp`;
+  if (challengeOnly) issuer += "/issuer";
   const servers = { cloudflare: { type: "http", url } };
   const storage = new McpOAuthStorage(authPath);
   const clients = [];
@@ -249,7 +264,9 @@ describe("MCP OAuth", () => {
       expect(Object.keys(persisted).sort()).toEqual([
         "authorizationServerUrl",
         "clientInformation",
+        "grantId",
         "redirectUrl",
+        "resourceMetadataUrl",
         "tokens",
         "tokensExpireAt",
       ]);
@@ -258,12 +275,71 @@ describe("MCP OAuth", () => {
         "account.read",
         "dns.write",
       ]);
-      expect(fx.registrations).toHaveLength(1);
+      expect(fx.registrations).toHaveLength(2);
       expect((await client.callTool("cloudflare", "dns", {}, signal())).isError).toBe(false);
       expect(fx.calls).toBe(1);
       expect(statSync(fx.authPath).mode & 0o777).toBe(0o600);
       await fx.logout();
       await expect(client.callTool("cloudflare", "dns", {}, signal())).rejects.toBeInstanceOf(
+        McpAuthorizationError,
+      );
+    } finally {
+      await fx.close();
+    }
+  });
+
+  it("discovers challenge-only metadata and uses it for proactive and reactive refresh", async () => {
+    const fx = await fixture({ challengeOnly: true });
+    try {
+      await fx.login(["--all"]);
+      const before = fx.storage.read(fx.url);
+      expect(before.authorizationServerUrl).toBe(`${new URL(fx.url).origin}/issuer`);
+      fx.storage.save(fx.url, { ...before, tokensExpireAt: 0 });
+      const provider = createMcpAuthProvider("cloudflare", fx.url, fx.storage, signal(), false);
+      const token = await provider.token();
+      expect(fx.refreshes).toBe(1);
+      const { resourceMetadataUrl, ...current } = fx.storage.read(fx.url);
+      fx.storage.save(fx.url, current);
+      await provider.onUnauthorized({
+        token,
+        response: new Response(null, {
+          status: 401,
+          headers: {
+            "www-authenticate": `Bearer resource_metadata="${resourceMetadataUrl}"`,
+          },
+        }),
+      });
+      expect(fx.refreshes).toBe(2);
+      expect(fx.storage.read(fx.url).resourceMetadataUrl).toBe(resourceMetadataUrl);
+    } finally {
+      await fx.close();
+    }
+  });
+
+  it("refreshes the tool catalog after login expands the grant and after logout", async () => {
+    const fx = await fixture({ scopedTools: true });
+    try {
+      await fx.login();
+      const client = fx.manager();
+      expect((await client.listTools("cloudflare", signal())).tools).toEqual([]);
+      const before = fx.storage.read(fx.url);
+      const controller = new AbortController();
+      await expect(
+        fx.login(["--scope", "dns.write"], {
+          signal: controller.signal,
+          onAuthorization: async () => controller.abort(),
+        }),
+      ).rejects.toThrow();
+      expect(fx.storage.read(fx.url)).toEqual(before);
+      await fx.login(["--scope", "dns.write"]);
+      expect(
+        (await client.listTools("cloudflare", signal())).tools.map((tool) => tool.name),
+      ).toEqual(["dns"]);
+      expect((await client.callTool("cloudflare", "dns", {}, signal())).isError).toBe(false);
+      await fx.login(["--scope", "dns.write"]);
+      expect(fx.registrations).toHaveLength(3);
+      await fx.logout();
+      await expect(client.listTools("cloudflare", signal())).rejects.toBeInstanceOf(
         McpAuthorizationError,
       );
     } finally {

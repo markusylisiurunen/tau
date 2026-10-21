@@ -73,7 +73,11 @@ export function createMcpAuthProvider(
   signal: AbortSignal,
   staticAuthorization: boolean,
 ): AuthProvider {
-  const refresh = async (rejectedToken: string | undefined, force: boolean) => {
+  const refresh = async (
+    rejectedToken: string | undefined,
+    force: boolean,
+    resourceMetadataUrl?: URL,
+  ) => {
     const deadline = AbortSignal.any([signal, AbortSignal.timeout(30_000)]);
     return await storage.lock(
       url,
@@ -90,7 +94,13 @@ export function createMcpAuthProvider(
         }
         if (!current.tokens.refresh_token) throw new McpAuthorizationError(server);
         try {
-          const discovered = await discoverOAuthServerInfo(url, { signal: deadline });
+          const metadataUrl =
+            resourceMetadataUrl ??
+            (current.resourceMetadataUrl ? new URL(current.resourceMetadataUrl) : undefined);
+          const discovered = await discoverOAuthServerInfo(url, {
+            resourceMetadataUrl: metadataUrl,
+            signal: deadline,
+          });
           if (discovered.authorizationServerUrl !== current.authorizationServerUrl) {
             throw new McpAuthorizationError(server);
           }
@@ -102,6 +112,8 @@ export function createMcpAuthProvider(
             signal: deadline,
           });
           storage.save(url, {
+            grantId: current.grantId,
+            ...(metadataUrl ? { resourceMetadataUrl: metadataUrl.href } : {}),
             authorizationServerUrl: current.authorizationServerUrl,
             redirectUrl: current.redirectUrl,
             clientInformation: current.clientInformation,
@@ -150,7 +162,7 @@ export function createMcpAuthProvider(
       if (challenge.error === "insufficient_scope") {
         throw new McpAuthorizationError(server, parseScopes(challenge.scope));
       }
-      await refresh(context.token, true);
+      await refresh(context.token, true, challenge.resourceMetadataUrl);
     },
   };
 }

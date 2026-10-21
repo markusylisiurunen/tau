@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   authorizeMcp,
   discoverOAuthServerInfo,
@@ -6,6 +7,7 @@ import {
   OAuthCallbackServer,
   OAuthError,
   OAuthRegistrationError,
+  parseWwwAuthenticate,
 } from "@earendil-works/pi-mcp/oauth";
 import type { McpServersConfig } from "../config/mcp.js";
 import { McpOAuthStorage, parseScopes } from "./oauth.js";
@@ -89,8 +91,13 @@ export async function runMcpCommand(options: {
     throw new Error("remove the configured Authorization header before using MCP OAuth login");
   }
   const previous = storage.read(url);
+  const deadline = AbortSignal.any([signal, AbortSignal.timeout(30_000)]);
+  const response = await fetch(url, { signal: deadline });
+  const { resourceMetadataUrl } = parseWwwAuthenticate(response.headers.get("www-authenticate"));
+  await response.body?.cancel();
   const discovered = await discoverOAuthServerInfo(url, {
-    signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
+    resourceMetadataUrl,
+    signal: deadline,
   });
   const advertised = discovered.authorizationServerMetadata?.scopes_supported;
   if (command.all && !advertised?.length)
@@ -107,6 +114,11 @@ export async function runMcpCommand(options: {
       .filter(Boolean)
       .join(" "),
   );
+  const registeredScopes = parseScopes(
+    previous && "scope" in previous.clientInformation
+      ? previous.clientInformation.scope
+      : undefined,
+  );
   const redirect = previous ? new URL(previous.redirectUrl) : undefined;
   const callback = await OAuthCallbackServer.listen(
     redirect ? { port: Number(redirect.port), path: redirect.pathname } : {},
@@ -121,7 +133,8 @@ export async function runMcpCommand(options: {
     store.save({
       serverUrl: url,
       clientInformation:
-        previous?.authorizationServerUrl === discovered.authorizationServerUrl
+        previous?.authorizationServerUrl === discovered.authorizationServerUrl &&
+        scopes.every((scope) => registeredScopes.includes(scope))
           ? previous.clientInformation
           : undefined,
     });
@@ -157,6 +170,8 @@ export async function runMcpCommand(options: {
     if (!state?.clientInformation || !state.tokens)
       throw new Error("authorization did not return credentials");
     const credentials = {
+      grantId: randomUUID(),
+      ...(resourceMetadataUrl ? { resourceMetadataUrl: resourceMetadataUrl.href } : {}),
       authorizationServerUrl: discovered.authorizationServerUrl,
       redirectUrl: callback.redirectUrl,
       clientInformation: state.clientInformation,

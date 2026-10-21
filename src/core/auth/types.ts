@@ -26,6 +26,8 @@ export type ProviderAuthData = {
 };
 
 export type StoredMcpOAuth = {
+  grantId: string;
+  resourceMetadataUrl?: string;
   authorizationServerUrl: string;
   redirectUrl: string;
   clientInformation: OAuthClientInformationMixed;

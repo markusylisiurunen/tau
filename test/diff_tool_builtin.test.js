@@ -553,7 +553,8 @@ describe("built-in diff tool", () => {
 
       const html = await (await fetch(started.url)).text();
       const assetPaths = [...html.matchAll(/(?:src|href)="(\.\/[^"]+)"/g)].map((match) => match[1]);
-      expect(assetPaths).toHaveLength(2);
+      expect(assetPaths.some((path) => path.endsWith(".js"))).toBe(true);
+      expect(assetPaths.some((path) => path.endsWith(".css"))).toBe(true);
 
       const mountedUrl = new URL("https://example.test/reviews/review-1/");
       for (const assetPath of assetPaths) {

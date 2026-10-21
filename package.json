@@ -36,11 +36,11 @@
     "@earendil-works/pi-ai": "1.3.0",
     "@earendil-works/pi-mcp": "1.3.0",
     "@earendil-works/pi-tui": "1.3.0",
-    "@fly/sprites": "^0.2.3",
+    "@fly/sprites": "^0.2.4",
     "chalk": "^6.0.1",
     "colorjs.io": "^0.7.1",
     "file-type": "^22.2.0",
-    "jose": "^6.2.12",
+    "jose": "^6.2.13",
     "ses": "2.3.0",
     "sharp": "^0.35.5",
     "strip-ansi": "^7.2.0",
@@ -51,13 +51,13 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
-    "@cloudflare/workers-types": "^5.20261019.1",
+    "@cloudflare/workers-types": "^5.20261021.1",
     "@types/node": "^24.19.2",
     "@types/ws": "^8.18.2",
     "prettier": "^3.9.10",
     "typescript": "^7.0.2",
     "vitest": "^5.0.5",
-    "wrangler": "^4.151.2"
+    "wrangler": "^4.151.3"
   },
   "engines": {
     "node": ">=24.0.0"

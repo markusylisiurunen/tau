@@ -1,9 +1,9 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createMcpCapability } from "../dist/core/code_mode/mcp.js";
 import { parseMcpCliArgs, runMcpCommand } from "../dist/core/mcp/cli.js";
 import { McpManager } from "../dist/core/mcp/manager.js";
@@ -11,13 +11,14 @@ import {
   createMcpAuthProvider,
   McpAuthorizationError,
   McpOAuthStorage,
+  mcpOAuthFetch,
 } from "../dist/core/mcp/oauth.js";
 import { searchMcpTools } from "../dist/core/mcp/search.js";
 import { createCapabilityTool } from "./helpers/code_mode.js";
 
 const signal = () => new AbortController().signal;
 
-async function fixture({ challengeOnly = false, scopedTools = false } = {}) {
+async function fixture({ challengeOnly = false, scopedTools = false, metadataScopes = true } = {}) {
   const directory = mkdtempSync(join(tmpdir(), "tau-mcp-oauth-"));
   const authPath = join(directory, "auth.json");
   const registrations = [];
@@ -42,7 +43,7 @@ async function fixture({ challengeOnly = false, scopedTools = false } = {}) {
       return json({
         resource: url,
         authorization_servers: [issuer],
-        scopes_supported: ["account.read"],
+        ...(metadataScopes ? { scopes_supported: ["account.read"] } : {}),
       });
     }
     if (
@@ -175,8 +176,10 @@ async function fixture({ challengeOnly = false, scopedTools = false } = {}) {
     },
     async login(flags = [], override = {}) {
       const {
+        beforeAuthorization = async () => {},
         onAuthorization = async (value) => {
           const auth = new URL(value);
+          await beforeAuthorization();
           authorizations.push(auth);
           const callback = new URL(auth.searchParams.get("redirect_uri"));
           callback.searchParams.set("state", auth.searchParams.get("state"));
@@ -285,6 +288,130 @@ describe("MCP OAuth", () => {
       );
     } finally {
       await fx.close();
+    }
+  });
+
+  it("uses challenge-only scopes for default login while preserving existing grants", async () => {
+    const fx = await fixture({ metadataScopes: false });
+    try {
+      await fx.login();
+      expect(fx.storage.read(fx.url).tokens.scope).toBe("account.read");
+      await fx.login(["--scope", "dns.write"]);
+      await fx.login();
+      expect(fx.storage.read(fx.url).tokens.scope.split(" ")).toEqual([
+        "account.read",
+        "dns.write",
+      ]);
+    } finally {
+      await fx.close();
+    }
+  });
+
+  it("accepts token rotation during login but rejects replacement or removal of the grant", async () => {
+    const fx = await fixture();
+    try {
+      await fx.login();
+      const before = fx.storage.read(fx.url);
+      await fx.login(["--scope", "dns.write"], {
+        beforeAuthorization: async () => {
+          fx.storage.save(fx.url, { ...before, tokensExpireAt: 0 });
+          const provider = createMcpAuthProvider("cloudflare", fx.url, fx.storage, signal(), false);
+          await provider.token();
+          expect(fx.storage.read(fx.url).grantId).toBe(before.grantId);
+        },
+      });
+      expect(fx.refreshes).toBe(1);
+      expect(fx.storage.read(fx.url).tokens.scope).toBe("account.read dns.write");
+      expect(fx.storage.read(fx.url).grantId).not.toBe(before.grantId);
+      const replacement = { ...fx.storage.read(fx.url), grantId: randomUUID() };
+      await expect(
+        fx.login([], {
+          beforeAuthorization: async () => fx.storage.save(fx.url, replacement),
+        }),
+      ).rejects.toThrow();
+      expect(fx.storage.read(fx.url)).toEqual(replacement);
+      await expect(
+        fx.login([], {
+          beforeAuthorization: async () => fx.logout(),
+        }),
+      ).rejects.toThrow();
+      expect(fx.storage.read(fx.url)).toBeUndefined();
+    } finally {
+      await fx.close();
+    }
+  });
+
+  it.each(["issuer", "redirect"])(
+    "rejects insecure discovery %s before login or refresh can send credentials",
+    async (mode) => {
+      const fx = await fixture();
+      const realFetch = globalThis.fetch;
+      let spy;
+      try {
+        await fx.login();
+        const before = fx.storage.read(fx.url);
+        fx.storage.save(fx.url, { ...before, tokensExpireAt: 0 });
+        spy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+          const url = new URL(input);
+          if (url.hostname !== "127.0.0.1") throw new Error("unexpected network request");
+          if (url.pathname.startsWith("/.well-known/oauth-protected-resource")) {
+            return mode === "issuer"
+              ? Response.json({
+                  resource: fx.url,
+                  authorization_servers: ["http://issuer.example"],
+                })
+              : new Response(null, {
+                  status: 302,
+                  headers: { location: "http://issuer.example/metadata" },
+                });
+          }
+          return realFetch(input, init);
+        });
+        await expect(fx.login()).rejects.toThrow();
+        const provider = createMcpAuthProvider("cloudflare", fx.url, fx.storage, signal(), false);
+        await expect(provider.token()).rejects.toThrow();
+        expect(spy.mock.calls.every(([url]) => new URL(url).hostname === "127.0.0.1")).toBe(true);
+        expect(fx.refreshes).toBe(0);
+        expect(fx.storage.read(fx.url).tokens).toEqual(before.tokens);
+        expect(fx.authorizations).toHaveLength(1);
+      } finally {
+        spy?.mockRestore();
+        await fx.close();
+      }
+    },
+  );
+
+  it("validates every discovery redirect and does not redirect credential POSTs", async () => {
+    const spy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = new URL(input);
+      return new Response(null, {
+        status: 307,
+        headers: {
+          location: url.pathname === "/start" ? "/metadata" : "http://issuer.example/metadata",
+        },
+      });
+    });
+    try {
+      await expect(mcpOAuthFetch("https://issuer.example/start")).rejects.toThrow();
+      expect(spy.mock.calls.map(([url]) => url.href)).toEqual([
+        "https://issuer.example/start",
+        "https://issuer.example/metadata",
+      ]);
+      expect(spy.mock.calls.every(([, init]) => init.redirect === "manual")).toBe(true);
+      spy.mockClear();
+      await expect(
+        mcpOAuthFetch("https://issuer.example/start", {
+          method: "POST",
+          body: "refresh_token=secret",
+        }),
+      ).rejects.toThrow();
+      expect(spy).toHaveBeenCalledTimes(1);
+      spy.mockClear();
+      await expect(mcpOAuthFetch("http://issuer.example/token")).rejects.toThrow();
+      await expect(mcpOAuthFetch("ftp://localhost/token")).rejects.toThrow();
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
     }
   });
 

@@ -72,7 +72,9 @@ tau mcp login cloudflare-api --all
 tau mcp logout cloudflare-api
 ```
 
-Run these commands on the host, from the directory where it was launched, so the CLI resolves the same global and project MCP configuration. `login` without flags requests the server's default scopes together with existing granted scopes. Repeat `--scope` to add specific permissions to the existing grant. `--all` requests every scope advertised by the authorization server and fails if it advertises none. When additional scopes exceed the client registration, login registers a new client and keeps the previous grant until authorization succeeds. The service decides which permissions it grants; requesting all does not guarantee unrestricted access. `--all` and `--scope` cannot be combined.
+Run these commands on the host, from the directory where it was launched, so the CLI resolves the same global and project MCP configuration. `login` without flags requests the authentication challenge's scopes (or the resource metadata's default scopes when the challenge has none) together with existing granted scopes. Repeat `--scope` to add specific permissions to the existing grant. `--all` requests every scope advertised by the authorization server and fails if it advertises none. When additional scopes exceed the client registration, login registers a new client and keeps the previous grant until authorization succeeds. The service decides which permissions it grants; requesting all does not guarantee unrestricted access. `--all` and `--scope` cannot be combined.
+
+OAuth requests and discovery redirects require HTTPS, except for HTTP on loopback. Registration and token requests do not follow redirects.
 
 Login prints an authorization URL. Open it in your browser and approve access at the service. The callback listener binds to loopback and waits up to five minutes. For a remote host, forward the printed callback port through SSH before opening the authorization URL in your local browser, for example `ssh -N -L <port>:127.0.0.1:<port> <host>`. A later login reuses the registered callback port, which must be free.
 

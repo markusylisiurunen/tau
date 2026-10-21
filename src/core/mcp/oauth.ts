@@ -1,4 +1,4 @@
-import type { AuthProvider } from "@earendil-works/pi-mcp";
+import type { AuthProvider, McpFetch } from "@earendil-works/pi-mcp";
 import {
   discoverOAuthServerInfo,
   OAuthError,
@@ -8,6 +8,33 @@ import {
 } from "@earendil-works/pi-mcp/oauth";
 import { AuthStorage } from "../auth/auth_storage.js";
 import type { StoredMcpOAuth } from "../auth/types.js";
+
+export function validateMcpOAuthUrl(value: string | URL): URL {
+  const url = new URL(value);
+  if (
+    url.protocol !== "https:" &&
+    !(url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname))
+  ) {
+    // Discovery propagates TypeError instead of treating it as missing metadata.
+    throw new TypeError("MCP OAuth requires HTTPS except on loopback");
+  }
+  return url;
+}
+
+export const mcpOAuthFetch: McpFetch = async (input, init) => {
+  let url = validateMcpOAuthUrl(input);
+  for (let redirects = 0; ; redirects++) {
+    const response = await fetch(url, { ...init, redirect: "manual" });
+    if (![301, 302, 303, 307, 308].includes(response.status)) return response;
+    const location = response.headers.get("location");
+    if (!location) return response;
+    await response.body?.cancel();
+    url = validateMcpOAuthUrl(new URL(location, url));
+    if (redirects >= 20 || (init?.method && !["GET", "HEAD"].includes(init.method))) {
+      throw new TypeError("MCP OAuth request redirect is not allowed");
+    }
+  }
+};
 
 export function parseScopes(scope: string | undefined): string[] {
   if (!scope) return [];
@@ -99,6 +126,7 @@ export function createMcpAuthProvider(
             (current.resourceMetadataUrl ? new URL(current.resourceMetadataUrl) : undefined);
           const discovered = await discoverOAuthServerInfo(url, {
             resourceMetadataUrl: metadataUrl,
+            fetch: mcpOAuthFetch,
             signal: deadline,
           });
           if (discovered.authorizationServerUrl !== current.authorizationServerUrl) {
@@ -109,6 +137,7 @@ export function createMcpAuthProvider(
             clientInformation: current.clientInformation,
             resource: selectResource(url, discovered.resourceMetadata),
             refreshToken: current.tokens.refresh_token,
+            fetch: mcpOAuthFetch,
             signal: deadline,
           });
           storage.save(url, {

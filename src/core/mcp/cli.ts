@@ -10,7 +10,7 @@ import {
   parseWwwAuthenticate,
 } from "@earendil-works/pi-mcp/oauth";
 import type { McpServersConfig } from "../config/mcp.js";
-import { McpOAuthStorage, parseScopes } from "./oauth.js";
+import { McpOAuthStorage, mcpOAuthFetch, parseScopes, validateMcpOAuthUrl } from "./oauth.js";
 
 export type McpCliCommand =
   | { type: "help" }
@@ -74,13 +74,7 @@ export async function runMcpCommand(options: {
   if (server?.type !== "http" || server.enabled === false) {
     throw new Error(`'${command.server}' must be an enabled HTTP MCP server`);
   }
-  const url = new URL(server.url).href;
-  if (
-    new URL(url).protocol !== "https:" &&
-    !["localhost", "127.0.0.1", "[::1]"].includes(new URL(url).hostname)
-  ) {
-    throw new Error("MCP OAuth requires HTTPS except on loopback");
-  }
+  const url = validateMcpOAuthUrl(server.url).href;
   const storage = new McpOAuthStorage(options.authPath);
   if (command.type === "logout") {
     await storage.lock(url, async () => storage.save(url, undefined), signal);
@@ -92,13 +86,17 @@ export async function runMcpCommand(options: {
   }
   const previous = storage.read(url);
   const deadline = AbortSignal.any([signal, AbortSignal.timeout(30_000)]);
-  const response = await fetch(url, { signal: deadline });
-  const { resourceMetadataUrl } = parseWwwAuthenticate(response.headers.get("www-authenticate"));
+  const response = await mcpOAuthFetch(url, { signal: deadline });
+  const { resourceMetadataUrl, scope } = parseWwwAuthenticate(
+    response.headers.get("www-authenticate"),
+  );
   await response.body?.cancel();
   const discovered = await discoverOAuthServerInfo(url, {
     resourceMetadataUrl,
+    fetch: mcpOAuthFetch,
     signal: deadline,
   });
+  const challengedScopes = parseScopes(scope);
   const advertised = discovered.authorizationServerMetadata?.scopes_supported;
   if (command.all && !advertised?.length)
     throw new Error("the authorization server does not advertise scopes; --all is unavailable");
@@ -109,7 +107,9 @@ export async function runMcpCommand(options: {
         ? advertised!
         : command.scopes.length
           ? command.scopes
-          : (discovered.resourceMetadata?.scopes_supported ?? [])),
+          : challengedScopes.length
+            ? challengedScopes
+            : (discovered.resourceMetadata?.scopes_supported ?? [])),
     ]
       .filter(Boolean)
       .join(" "),
@@ -145,11 +145,16 @@ export async function runMcpCommand(options: {
       clientMetadata: { client_name: "Tau", token_endpoint_auth_method: "none" },
       store,
       onRedirect: (value) => {
-        authorizationUrl = value;
+        authorizationUrl = validateMcpOAuthUrl(value);
       },
     });
     await provider.saveDiscoveryState(discovered);
-    const flow = { serverUrl: url, scope: scopes.join(" ") || undefined, skipRefresh: true };
+    const flow = {
+      serverUrl: url,
+      scope: scopes.join(" ") || undefined,
+      skipRefresh: true,
+      fetch: mcpOAuthFetch,
+    };
     await authorizeMcp(provider, {
       ...flow,
       signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
@@ -181,7 +186,7 @@ export async function runMcpCommand(options: {
     await storage.lock(
       url,
       async () => {
-        if (JSON.stringify(storage.read(url)) !== JSON.stringify(previous)) {
+        if (storage.read(url)?.grantId !== previous?.grantId) {
           throw new Error("MCP credentials changed during login; run login again");
         }
         storage.save(url, credentials);

@@ -49,10 +49,10 @@ export const openRouterModels: Record<Operation, OpenRouterModel[]> = {
       role: "Recommended first choice for classification, scoring, and verification with text or images.",
     },
     {
-      id: "typesafe/jev-1.13",
-      inputs: ["state", "questions"],
+      id: "typesafe/jev-1.14",
+      inputs: ["state", "questions", "image"],
       reasoning: [],
-      role: "High-volume text or JSON decisions when cost is the priority.",
+      role: "High-volume text, JSON, or PNG/JPEG image decisions when cost is the priority.",
     },
   ],
   chat: [
@@ -194,9 +194,10 @@ export async function requestOpenRouterDecisions(
     attachments,
     options.mediaAdapter,
     options.signal,
+    model === "typesafe/jev-1.14" ? "jev" : "standard",
   );
   const text = typeof input.state === "string" ? input.state : JSON.stringify(input.state);
-  const state = media.length ? [{ type: "text", text }, ...media] : text;
+  const state = media.length ? [text, ...media] : text;
   const result = decisionResponse.safeParse(
     await requestOpenRouter("decisions", { model, state, questions: input.questions }, options),
   );

@@ -209,13 +209,15 @@ type DecisionResult = {
 - \`choice\`: one supplied category; optional confidence and category probabilities are from 0 to 1.
 - \`score\`: position from 0 to the final rubric index, possibly fractional. Distribution and legend keys are rubric-index strings. Optional confidence and probabilities are from 0 to 1.
 
-Prefer \`openai/gpt-6-luna-decisions\` for decisions, including text, JSON, and image-based judgments. Choose \`typesafe/jev-1.13\` for high-volume text or JSON decisions when cost is the priority.
+Prefer \`openai/gpt-6-luna-decisions\` for decisions, including text, JSON, and image-based judgments. Choose \`typesafe/jev-1.14\` for high-volume text, JSON, or image decisions when cost is the priority.
 
 Luna supports at most 200 questions, 255 categories per choice question, and 2–10 rubric levels per score question. These limits are checked before sending the request. Jev also accepts a single-level score rubric.
 
 Luna accepts up to 16 PNG/JPEG/WebP images. Supply them through \`attachments\`, using the same path or inline forms as chat images. Describe what to check in \`questions\`. Images follow \`state\` in attachment order and retain their original bytes. Objects and arrays in \`state\` are sent as JSON text, so image URLs inside \`state\` are treated as text.
 
-The image limits below apply to decisions too. Jev accepts no attachments. Neither decision model accepts audio or video. Omitting \`attachments\` sends no images.
+Jev accepts up to 16 PNG/JPEG images through the same attachment forms. Each side must be 256–1,568 pixels, with at least 78,400 pixels in total (inclusive limits). A 256×256 image is too small; 280×280 meets the minimum area. WebP is unsupported. These constraints are checked before sending, without resizing or conversion. Jev does not apply EXIF orientation, so rotate photos before attaching them. Provider-side processed-image and expanded-request limits may still reject locally valid requests. Bounding-box questions are unsupported.
+
+The image limits below apply to decisions too. Neither decision model accepts audio or video. Omitting \`attachments\` sends no images.
 
 Negative judgments and low confidence are normal results. Refusals and responses with mismatched names, types, categories, or ranges throw. The tool returns the model's answers without adding decision thresholds or prose explanations.
 

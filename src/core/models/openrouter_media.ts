@@ -77,6 +77,7 @@ export async function prepareOpenRouterAttachments(
   attachments: OpenRouterAttachment[],
   adapter: OpenRouterMediaAdapter,
   signal: AbortSignal,
+  imageProfile: "standard" | "jev" = "standard",
 ): Promise<OpenRouterMediaPart[]> {
   if (
     attachments.length > 16 ||
@@ -126,6 +127,19 @@ export async function prepareOpenRouterAttachments(
       ) {
         throw new Error(
           "images must be single-frame, at most 8000 pixels per edge and 32 megapixels",
+        );
+      }
+      if (
+        imageProfile === "jev" &&
+        (type.mime === "image/webp" ||
+          metadata.width < 256 ||
+          metadata.height < 256 ||
+          metadata.width > 1568 ||
+          metadata.height > 1568 ||
+          metadata.width * metadata.height < 78_400)
+      ) {
+        throw new Error(
+          "Jev images require PNG or JPEG, 256–1568 pixels per edge and at least 78,400 pixels in total",
         );
       }
       await image.stats();

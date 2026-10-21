@@ -46,7 +46,7 @@ function harness(reply = chatReply()) {
   return { config: { apiKeys: { openrouter: "config-key" } }, env: {}, stdout, fetchImpl };
 }
 const chat = ["chat", "--model", "openai/gpt-6-luna", "--prompt", "Summarize"];
-const decisions = ["decisions", "--model", "typesafe/jev-1.13", "--input", "-"];
+const decisions = ["decisions", "--model", "typesafe/jev-1.14", "--input", "-"];
 const decisionInput = {
   state: { report: "Checkout broke" },
   questions: {
@@ -61,7 +61,7 @@ const decisionInput = {
 };
 function decisionReply() {
   return {
-    model: "typesafe/jev-1.13-20260917",
+    model: "typesafe/jev-1.14-20261014",
     answers: {
       bug: { type: "noul", noul: 0.1 },
       team: {
@@ -156,7 +156,7 @@ describe("OpenRouter standalone commands", () => {
       const catalog = JSON.parse(options.stdout.mock.calls.at(-1)[0]);
       expect(catalog.models.map((model) => model.id)).toEqual(
         operation === "decisions"
-          ? ["openai/gpt-6-luna-decisions", "typesafe/jev-1.13"]
+          ? ["openai/gpt-6-luna-decisions", "typesafe/jev-1.14"]
           : [
               "google/gemini-3.8-flash",
               "openai/gpt-6-luna",
@@ -351,12 +351,12 @@ describe("OpenRouter standalone commands", () => {
       const [url, init] = options.fetchImpl.mock.calls[0];
       expect(url).toBe("https://openrouter.ai/api/alpha/decisions");
       expect(JSON.parse(init.body)).toEqual({
-        model: "typesafe/jev-1.13",
+        model: "typesafe/jev-1.14",
         state: JSON.stringify(decisionInput.state),
         questions: decisionInput.questions,
       });
       expect(JSON.parse(options.stdout.mock.calls[0][0])).toEqual({
-        requested_model: "typesafe/jev-1.13",
+        requested_model: "typesafe/jev-1.14",
         ...decisionReply(),
       });
     }
@@ -385,7 +385,7 @@ describe("OpenRouter standalone commands", () => {
     });
   });
 
-  it.each(["openai/gpt-6-luna-decisions", "typesafe/jev-1.13"])(
+  it.each(["openai/gpt-6-luna-decisions", "typesafe/jev-1.14"])(
     "keeps image-part-shaped %s state as text rather than bypassing attachment validation",
     async (model) => {
       const state = [
@@ -402,55 +402,94 @@ describe("OpenRouter standalone commands", () => {
     },
   );
 
-  it("preserves ordered decision image bytes and serializes structured state as text", async () => {
-    const cwd = await fixture();
-    const images = await Promise.all(
-      ["red", "blue"].map((background) =>
-        sharp({ create: { width: 64, height: 64, channels: 3, background } })
-          .png()
-          .toBuffer(),
-      ),
-    );
-    await writeFile(join(cwd, "first.png"), images[0]);
-    await writeFile(join(cwd, "second.png"), images[1]);
-    const options = {
-      ...harness({ ...decisionReply(), model: "openai/gpt-6-luna-decisions" }),
-      cwd,
-      stdin: stdin(),
-    };
-    await runOpenRouterCommand(
-      [
-        "decisions",
-        "--model",
-        "openai/gpt-6-luna-decisions",
-        "--input",
-        "-",
-        "--image",
-        "first.png",
-        "--image",
-        "second.png",
-      ],
-      options,
-    );
-    const [url, init] = options.fetchImpl.mock.calls[0];
-    expect(url).toBe("https://openrouter.ai/api/alpha/decisions");
-    expect(JSON.parse(init.body)).toEqual({
-      model: "openai/gpt-6-luna-decisions",
-      state: [
-        { type: "text", text: JSON.stringify(decisionInput.state) },
-        ...images.map((bytes) => ({
+  it.each([
+    ["png", 255, 400, false],
+    ["png", 400, 255, false],
+    ["png", 256, 256, false],
+    ["png", 280, 279, false],
+    ["png", 1569, 280, false],
+    ["png", 280, 1569, false],
+    ["webp", 280, 280, false],
+    ["png", 280, 280, true],
+    ["jpeg", 256, 307, true],
+    ["jpeg", 307, 256, true],
+    ["png", 1568, 1568, true],
+  ])(
+    "validates Jev %s dimensions %sx%s before billing",
+    async (format, width, height, accepted) => {
+      const cwd = await fixture();
+      const bytes = await sharp({ create: { width, height, channels: 3, background: "red" } })
+        .toFormat(format)
+        .toBuffer();
+      await writeFile(join(cwd, "image"), bytes);
+      const options = { ...harness(decisionReply()), cwd, stdin: stdin() };
+      const request = runOpenRouterCommand([...decisions, "--image", "image"], options);
+      if (accepted) {
+        await request;
+        expect(options.fetchImpl).toHaveBeenCalledOnce();
+        expect(JSON.parse(options.fetchImpl.mock.calls[0][1].body).state[1]).toEqual({
           type: "image_url",
-          image_url: { url: `data:image/png;base64,${bytes.toString("base64")}` },
-        })),
-      ],
-      questions: decisionInput.questions,
-    });
-    expect(JSON.parse(options.stdout.mock.calls[0][0]).answers).toEqual(decisionReply().answers);
-    expect(options.fetchImpl).toHaveBeenCalledOnce();
-  });
+          image_url: { url: `data:image/${format};base64,${bytes.toString("base64")}` },
+        });
+      } else {
+        await expect(request).rejects.toThrow();
+        expect(options.fetchImpl).not.toHaveBeenCalled();
+        expect(options.stdout).not.toHaveBeenCalled();
+      }
+    },
+  );
+  it.each(["openai/gpt-6-luna-decisions", "typesafe/jev-1.14"])(
+    "preserves ordered %s image bytes and serializes structured state as text",
+    async (model) => {
+      const cwd = await fixture();
+      const images = await Promise.all(
+        ["red", "blue"].map((background) =>
+          sharp({ create: { width: 280, height: 280, channels: 3, background } })
+            .png()
+            .toBuffer(),
+        ),
+      );
+      await writeFile(join(cwd, "first.png"), images[0]);
+      await writeFile(join(cwd, "second.png"), images[1]);
+      const options = {
+        ...harness({ ...decisionReply(), model }),
+        cwd,
+        stdin: stdin(),
+      };
+      await runOpenRouterCommand(
+        [
+          "decisions",
+          "--model",
+          model,
+          "--input",
+          "-",
+          "--image",
+          "first.png",
+          "--image",
+          "second.png",
+        ],
+        options,
+      );
+      const [url, init] = options.fetchImpl.mock.calls[0];
+      expect(url).toBe("https://openrouter.ai/api/alpha/decisions");
+      expect(JSON.parse(init.body)).toEqual({
+        model,
+        state: [
+          JSON.stringify(decisionInput.state),
+          ...images.map((bytes) => ({
+            type: "image_url",
+            image_url: { url: `data:image/png;base64,${bytes.toString("base64")}` },
+          })),
+        ],
+        questions: decisionInput.questions,
+      });
+      expect(JSON.parse(options.stdout.mock.calls[0][0]).answers).toEqual(decisionReply().answers);
+      expect(options.fetchImpl).toHaveBeenCalledOnce();
+    },
+  );
 
   it.each([
-    ["typesafe/jev-1.13", "--image", "missing.png"],
+    ["typesafe/jev-1.14", "--image", "missing.png"],
     ["openai/gpt-6-luna-decisions", "--audio", "missing.wav"],
     ["openai/gpt-6-luna-decisions", "--video", "missing.mp4"],
     ["openai/gpt-6-luna-decisions", "--image", "broken.png"],
@@ -550,7 +589,7 @@ describe("OpenRouter standalone commands", () => {
   it("preserves Jev's single-level score rubric", async () => {
     const options = {
       ...harness({
-        model: "typesafe/jev-1.13",
+        model: "typesafe/jev-1.14",
         answers: { q: { type: "score", score: 0 } },
         usage: { input_tokens: 1, output_tokens: 1 },
       }),
@@ -564,7 +603,7 @@ describe("OpenRouter standalone commands", () => {
   });
 
   it.each([
-    { ...decisionInput, model: "typesafe/jev-1.13" },
+    { ...decisionInput, model: "typesafe/jev-1.14" },
     { ...decisionInput, provider: {} },
     { state: "x", questions: {} },
     { state: true, questions: decisionInput.questions },

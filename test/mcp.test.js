@@ -64,7 +64,11 @@ describe("MCP semantic search example", () => {
   const runExample = new AsyncFunction("tau", "printText", code);
 
   it.each([0, 3, 260])("ranks the full %i-tool catalog in sequential batches", async (count) => {
-    const catalog = Array.from({ length: count }, (_, index) => ({ name: `candidate_${index}` }));
+    const descriptions = [undefined, "", "Short description", "a".repeat(1000), "b".repeat(1001)];
+    const catalog = Array.from({ length: count }, (_, index) => ({
+      name: `candidate_${index}`,
+      description: descriptions[index % descriptions.length],
+    }));
     const catalogs = { first: catalog.slice(0, 130), second: catalog.slice(130) };
     const listTools = vi.fn(async (server, { limit, offset, query }) => {
       expect(query).toBeUndefined();
@@ -88,6 +92,7 @@ describe("MCP semantic search example", () => {
         expect(questions[tool.id].type).toBe("score");
         expect(questions[tool.id].criteria).toHaveLength(4);
         const index = Number(tool.name.split("_")[1]);
+        expect(tool.description).toBe((catalog[index].description ?? "").slice(0, 1000));
         answers[tool.id] = { type: "score", score: index % 4 };
       }
       active = false;
@@ -127,7 +132,7 @@ describe("MCP semantic search example", () => {
         .map((tool, index) => ({
           server: index < 130 ? "first" : "second",
           name: tool.name,
-          description: "",
+          description: (tool.description ?? "").slice(0, 1000),
           score: index % 4,
         }))
         .filter((tool) => tool.score >= 2)

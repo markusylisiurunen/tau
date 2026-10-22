@@ -1,0 +1,46 @@
+import { z } from "zod";
+import { CLAUDE_CODE_MODEL_IDS } from "./claude_code_models.js";
+
+const tokenCount = z.number().finite().nonnegative();
+
+export const claudeCodeInputSchema = z.object({
+  prompt: z.string(),
+  systemPrompt: z.string(),
+  cwd: z.string(),
+  contextWindow: tokenCount.positive(),
+  model: z.enum(CLAUDE_CODE_MODEL_IDS),
+  effort: z.enum(["low", "medium", "high", "xhigh", "max"]),
+  tools: z.array(z.string()),
+  sessionId: z.string().uuid().optional(),
+});
+
+export type ClaudeCodeInput = z.infer<typeof claudeCodeInputSchema>;
+
+export const claudeCodeEventSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("session"), id: z.string().uuid() }),
+  z.object({ type: z.literal("assistant"), text: z.string().max(8192) }),
+  z.object({
+    type: z.literal("tool"),
+    name: z.string().max(256),
+    subject: z.string().max(1024),
+    failed: z.boolean(),
+  }),
+  z.object({
+    type: z.literal("result"),
+    response: z.string().max(4 * 1024 * 1024),
+    failed: z.boolean(),
+    usage: z.object({
+      input: tokenCount,
+      output: tokenCount,
+      cacheRead: tokenCount,
+      cacheWrite: tokenCount,
+      contextWindowUsageTokens: tokenCount,
+      contextWindow: tokenCount.positive(),
+    }),
+    cost: tokenCount,
+  }),
+  z.object({ type: z.literal("error"), message: z.string().max(8192) }),
+]);
+
+export type ClaudeCodeEvent = z.infer<typeof claudeCodeEventSchema>;
+export type ClaudeCodeResult = Extract<ClaudeCodeEvent, { type: "result" }>;

@@ -64,7 +64,9 @@ Rules that follow:
 
 ## Agent runtime
 
-`src/core/agent/agent_runtime.ts` is the single stateful runtime for main sessions, subagents, and ephemeral threads. It owns subturns, streaming, retries, compaction, steering, interruption, recovery, and durable agent state. Never fork these into a mode-specific runner.
+`src/core/agent/agent_runtime.ts` is the single stateful Tau runtime for main sessions, native subagents, and ephemeral threads. It owns subturns, streaming, retries, compaction, steering, interruption, recovery, and durable agent state. Never fork these into a mode-specific runner.
+
+Claude Code launch models are external subagent runtimes supervised by `AgentSupervisor`, not model providers. Their SDK runner executes through `ToolExecutionBackend` on the execution environment; Claude Code owns its credentials, tools, and native sessions there. Keep Tau's capacity, lifecycle, and event projection shared. Never copy Claude credentials to the host or turn its transcript into a second Tau recovery source.
 
 - Neighbors: `ChatRuntime` resolves model, prompt, and the bound `AgentSpec`. `src/core/tools/catalog.ts` binds tool dependencies. `model_sampler.ts` does stateless inference against a target the caller chooses; never couple it to the active persona. `src/core/subagents/agent_supervisor.ts` owns child lifecycle, limits, waits, usage, and cleanup. `src/host/hosted_ephemeral_agent_session.ts` owns ephemeral threads and forks.
 - A logical turn captures its full `AgentSpec` (tools, model settings) for all its subturns and steering continuations. A settings change applies to the next turn, not the active one.

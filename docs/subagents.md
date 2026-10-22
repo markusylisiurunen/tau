@@ -18,7 +18,7 @@ The agent follows this rule itself. Tau checks that a launch is valid, but it do
 
 ## Tools
 
-A subagent can receive these tools:
+A native Tau subagent can receive these tools. [Claude Code subagents](#claude-code-subagents) use the corresponding Claude Code tools instead:
 
 - `bash`
 - `write`
@@ -32,7 +32,7 @@ A subagent can receive these tools:
 
 A subagent gets each of these that the main persona also has. For example, a main persona with `bash`, `edit`, `history`, and `spawn_agent` gives its subagents `bash`, `edit`, and `history`. Names such as `web` and `history` enable the matching capability in the subagent's `code` tool. MCP uses the host's existing connections, whatever the subagent's working directory. There is no separate tool list for subagents.
 
-Every subagent also gets the built-in `tau_docs` tool, and a persona's `tools` list cannot remove it. Subagents never get the subagent tools, client tools, or TUI tools, so a subagent cannot start subagents of its own. See [tools](tools.md) for how tool availability works in general.
+Every native Tau subagent also gets the built-in `tau_docs` tool, and a persona's `tools` list cannot remove it. Subagents never get the subagent tools, client tools, or TUI tools, so a subagent cannot start subagents of its own. See [tools](tools.md) for how tool availability works in general.
 
 ## Models and settings
 
@@ -66,6 +66,48 @@ Configure the allowlist with `subagents.launchModels` in `config.json`:
 ```
 
 The nearest `launchModels` list replaces broader ones; lists are not combined. The resulting list applies to every persona that has `spawn_agent`.
+
+## Claude Code subagents
+
+The `claude-code` launch provider runs Anthropic's Claude Agent SDK with the official Claude Code executable. The main agent uses the same spawn, list, wait, follow-up, and interrupt tools. These models are available only as explicit subagent launch overrides, not as main-session models or sampling providers.
+
+Install a current Claude Code on the session's **execution environment**, with `claude` on its login-shell `PATH`, and sign in there using Claude Code's own subscription login. Tau ships the SDK runner; no separate SDK installation is needed on that environment. The integration uses Agent SDK 0.3.308. On a hosted environment, a Claude login on the host or attached laptop is not sufficient.
+
+Add the desired models and efforts to the launch allowlist:
+
+```json
+{
+  "subagents": {
+    "launchModels": [
+      "claude-code/claude-opus-5-5:medium",
+      "claude-code/claude-sonnet-5-5:medium",
+      "claude-code/claude-haiku-5-5:low"
+    ]
+  }
+}
+```
+
+Only these three model IDs are supported. Effort may be `low`, `medium`, `high`, `xhigh`, or `max`; each permitted model/effort combination needs its own allowlist entry. Availability still depends on the Claude account and installed Claude Code version. Tau does not substitute another model after a rejection.
+
+Claude Code owns its agent loop, retries, context compaction, and conversation files. Each run is limited to 1,024 agentic turns. The selected model and effort are passed to the SDK; other Tau model settings, such as service tier, are not. Tau supplies the selected working directory and appends the inherited subagent instructions, including resolved project context and skills, to Claude Code's native prompt. Follow-ups resume that worker's Claude session. The main conversation is not copied to it.
+
+Native tools follow the parent persona's selected tools:
+
+| Inherited Tau tool | Claude Code tools      |
+| ------------------ | ---------------------- |
+| `bash`             | Bash, Read, Glob, Grep |
+| `view_image`       | Read, Glob, Grep       |
+| `write`            | Write                  |
+| `edit`             | Edit                   |
+| `web`              | WebSearch, WebFetch    |
+
+Claude workers do not receive Tau's `code` capabilities, host MCP connections, `tau_docs`, client tools, or nested agent tools. User and project Claude settings, hooks, plugins, native skill loading, and automatic MCP connections are disabled for these workers. The inherited Tau skill descriptions remain instructions to read the relevant files. Managed Claude Code policies still apply.
+
+The listed native tools are pre-approved, and requests requiring further permission are denied rather than waiting for an unattended prompt. These tools run with the execution environment's operating-system authority, like Tau's ordinary tools; the tool list is not a sandbox. Reported tool results and bounded assistant activity appear through the normal subagent activity channel. Full native transcripts remain in Claude Code's own storage, not in the main agent's context.
+
+Tau checks the SDK's account information before submitting the task and rejects API-key authentication or a missing subscription. It does not import Claude credentials into Tau's auth storage, and it removes API and cloud-provider routing overrides from the child environment. There is no API fallback. Fast mode is off. Account-level extra usage can still incur charges: disable it in Claude if only included subscription usage is wanted. Reported dollar costs are SDK estimates, not subscription charges.
+
+Claude workers share the eight-worker limit and the ordinary subagent lifetime. Interrupting a worker terminates its process group; its native session can be resumed by a follow-up while the parent session remains alive. Host restart, session disposal, and rewind remove the supervised worker just as they remove native Tau workers. Claude's transcript files are not deleted, but Tau does not recover the worker from them after a restart.
 
 ## Working directory
 

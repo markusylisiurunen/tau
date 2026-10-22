@@ -121,6 +121,29 @@ const baseArguments = {
   prompt: "investigate this",
 };
 
+describe("Claude Code launch selection", () => {
+  it("uses the same allowlist and directory-context resolution as native subagents", async () => {
+    const fx = createFixture();
+    const model = "claude-code/claude-opus-5-5:high";
+    const denied = await execute(fx.tool, { ...baseArguments, model });
+    expect(denied.result.toolResult.outcome).toBe("blocked");
+    expect(fx.supervisor.spawn).not.toHaveBeenCalled();
+    fx.persona.subagentLaunchModels = [model];
+    const accepted = await execute(fx.tool, { ...baseArguments, model });
+    expect(accepted.result.toolResult.outcome).toBe("succeeded");
+    expect(fx.supervisor.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runtimeConfig: expect.objectContaining({
+          model: expect.objectContaining({ provider: "claude-code", id: "claude-opus-5-5" }),
+          systemPrompt: "subagent prompt",
+          workingDirectory: "/repo/current",
+          tools: ["bash", "write", "edit", "history"],
+        }),
+      }),
+    );
+  });
+});
+
 describe("list_agents tool", () => {
   it("returns dense text without including retained response bodies", async () => {
     const state = createSubagentState({

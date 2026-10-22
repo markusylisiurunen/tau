@@ -209,8 +209,6 @@ Each subscription returns an unsubscribe function.
 
 `createEphemeralContext` and `submitEphemeralThread` accept an optional `reasoning` effort. Without it, a new context uses the session's current effort. On submission, the given effort becomes the thread's effort before the turn runs. A fork copies the source thread's effort, then applies any given effort.
 
-Project instructions and skills are captured when the context is created and shared by its threads. Forks retain the source thread's system prompt, tools, and conversation prefix without reloading project files. This preserves the prefix for provider prompt caching; cache hits depend on the provider.
-
 ### Execute a command
 
 `exec` generates a unique execution ID for you. It supports exact positional arguments, environment variables other than `HOME`, binary stdin, a starting `cwd`, a timeout, a capture limit, and a cancellation signal:

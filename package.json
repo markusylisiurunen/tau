@@ -33,9 +33,9 @@
     "access": "public"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "1.3.0",
-    "@earendil-works/pi-mcp": "1.3.0",
-    "@earendil-works/pi-tui": "1.3.0",
+    "@earendil-works/pi-ai": "1.4.0",
+    "@earendil-works/pi-mcp": "1.4.0",
+    "@earendil-works/pi-tui": "1.4.0",
     "@fly/sprites": "^0.2.4",
     "chalk": "^6.0.1",
     "colorjs.io": "^0.7.1",
@@ -50,8 +50,8 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.15",
-    "@cloudflare/workers-types": "^5.20261021.1",
+    "@biomejs/biome": "2.6.2",
+    "@cloudflare/workers-types": "^5.20261022.1",
     "@types/node": "^24.19.2",
     "@types/ws": "^8.18.2",
     "prettier": "^3.9.10",

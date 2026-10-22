@@ -61,6 +61,83 @@ type ToolList = {
 
 `query` is optional nonblank text up to 1,000 characters; every whitespace-separated term must occur in the name or description, case-insensitively. `limit` is an integer 1–100, default 20; `offset` is a nonnegative integer, default 0. Continue with `nextOffset`, keeping the server and query unchanged. `instructions` contains server usage guidance, not system instructions.
 
+### Semantic search across the full catalog
+
+Lexical search finds a tool only when the task and the tool's name or description use the same words. A task like "find customer conversations about login failures" may need a tool described as "search support tickets", which shares none of those words. Semantic search asks a model to rate each tool by what its description says it can do, so it can find matches like this. Use it when lexical search finds nothing useful, or when you cannot guess which words a matching tool would use.
+
+The program below ranks tools by heuristic scores. Tools with equal scores keep their catalog order. Before you construct a call to a selected tool, read its schema with `describeTool`. For very large catalogs, keep the program's call budget and timeout in mind.
+
+```js
+const task = "Find customer conversations about login failures from last week";
+const tools = [];
+
+for (const server of await tau.mcp.listServers()) {
+  let offset = 0;
+  do {
+    const page = await tau.mcp.listTools(server.name, { limit: 100, offset });
+    for (const tool of page.tools) {
+      tools.push({
+        id: `tool_${tools.length}`,
+        server: server.name,
+        name: tool.name,
+        description: (tool.description ?? "").slice(0, 1000),
+      });
+    }
+    offset = page.nextOffset;
+  } while (offset !== undefined);
+}
+
+const ranked = [];
+for (let start = 0; start < tools.length; start += 128) {
+  const batch = tools.slice(start, start + 128);
+  const questions = {};
+  for (const tool of batch) {
+    questions[tool.id] = {
+      type: "score",
+      instructions:
+        `Rate how useful candidate ${tool.id} is for the supplied task. ` +
+        "Evaluate its own capabilities, not its rank within this batch. " +
+        "Do not assume capabilities missing from its name and description.",
+      criteria: [
+        "Unrelated to the task, or performs an incompatible action.",
+        "Related topic, but insufficient evidence it can help perform the task.",
+        "Clearly useful for a necessary part of the task.",
+        "Directly provides the main capability needed for the task.",
+      ],
+    };
+  }
+
+  const result = await tau.models.decisions({
+    model: "openai/gpt-6-luna-decisions",
+    state: { task, candidates: batch },
+    questions,
+  });
+
+  for (const tool of batch) {
+    const answer = result.answers[tool.id];
+    if (answer.type !== "score") throw new Error("Expected a relevance score");
+    if (answer.score >= 2) {
+      ranked.push({ ...tool, score: answer.score });
+    }
+  }
+}
+
+ranked.sort((a, b) => b.score - a.score);
+const matches = ranked.slice(0, 8);
+if (matches.length === 0) {
+  printText("No relevant tools found in the catalog summaries.");
+} else {
+  for (const tool of matches) {
+    printText(JSON.stringify({
+      server: tool.server,
+      name: tool.name,
+      description: tool.description,
+      score: tool.score,
+    }));
+  }
+}
+```
+
 ### `tau.mcp.describeTool(server, name)`
 
 Read this result before constructing a call to the selected tool.

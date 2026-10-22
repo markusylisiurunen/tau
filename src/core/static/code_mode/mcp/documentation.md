@@ -63,7 +63,9 @@ type ToolList = {
 
 ### Semantic search across the full catalog
 
-This example assumes you have already read `tau.docs("models")`. If you have not, read it in a separate program first.
+Lexical search finds a tool only when the task and the tool's name or description use the same words. A task like "find customer conversations about login failures" may need a tool described as "search support tickets", which shares none of those words. Semantic search asks a model to rate each tool by what its description says it can do, so it can find matches like this. Use it when lexical search finds nothing useful, or when you cannot guess which words a matching tool would use.
+
+The program below ranks tools by heuristic scores. Tools with equal scores keep their catalog order. Before you construct a call to a selected tool, read its schema with `describeTool`. For very large catalogs, keep the program's call budget and timeout in mind.
 
 ```js
 const task = "Find customer conversations about login failures from last week";
@@ -135,10 +137,6 @@ if (matches.length === 0) {
   }
 }
 ```
-
-Scores are heuristic; ties keep catalog order. Read selected schemas with `describeTool` before constructing calls.
-
-Discovery failures stop the program. For very large catalogs, account for the program's call budget and timeout.
 
 ### `tau.mcp.describeTool(server, name)`
 

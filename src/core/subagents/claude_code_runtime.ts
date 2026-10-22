@@ -7,7 +7,7 @@ import {
   claudeCodeEventSchema,
   claudeCodeInputSchema,
 } from "./claude_code_protocol.js";
-import type { SubagentRuntimeConfig } from "./types.js";
+import type { ClaudeCodeSubagentConfig } from "./types.js";
 
 const MAX_EVENT_BYTES = 8 * 1024 * 1024;
 const EVENT_PREFIX = "tau-claude-code:";
@@ -48,7 +48,7 @@ export class ClaudeCodeRuntime {
 
   constructor(
     private readonly options: {
-      config: SubagentRuntimeConfig;
+      config: ClaudeCodeSubagentConfig;
       backend: ToolExecutionBackend;
       onEvent: (event: ClaudeCodeEvent) => Promise<void>;
     },
@@ -73,11 +73,9 @@ export class ClaudeCodeRuntime {
     const config = this.options.config;
     const input = claudeCodeInputSchema.parse({
       prompt,
-      systemPrompt: config.systemPrompt,
       cwd: config.workingDirectory,
       model: config.model.id,
-      contextWindow: config.model.contextWindow,
-      effort: config.settings.reasoning,
+      effort: config.effort,
       tools: config.tools,
       sessionId: this.sessionId,
     });

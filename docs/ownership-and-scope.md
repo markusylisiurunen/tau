@@ -24,7 +24,7 @@ The built-in `tau_docs` tool also belongs to the host. It reads the documentatio
 
 The **execution environment** is the machine the agent can act on. It owns the agent-visible working directory (`cwd`), home, platform, environment, filesystem, processes, project repository, project configuration and content, `AGENTS.md` files, skills, and command resolution.
 
-[Claude Code subagents](subagents.md#claude-code-subagents) also run here, including their model calls, subscription login, and native conversation files. The host supervises them through the execution backend and does not copy their credentials into Tau.
+[Claude Code subagents](subagents.md#claude-code-subagents) run their model calls here and keep their subscription login and conversation files here. The host starts, observes, and stops these workers through the execution environment. Their credentials remain with Claude Code.
 
 Tau reads files and runs commands through the execution environment, even when it is on the same machine as the host. Each session has exactly one execution environment. Paths shown to the agent and paths passed to its tools are always paths on that environment.
 

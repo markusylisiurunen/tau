@@ -23,7 +23,7 @@ The host makes model calls and runs services such as web search and remote histo
 
 With local `tau`, all of these are usually one machine. With `tau attach`, a key set only in the attached client's shell does not reach the remote host. Run `tau auth` on the host machine, and set host environment variables where `tau serve` or the SDK host runs. See [ownership and scope](ownership-and-scope.md) for the full boundary.
 
-Claude Code launch models use the execution environment's own Claude Code subscription login. Sign in with Claude Code there; `tau auth` does not manage this account. Tau checks the account before sending a task and does not fall back to API billing. See [Claude Code subagents](subagents.md#claude-code-subagents) for setup, tools, and billing limits.
+Claude Code subagents use a Claude subscription login on the execution environment. Sign in with Claude Code there; `tau auth` does not manage this account. Tau checks the account before sending a task and does not fall back to API billing. See [Claude Code subagents](subagents.md#claude-code-subagents) for setup and extra-usage charges.
 
 ## Provider API keys
 

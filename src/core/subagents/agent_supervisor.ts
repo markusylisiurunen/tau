@@ -11,7 +11,7 @@ import type { BashJobRegistry } from "../tools/bash_jobs.js";
 import { ToolCatalog } from "../tools/catalog.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
 import type { ToolRunPresentation } from "../tools/presentation.js";
-import type { Persona, ReasoningEffort } from "../types.js";
+import type { ReasoningEffort } from "../types.js";
 import {
   appendUsageLogEntry,
   getUsageCostTotal,
@@ -19,7 +19,6 @@ import {
   type UsageRecorder,
 } from "../usage/logs.js";
 import { extractAssistantText } from "../utils/messages.js";
-import { CLAUDE_CODE_PROVIDER } from "./claude_code_models.js";
 import type { ClaudeCodeEvent } from "./claude_code_protocol.js";
 import { ClaudeCodeRuntime } from "./claude_code_runtime.js";
 import { formatActiveSubagentsForCompaction } from "./format.js";
@@ -54,7 +53,6 @@ type SubagentRecord = {
   workingDirectory: string;
   createdAt: number;
   originHistoryEntryId: string;
-  runtimeConfig: SubagentRuntimeConfig;
   personaId?: string;
   runtime: AgentRuntime | ClaudeCodeRuntime;
   run: SubagentRunSnapshot;
@@ -151,46 +149,54 @@ export class AgentSupervisor {
 
     const id = randomUUID();
     const runtimeConfig = { ...options.runtimeConfig, workingDirectory };
-    const persona: Persona = {
-      id: `${options.personaId ?? "agent"}-subagent`,
-      label: "subagent",
-      description: "Background agent",
-      source: "project",
-      systemPrompt: runtimeConfig.systemPrompt,
-      model: runtimeConfig.model,
-      settings: runtimeConfig.settings,
-      tools: runtimeConfig.tools,
-      subagentLaunchModels: [],
-    };
-    const runtime =
-      runtimeConfig.model.provider === CLAUDE_CODE_PROVIDER
-        ? new ClaudeCodeRuntime({
-            config: runtimeConfig,
-            backend: options.backend,
-            onEvent: async (event) => await this.recordClaudeCodeEvent(id, event),
-          })
-        : new AgentRuntime({
-            spec: createAgentSpec({
-              autoCompactThresholdTokens: null,
-              ...resolveAgentModel(persona, options.config, {
-                includeModelNotice: true,
-                deps: this.deps,
-              }),
+    let runtime: AgentRuntime | ClaudeCodeRuntime;
+    let reasoning: ReasoningEffort;
+    if (runtimeConfig.kind === "claude-code") {
+      runtime = new ClaudeCodeRuntime({
+        config: runtimeConfig,
+        backend: options.backend,
+        onEvent: async (event) => await this.recordClaudeCodeEvent(id, event),
+      });
+      reasoning = runtimeConfig.effort;
+    } else {
+      runtime = new AgentRuntime({
+        spec: createAgentSpec({
+          autoCompactThresholdTokens: null,
+          ...resolveAgentModel(
+            {
+              id: `${options.personaId ?? "agent"}-subagent`,
+              label: "subagent",
+              description: "Background agent",
+              source: "project",
               systemPrompt: runtimeConfig.systemPrompt,
-              tools: ToolCatalog.createSubagentRegistry(
-                runtimeConfig.tools,
-                options.backend,
-                workingDirectory,
-                options.config,
-                options.bashJobs,
-                options.history,
-                options.mcp,
-              ),
-            }),
-            eventSink: async (event) => await this.recordAgentEvent(id, event),
-            clock: this.deps.clock,
-            archiveAutoCompaction: createAutoCompactionArchiver(options.backend),
-          });
+              model: runtimeConfig.model,
+              settings: runtimeConfig.settings,
+              tools: runtimeConfig.tools,
+              subagentLaunchModels: [],
+            },
+            options.config,
+            {
+              includeModelNotice: true,
+              deps: this.deps,
+            },
+          ),
+          systemPrompt: runtimeConfig.systemPrompt,
+          tools: ToolCatalog.createSubagentRegistry(
+            runtimeConfig.tools,
+            options.backend,
+            workingDirectory,
+            options.config,
+            options.bashJobs,
+            options.history,
+            options.mcp,
+          ),
+        }),
+        eventSink: async (event) => await this.recordAgentEvent(id, event),
+        clock: this.deps.clock,
+        archiveAutoCompaction: createAutoCompactionArchiver(options.backend),
+      });
+      reasoning = runtime.spec.attribution.reasoningEffort;
+    }
     const createdAt = this.deps.clock.now();
     const record: SubagentRecord = {
       id,
@@ -198,15 +204,11 @@ export class AgentSupervisor {
       model: {
         provider: runtimeConfig.model.provider,
         id: runtimeConfig.model.id,
-        reasoning:
-          runtime instanceof AgentRuntime
-            ? runtime.spec.attribution.reasoningEffort
-            : (runtimeConfig.settings.reasoning ?? "none"),
+        reasoning,
       },
       workingDirectory,
       createdAt,
       originHistoryEntryId: options.originHistoryEntryId,
-      runtimeConfig,
       personaId: options.personaId,
       runtime,
       run: {
@@ -222,7 +224,7 @@ export class AgentSupervisor {
         cacheRead: 0,
         cacheWrite: 0,
         contextWindowUsageTokens: 0,
-        contextWindow: runtimeConfig.model.contextWindow,
+        contextWindow: runtimeConfig.kind === "native" ? runtimeConfig.model.contextWindow : 0,
       },
       toolPresentations: new Map(),
       blockedToolCalls: new Map(),
@@ -429,8 +431,15 @@ export class AgentSupervisor {
         cacheWrite: Math.max(0, event.usage.cacheWrite - record.usage.cacheWrite),
       });
       const cost = Math.max(0, event.cost - record.costTotal);
-      record.costTotal = event.cost;
-      record.usage = { ...event.usage };
+      // Startup failures can report zero totals even for a resumed session.
+      record.costTotal += cost;
+      record.usage = {
+        ...event.usage,
+        input: record.usage.input + usage.input,
+        output: record.usage.output + usage.output,
+        cacheRead: record.usage.cacheRead + usage.cacheRead,
+        cacheWrite: record.usage.cacheWrite + usage.cacheWrite,
+      };
       (this.options.recordUsage ?? appendUsageLogEntry)({
         timestamp: this.deps.clock.now(),
         sessionId: record.id,
@@ -484,7 +493,7 @@ export class AgentSupervisor {
         cacheRead: record.usage.cacheRead + usage.cacheRead,
         cacheWrite: record.usage.cacheWrite + usage.cacheWrite,
         contextWindowUsageTokens: usage.input + usage.output + usage.cacheRead + usage.cacheWrite,
-        contextWindow: record.runtimeConfig.model.contextWindow,
+        contextWindow: record.usage.contextWindow,
       };
       (this.options.recordUsage ?? appendUsageLogEntry)({
         timestamp: event.message.timestamp,

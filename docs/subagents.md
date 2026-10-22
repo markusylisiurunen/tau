@@ -6,7 +6,7 @@ Subagents are background agents that the main agent starts and the host supervis
 
 Subagents are general-purpose workers. There are no named types. Several can run at once, each with its own task and conversation.
 
-A subagent behaves like the active main persona, wrapped in instructions that Tau maintains. Those instructions and the subagent's description cannot be configured. Put task-specific instructions, including any relevant skill guidance, in the launch prompt.
+A native Tau subagent behaves like the active main persona, wrapped in instructions that Tau maintains. Those instructions and the subagent's description cannot be configured. Put task-specific instructions, including any relevant skill guidance, in the launch prompt.
 
 Whether the agent can start subagents depends on the main persona's tool list. Built-in personas, and custom personas that omit `tools`, enable all five subagent tools. A custom persona with a `tools` list that lacks `spawn_agent` cannot start subagents. Leave out all five subagent tools when no subagent interaction is wanted. There is no other setting to turn subagents on or off. See [personas](personas.md).
 
@@ -46,7 +46,7 @@ A model override uses this exact form:
 
 The provider is lowercased. The model ID is kept exactly as written and is case-sensitive. Effort is one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`.
 
-The configured list of launch models is an allowlist. It does not choose a default. The main agent should normally omit the `model` argument to `spawn_agent`, and the subagent then uses the active persona's model and reasoning. When `model` is given, it must exactly match an allowlist entry after normalization. The override changes the provider, model, and reasoning, and keeps the other settings.
+The configured list of launch models is an allowlist. It does not choose a default. The main agent should normally omit the `model` argument to `spawn_agent`, and the subagent then uses the active persona's model and reasoning. When `model` is given, it must exactly match an allowlist entry after normalization. For native Tau subagents, the override changes the provider, model, and reasoning, and keeps the other settings.
 
 A model ID may be missing from the catalog if its provider is known (see [models](models.md)). An entry with an invalid provider, model, effort, or format makes the configuration field invalid. Duplicate entries are removed.
 
@@ -69,11 +69,11 @@ The nearest `launchModels` list replaces broader ones; lists are not combined. T
 
 ## Claude Code subagents
 
-The `claude-code` launch provider runs Anthropic's Claude Agent SDK with the official Claude Code executable. The main agent uses the same spawn, list, wait, follow-up, and interrupt tools. These models are available only as explicit subagent launch overrides, not as main-session models or sampling providers.
+The `claude-code` launch provider runs Claude Code through Anthropic's Agent SDK. The main agent uses the usual spawn, list, wait, follow-up, and interrupt tools to manage these workers. Claude Code models are available only as explicit subagent launch overrides.
 
-Install a current Claude Code on the session's **execution environment**, with `claude` on its login-shell `PATH`, and sign in there using Claude Code's own subscription login. Tau ships the SDK runner; no separate SDK installation is needed on that environment. The integration uses Agent SDK 0.3.308. On a hosted environment, a Claude login on the host or attached laptop is not sufficient.
+Install Claude Code on the session's execution environment, put `claude` on its login-shell `PATH`, and sign in there with a Claude subscription. A login on the host or attached laptop does not reach a separate execution environment. Tau includes Agent SDK 0.3.308, so no separate SDK installation is needed.
 
-Add the desired models and efforts to the launch allowlist:
+Add the desired model/effort combinations to the launch allowlist:
 
 ```json
 {
@@ -87,11 +87,13 @@ Add the desired models and efforts to the launch allowlist:
 }
 ```
 
-Only these three model IDs are supported. Effort may be `low`, `medium`, `high`, `xhigh`, or `max`; each permitted model/effort combination needs its own allowlist entry. Availability still depends on the Claude account and installed Claude Code version. Tau does not substitute another model after a rejection.
+These are the three supported model IDs. Effort may be `low`, `medium`, `high`, `xhigh`, or `max`. Each permitted combination needs its own allowlist entry. Model availability also depends on the Claude account and installed Claude Code version. If Claude Code rejects a model, Tau reports the failure.
 
-Claude Code owns its agent loop, retries, context compaction, and conversation files. Each run is limited to 1,024 agentic turns. The selected model and effort are passed to the SDK; other Tau model settings, such as service tier, are not. Tau supplies the selected working directory and appends the inherited subagent instructions, including resolved project context and skills, to Claude Code's native prompt. Follow-ups resume that worker's Claude session. The main conversation is not copied to it.
+Claude Code manages its conversation, retries, and compaction. Each run allows up to 1,024 agentic turns. Tau passes the selected model, effort, working directory, and task. Other Tau model settings, such as service tier, do not apply. Follow-ups resume the same Claude session.
 
-Native tools follow the parent persona's selected tools:
+The worker uses Claude Code's native system prompt with a short addition: complete the task autonomously, preserve other agents' work, and return a self-contained result. It cannot ask the parent or user for clarification. Tau does not copy the parent conversation, persona prompt, project instructions, or skill descriptions. The worker is instructed to read applicable `AGENTS.md` files itself.
+
+Claude Code loads its user, project, and local settings and discovers its own instructions and skills. The `Skill` tool is always available. Other native tools follow the parent persona's selection:
 
 | Inherited Tau tool | Claude Code tools      |
 | ------------------ | ---------------------- |
@@ -101,25 +103,27 @@ Native tools follow the parent persona's selected tools:
 | `edit`             | Edit                   |
 | `web`              | WebSearch, WebFetch    |
 
-Claude workers do not receive Tau's `code` capabilities, host MCP connections, `tau_docs`, client tools, or nested agent tools. User and project Claude settings, hooks, plugins, native skill loading, and automatic MCP connections are disabled for these workers. The inherited Tau skill descriptions remain instructions to read the relevant files. Managed Claude Code policies still apply.
+Workers receive no Tau `code` capabilities, host MCP connections, `tau_docs`, or client tools. Nested agents and interactive questions are disabled. Hooks, automatic memory, and automatic MCP connections are disabled too. Managed Claude Code policies still apply.
 
-The listed native tools are pre-approved, and requests requiring further permission are denied rather than waiting for an unattended prompt. These tools run with the execution environment's operating-system authority, like Tau's ordinary tools; the tool list is not a sandbox. Reported tool results and bounded assistant activity appear through the normal subagent activity channel. Full native transcripts remain in Claude Code's own storage, not in the main agent's context.
+Selected tools use `bypassPermissions`, with Claude Code's sandbox disabled. They run with the execution environment's operating-system authority, like Tau's tools. Review the local Claude settings and skills before enabling these workers.
 
-Tau checks the SDK's account information before submitting the task and rejects API-key authentication or a missing subscription. It does not import Claude credentials into Tau's auth storage, and it removes API and cloud-provider routing overrides from the child environment. There is no API fallback. Fast mode is off. Account-level extra usage can still incur charges: disable it in Claude if only included subscription usage is wanted. Reported dollar costs are SDK estimates, not subscription charges.
+Tau displays short assistant updates and tool completion summaries. Full tool output stays in Claude Code's conversation files. Token and cost totals come from the SDK, including earlier usage when a session resumes. Context usage comes from the SDK's context summary after a successful run. Until then, Tau shows it as unavailable. Failed SDK results carry no context measurement.
 
-Claude workers share the eight-worker limit and the ordinary subagent lifetime. Interrupting a worker terminates its process group; its native session can be resumed by a follow-up while the parent session remains alive. Host restart, session disposal, and rewind remove the supervised worker just as they remove native Tau workers. Claude's transcript files are not deleted, but Tau does not recover the worker from them after a restart.
+Before sending the task, Tau checks that the SDK reports a subscription login without API-key authentication. Claude Code keeps its own credentials. Tau removes API and cloud-provider routing overrides from the child environment and provides no API fallback. Fast mode is disabled. Account-level extra usage can still incur charges; disable it in Claude to use only the included subscription allowance. The SDK's dollar estimates do not report subscription charges.
+
+Claude workers share the eight-worker limit and the usual subagent lifetime. Interrupting a worker terminates its process group. A follow-up can resume its Claude session while the parent session remains alive. Host restart, session disposal, and rewind remove workers under the same rules as native Tau subagents. Claude's transcript files remain on disk, but Tau does not use them to restore workers after a restart.
 
 ## Working directory
 
 `spawn_agent` normally runs the subagent in the main session's `cwd`. The optional `workingDirectory` may be absolute or relative to that `cwd`. Tau resolves it to an absolute path on the execution environment.
 
-When that path differs from the parent's `cwd`, Tau rebuilds the subagent's context for the new directory. It detects the platform and repository there, reads the applicable `AGENTS.md` files, and discovers that directory's skills.
+For native Tau subagents, when that path differs from the parent's `cwd`, Tau rebuilds the subagent's context for the new directory. It detects the platform and repository there, reads the applicable `AGENTS.md` files, and discovers that directory's skills.
 
-The new directory does **not** change the subagent's persona, model catalog, runtime configuration, credentials, or tool policy. Those always come from the parent session. Configuration in the new directory is read only where context needs it, such as for skill discovery.
+For native Tau subagents, the new directory does not change the persona, model catalog, runtime configuration, credentials, or tool policy. Those come from the parent session. Configuration in the new directory is read only where context needs it, such as for skill discovery.
 
 `workingDirectory` is always a path on the execution environment, which matters in monorepos and hosted environments. The host and attached clients never resolve it against their own filesystems.
 
-A launch fails if Tau cannot build context for the directory, if the directory is invalid for the environment, or if the environment cannot resolve working directories. A path that resolves to the parent's `cwd`, such as `.`, reuses the parent's context.
+A native Tau launch fails if Tau cannot build context for the directory, if the directory is invalid for the environment, or if the environment cannot resolve working directories. A path that resolves to the parent's `cwd`, such as `.`, reuses the parent's context. Claude Code workers load context themselves in the selected directory; an invalid directory fails when the worker starts.
 
 ## Lifecycle and subagent tools
 
@@ -155,7 +159,7 @@ In the TUI, `Ctrl+G` interrupts the selected running subagent. Interrupting the 
 
 Subagents belong to the running session on the host, not to an attached TUI. Detaching a client, or losing the connection, does not stop them while the session stays alive. Another client can attach to the session and see their current state.
 
-Subagents do not survive the end of a session on the host or a host restart. Their status may be saved while the session is live, but recovery removes those records, because the subagents' conversations no longer exist. A recovered session cannot send input to an old subagent ID.
+Subagents do not survive the end of a session on the host or a host restart. Their status may be saved while the session is live, but recovery removes those records, because their runtimes no longer exist. A recovered session cannot send input to an old subagent ID.
 
 Rewind also removes subagents that were started by an assistant message the rewind removed. Host shutdown or session disposal interrupts and removes all subagents.
 

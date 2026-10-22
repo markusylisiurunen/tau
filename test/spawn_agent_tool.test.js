@@ -57,7 +57,10 @@ function createFixture(overrides = {}) {
         model: {
           provider: runtimeConfig.model.provider,
           id: runtimeConfig.model.id,
-          reasoning: runtimeConfig.settings.reasoning ?? "none",
+          reasoning:
+            runtimeConfig.kind === "claude-code"
+              ? runtimeConfig.effort
+              : (runtimeConfig.settings.reasoning ?? "none"),
         },
         workingDirectory: runtimeConfig.workingDirectory,
       }),
@@ -122,25 +125,41 @@ const baseArguments = {
 };
 
 describe("Claude Code launch selection", () => {
-  it("uses the same allowlist and directory-context resolution as native subagents", async () => {
-    const fx = createFixture();
+  it("enforces the allowlist without resolving native prompt or model metadata", async () => {
+    const resolveSubagentPrompt = vi.fn(() => {
+      throw new Error("must not compose native context");
+    });
+    const modelResolver = vi.fn(() => {
+      throw new Error("must not resolve native metadata");
+    });
+    const fx = createFixture({
+      resolveSubagentPrompt,
+      modelResolver,
+      subagentSystemPrompt: undefined,
+    });
     const model = "claude-code/claude-opus-5-5:high";
     const denied = await execute(fx.tool, { ...baseArguments, model });
     expect(denied.result.toolResult.outcome).toBe("blocked");
     expect(fx.supervisor.spawn).not.toHaveBeenCalled();
     fx.persona.subagentLaunchModels = [model];
-    const accepted = await execute(fx.tool, { ...baseArguments, model });
+    const accepted = await execute(fx.tool, { ...baseArguments, model, workingDirectory: "other" });
     expect(accepted.result.toolResult.outcome).toBe("succeeded");
     expect(fx.supervisor.spawn).toHaveBeenCalledWith(
       expect.objectContaining({
         runtimeConfig: expect.objectContaining({
           model: expect.objectContaining({ provider: "claude-code", id: "claude-opus-5-5" }),
-          systemPrompt: "subagent prompt",
-          workingDirectory: "/repo/current",
+          kind: "claude-code",
+          effort: "high",
+          workingDirectory: "/repo/current/other",
           tools: ["bash", "write", "edit", "history"],
         }),
       }),
     );
+    const config = fx.supervisor.spawn.mock.calls[0][0].runtimeConfig;
+    expect(config).not.toHaveProperty("systemPrompt");
+    expect(config).not.toHaveProperty("settings");
+    expect(modelResolver).not.toHaveBeenCalled();
+    expect(resolveSubagentPrompt).not.toHaveBeenCalled();
   });
 });
 

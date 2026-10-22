@@ -59,32 +59,35 @@ export function parseSubagentLaunchModel(
     return { error: `unknown provider '${providerPart.trim()}'` };
   }
 
-  const model =
-    provider === CLAUDE_CODE_PROVIDER
-      ? resolveClaudeCodeModel(modelIdPart, options.resolveModel)
-      : options.resolveModel(provider, modelIdPart);
-  if (!model) {
-    return { error: `unknown model '${provider}/${modelIdPart}'` };
-  }
-
   const reasoning = ReasoningEffortSchema.safeParse(effortPart);
   if (!reasoning.success) {
     return {
       error: `invalid reasoning effort. expected one of: ${REASONING_LEVELS.join(", ")}`,
     };
   }
-  if (
-    provider === CLAUDE_CODE_PROVIDER &&
-    (reasoning.data === "none" || reasoning.data === "minimal")
-  ) {
-    return { error: "Claude Code launch models require low, medium, high, xhigh, or max effort" };
+  if (provider === CLAUDE_CODE_PROVIDER) {
+    if (reasoning.data === "none" || reasoning.data === "minimal") {
+      return { error: "Claude Code launch models require low, medium, high, xhigh, or max effort" };
+    }
+    const model = resolveClaudeCodeModel(modelIdPart);
+    if (!model) return { error: `unknown model '${provider}/${modelIdPart}'` };
+    return {
+      launchModel: {
+        kind: "claude-code",
+        model,
+        reasoning: reasoning.data,
+        normalized: `${provider}/${model.id}:${reasoning.data}`,
+      },
+    };
   }
-  const normalized = `${provider}/${model.id}:${reasoning.data}`;
+  const model = options.resolveModel(provider, modelIdPart);
+  if (!model) return { error: `unknown model '${provider}/${modelIdPart}'` };
   return {
     launchModel: {
+      kind: "native",
       model,
       reasoning: reasoning.data,
-      normalized,
+      normalized: `${provider}/${model.id}:${reasoning.data}`,
     },
   };
 }

@@ -3,13 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import { describe, expect, it } from "vitest";
-import { resolveModel } from "../dist/core/models/catalog.js";
 import { ClaudeCodeRuntime } from "../dist/core/subagents/claude_code_runtime.js";
 import { spawnWithCapture } from "../dist/core/utils/spawn_capture.js";
 
 // A protocol peer, not an Anthropic client. Exercises the shipped SDK bundle's
 // initialization, deferred prompt, message decoding, and process cleanup offline.
-function fakeClaude(directory, subscription, hang = false) {
+function fakeClaude(directory, subscription, hang = false, outcome = "success") {
   const marker = join(directory, "prompt.json");
   writeFileSync(
     join(directory, "claude"),
@@ -22,6 +21,10 @@ const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
 readline.createInterface({ input: process.stdin }).on("line", line => {
   const message = JSON.parse(line);
   if (message.type === "control_request") {
+    if (message.request.subtype === "get_context_usage") {
+      send({ type: "control_response", response: { subtype: "success", request_id: message.request_id, response: { totalTokens: 17, maxTokens: 1000000 } } });
+      return;
+    }
     if (message.request.subtype === "initialize") initialization = message.request;
     send({ type: "control_response", response: { subtype: "success", request_id: message.request_id, response: {
       commands: [], agents: [], models: [], output_style: "default", available_output_styles: [],
@@ -32,17 +35,31 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
     const session_id = "ce4518fa-4b3f-44ef-a1a3-2f7edc024b8d";
     send({ type: "system", subtype: "init", session_id });
     if (${hang}) { setInterval(() => {}, 1000); return; }
-    send({ type: "assistant", parent_tool_use_id: null, session_id,
-      message: { role: "assistant", content: [{ type: "text", text: "finished" }, { type: "tool_use", id: "tool-1", name: "Bash", input: { command: "npm test" } }],
-        usage: { input_tokens: 5, output_tokens: 3, cache_read_input_tokens: 7, cache_creation_input_tokens: 2 } } });
-    send({ type: "user", parent_tool_use_id: null, session_id, message: { role: "user", content: [
-      { type: "tool_result", tool_use_id: "tool-1", content: "large-output".repeat(100000), is_error: false }
+    const assistant = (content, parent_tool_use_id = null) => send({ type: "assistant", parent_tool_use_id, session_id,
+      message: { id: "message-1", model: "claude-sonnet-5-5", role: "assistant", content, stop_reason: null,
+        usage: { input_tokens: 5, output_tokens: 0, cache_read_input_tokens: 7, cache_creation_input_tokens: 2 } } });
+    assistant([{ type: "text", text: "finished" }]);
+    assistant([{ type: "tool_use", id: "tool-1", name: "Bash", input: { command: "npm test" } }]);
+    assistant([{ type: "tool_use", id: "tool-2", name: "Read", input: null }]);
+    assistant([{ type: "text", text: "nested text" }], "nested-call");
+    send({ type: "user", isReplay: true, parent_tool_use_id: null, session_id, message: { role: "user", content: [
+      { type: "tool_result", tool_use_id: "tool-1", content: "replay", is_error: true }
     ] } });
-    send({ type: "result", subtype: "success", is_error: false, session_id, result: "finished",
-      total_cost_usd: 0.01, modelUsage: { "claude-sonnet-5-5": {
-        inputTokens: 5, outputTokens: 3, cacheReadInputTokens: 7, cacheCreationInputTokens: 2, contextWindow: 1000000
-      } } });
-    setTimeout(() => process.exit(0), 25);
+    send({ type: "user", parent_tool_use_id: "nested-call", session_id, message: { role: "user", content: [
+      { type: "tool_result", tool_use_id: "tool-1", content: "nested result", is_error: true }
+    ] } });
+    send({ type: "user", parent_tool_use_id: null, session_id, message: { role: "user", content: [
+      { type: "tool_result", tool_use_id: "tool-1", content: "large-output".repeat(100000), is_error: false },
+      { type: "tool_result", tool_use_id: "tool-2", content: "bad input", is_error: true },
+      { type: "tool_result", tool_use_id: "unknown", content: "unknown result" }
+    ] } });
+    const outcome = ${JSON.stringify(outcome)};
+    send({ type: "result", subtype: outcome === "api_error" ? "success" : outcome,
+      is_error: outcome !== "success", session_id, result: "finished", errors: ["stopped"],
+      total_cost_usd: 0.01, modelUsage: outcome === "error_during_execution" ? {} : {
+        "claude-sonnet-5-5": { inputTokens: 5, outputTokens: 3, cacheReadInputTokens: 7, cacheCreationInputTokens: 2, contextWindow: 1000000 },
+        "helper": { inputTokens: 2, outputTokens: 1, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, contextWindow: 200000 }
+      } });
   }
 });
 `,
@@ -52,12 +69,12 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
 }
 
 function createRuntime(directory, events) {
-  const model = { ...resolveModel("anthropic", "claude-sonnet-5-5"), provider: "claude-code" };
+  const model = { id: "claude-sonnet-5-5", provider: "claude-code" };
   return new ClaudeCodeRuntime({
     config: {
       model,
-      settings: { reasoning: "medium" },
-      systemPrompt: "subagent context",
+      kind: "claude-code",
+      effort: "medium",
       tools: ["bash"],
       workingDirectory: directory,
     },
@@ -100,7 +117,12 @@ describe("bundled Claude Agent SDK runner", () => {
       const sent = JSON.parse(readFileSync(marker, "utf8"));
       expect(sent.message.message.content).toBe("perform the task");
       expect(JSON.stringify(sent.args)).toContain("claude-sonnet-5-5");
-      expect(sent.initialization.appendSystemPrompt).toContain("subagent context");
+      expect(sent.initialization.systemPrompt).toBeUndefined();
+      expect(sent.args).toContain("--permission-mode=bypassPermissions");
+      expect(sent.args).toContain("--allow-dangerously-skip-permissions");
+      expect(sent.args).toContain("--setting-sources=user,project,local");
+      expect(sent.args).toContain("--tools=Read,Glob,Grep,Bash,Skill");
+      expect(sent.initialization).not.toHaveProperty("skills");
       expect(sent.cwd).toBe(directory);
       expect(events).toContainEqual(expect.objectContaining({ type: "session" }));
       expect(events).toContainEqual({
@@ -109,11 +131,23 @@ describe("bundled Claude Agent SDK runner", () => {
         subject: "npm test",
         failed: false,
       });
+      expect(events.filter((event) => event.type === "tool")).toHaveLength(2);
+      expect(events).toContainEqual({ type: "tool", name: "Read", subject: "Read", failed: true });
+      expect(events.filter((event) => event.type === "assistant")).toEqual([
+        { type: "assistant", text: "finished" },
+      ]);
       expect(JSON.stringify(events)).not.toContain("large-output");
       expect(events).toContainEqual(
         expect.objectContaining({
           type: "result",
-          usage: expect.objectContaining({ input: 5, contextWindowUsageTokens: 17 }),
+          usage: {
+            input: 7,
+            output: 4,
+            cacheRead: 7,
+            cacheWrite: 2,
+            contextWindowUsageTokens: 17,
+            contextWindow: 1000000,
+          },
         }),
       );
     } finally {
@@ -121,6 +155,35 @@ describe("bundled Claude Agent SDK runner", () => {
       rmSync(directory, { recursive: true, force: true });
     }
   }, 20_000);
+
+  it.each([
+    "api_error",
+    "error_during_execution",
+    "error_max_turns",
+    "error_max_budget_usd",
+    "error_max_structured_output_retries",
+  ])(
+    "preserves SDK failure %s",
+    async (outcome) => {
+      const directory = mkdtempSync(join(tmpdir(), "tau-claude-failure-"));
+      const events = [];
+      const runtime = createRuntime(directory, events);
+      try {
+        fakeClaude(directory, true, false, outcome);
+        const result = await runtime.submit("task");
+        expect(result).toMatchObject({
+          status: "completed",
+          result: { failed: true, usage: { contextWindow: 0 } },
+        });
+        expect(events.filter((event) => event.type === "result")).toHaveLength(1);
+        if (outcome === "error_during_execution") expect(result.result.usage.input).toBe(0);
+      } finally {
+        runtime.dispose();
+        rmSync(directory, { recursive: true, force: true });
+      }
+    },
+    20_000,
+  );
 
   it("interrupts the SDK process group while a task is running", async () => {
     const directory = mkdtempSync(join(tmpdir(), "tau-claude-interrupt-"));

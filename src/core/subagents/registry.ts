@@ -11,7 +11,12 @@ import {
   TOOL_NAME_WRITE,
 } from "../tools/tool_names.js";
 import type { Persona } from "../types.js";
-import type { SubagentLaunchModel, SubagentRuntimeConfig, SubagentToolName } from "./types.js";
+import type {
+  ClaudeCodeSubagentConfig,
+  NativeSubagentConfig,
+  SubagentLaunchModel,
+  SubagentToolName,
+} from "./types.js";
 
 const INHERITABLE_TOOL_NAMES = new Set<SubagentToolName>([
   TOOL_NAME_BASH,
@@ -51,18 +56,39 @@ function getInheritedSubagentTools(persona: Persona): SubagentToolName[] {
   return normalizeTools(selected);
 }
 
-export type SubagentEffectiveSettings = Pick<SubagentRuntimeConfig, "model" | "settings" | "tools">;
+type NativeSubagentSettings = Omit<NativeSubagentConfig, "systemPrompt" | "workingDirectory">;
+export type SubagentEffectiveSettings =
+  | NativeSubagentSettings
+  | Omit<ClaudeCodeSubagentConfig, "workingDirectory">;
+
+export function resolveSubagentEffectiveSettings(args: {
+  persona: Persona;
+  launchModel?: undefined;
+}): NativeSubagentSettings;
+export function resolveSubagentEffectiveSettings(args: {
+  persona: Persona;
+  launchModel?: SubagentLaunchModel;
+}): SubagentEffectiveSettings;
 
 export function resolveSubagentEffectiveSettings(args: {
   persona: Persona;
   launchModel?: SubagentLaunchModel;
 }): SubagentEffectiveSettings {
+  const tools = getInheritedSubagentTools(args.persona);
+  if (args.launchModel?.kind === "claude-code") {
+    return {
+      kind: "claude-code",
+      model: args.launchModel.model,
+      effort: args.launchModel.reasoning,
+      tools,
+    };
+  }
   const settings = { ...args.persona.settings };
   if (args.launchModel) {
     settings.reasoning = args.launchModel.reasoning;
   }
-  const tools = getInheritedSubagentTools(args.persona);
   return {
+    kind: "native",
     model: args.launchModel?.model ?? args.persona.model,
     settings,
     tools,

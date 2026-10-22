@@ -1,6 +1,3 @@
-import type { Api, Model } from "@earendil-works/pi-ai";
-import type { ModelResolver } from "../models/catalog.js";
-
 export const CLAUDE_CODE_PROVIDER = "claude-code";
 
 export const CLAUDE_CODE_MODEL_IDS = [
@@ -8,13 +5,14 @@ export const CLAUDE_CODE_MODEL_IDS = [
   "claude-sonnet-5-5",
   "claude-haiku-5-5",
 ] as const;
-const MODEL_IDS: ReadonlySet<string> = new Set(CLAUDE_CODE_MODEL_IDS);
+export type ClaudeCodeModel = {
+  provider: typeof CLAUDE_CODE_PROVIDER;
+  id: (typeof CLAUDE_CODE_MODEL_IDS)[number];
+};
 
-export function resolveClaudeCodeModel(
-  id: string,
-  resolveModel: ModelResolver,
-): Model<Api> | undefined {
-  if (!MODEL_IDS.has(id)) return undefined;
-  const model = resolveModel("anthropic", id);
-  return model ? { ...model, provider: CLAUDE_CODE_PROVIDER } : undefined;
+export type ClaudeCodeEffort = "low" | "medium" | "high" | "xhigh" | "max";
+
+export function resolveClaudeCodeModel(id: string): ClaudeCodeModel | undefined {
+  const modelId = CLAUDE_CODE_MODEL_IDS.find((candidate) => candidate === id);
+  return modelId ? { provider: CLAUDE_CODE_PROVIDER, id: modelId } : undefined;
 }

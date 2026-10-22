@@ -55,9 +55,9 @@ function fixture(run) {
   const spawn = () =>
     supervisor.spawn({
       runtimeConfig: {
-        systemPrompt: "inherited instructions",
+        kind: "claude-code",
         model,
-        settings: { reasoning: "medium" },
+        effort: "medium",
         tools: ["bash", "edit"],
         workingDirectory: "/remote/workspace",
       },
@@ -71,14 +71,21 @@ function fixture(run) {
 }
 
 describe("Claude Code launch models", () => {
-  it("resolves only the three launch-only models from Anthropic catalog metadata", () => {
+  it("resolves Claude launch identity without consulting the native catalog", () => {
+    const resolveNativeModel = vi.fn(() => {
+      throw new Error("must not resolve native metadata");
+    });
     for (const name of ["opus", "sonnet", "haiku"]) {
       const id = `claude-${name}-5-5`;
-      const parsed = parseSubagentLaunchModel(`Claude-Code/${id}:high`, { resolveModel });
+      const parsed = parseSubagentLaunchModel(`Claude-Code/${id}:high`, {
+        resolveModel: resolveNativeModel,
+      });
       expect(parsed.launchModel.model).toEqual({
-        ...resolveModel("anthropic", id),
+        id,
         provider: "claude-code",
       });
+      expect(parsed.launchModel.kind).toBe("claude-code");
+      expect(resolveNativeModel).not.toHaveBeenCalled();
       expect(parsed.launchModel.normalized).toBe(`claude-code/${id}:high`);
       expect(resolveModel("claude-code", id)).toBeUndefined();
     }
@@ -99,13 +106,11 @@ describe("Claude Code launch models", () => {
     const options = claudeCodeOptions(
       {
         prompt: "task",
-        systemPrompt: "parent",
         cwd: "/target",
         model: "claude-haiku-5-5",
         effort: "low",
         tools: ["bash"],
         sessionId,
-        contextWindow: 1_000_000,
       },
       "/bin/claude",
     );
@@ -115,18 +120,18 @@ describe("Claude Code launch models", () => {
       effort: "low",
       resume: sessionId,
       pathToClaudeCodeExecutable: "/bin/claude",
-      tools: ["Read", "Glob", "Grep", "Bash"],
-      allowedTools: ["Read", "Glob", "Grep", "Bash"],
-      permissionMode: "dontAsk",
-      settingSources: [],
+      tools: ["Read", "Glob", "Grep", "Bash", "Skill"],
+      permissionMode: "bypassPermissions",
+      allowDangerouslySkipPermissions: true,
+      disallowedTools: ["Agent", "Task", "AskUserQuestion"],
+      settingSources: ["user", "project", "local"],
       strictMcpConfig: true,
       mcpServers: {},
-      plugins: [],
-      skills: [],
+      skills: "all",
       settings: { fastMode: false, autoMemoryEnabled: false, disableAllHooks: true },
       systemPrompt: { type: "preset", preset: "claude_code" },
     });
-    expect(options.systemPrompt.append).toContain("parent");
+    expect(options.env.CLAUDE_AGENT_SDK_CLIENT_APP).not.toBe("tau");
     expect(options).not.toHaveProperty("fallbackModel");
   });
 });
@@ -148,10 +153,13 @@ describe("Claude Code supervised lifecycle", () => {
     expect(f.calls[0].input).toMatchObject({
       cwd: "/remote/workspace",
       prompt: "first task",
-      systemPrompt: "inherited instructions",
       tools: ["bash", "edit"],
     });
     expect(f.calls[0].input).not.toHaveProperty("sessionId");
+    expect(f.calls[0].input).not.toHaveProperty("systemPrompt");
+    expect(f.calls[0].input).not.toHaveProperty("contextWindow");
+    expect(spawned.state.usage.contextWindow).toBe(0);
+    expect(first.usage.contextWindow).toBe(1_000_000);
     expect(f.calls[0].options.cwd).toBe("/remote/workspace");
     expect(f.events).toContainEqual(
       expect.objectContaining({
@@ -168,6 +176,32 @@ describe("Claude Code supervised lifecycle", () => {
     expect(second.costTotal).toBe(0.2);
     expect(f.recordUsage.mock.calls.map(([entry]) => entry.usage.input)).toEqual([10, 10]);
     expect(f.recordUsage.mock.calls.map(([entry]) => entry.cost.total)).toEqual([0.1, 0.1]);
+    f.supervisor.reset();
+  });
+
+  it("keeps cumulative accounting across a zero-usage startup failure", async () => {
+    const f = fixture(async (_input, options, count) => {
+      emit(options, { type: "session", id: sessionId });
+      emit(
+        options,
+        count === 2
+          ? { ...result("startup failed", 0), failed: true }
+          : result("done", count === 1 ? 10 : 20),
+      );
+      return ok;
+    });
+    const id = f.spawn().state.id;
+    await f.supervisor.waitForAgents([id]);
+    f.supervisor.sendInput({ id, prompt: "retry" });
+    const [failed] = await f.supervisor.waitForAgents([id]);
+    expect(failed.run.status).toBe("failed");
+    expect(failed.usage.input).toBe(10);
+    expect(failed.costTotal).toBe(0.1);
+    f.supervisor.sendInput({ id, prompt: "retry again" });
+    const [finished] = await f.supervisor.waitForAgents([id]);
+    expect(finished.usage.input).toBe(20);
+    expect(f.recordUsage.mock.calls.map(([entry]) => entry.usage.input)).toEqual([10, 0, 10]);
+    expect(f.recordUsage.mock.calls.map(([entry]) => entry.cost.total)).toEqual([0.1, 0, 0.1]);
     f.supervisor.reset();
   });
 

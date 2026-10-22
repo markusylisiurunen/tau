@@ -33,8 +33,7 @@ export function claudeCodeOptions(input: ClaudeCodeInput, executable: string): O
     )
       delete env[key];
   }
-  env.CLAUDE_AGENT_SDK_CLIENT_APP = "tau";
-  const tools = claudeCodeTools(input.tools);
+  const tools = [...claudeCodeTools(input.tools), "Skill"];
   return {
     cwd: input.cwd,
     model: input.model,
@@ -43,25 +42,29 @@ export function claudeCodeOptions(input: ClaudeCodeInput, executable: string): O
     pathToClaudeCodeExecutable: executable,
     env,
     tools,
-    allowedTools: tools,
-    permissionMode: "dontAsk",
-    settingSources: [],
+    permissionMode: "bypassPermissions",
+    allowDangerouslySkipPermissions: true,
+    disallowedTools: ["Agent", "Task", "AskUserQuestion"],
+    settingSources: ["user", "project", "local"],
     strictMcpConfig: true,
     mcpServers: {},
-    plugins: [],
-    skills: [],
-    settings: { fastMode: false, autoMemoryEnabled: false, disableAllHooks: true },
+    skills: "all",
+    settings: {
+      fastMode: false,
+      autoMemoryEnabled: false,
+      disableAllHooks: true,
+      sandbox: { enabled: false },
+    },
     persistSession: true,
     ...(input.sessionId ? { resume: input.sessionId } : {}),
     systemPrompt: {
       type: "preset",
       preset: "claude_code",
       append: [
-        input.systemPrompt,
-        "You are a background subagent working for the main Tau agent, not directly for the user.",
-        "Use only the Claude Code tools available in this session. Inherited references to Tau tools or code capabilities do not make them available here.",
-        "Do not launch other agents. Report questions, permission denials, and blockers to the main agent in your final response.",
-        "Return a self-contained result describing the work, verification, and any remaining limitations.",
+        "You are a background subagent. Complete the assigned task autonomously; you cannot ask the parent agent or user for clarification. Make reasonable assumptions when safe, and report blockers instead of attempting risky workarounds.",
+        "Read and follow applicable AGENTS.md files in the working directory, its parents, and any directories you work in. Use the skills available in this session when relevant.",
+        "Other agents may be editing the same worktree. Preserve changes you did not make. Do not run work-discarding Git commands unless the task explicitly requires them. Do not launch other agents.",
+        "Your final response must stand on its own: describe the outcome, verification, and any remaining limitations.",
       ].join("\n\n"),
     },
     stderr: () => {},
@@ -92,6 +95,10 @@ export async function runClaudeCode(
   const ready = new Promise<void>((resolve) => {
     allowPrompt = resolve;
   });
+  let finishPrompt!: () => void;
+  const finished = new Promise<void>((resolve) => {
+    finishPrompt = resolve;
+  });
   async function* prompts(): AsyncGenerator<SDKUserMessage> {
     await ready;
     if (!authorized) return;
@@ -101,13 +108,14 @@ export async function runClaudeCode(
       parent_tool_use_id: null,
       message: { role: "user", content: input.prompt },
     };
+    // Keep the control channel open until the context summary has been read.
+    await finished;
   }
   const conversation = query({
     prompt: prompts(),
     options: claudeCodeOptions(input, findClaudeExecutable()),
   });
   const calls = new Map<string, { name: string; subject: string }>();
-  let contextTokens = 0;
   try {
     const initialization = await conversation.initializationResult();
     const account = initialization.account;
@@ -122,17 +130,14 @@ export async function runClaudeCode(
       if (message.type === "system" && message.subtype === "init") {
         emit({ type: "session", id: message.session_id });
       } else if (message.type === "assistant" && message.parent_tool_use_id === null) {
-        const usage = message.message.usage;
-        contextTokens =
-          usage.input_tokens +
-          usage.output_tokens +
-          (usage.cache_read_input_tokens ?? 0) +
-          (usage.cache_creation_input_tokens ?? 0);
         for (const block of message.message.content) {
           if (block.type === "text" && block.text) {
             emit({ type: "assistant", text: block.text.slice(0, 8192) });
           } else if (block.type === "tool_use") {
-            const args = block.input as Record<string, unknown>;
+            const args =
+              block.input !== null && typeof block.input === "object" && !Array.isArray(block.input)
+                ? (block.input as Record<string, unknown>)
+                : {};
             const subject =
               [args.file_path, args.command, args.pattern, args.url].find(
                 (value): value is string => typeof value === "string",
@@ -143,7 +148,12 @@ export async function runClaudeCode(
             });
           }
         }
-      } else if (message.type === "user" && Array.isArray(message.message.content)) {
+      } else if (
+        message.type === "user" &&
+        !("isReplay" in message) &&
+        message.parent_tool_use_id === null &&
+        Array.isArray(message.message.content)
+      ) {
         for (const block of message.message.content) {
           if (block.type !== "tool_result") continue;
           const call = calls.get(block.tool_use_id);
@@ -153,13 +163,17 @@ export async function runClaudeCode(
         }
       } else if (message.type === "result") {
         const totals = Object.values(message.modelUsage);
+        const failed = message.is_error || message.subtype !== "success";
+        const context = failed
+          ? undefined
+          : await conversation.getContextUsage({ detail: "summary" });
         const usage = {
           input: 0,
           output: 0,
           cacheRead: 0,
           cacheWrite: 0,
-          contextWindowUsageTokens: contextTokens,
-          contextWindow: input.contextWindow,
+          contextWindowUsageTokens: context?.totalTokens ?? 0,
+          contextWindow: context?.maxTokens ?? 0,
         };
         for (const model of totals) {
           usage.input += model.inputTokens;
@@ -173,13 +187,15 @@ export async function runClaudeCode(
             message.subtype === "success"
               ? message.result
               : [message.subtype, ...message.errors].join("\n"),
-          failed: message.is_error || message.subtype !== "success",
+          failed,
           cost: message.total_cost_usd,
           usage,
         });
+        return;
       }
     }
   } finally {
+    finishPrompt();
     conversation.close();
     allowPrompt();
   }

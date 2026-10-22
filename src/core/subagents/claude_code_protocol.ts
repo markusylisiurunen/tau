@@ -5,9 +5,7 @@ const tokenCount = z.number().finite().nonnegative();
 
 export const claudeCodeInputSchema = z.object({
   prompt: z.string(),
-  systemPrompt: z.string(),
   cwd: z.string(),
-  contextWindow: tokenCount.positive(),
   model: z.enum(CLAUDE_CODE_MODEL_IDS),
   effort: z.enum(["low", "medium", "high", "xhigh", "max"]),
   tools: z.array(z.string()),
@@ -35,7 +33,7 @@ export const claudeCodeEventSchema = z.discriminatedUnion("type", [
       cacheRead: tokenCount,
       cacheWrite: tokenCount,
       contextWindowUsageTokens: tokenCount,
-      contextWindow: tokenCount.positive(),
+      contextWindow: tokenCount,
     }),
     cost: tokenCount,
   }),

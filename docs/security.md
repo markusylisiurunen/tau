@@ -20,7 +20,7 @@ Give each part only the access it needs:
 
 Interruption, timeouts, output limits, and process-group termination limit how long and how much a command runs. They do not ask for approval and cannot undo anything already done. Review destructive commands, and use Tau's normal session operations instead of asking an agent to change Tau's internal files.
 
-[Claude Code subagents](subagents.md#claude-code-subagents) run a separate native agent on the execution environment. Its selected tools are pre-approved and have that environment's operating-system authority. Claude credentials and native transcripts stay there. Tau does not forward its host service credentials or MCP connections, and the worker does not load user or project Claude settings, hooks, plugins, or MCP configuration. Managed Claude policies still apply. Account-level subscription extra usage remains a possible source of charges.
+[Claude Code subagents](subagents.md#claude-code-subagents) run on the execution environment with permission checks bypassed and the Claude Code sandbox disabled. They load local Claude settings, project instructions, and skills. Review those files before enabling workers. Tau restricts the available tools and disables hooks, automatic MCP connections, and nested agents. Managed Claude policies still apply. Claude credentials and transcripts stay on that environment; Tau does not forward host service credentials or MCP connections. Subscription extra usage can incur charges if enabled in the Claude account.
 
 ## Treat project content as executable policy
 

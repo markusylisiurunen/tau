@@ -44,6 +44,7 @@ export type DiffReviewSnapshotSource =
 
 export type CaptureDiffReviewSnapshotOptions = {
   cwd: string;
+  workingDirectory?: string;
   source: DiffReviewSnapshotSource;
   signal?: AbortSignal;
   deps?: Partial<DiffSnapshotDeps>;
@@ -145,7 +146,7 @@ export async function captureDiffReviewSnapshot(
   options: CaptureDiffReviewSnapshotOptions,
 ): Promise<DiffReviewSnapshot> {
   const deps = createDiffSnapshotDeps(options.deps);
-  const cwd = resolve(options.cwd);
+  const cwd = resolve(options.cwd, options.workingDirectory ?? ".");
   const signal = options.signal;
   const repoRoot = await resolveGitRepoRoot(cwd, deps, signal);
   const source = options.source;

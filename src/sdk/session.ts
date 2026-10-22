@@ -858,6 +858,7 @@ class TauSdkSessionImpl implements TauSdkSession {
   }
 
   async createEphemeralContext(options: {
+    workingDirectory?: string;
     instructions: string;
     tools: SessionProtocolEphemeralAgentTool[];
     reasoning?: SessionProtocolReasoningEffort;

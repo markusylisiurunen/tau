@@ -47,8 +47,13 @@ function createFailingStream(partialText, error) {
   };
 }
 
-function createSession(recordUsage = vi.fn(), config = {}, reasoning = "medium") {
+async function createSession(recordUsage = vi.fn(), config = {}, reasoning = "medium") {
   const backend = createLocalToolExecutionBackend();
+  backend.runNodeScript = vi.fn(async () => ({
+    exitCode: 0,
+    output: JSON.stringify({ files: [] }),
+    truncated: false,
+  }));
   const executionEnvironment = {
     snapshot: () => ({ kind: "local", cwd: "/repo", home: "/home/user" }),
     getToolExecutionBackend: () => backend,
@@ -70,13 +75,13 @@ function createSession(recordUsage = vi.fn(), config = {}, reasoning = "medium")
   return {
     emitUpdate,
     recordUsage,
-    session: new HostedEphemeralAgentSession({
+    session: await HostedEphemeralAgentSession.create({
+      cwd: "/repo",
       contextId: "ephemeral-1",
       sessionId: "session-1",
       sessionStartedAt: 0,
       persona: personas[0],
       config,
-      discoveredSkills: [],
       includeAgentContext: false,
       executionEnvironment,
       instructions: "review the diff",
@@ -90,7 +95,7 @@ function createSession(recordUsage = vi.fn(), config = {}, reasoning = "medium")
 
 describe("HostedEphemeralAgentSession", () => {
   it("preserves native instructions and metadata when forking without sending metadata to the model", async () => {
-    const { session } = createSession();
+    const { session } = await createSession();
     try {
       const source = await session.getOrCreateThread("source");
       await source.runtime.commitSystemMessage("fork instruction", {
@@ -119,7 +124,7 @@ describe("HostedEphemeralAgentSession", () => {
   });
 
   it("continues and forks thread state", async () => {
-    const { session, recordUsage, emitUpdate } = createSession(vi.fn(), {}, "low");
+    const { session, recordUsage, emitUpdate } = await createSession(vi.fn(), {}, "low");
     const source = await session.getOrCreateThread("source");
     expect(source.runtime).toBeInstanceOf(AgentRuntime);
     expect(source.runtime.spec.attribution.reasoningEffort).toBe("low");
@@ -186,7 +191,7 @@ describe("HostedEphemeralAgentSession", () => {
   });
 
   it("rejects a partial provider failure", async () => {
-    const { session } = createSession();
+    const { session } = await createSession();
     const thread = await session.getOrCreateThread("source");
     const streamError = new Error("stream failed");
     thread.runtime.spec.retryPolicy = { maxRetries: 0, delayMs: 0 };
@@ -212,7 +217,7 @@ describe("HostedEphemeralAgentSession", () => {
   it("does not apply model system notices to ephemeral agents", async () => {
     const model = personas[0].model;
     const notice = "main and subagent notice";
-    const { session } = createSession(vi.fn(), {
+    const { session } = await createSession(vi.fn(), {
       modelSystemNotices: { [`${model.provider}/${model.id}`]: notice },
     });
     const thread = await session.getOrCreateThread("source");

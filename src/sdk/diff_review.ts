@@ -91,6 +91,7 @@ export async function startTauSdkDiffReview(
   options.signal?.throwIfAborted();
 
   const ephemeral = await options.session.createEphemeralContext({
+    workingDirectory: snapshot.cwd,
     instructions: buildDiffReviewInstructions(snapshot),
     tools: ["bash", "view_image"],
   });

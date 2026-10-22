@@ -205,6 +205,8 @@ Each subscription returns an unsubscribe function.
 
 `submit`, `queue`, and `record` accept `{ historyEntryId?: string }`; without it, Tau generates the ID. Use `getTauSdkSessionTurnRecord(snapshot, id)` to tell whether an accepted turn is unknown, running, or finished, or `getTauSdkSessionTurnOutcome(snapshot, id)` when you only need the final outcome.
 
+`createEphemeralContext` accepts an optional `workingDirectory` for project instructions, skills, and tool defaults. Relative paths resolve against the session directory; omitting it uses the session directory. This does not change the main session.
+
 `createEphemeralContext` and `submitEphemeralThread` accept an optional `reasoning` effort. Without it, a new context uses the session's current effort. On submission, the given effort becomes the thread's effort before the turn runs. A fork copies the source thread's effort, then applies any given effort.
 
 ### Execute a command

@@ -45,14 +45,20 @@ export function getDefaultHistoryDatabasePath(homeDir?: string): string {
 export class LocalHistoryStore {
   private readonly database: DatabaseSync;
 
-  constructor(path: string) {
+  constructor(path: string, options: { busyTimeoutMs?: number } = {}) {
     if (path !== ":memory:") {
       mkdirSync(dirname(path), { recursive: true, mode: PRIVATE_DIRECTORY_MODE });
       chmodSync(dirname(path), PRIVATE_DIRECTORY_MODE);
     }
     this.database = new DatabaseSync(path);
-    if (path !== ":memory:") chmodSync(path, PRIVATE_FILE_MODE);
-    this.initialize();
+    try {
+      this.database.exec(`PRAGMA busy_timeout = ${options.busyTimeoutMs ?? 5000}`);
+      if (path !== ":memory:") chmodSync(path, PRIVATE_FILE_MODE);
+      this.initialize();
+    } catch (error) {
+      this.database.close();
+      throw error;
+    }
   }
 
   close(): void {
@@ -401,7 +407,6 @@ export class LocalHistoryStore {
   private initialize(): void {
     this.database.exec(`
       PRAGMA journal_mode = WAL;
-      PRAGMA busy_timeout = 5000;
       PRAGMA foreign_keys = ON;
       CREATE TABLE IF NOT EXISTS history_sessions (
         session_id TEXT PRIMARY KEY,

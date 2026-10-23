@@ -140,18 +140,27 @@ export type TauSdkTransportClientOptions = {
   clientTools?: TauSdkClientTool[];
 };
 
-export type TauSdkHostDiagnostic = {
-  event: "history_replication_failed";
-  endpoint: string;
-  sessionId?: string;
-  operationId?: string;
-  quarantined?: true;
-  error: {
-    status?: number;
-    code?: string;
-    message: string;
-  };
-};
+export type TauSdkHostDiagnostic =
+  | {
+      event: "history_replication_failed";
+      endpoint: string;
+      sessionId?: string;
+      operationId?: string;
+      quarantined?: true;
+      error: {
+        status?: number;
+        code?: string;
+        message: string;
+      };
+    }
+  | {
+      event: "history_recording";
+      status: "delayed" | "dropped" | "recovered";
+      sessionId: string;
+      pendingOperations: number;
+      pendingBytes: number;
+      message: string;
+    };
 
 export type TauSdkClientOptions = TauSdkTransportClientOptions & {
   cwd?: string;

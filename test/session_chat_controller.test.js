@@ -1062,11 +1062,31 @@ describe("SessionChatController", () => {
           message: "failure",
         },
       };
-      controller.showHistoryReplicationFailure(diagnostic);
+      controller.showHistoryDiagnostic(diagnostic);
       expect(view.footerNotices.at(-1).tone).toBe(quarantined ? "error" : "default");
       const notice = view.transcriptNotices.at(-1);
       expect(notice.tone).toBe(quarantined ? "error" : "default");
       expect(JSON.parse(notice.content[0])).toEqual(diagnostic);
+    },
+  );
+
+  it.each(["delayed", "dropped", "recovered"])(
+    "shows local recording health without treating it as remote quarantine (%s)",
+    async (status) => {
+      const { view, controller } = await createControllerHarness({ targetLabel: "in-process" });
+      const diagnostic = {
+        event: "history_recording",
+        status,
+        sessionId: "session",
+        pendingOperations: 2,
+        pendingBytes: 100,
+        message: "recording status",
+      };
+      controller.showHistoryDiagnostic(diagnostic);
+      const notice = view.transcriptNotices.at(-1);
+      expect(notice.tone).toBe(status === "dropped" ? "error" : "default");
+      expect(JSON.parse(notice.content[0])).toEqual(diagnostic);
+      expect(notice.content).toHaveLength(1);
     },
   );
 

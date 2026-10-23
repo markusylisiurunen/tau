@@ -386,6 +386,7 @@ export class LocalSessionHost implements TauSessionHost {
       (session) => {
         this.sessions.delete(session);
         this.sessionReferences.delete(session);
+        this.history.forgetSession(session.sessionId);
       },
     );
     const historyFailure = this.history.registerSession(
@@ -2043,9 +2044,9 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       version: 1,
       severity: "warn",
       subject: { type: "session" },
-      presentation: projectSessionProtocolNoticePresentation("session history is unavailable", [
+      presentation: projectSessionProtocolNoticePresentation("some history was not recorded", [
         reason,
-        "this session will continue without durable history recording or recall",
+        "agent work continues; later history changes can still be recorded",
       ]),
       data: {},
     });

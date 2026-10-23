@@ -20,7 +20,7 @@ import {
   type DiffReviewToolLauncher,
 } from "../core/diff_review/index.js";
 import { buildDiffReviewInstructions } from "../core/diff_review/review_instructions.js";
-import type { HistoryReplicationFailureDiagnostic } from "../core/history/history_manager.js";
+import type { HistoryDiagnostic } from "../core/history/history_manager.js";
 import { type CoreDeps, createDefaultCoreDeps } from "../core/runtime/deps.js";
 import { runDirectBashCommand } from "../core/session/direct_bash.js";
 import type { SubagentEvent } from "../core/subagents/types.js";
@@ -303,7 +303,19 @@ export class SessionChatController {
     }
   }
 
-  showHistoryReplicationFailure(diagnostic: HistoryReplicationFailureDiagnostic): void {
+  showHistoryDiagnostic(diagnostic: HistoryDiagnostic): void {
+    if (diagnostic.event === "history_recording") {
+      const title =
+        diagnostic.status === "recovered"
+          ? "history recording resumed"
+          : diagnostic.status === "dropped"
+            ? "some history was not recorded"
+            : "history recording delayed";
+      const tone = diagnostic.status === "dropped" ? "error" : "default";
+      this.view.showFooterNotice(title, tone);
+      this.view.addTranscriptNotice(title, tone, [JSON.stringify(diagnostic, null, 2)]);
+      return;
+    }
     const title = diagnostic.quarantined
       ? "history replication blocked"
       : "history replication delayed";

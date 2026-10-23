@@ -23,7 +23,13 @@ For each session, history stores the creation attributes and the active transcri
 
 `<system>...</system>` blocks at the start of user messages stay in history. Tool arguments and results can contain file contents, command output, and other sensitive data, so treat the database as private. Tau creates its directory and file with private permissions, but the host user and the machine's administrators can still read them. Never copy the database into a repository or share it.
 
-Recording history is best effort. If the database cannot open, or a later write fails, the session keeps running. Tau adds one `history unavailable` warning to the session, which stays in the session, and turns history off until the host restarts. A restart tries to open the database again.
+Recording history is best effort and never waits for database locks on the agent's event loop. The host buffers changes in memory and writes them in order from a background worker. Temporary SQLite contention delays recording; the worker retries automatically, including when opening the database. Normal appends and rewinds retain their order while waiting.
+
+The buffer holds up to 64 MiB of serialized changes per host. When it fills, new changes are dropped until space is available. Other local write errors drop the affected change rather than disabling history. Later changes in the same session are still recorded. Session files and agent work are unaffected by history failures.
+
+Pending changes have not reached durable storage. A crash can lose them; normal shutdown gives recording and replication up to two seconds to flush. Events already committed to SQLite remain on disk, including any pending remote replication. Tau does not automatically reconstruct missing history from session files.
+
+Hosts emit `history_recording` diagnostics with a `delayed`, `dropped`, or `recovered` status, a session ID, and pending operation and byte counts. The TUI displays them, headless hosts write them to stderr, and in-process SDK hosts deliver them through `onDiagnostic`. Repeated drop diagnostics are rate-limited. A recording gap does not stop later recording or require a host restart.
 
 ## How session operations affect history
 
@@ -202,13 +208,13 @@ Cloudflare problems show up in the normal Worker logs, Cron Events, and D1 diagn
 
 **The agent has no history capability.** The active persona must select `history`. Fix the persona and run `/reload` while idle.
 
-**The history capability returns a service error while the session works.** Remote searches and replication can fail without affecting the session. Check that the endpoint is reachable and read the Worker logs, without printing the key. Local recording continues unless the session also shows a `history unavailable` warning.
+**The history capability returns a service error while the session works.** Remote searches and replication can fail without affecting the session or local recording. Check that the endpoint is reachable and read the Worker logs, without printing the key. Check `history_recording` diagnostics separately for local write failures.
 
 **The browser keeps asking for credentials.** Use username `tau` and the viewer password from the latest setup. The API key is for hosts and does not work in the browser.
 
 **A session does not appear in remote search.** Confirm the host was restarted with the remote config, the session was used while the config was active, and enough history activity has happened to send the outbox. Check host logs for `history_replication_failed`. A permanent rejection affects only the named session, while other failures are retried. Summaries are not immediate.
 
-**Local history became unavailable.** On the host, check that you are running as the expected user and home, and check file access, free space, and ownership of `~/.config/tau`, the Node version, and whether another process is using the database. A restart is needed to reopen history after a local failure. Do not open, edit, replace, or delete the SQLite files as a first repair, and do not inspect outbox rows or keys.
+**Local history is delayed or dropping changes.** Brief SQLite contention is retried automatically. For sustained failures, check the host's `history_recording` diagnostics, file access, free space, ownership of `~/.config/tau`, and whether another process holds a long database transaction. Fixing the underlying problem lets later writes proceed without restarting the host; dropped changes remain gaps. `tau history status` reports remote replication quarantines, not the live recording buffer. Do not edit, replace, or delete the SQLite files as a first repair, and do not inspect outbox rows or keys.
 
 **Search finds material removed from the model's context.** This is expected after compaction. After a rewind, the removed entries should disappear; if the remote copy still has them, wait for the deletion to replicate.
 

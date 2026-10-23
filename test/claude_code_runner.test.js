@@ -2,7 +2,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout } from "node:timers/promises";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { AgentSupervisor } from "../dist/core/subagents/agent_supervisor.js";
 import { ClaudeCodeRuntime } from "../dist/core/subagents/claude_code_runtime.js";
 import { spawnWithCapture } from "../dist/core/utils/spawn_capture.js";
 
@@ -34,7 +35,9 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
     fs.writeFileSync(${JSON.stringify(marker)}, JSON.stringify({ message, initialization, cwd: process.cwd(), args: process.argv.slice(2) }));
     const session_id = "ce4518fa-4b3f-44ef-a1a3-2f7edc024b8d";
     send({ type: "system", subtype: "init", session_id });
-    if (${hang}) { setInterval(() => {}, 1000); return; }
+    if (${JSON.stringify(hang)} === true) { setInterval(() => {}, 1000); return; }
+    const stream = (event) => send({ type: "stream_event", parent_tool_use_id: null, session_id, event });
+    stream({ type: "message_start", message: { id: "message-1", usage: { input_tokens: 5, output_tokens: 0, cache_read_input_tokens: 7, cache_creation_input_tokens: 2 } } });
     const assistant = (content, parent_tool_use_id = null) => send({ type: "assistant", parent_tool_use_id, session_id,
       message: { id: "message-1", model: "claude-sonnet-5-5", role: "assistant", content, stop_reason: null,
         usage: { input_tokens: 5, output_tokens: 0, cache_read_input_tokens: 7, cache_creation_input_tokens: 2 } } });
@@ -53,6 +56,9 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
       { type: "tool_result", tool_use_id: "tool-2", content: "bad input", is_error: true },
       { type: "tool_result", tool_use_id: "unknown", content: "unknown result" }
     ] } });
+    stream({ type: "message_delta", delta: { stop_reason: "tool_use", stop_sequence: null }, usage: { output_tokens: 3, input_tokens: null } });
+    stream({ type: "message_stop" });
+    if (${JSON.stringify(hang)} === "after-usage") { setInterval(() => {}, 1000); return; }
     const outcome = ${JSON.stringify(outcome)};
     send({ type: "result", subtype: outcome === "api_error" ? "success" : outcome,
       is_error: outcome !== "success", session_id, result: "finished", errors: ["stopped"],
@@ -68,9 +74,9 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
   return marker;
 }
 
-function createRuntime(directory, events) {
+function createRuntimeOptions(directory, events) {
   const model = { id: "claude-sonnet-5-5", provider: "claude-code" };
-  return new ClaudeCodeRuntime({
+  return {
     config: {
       model,
       kind: "claude-code",
@@ -99,14 +105,14 @@ function createRuntime(directory, events) {
         return { ...result, truncated: result.captureLimitExceeded };
       },
     },
-  });
+  };
 }
 
 describe("bundled Claude Agent SDK runner", () => {
   it("initializes the real SDK and sends the prompt only after subscription authentication", async () => {
     const directory = mkdtempSync(join(tmpdir(), "tau-claude-runner-"));
     const events = [];
-    const runtime = createRuntime(directory, events);
+    const runtime = new ClaudeCodeRuntime(createRuntimeOptions(directory, events));
     try {
       const marker = fakeClaude(directory, true);
       const result = await runtime.submit("perform the task");
@@ -167,7 +173,7 @@ describe("bundled Claude Agent SDK runner", () => {
     async (outcome) => {
       const directory = mkdtempSync(join(tmpdir(), "tau-claude-failure-"));
       const events = [];
-      const runtime = createRuntime(directory, events);
+      const runtime = new ClaudeCodeRuntime(createRuntimeOptions(directory, events));
       try {
         fakeClaude(directory, true, false, outcome);
         const result = await runtime.submit("task");
@@ -188,7 +194,7 @@ describe("bundled Claude Agent SDK runner", () => {
   it("interrupts the SDK process group while a task is running", async () => {
     const directory = mkdtempSync(join(tmpdir(), "tau-claude-interrupt-"));
     const events = [];
-    const runtime = createRuntime(directory, events);
+    const runtime = new ClaudeCodeRuntime(createRuntimeOptions(directory, events));
     let pending;
     try {
       fakeClaude(directory, true, true);
@@ -211,10 +217,60 @@ describe("bundled Claude Agent SDK runner", () => {
     }
   }, 20_000);
 
+  it("preserves usage in the supervisor and log when interrupted before a result", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "tau-claude-usage-"));
+    const recordUsage = vi.fn();
+    const events = [];
+    const supervisor = new AgentSupervisor({ recordUsage, onEvent: (event) => events.push(event) });
+    const options = createRuntimeOptions(directory, []);
+    let id;
+    try {
+      fakeClaude(directory, true, "after-usage");
+      const spawned = supervisor.spawn({
+        runtimeConfig: options.config,
+        backend: options.backend,
+        config: {},
+        title: "usage test",
+        prompt: "complete a model call then wait",
+        originHistoryEntryId: "origin",
+      });
+      expect(spawned.ok).toBe(true);
+      id = spawned.state.id;
+      for (
+        let attempt = 0;
+        attempt < 500 && supervisor.getSnapshot(id).usage.output !== 3;
+        attempt++
+      ) {
+        await setTimeout(10);
+      }
+      expect(supervisor.getSnapshot(id).usage.output).toBe(3);
+      const stopped = await supervisor.interrupt(id);
+      expect(stopped.run.status).toBe("interrupted");
+      expect(stopped.usage).toEqual({
+        input: 5,
+        output: 3,
+        cacheRead: 7,
+        cacheWrite: 2,
+        contextWindowUsageTokens: 17,
+        contextWindow: 0,
+      });
+      expect(recordUsage.mock.calls.map(([entry]) => entry.usage)).toEqual([
+        { input: 5, output: 0, cacheRead: 7, cacheWrite: 2, total: 14 },
+        { input: 0, output: 3, cacheRead: 0, cacheWrite: 0, total: 3 },
+      ]);
+      expect(stopped.costTotal).toBe(0);
+      expect(readFileSync(join(directory, "terminated"), "utf8")).toBe("yes");
+    } finally {
+      if (id) await supervisor.interrupt(id);
+      supervisor.reset();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }, 20_000);
+
   it("rejects API authentication before giving the CLI a task", async () => {
     const directory = mkdtempSync(join(tmpdir(), "tau-claude-auth-"));
     const events = [];
-    const runtime = createRuntime(directory, events);
+    const runtime = new ClaudeCodeRuntime(createRuntimeOptions(directory, events));
     try {
       const marker = fakeClaude(directory, false);
       await expect(runtime.submit("must not run")).rejects.toThrow(/subscription/);

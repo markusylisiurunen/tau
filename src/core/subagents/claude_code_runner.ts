@@ -1,6 +1,11 @@
 import { accessSync, constants } from "node:fs";
 import { delimiter, join } from "node:path";
-import { type Options, query, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import {
+  type Options,
+  query,
+  type SDKAssistantMessage,
+  type SDKUserMessage,
+} from "@anthropic-ai/claude-agent-sdk";
 import {
   type ClaudeCodeEvent,
   type ClaudeCodeInput,
@@ -39,6 +44,7 @@ export function claudeCodeOptions(input: ClaudeCodeInput, executable: string): O
     model: input.model,
     effort: input.effort,
     maxTurns: 1024,
+    includePartialMessages: true,
     pathToClaudeCodeExecutable: executable,
     env,
     tools,
@@ -116,6 +122,19 @@ export async function runClaudeCode(
     options: claudeCodeOptions(input, findClaudeExecutable()),
   });
   const calls = new Map<string, { name: string; subject: string }>();
+  let streamedMessage: Pick<SDKAssistantMessage["message"], "id" | "usage"> | undefined;
+  const emitUsage = (message: Pick<SDKAssistantMessage["message"], "id" | "usage">) => {
+    emit({
+      type: "usage",
+      messageId: message.id,
+      usage: {
+        input: message.usage.input_tokens,
+        output: message.usage.output_tokens,
+        cacheRead: message.usage.cache_read_input_tokens ?? 0,
+        cacheWrite: message.usage.cache_creation_input_tokens ?? 0,
+      },
+    });
+  };
   try {
     const initialization = await conversation.initializationResult();
     const account = initialization.account;
@@ -129,7 +148,27 @@ export async function runClaudeCode(
     for await (const message of conversation) {
       if (message.type === "system" && message.subtype === "init") {
         emit({ type: "session", id: message.session_id });
+      } else if (message.type === "stream_event" && message.parent_tool_use_id === null) {
+        const event = message.event;
+        if (event.type === "message_start") {
+          streamedMessage = { id: event.message.id, usage: event.message.usage };
+        } else if (event.type === "message_delta" && streamedMessage) {
+          const usage = streamedMessage.usage;
+          streamedMessage.usage = {
+            ...usage,
+            input_tokens: event.usage.input_tokens ?? usage.input_tokens,
+            output_tokens: event.usage.output_tokens ?? usage.output_tokens,
+            cache_read_input_tokens:
+              event.usage.cache_read_input_tokens ?? usage.cache_read_input_tokens,
+            cache_creation_input_tokens:
+              event.usage.cache_creation_input_tokens ?? usage.cache_creation_input_tokens,
+          };
+          emitUsage(streamedMessage);
+        } else if (event.type === "message_stop") {
+          streamedMessage = undefined;
+        }
       } else if (message.type === "assistant" && message.parent_tool_use_id === null) {
+        emitUsage(message.message);
         for (const block of message.message.content) {
           if (block.type === "text" && block.text) {
             emit({ type: "assistant", text: block.text.slice(0, 8192) });

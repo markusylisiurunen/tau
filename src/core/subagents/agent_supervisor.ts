@@ -19,7 +19,7 @@ import {
   type UsageRecorder,
 } from "../usage/logs.js";
 import { extractAssistantText } from "../utils/messages.js";
-import type { ClaudeCodeEvent } from "./claude_code_protocol.js";
+import type { ClaudeCodeEvent, ClaudeCodeTokenUsage } from "./claude_code_protocol.js";
 import { ClaudeCodeRuntime } from "./claude_code_runtime.js";
 import { formatActiveSubagentsForCompaction } from "./format.js";
 import type {
@@ -58,6 +58,7 @@ type SubagentRecord = {
   run: SubagentRunSnapshot;
   costTotal: number;
   usage: SubagentUsageSnapshot;
+  claudeMessageUsage: Map<string, ClaudeCodeTokenUsage | null>;
   toolPresentations: Map<string, ToolRunPresentation>;
   blockedToolCalls: Map<string, string>;
   completion: Promise<SubagentRecord>;
@@ -226,6 +227,7 @@ export class AgentSupervisor {
         contextWindowUsageTokens: 0,
         contextWindow: runtimeConfig.kind === "native" ? runtimeConfig.model.contextWindow : 0,
       },
+      claudeMessageUsage: new Map(),
       toolPresentations: new Map(),
       blockedToolCalls: new Map(),
       completion: Promise.resolve(undefined as never),
@@ -421,20 +423,47 @@ export class AgentSupervisor {
   private async recordClaudeCodeEvent(id: string, event: ClaudeCodeEvent): Promise<void> {
     const record = this.records.get(id);
     if (!record) return;
-    if (event.type === "result") {
+    if (event.type === "usage" || event.type === "result") {
+      let reported = event.usage;
+      if (event.type === "usage") {
+        const previous = record.claudeMessageUsage.get(event.messageId);
+        // Final result totals already cover these messages, including resumed replays.
+        if (previous === null) return;
+        const current = {
+          input: Math.max(previous?.input ?? 0, event.usage.input),
+          output: Math.max(previous?.output ?? 0, event.usage.output),
+          cacheRead: Math.max(previous?.cacheRead ?? 0, event.usage.cacheRead),
+          cacheWrite: Math.max(previous?.cacheWrite ?? 0, event.usage.cacheWrite),
+        };
+        record.claudeMessageUsage.set(event.messageId, current);
+        reported = {
+          input: record.usage.input + current.input - (previous?.input ?? 0),
+          output: record.usage.output + current.output - (previous?.output ?? 0),
+          cacheRead: record.usage.cacheRead + current.cacheRead - (previous?.cacheRead ?? 0),
+          cacheWrite: record.usage.cacheWrite + current.cacheWrite - (previous?.cacheWrite ?? 0),
+        };
+        if (getUsageTotals(current).total === getUsageTotals(previous).total) return;
+        record.usage.contextWindowUsageTokens = getUsageTotals(current).total;
+      } else {
+        for (const messageId of record.claudeMessageUsage.keys()) {
+          record.claudeMessageUsage.set(messageId, null);
+        }
+        record.usage.contextWindowUsageTokens = event.usage.contextWindowUsageTokens;
+        record.usage.contextWindow = event.usage.contextWindow;
+      }
       // SDK totals include the history restored on resume. Record only the delta,
       // and replace (rather than sum) the current context-window measurement.
       const usage = getUsageTotals({
-        input: Math.max(0, event.usage.input - record.usage.input),
-        output: Math.max(0, event.usage.output - record.usage.output),
-        cacheRead: Math.max(0, event.usage.cacheRead - record.usage.cacheRead),
-        cacheWrite: Math.max(0, event.usage.cacheWrite - record.usage.cacheWrite),
+        input: Math.max(0, reported.input - record.usage.input),
+        output: Math.max(0, reported.output - record.usage.output),
+        cacheRead: Math.max(0, reported.cacheRead - record.usage.cacheRead),
+        cacheWrite: Math.max(0, reported.cacheWrite - record.usage.cacheWrite),
       });
-      const cost = Math.max(0, event.cost - record.costTotal);
+      const cost = event.type === "result" ? Math.max(0, event.cost - record.costTotal) : 0;
       // Startup failures can report zero totals even for a resumed session.
       record.costTotal += cost;
       record.usage = {
-        ...event.usage,
+        ...record.usage,
         input: record.usage.input + usage.input,
         output: record.usage.output + usage.output,
         cacheRead: record.usage.cacheRead + usage.cacheRead,

@@ -179,6 +179,54 @@ describe("Claude Code supervised lifecycle", () => {
     f.supervisor.reset();
   });
 
+  it("deduplicates message usage across blocks, interruption, and resumed results", async () => {
+    const usage = (messageId, input, output) => ({
+      type: "usage",
+      messageId,
+      usage: { input, output, cacheRead: 0, cacheWrite: 0 },
+    });
+    const f = fixture(async (_input, options, count) => {
+      emit(options, { type: "session", id: sessionId });
+      emit(options, usage("first", 5, 2));
+      emit(options, usage("first", 5, 3));
+      emit(options, usage("first", 5, 2));
+      if (count === 1) return { ...ok, aborted: true };
+      if (count === 2) {
+        emit(options, usage("second", 5, 3));
+        emit(options, result("done", 10));
+      } else {
+        // A replay after reconciliation may contain more output than earlier streamed blocks.
+        emit(options, usage("second", 5, 5));
+        emit(options, usage("third", 5, 5));
+        emit(options, result("done", 15));
+      }
+      return ok;
+    });
+    const id = f.spawn().state.id;
+    const [interrupted] = await f.supervisor.waitForAgents([id]);
+    expect(interrupted.run.status).toBe("interrupted");
+    expect(interrupted.usage).toMatchObject({ input: 5, output: 3, contextWindowUsageTokens: 8 });
+    f.supervisor.sendInput({ id, prompt: "continue" });
+    await f.supervisor.waitForAgents([id]);
+    f.supervisor.sendInput({ id, prompt: "continue again" });
+    const [finished] = await f.supervisor.waitForAgents([id]);
+    expect(finished.usage).toMatchObject({ input: 15, output: 15 });
+    expect(
+      f.recordUsage.mock.calls.map(([entry]) => [entry.usage.input, entry.usage.output]),
+    ).toEqual([
+      [5, 2],
+      [0, 1],
+      [5, 3],
+      [0, 4],
+      [5, 5],
+      [0, 0],
+    ]);
+    expect(f.recordUsage.mock.calls.reduce((total, [entry]) => total + entry.cost.total, 0)).toBe(
+      0.15,
+    );
+    f.supervisor.reset();
+  });
+
   it("keeps cumulative accounting across a zero-usage startup failure", async () => {
     const f = fixture(async (_input, options, count) => {
       emit(options, { type: "session", id: sessionId });

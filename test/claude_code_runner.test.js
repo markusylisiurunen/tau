@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout } from "node:timers/promises";
@@ -131,7 +131,7 @@ describe("bundled Claude Agent SDK runner", () => {
       expect(sent.args.some((arg) => arg.startsWith("--mcp-config"))).toBe(false);
       expect(sent.args).toContain("--tools=Read,Glob,Grep,Bash,Skill");
       expect(sent.initialization).not.toHaveProperty("skills");
-      expect(sent.cwd).toBe(directory);
+      expect(sent.cwd).toBe(realpathSync(directory));
       expect(events).toContainEqual(expect.objectContaining({ type: "session" }));
       expect(events).toContainEqual({
         type: "tool",

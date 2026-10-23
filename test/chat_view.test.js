@@ -93,7 +93,7 @@ describe("TuiChatView transcript detachment", () => {
         expect(view.chatContainer.allMessages).toEqual([]);
         expect(view.chatContainer.idToIndex.size).toBe(0);
         expect(view.chatContainer.chatContainer.children).toEqual([]);
-        expect(view.chatContainer.cachedRenderLines).toBeUndefined();
+        expect(view.chatContainer.cachedRenderLines).toEqual([]);
         expect(view.ui.captureRenderState().previousLines).toEqual([]);
         expect(view.getEditorText()).toBe(editorText);
         expect(resetSubagents).not.toHaveBeenCalled();

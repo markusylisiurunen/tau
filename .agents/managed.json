@@ -36,6 +36,11 @@
       "hash": "94cd97598fc2cab573b2bcd0b7cc48d24420a08ad69708fe714840def97e6fbb",
       "mode": 420
     },
+    ".agents/skills/delegate-prose/SKILL.md": {
+      "type": "file",
+      "hash": "18623fccd0d2d7052d8ddb3b0b4ec3b76831ddbbc48c5282fc65afee643b39b1",
+      "mode": 420
+    },
     ".agents/skills/design-afresh/SKILL.md": {
       "type": "file",
       "hash": "cbabd89be614848269c159265a51e4ef9a26e91d3fc414e884fc7e5008857e6c",
@@ -126,6 +131,21 @@
       "hash": "88cf18d2aeff36b11002980f4d54ba4bfca4eca830adf081cd8257e412523d38",
       "mode": 420
     },
+    ".claude/commands/workflows/delegate-rewrite-branch.md": {
+      "type": "file",
+      "hash": "decec9465c5b1a72fe1b914e34aa3d241b9ff5e4e06cb24aed311fc7bb11b314",
+      "mode": 420
+    },
+    ".claude/commands/workflows/delegate-rewrite-changes.md": {
+      "type": "file",
+      "hash": "1cf48820672188473f69ceddedae953da978c622e0c316a4d0d415510c5f0eb1",
+      "mode": 420
+    },
+    ".claude/commands/workflows/delegate-rewrite.md": {
+      "type": "file",
+      "hash": "74d4d067267ca1554974a83f9312a406a1dbc8a9ad96edbb8389069e39246689",
+      "mode": 420
+    },
     ".claude/commands/workflows/deslop-branch.md": {
       "type": "file",
       "hash": "add95d53616047b0e147020469f415c663873ab5ef858e2931624298af8ecaa9",
@@ -185,6 +205,10 @@
       "type": "symlink",
       "hash": "304e0c47e9d476de123063eafc63397605c8deb06d4bd6dcca631234b0abcbe4"
     },
+    ".claude/skills/delegate-prose": {
+      "type": "symlink",
+      "hash": "1f271b3df96fd450585e2ab9b4397e10ac8318ad0e6258b5db59403eac0977fb"
+    },
     ".claude/skills/design-afresh": {
       "type": "symlink",
       "hash": "4aba4c0ed4654524ab1eea569a3ee9ae9c8370548105f4efcb1006251114eb73"
@@ -216,7 +240,7 @@
     },
     ".cowork/prompts/issue-implement.append.md": {
       "type": "file",
-      "hash": "24b8dbb9444c1eb6af2a12a5e7a1c40bd5ccf4af14af13eae6e93e38a7ab536e",
+      "hash": "5beaae6a2389a8d6d161b1873d759c1fa8c056604441ea18f8bf6b9012c8dc68",
       "mode": 420
     },
     ".cowork/prompts/issue-plan.append.md": {
@@ -226,12 +250,17 @@
     },
     ".cowork/prompts/pull-request-deslop.append.md": {
       "type": "file",
-      "hash": "0bc4de6d58554494d15088a87a0750e7689cf5b5d2cc1d5cd656c792a2738902",
+      "hash": "c2fe7b4573a2766d1c38e798f00896da16a7354d6b653846ad9d1dabc85a49ae",
       "mode": 420
     },
     ".cowork/prompts/pull-request-explain.append.md": {
       "type": "file",
       "hash": "6cb91d09b09b8f425e9c93c19a9fe3196bbeb49b668b3e87701e7fffa8c2d30e",
+      "mode": 420
+    },
+    ".cowork/prompts/pull-request-fix.append.md": {
+      "type": "file",
+      "hash": "17b926a7f78f909b7339c6a4c337d8a3fed75d6bec64989193fb606f18bcc1a3",
       "mode": 420
     },
     ".cowork/prompts/pull-request-review.append.md": {
@@ -267,6 +296,21 @@
     ".tau/prompts/decision-review-changes.md": {
       "type": "file",
       "hash": "3a692eaa3ec7ec912ee10fb7e40df564d2f42f1762f363598fae35f3ff2d0448",
+      "mode": 420
+    },
+    ".tau/prompts/delegate-rewrite-branch.md": {
+      "type": "file",
+      "hash": "c7e7d0822123dbbb269aed8a76a5b9de2bccc3a4c49afab4debaef4482539f25",
+      "mode": 420
+    },
+    ".tau/prompts/delegate-rewrite-changes.md": {
+      "type": "file",
+      "hash": "15c26908f8637bd73ef41d8e6eb26b88105b212257a39b75e4b743cb14449aa5",
+      "mode": 420
+    },
+    ".tau/prompts/delegate-rewrite.md": {
+      "type": "file",
+      "hash": "2a2a995bffd46699e2eda43747a732ab68a0de9e79b3a0e90110590b58e086cd",
       "mode": 420
     },
     ".tau/prompts/deslop-branch.md": {

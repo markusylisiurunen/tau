@@ -12,4 +12,6 @@ Form your own assessment while the peer works, but do not change the worktree un
 
 If the peer cannot run, continue on your own and mention this in the final summary. Do not switch to the direct Anthropic API.
 
+After completing and verifying the functional changes, use skill `delegate-prose` for substantive prose changes in repository files, such as documentation and instructions. This workflow authorizes that delegation. Launch a new writing peer; do not reuse the assessment peer. Write the final summary and other communication with the user yourself. If the writing peer cannot run or finish, make the prose changes yourself with skill `clear-writing` and mention in the final summary that they did not get the Opus pass.
+
 Use the Claude Code peer with launch model `claude-code/claude-opus-5-5:medium`.

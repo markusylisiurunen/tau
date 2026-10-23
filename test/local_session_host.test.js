@@ -5468,6 +5468,55 @@ describe("LocalSessionHost", () => {
     await host.shutdown();
   });
 
+  it("keeps recording history when a session reopens during eviction disposal", async () => {
+    const history = new HistoryManager(new LocalHistoryStore(":memory:"));
+    const disposalStarted = deferred();
+    const finishDisposal = deferred();
+    const executionEnvironment = createTestExecutionEnvironment();
+    executionEnvironment.dispose = async () => {
+      disposalStarted.resolve();
+      await finishDisposal.promise;
+    };
+    const host = createHost(new MemorySessionStore(), {
+      history,
+      executionEnvironmentResolver: {
+        resolve: async () => executionEnvironment,
+        canRestore: (snapshot) => snapshot.kind === "local",
+        restore: async (snapshot) => createTestExecutionEnvironment(snapshot),
+      },
+    });
+    try {
+      const session = await host.createSession(localCreateInput);
+      const first = await session.record({ text: "before eviction" });
+      host.releaseSession(session);
+      await disposalStarted.promise;
+
+      const reopened = await host.observeSession(session.sessionId);
+      expect(reopened).toBeDefined();
+      expect(reopened).not.toBe(session);
+      finishDisposal.resolve();
+      await session.dispose();
+
+      const removed = await reopened.record({ text: "after disposal" });
+      const readIds = async () =>
+        (await history.query().read({ sessionId: session.sessionId, limit: 10 })).entries.map(
+          (entry) => entry.id,
+        );
+      expect(await readIds()).toEqual([first.userHistoryEntryId, removed.userHistoryEntryId]);
+      await reopened.rewindToHistoryEntryId(removed.userHistoryEntryId);
+      const last = await reopened.record({ text: "after rewind" });
+      expect(await readIds()).toEqual([first.userHistoryEntryId, last.userHistoryEntryId]);
+
+      await reopened.dispose();
+      expect(
+        history.truncateFromSources(session.sessionId, [last.userHistoryEntryId]),
+      ).toBeDefined();
+    } finally {
+      finishDisposal.resolve();
+      await host.shutdown();
+    }
+  });
+
   it("persists Bash job failure diagnostics in the TUI facet and ordered deltas", async () => {
     const store = new MemorySessionStore();
     const host = createHost(store);

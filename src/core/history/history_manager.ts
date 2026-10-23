@@ -66,7 +66,10 @@ export class HistoryManager {
   private readonly replicationRuns = new Map<string, Promise<void>>();
   private readonly replicationRetries = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly targets = new Map<string, HistoryRemoteTarget>();
-  private readonly sessions = new Map<string, HistorySessionRecord>();
+  private readonly sessions = new Map<
+    string,
+    { session: HistorySessionRecord; references: number }
+  >();
   private readonly pending: PendingRecording[] = [];
   private pendingBytes = 0;
   private recording: Promise<void> | undefined;
@@ -90,7 +93,8 @@ export class HistoryManager {
   }
 
   registerSession(session: HistorySessionRecord, remote?: HistoryRemoteTarget): string | undefined {
-    this.sessions.set(session.sessionId, structuredClone(session));
+    const references = (this.sessions.get(session.sessionId)?.references ?? 0) + 1;
+    this.sessions.set(session.sessionId, { session: structuredClone(session), references });
     return this.enqueue(session.sessionId, { type: "register" }, remote);
   }
 
@@ -113,7 +117,10 @@ export class HistoryManager {
   }
 
   forgetSession(sessionId: string): void {
-    this.sessions.delete(sessionId);
+    const registration = this.sessions.get(sessionId);
+    if (!registration) return;
+    registration.references -= 1;
+    if (registration.references === 0) this.sessions.delete(sessionId);
   }
 
   query(remote?: HistoryRemoteTarget): HistoryQuery {
@@ -172,7 +179,7 @@ export class HistoryManager {
     remote?: HistoryRemoteTarget,
   ): string | undefined {
     if (this.closed) return "history manager is closed";
-    const session = this.sessions.get(sessionId);
+    const session = this.sessions.get(sessionId)?.session;
     if (!session) return `history session '${sessionId}' was not registered`;
     const bytes = Buffer.byteLength(JSON.stringify({ session, change }));
     if (this.pendingBytes + bytes > (this.options.maxPendingBytes ?? MAX_PENDING_BYTES)) {

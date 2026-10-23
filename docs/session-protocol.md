@@ -228,6 +228,8 @@ An initialized client that advertised a tool can receive:
 }
 ```
 
+`executionDeadlineMs` is a positive duration in milliseconds, or `null` when the advertised tool has no execution deadline. Omitting `executionTimeoutMs` from the tool definition uses 60 seconds; setting it to `null` disables only the execution deadline. Acknowledgement deadlines and cancellation on interruption or client detach still apply.
+
 Acknowledge promptly with `session.clientTool.ack`, optionally with a partial presentation for the running tool card. Start work only after the acknowledgement returns `{ accepted: true }`. Then send exactly one `session.clientTool.result` with `{ ok: true, content }` or `{ ok: false, error }`, optionally with a separate presentation for the finished card. `content` is an ordered array of text and image blocks. Both presentations may contain `subject`, `subjectWrap`, `details`, and `metadata`. The host sets the action and operation and fills in omitted fields. Fields you set are kept unchanged once they pass validation, while defaults are truncated the way Tau truncates its own cards. An empty `details` or `metadata` array hides that default.
 
 A successful result is rejected until the acknowledgement has completed. If preparation fails, send an error result before acknowledging; the host records a preparation failure and the tool never runs. If no result arrives, because of a timeout, cancellation, detach, or other failure, the host shows a complete default card. The result method returns `{ accepted: boolean }`; `false` means the result does not fit the call's current state or the call no longer expects it.

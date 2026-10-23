@@ -80,7 +80,7 @@ export function createTuiClientTools(options: {
     {
       schema: {
         ...DIFF_REVIEW_TOOL,
-        executionTimeoutMs: 30 * 60 * 1000,
+        executionTimeoutMs: null,
       },
       describe: (args) => createDiffReviewPresentation(args),
       execute: async (args, context) => {

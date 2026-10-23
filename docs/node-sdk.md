@@ -52,7 +52,7 @@ type TauSdkClientOptions = {
 
 `persona`, `reasoning`, and `noAgentContextFiles` apply to sessions created by this host. `connectTimeoutMs` defaults to 5,000 ms. Default initialization metadata is `{ client: { name: "tau-sdk", version: "1" } }`.
 
-The in-process host never writes background diagnostics to stdout or stderr. Set `onDiagnostic` to receive them as structured objects, such as history replication failures that will be retried, and route them to your application's logging.
+The in-process host never writes background diagnostics to stdout or stderr. Set `onDiagnostic` to receive them as structured objects and route them to your application's logging. `history_recording` reports delayed, dropped, or recovered local recording, with a session ID and pending operation and byte counts. `history_replication_failed` reports remote delivery failures. Neither stops agent work; see [history](history.md) for retry behavior and durability limits.
 
 By default, creating an in-process client starts one background check of the model catalog against `pi.dev`. The host loads `~/.config/tau/models-store.json` first, never refreshes on a timer, and keeps each session on the catalog it started with until `session.reload()`. Set `refreshModelCatalog: false` to skip this client's check, or set `TAU_OFFLINE` to skip automatic checks for the whole process. Neither removes an existing cache or blocks an explicit `tau models refresh`. See [models](models.md) for details and [security](security.md) for why the catalog is trusted.
 

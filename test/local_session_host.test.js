@@ -481,77 +481,51 @@ describe("LocalSessionHost", () => {
     },
   );
 
-  it("starts with a persistent warning when local history initialization fails", async () => {
+  it("starts and accepts agent work while background history initialization fails", async () => {
     const root = mkdtempSync(join(tmpdir(), "tau-unavailable-history-"));
     const parentFile = join(root, "not-a-directory");
     writeFileSync(parentFile, "file");
-    const history = HistoryManager.open(join(parentFile, "history.sqlite"));
+    const reportRecording = vi.fn();
+    const history = HistoryManager.open(join(parentFile, "history.sqlite"), { reportRecording });
     const host = createHost(new MemorySessionStore(), { history });
-
     try {
       const session = await host.createSession(localCreateInput);
+      await expect(session.record({ text: "keep working" })).resolves.toBeTruthy();
+      await history.flush();
+      expect(reportRecording).toHaveBeenCalledWith(
+        expect.objectContaining({ event: "history_recording", status: "dropped" }),
+      );
       const snapshot = await session.snapshot();
-
-      expect(snapshot.timeline.items).toContainEqual(
-        expect.objectContaining({
-          id: "notice-history-unavailable",
-          type: "notice",
-          notice: expect.objectContaining({
-            kind: "tau.history.unavailable",
-            severity: "warn",
-            presentation: {
-              title: "session history is unavailable",
-              content: [
-                expect.any(String),
-                "this session will continue without durable history recording or recall",
-              ],
-            },
-            subject: { type: "session" },
-          }),
-        }),
-      );
-      await expect(history.query().search({ limit: 10 })).rejects.toThrow(
-        "session history is unavailable",
-      );
+      expect(snapshot.messages.some((item) => item.message.role === "user")).toBe(true);
     } finally {
       await host.shutdown();
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it("continues turns and warns once when local history projection fails", async () => {
+  it("continues recording later messages after a history projection failure", async () => {
     const historyStore = new LocalHistoryStore(":memory:");
-    vi.spyOn(historyStore, "append").mockImplementation(() => {
+    vi.spyOn(historyStore, "append").mockImplementationOnce(() => {
       throw new Error("history disk failed");
     });
-    const host = createHost(new MemorySessionStore(), {
-      history: new HistoryManager(historyStore),
-    });
-
-    const session = await host.createSession(localCreateInput);
-    await expect(session.record({ text: "first" })).resolves.toBeTruthy();
-    await expect(session.record({ text: "second" })).resolves.toBeTruthy();
-
-    const snapshot = await session.snapshot();
-    expect(
-      snapshot.timeline.items.filter((item) => item.id === "notice-history-unavailable"),
-    ).toHaveLength(1);
-    expect(snapshot.messages).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          message: expect.objectContaining({
-            content: [expect.objectContaining({ type: "text", text: "first" })],
-          }),
-        }),
-        expect.objectContaining({
-          message: expect.objectContaining({
-            content: [expect.objectContaining({ type: "text", text: "second" })],
-          }),
-        }),
-      ]),
-    );
-
-    await host.shutdown();
+    const reportRecording = vi.fn();
+    const history = new HistoryManager(historyStore, { reportRecording });
+    const host = createHost(new MemorySessionStore(), { history });
+    try {
+      const session = await host.createSession(localCreateInput);
+      await expect(session.record({ text: "first" })).resolves.toBeTruthy();
+      await expect(session.record({ text: "second" })).resolves.toBeTruthy();
+      await history.flush();
+      expect(reportRecording).toHaveBeenCalledWith(expect.objectContaining({ status: "dropped" }));
+      const transcript = await historyStore.read({ sessionId: session.sessionId, limit: 10 });
+      expect(transcript.entries.filter((e) => e.type === "user").map((e) => e.content)).toEqual([
+        [{ type: "text", text: "second" }],
+      ]);
+      const snapshot = await session.snapshot();
+      expect(snapshot.messages.filter((item) => item.message.role === "user")).toHaveLength(2);
+    } finally {
+      await host.shutdown();
+    }
   });
 
   it("preserves provider thinking levels through disk recovery and request reconstruction", async () => {
@@ -5494,6 +5468,55 @@ describe("LocalSessionHost", () => {
     await host.shutdown();
   });
 
+  it("keeps recording history when a session reopens during eviction disposal", async () => {
+    const history = new HistoryManager(new LocalHistoryStore(":memory:"));
+    const disposalStarted = deferred();
+    const finishDisposal = deferred();
+    const executionEnvironment = createTestExecutionEnvironment();
+    executionEnvironment.dispose = async () => {
+      disposalStarted.resolve();
+      await finishDisposal.promise;
+    };
+    const host = createHost(new MemorySessionStore(), {
+      history,
+      executionEnvironmentResolver: {
+        resolve: async () => executionEnvironment,
+        canRestore: (snapshot) => snapshot.kind === "local",
+        restore: async (snapshot) => createTestExecutionEnvironment(snapshot),
+      },
+    });
+    try {
+      const session = await host.createSession(localCreateInput);
+      const first = await session.record({ text: "before eviction" });
+      host.releaseSession(session);
+      await disposalStarted.promise;
+
+      const reopened = await host.observeSession(session.sessionId);
+      expect(reopened).toBeDefined();
+      expect(reopened).not.toBe(session);
+      finishDisposal.resolve();
+      await session.dispose();
+
+      const removed = await reopened.record({ text: "after disposal" });
+      const readIds = async () =>
+        (await history.query().read({ sessionId: session.sessionId, limit: 10 })).entries.map(
+          (entry) => entry.id,
+        );
+      expect(await readIds()).toEqual([first.userHistoryEntryId, removed.userHistoryEntryId]);
+      await reopened.rewindToHistoryEntryId(removed.userHistoryEntryId);
+      const last = await reopened.record({ text: "after rewind" });
+      expect(await readIds()).toEqual([first.userHistoryEntryId, last.userHistoryEntryId]);
+
+      await reopened.dispose();
+      expect(
+        history.truncateFromSources(session.sessionId, [last.userHistoryEntryId]),
+      ).toBeDefined();
+    } finally {
+      finishDisposal.resolve();
+      await host.shutdown();
+    }
+  });
+
   it("persists Bash job failure diagnostics in the TUI facet and ordered deltas", async () => {
     const store = new MemorySessionStore();
     const host = createHost(store);
@@ -5860,7 +5883,7 @@ describe("LocalSessionHost", () => {
     });
     await store.commitSessionSnapshot(storedSnapshot);
     const host = createHost(store, {
-      history: new HistoryManager(undefined, { failureReason: "history unavailable" }),
+      history: new HistoryManager(new LocalHistoryStore(":memory:"), { maxPendingBytes: 0 }),
     });
 
     const recoveredSession = await host.observeSession("stored-draft");

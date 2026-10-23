@@ -23,12 +23,12 @@
     },
     ".agents/skills/cowork/references/configuration.md": {
       "type": "file",
-      "hash": "66d7e65697e174fe92935070f3de6a01615f25bf40f6224b76ba629aaf0d3f43",
+      "hash": "1d85e8c1cf777e2aea8ca6a389eddb8efeb5cc80f415972de996748bc2606e07",
       "mode": 420
     },
     ".agents/skills/cowork/SKILL.md": {
       "type": "file",
-      "hash": "35afc3b171aabc4b76bb2a8e5fbdf1e034c229bb6b283e650ebb879c3985fed7",
+      "hash": "ab59f0e4d67cd8580d3c81a45fe40e52cc88d63b28b30c838b3a92df176ea03d",
       "mode": 420
     },
     ".agents/skills/decision-review/SKILL.md": {
@@ -38,7 +38,7 @@
     },
     ".agents/skills/delegate-prose/SKILL.md": {
       "type": "file",
-      "hash": "18623fccd0d2d7052d8ddb3b0b4ec3b76831ddbbc48c5282fc65afee643b39b1",
+      "hash": "c216c6b8e1d284c88cbfdf80c6b7f73a25029315bffd4e79512f3c6b054f40d9",
       "mode": 420
     },
     ".agents/skills/design-afresh/SKILL.md": {
@@ -232,6 +232,11 @@
     ".claude/skills/ui-design": {
       "type": "symlink",
       "hash": "0ede215a170a81a3a67bc58f08cbfc2e6523803850f1a6ca15a3045f9c16deaf"
+    },
+    ".cowork/commands/rewrite.md": {
+      "type": "file",
+      "hash": "358c8419f9ae84f57e8c6dcdec69eb0f428814b9afb060f572bbde50b7b6bb6a",
+      "mode": 420
     },
     ".cowork/config.json": {
       "type": "file",

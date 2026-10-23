@@ -127,6 +127,8 @@ describe("bundled Claude Agent SDK runner", () => {
       expect(sent.args).toContain("--permission-mode=bypassPermissions");
       expect(sent.args).toContain("--allow-dangerously-skip-permissions");
       expect(sent.args).toContain("--setting-sources=user,project,local");
+      expect(sent.args).not.toContain("--strict-mcp-config");
+      expect(sent.args.some((arg) => arg.startsWith("--mcp-config"))).toBe(false);
       expect(sent.args).toContain("--tools=Read,Glob,Grep,Bash,Skill");
       expect(sent.initialization).not.toHaveProperty("skills");
       expect(sent.cwd).toBe(directory);

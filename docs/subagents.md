@@ -91,7 +91,7 @@ These are the three supported model IDs. Effort may be `low`, `medium`, `high`, 
 
 Claude Code manages its conversation, retries, and compaction. Each run allows up to 1,024 agentic turns. Tau passes the selected model, effort, working directory, and task. Other Tau model settings, such as service tier, do not apply. Follow-ups resume the same Claude session.
 
-The worker uses Claude Code's native system prompt with a short addition: complete the task autonomously, preserve other agents' work, and return a self-contained result. It cannot ask the parent or user for clarification. Tau does not copy the parent conversation, persona prompt, project instructions, or skill descriptions. The worker is instructed to read applicable `AGENTS.md` files itself.
+The worker uses Claude Code's native system prompt with a short addition: complete the task autonomously, preserve other agents' work, and return a self-contained result. It cannot ask the parent or user for clarification. Tau does not copy the parent conversation, persona prompt, project instructions, or skill descriptions. The worker is instructed to follow applicable project instructions itself.
 
 Claude Code loads its user, project, and local settings and discovers its own instructions and skills. The `Skill` tool is always available. Other native tools follow the parent persona's selection:
 
@@ -103,9 +103,9 @@ Claude Code loads its user, project, and local settings and discovers its own in
 | `edit`             | Edit                   |
 | `web`              | WebSearch, WebFetch    |
 
-Workers receive no Tau `code` capabilities, host MCP connections, `tau_docs`, or client tools. Nested agents and interactive questions are disabled. Hooks, automatic memory, and automatic MCP connections are disabled too. Managed Claude Code policies still apply.
+Workers receive no Tau `code` capabilities, host MCP connections, `tau_docs`, or client tools. Nested agents and interactive questions are disabled. Hooks and automatic memory are disabled too. Claude Code discovers its own MCP servers from its normal configuration sources, including project and user configuration on the execution environment. These connections are independent of the parent persona's `mcp` tool selection; Tau does not map or forward its host MCP connections. Managed Claude Code policies still apply.
 
-Selected tools use `bypassPermissions`, with Claude Code's sandbox disabled. They run with the execution environment's operating-system authority, like Tau's tools. Review the local Claude settings and skills before enabling these workers.
+Selected tools use `bypassPermissions`, with Claude Code's sandbox disabled. They run with the execution environment's operating-system authority, like Tau's tools. Review the local Claude settings, skills, and MCP configuration before enabling these workers.
 
 Tau displays short assistant updates and tool completion summaries. Full tool output stays in Claude Code's conversation files. Tau records SDK-reported assistant token usage as it arrives, so interruption preserves counts already received. Repeated message blocks and resumed messages are counted once. Final SDK totals reconcile these counts and supply cost estimates, including earlier usage when a session resumes. Cost from an interrupted run remains unavailable until the SDK reports it. The latest assistant usage supplies a context-token estimate; after a successful run, the SDK's context summary supplies the window size and a fuller measurement.
 

@@ -52,8 +52,6 @@ export function claudeCodeOptions(input: ClaudeCodeInput, executable: string): O
     allowDangerouslySkipPermissions: true,
     disallowedTools: ["Agent", "Task", "AskUserQuestion"],
     settingSources: ["user", "project", "local"],
-    strictMcpConfig: true,
-    mcpServers: {},
     skills: "all",
     settings: {
       fastMode: false,
@@ -67,10 +65,10 @@ export function claudeCodeOptions(input: ClaudeCodeInput, executable: string): O
       type: "preset",
       preset: "claude_code",
       append: [
-        "You are a background subagent. Complete the assigned task autonomously; you cannot ask the parent agent or user for clarification. Make reasonable assumptions when safe, and report blockers instead of attempting risky workarounds.",
-        "Read and follow applicable AGENTS.md files in the working directory, its parents, and any directories you work in. Use the skills available in this session when relevant.",
-        "Other agents may be editing the same worktree. Preserve changes you did not make. Do not run work-discarding Git commands unless the task explicitly requires them. Do not launch other agents.",
-        "Your final response must stand on its own: describe the outcome, verification, and any remaining limitations.",
+        "You are a headless subagent supporting a parent agent. Complete the assigned task autonomously, including any verification it requires. No user or parent agent is available to answer questions or approve intermediate steps. Resolve minor ambiguities with reasonable assumptions and continue. If missing information or authority prevents safe progress, report the blocker clearly instead of attempting brittle or risky workarounds.",
+        "Read and follow applicable project instructions wherever you work. Use the skills available in this session when relevant.",
+        "Other agents may be modifying the same worktree. Never revert, discard, or overwrite changes you did not make. Avoid mutating Git operations unless explicitly instructed by the task. Do not launch other agents.",
+        "Your final response is what the parent agent receives from your work. Make it self-contained and include everything important for the parent to understand and use the result. Do not rely on intermediate messages or tool output being visible.",
       ].join("\n\n"),
     },
     stderr: () => {},

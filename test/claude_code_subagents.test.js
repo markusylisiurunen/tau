@@ -99,7 +99,7 @@ describe("Claude Code launch models", () => {
     }
   });
 
-  it("maps only inherited tools and isolates native configuration", () => {
+  it("maps inherited built-in tools and leaves MCP discovery to Claude Code", () => {
     expect(claudeCodeTools([])).toEqual([]);
     expect(claudeCodeTools(["view_image", "edit"])).toEqual(["Read", "Glob", "Grep", "Edit"]);
     expect(claudeCodeTools(["history", "mcp", "models", "nook"])).toEqual([]);
@@ -125,14 +125,14 @@ describe("Claude Code launch models", () => {
       allowDangerouslySkipPermissions: true,
       disallowedTools: ["Agent", "Task", "AskUserQuestion"],
       settingSources: ["user", "project", "local"],
-      strictMcpConfig: true,
-      mcpServers: {},
       skills: "all",
       settings: { fastMode: false, autoMemoryEnabled: false, disableAllHooks: true },
       systemPrompt: { type: "preset", preset: "claude_code" },
     });
     expect(options.env.CLAUDE_AGENT_SDK_CLIENT_APP).not.toBe("tau");
     expect(options).not.toHaveProperty("fallbackModel");
+    expect(options).not.toHaveProperty("strictMcpConfig");
+    expect(options).not.toHaveProperty("mcpServers");
   });
 });
 

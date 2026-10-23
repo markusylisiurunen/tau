@@ -15,7 +15,7 @@ The TUI also offers the configured command client tools selected for its own wor
 
 A Telegram runner offers the built-in `send_photo_to_telegram`, `send_video_to_telegram`, `send_audio_to_telegram`, and `send_document_to_telegram` tools, plus the command client tools selected by each prepared workspace's Tau configuration. The built-in [file delivery tools](tools.md#sending-files-to-telegram) send files to the session's chat and are not affected by `enabledClientTools`. The runner does not offer the TUI's tools. The session's workspace, whether repository, persistent directory, or composite, decides which configuration selects its tools. See [Telegram projects and workspaces](telegram-projects.md) for workspace types.
 
-Node SDK clients can pass `TauSdkClientTool` handlers when they initialize. The same rules for routing, cancellation, and execution-environment access apply.
+Node SDK clients can pass `TauSdkClientTool` handlers when they initialize. Their schemas may set `executionTimeoutMs` to `null` for no execution deadline, or omit it for the 60-second default. Configured command tools require a positive timeout and do not accept `null`. The same rules for routing, cancellation, and execution-environment access apply.
 
 Only a client that is observing a session can add tools to it. The tools disappear when that client detaches or disconnects. When several clients observe one session, only one may offer a given tool name, and Tau rejects the later client if names collide. Client tool names also must not match host tools or built-in tools.
 

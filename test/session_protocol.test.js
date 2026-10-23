@@ -669,6 +669,44 @@ describe("session_protocol", () => {
     });
   });
 
+  it.each([null, 60_000, 0, -1, 1.5, "none"])(
+    "validates client tool deadline %s in definitions and calls",
+    (timeout) => {
+      const valid = timeout === null || timeout === 60_000;
+      expect(
+        validateSessionProtocolParams("initialize", {
+          client: {
+            name: "test",
+            version: "1",
+            tools: [
+              {
+                name: "review",
+                description: "Review",
+                parameters: {},
+                executionTimeoutMs: timeout,
+              },
+            ],
+          },
+        }).ok,
+      ).toBe(valid);
+      const parsed = parseSessionProtocolOutgoingLine(
+        JSON.stringify({
+          version: SESSION_PROTOCOL_VERSION,
+          type: "session.clientTool.call",
+          sessionId: "session-1",
+          agentId: "main",
+          callId: "call-1",
+          toolName: "review",
+          arguments: {},
+          ackDeadlineMs: 5000,
+          executionDeadlineMs: timeout,
+        }),
+      );
+      expect(parsed.ok).toBe(valid);
+      if (valid) expect(parsed.message.executionDeadlineMs).toBe(timeout);
+    },
+  );
+
   it("validates per-method params", () => {
     for (const [method, value] of [
       [

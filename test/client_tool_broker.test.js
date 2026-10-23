@@ -3,6 +3,7 @@ import { parseToolRunPresentation } from "../src/core/tools/presentation.ts";
 import { HOST_TOOL_NAMES } from "../src/core/tools/tool_names.ts";
 import { ClientToolBroker } from "../src/host/client_tool_broker.ts";
 import { SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES } from "../src/protocol/session_protocol.ts";
+import { createTuiClientTools } from "../src/tui/session_chat_app.ts";
 import { createProtocolImage } from "./helpers/session_protocol_fixtures.js";
 
 function createToolCall(args = {}) {
@@ -34,6 +35,103 @@ async function runTool(tool, toolCall, signal = new AbortController().signal, em
 }
 
 describe("ClientToolBroker", () => {
+  it.each(["result", "interrupt", "detach", "disconnect"])(
+    "keeps TUI diff reviews open beyond 30 minutes until %s",
+    async (ending) => {
+      vi.useFakeTimers();
+      try {
+        const broker = new ClientToolBroker();
+        const schema = createTuiClientTools({ enabled: true, getController: () => undefined }).find(
+          (tool) => tool.schema.name === "diff_review",
+        ).schema;
+        const sendCall = vi.fn();
+        const sendCancel = vi.fn();
+        const registration = broker.registerClient({ tools: [schema], sendCall, sendCancel });
+        registration.attachSession("session-1");
+        const abortController = new AbortController();
+        const execution = runTool(
+          broker.getToolDefinitions("session-1")[0],
+          {
+            ...createToolCall(),
+            name: "diff_review",
+          },
+          abortController.signal,
+        );
+        await vi.advanceTimersByTimeAsync(0);
+        const message = sendCall.mock.calls[0][0];
+        expect(message.executionDeadlineMs).toBeNull();
+        expect(await broker.ack(message.sessionId, message.callId)).toBe(true);
+        const settled = vi.fn();
+        void execution.then(settled);
+        await vi.advanceTimersByTimeAsync(31 * 60 * 1000);
+        expect(settled).not.toHaveBeenCalled();
+        expect(sendCancel).not.toHaveBeenCalled();
+
+        if (ending === "result") {
+          expect(
+            broker.result(message.sessionId, message.callId, {
+              ok: true,
+              content: [{ type: "text", text: "review" }],
+            }),
+          ).toBe(true);
+        } else if (ending === "interrupt") {
+          abortController.abort();
+        } else if (ending === "detach") {
+          registration.detachSession("session-1");
+        } else {
+          registration.unregister();
+        }
+        expect((await execution).toolResult.outcome).toBe(
+          ending === "result" ? "succeeded" : "cancelled",
+        );
+        if (ending === "interrupt" || ending === "detach") {
+          expect(sendCancel).toHaveBeenCalledWith(
+            expect.objectContaining({
+              reason: ending === "interrupt" ? "aborted" : "client-detached",
+            }),
+          );
+        }
+        expect(await broker.ack(message.sessionId, message.callId)).toBe(false);
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it.each([undefined, 1000])("preserves execution timeout %s", async (executionTimeoutMs) => {
+    vi.useFakeTimers();
+    try {
+      const broker = new ClientToolBroker();
+      const sendCall = vi.fn();
+      const sendCancel = vi.fn();
+      const registration = broker.registerClient({
+        tools: [
+          {
+            name: "local_picker",
+            description: "Pick an item.",
+            parameters: {},
+            executionTimeoutMs,
+          },
+        ],
+        sendCall,
+        sendCancel,
+      });
+      registration.attachSession("session-1");
+      const execution = runTool(broker.getToolDefinitions("session-1")[0], createToolCall());
+      await vi.advanceTimersByTimeAsync(0);
+      const message = sendCall.mock.calls[0][0];
+      expect(message.executionDeadlineMs).toBe(executionTimeoutMs ?? 60_000);
+      await broker.ack(message.sessionId, message.callId);
+      await vi.advanceTimersByTimeAsync(executionTimeoutMs ?? 60_000);
+      expect((await execution).toolResult.outcome).toBe("cancelled");
+      expect(sendCancel).toHaveBeenCalledWith(expect.objectContaining({ reason: "timeout" }));
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("reserves code and tau_docs for the host", () => {
     expect(HOST_TOOL_NAMES).toEqual(expect.arrayContaining(["code", "tau_docs"]));
   });
@@ -448,44 +546,48 @@ describe("ClientToolBroker", () => {
     );
   });
 
-  it("reports client tool acknowledgement timeouts with the tool name", async () => {
-    vi.useFakeTimers();
-    try {
-      const broker = new ClientToolBroker();
-      const sendCancel = vi.fn();
-      const registration = broker.registerClient({
-        tools: [
-          {
-            name: "local_picker",
-            description: "Pick a local item.",
-            parameters: { type: "object", properties: {}, additionalProperties: false },
-          },
-        ],
-        sendCall: vi.fn(),
-        sendCancel,
-      });
-      registration.attachSession("session-1");
-      const definition = broker.getToolDefinitions("session-1")[0];
+  it.each([undefined, null])(
+    "enforces acknowledgement timeout with execution timeout %s",
+    async (executionTimeoutMs) => {
+      vi.useFakeTimers();
+      try {
+        const broker = new ClientToolBroker();
+        const sendCancel = vi.fn();
+        const registration = broker.registerClient({
+          tools: [
+            {
+              name: "local_picker",
+              executionTimeoutMs,
+              description: "Pick a local item.",
+              parameters: { type: "object", properties: {}, additionalProperties: false },
+            },
+          ],
+          sendCall: vi.fn(),
+          sendCancel,
+        });
+        registration.attachSession("session-1");
+        const definition = broker.getToolDefinitions("session-1")[0];
 
-      const execution = definition.execute(createToolCall({ choice: "a" }), {
-        agentId: "test-agent",
-        turnId: "test-turn",
-        assistantMessageId: "test-assistant",
-        signal: new AbortController().signal,
-        emitActivity: async () => {},
-      });
-      await vi.advanceTimersByTimeAsync(5000);
-      const result = await execution;
+        const execution = definition.execute(createToolCall({ choice: "a" }), {
+          agentId: "test-agent",
+          turnId: "test-turn",
+          assistantMessageId: "test-assistant",
+          signal: new AbortController().signal,
+          emitActivity: async () => {},
+        });
+        await vi.advanceTimersByTimeAsync(5000);
+        const result = await execution;
 
-      expect(result.outcome).toBe("blocked");
-      expect(result.content[0].text).toBe(
-        "Client tool 'local_picker' is unavailable because its owning client did not acknowledge the tool call within 5000ms.",
-      );
-      expect(sendCancel).toHaveBeenCalledWith(expect.objectContaining({ reason: "timeout" }));
-    } finally {
-      vi.useRealTimers();
-    }
-  });
+        expect(result.outcome).toBe("blocked");
+        expect(result.content[0].text).toBe(
+          "Client tool 'local_picker' is unavailable because its owning client did not acknowledge the tool call within 5000ms.",
+        );
+        expect(sendCancel).toHaveBeenCalledWith(expect.objectContaining({ reason: "timeout" }));
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it("scopes client tools to attached sessions", () => {
     const broker = new ClientToolBroker();

@@ -116,7 +116,7 @@ export type SessionProtocolClientToolDefinition = {
   name: string;
   description: string;
   parameters: unknown;
-  executionTimeoutMs?: number;
+  executionTimeoutMs?: number | null;
 };
 
 export type SessionProtocolInitializeParams = {
@@ -1274,7 +1274,7 @@ export type SessionProtocolClientToolCallMessage = {
   toolName: string;
   arguments: unknown;
   ackDeadlineMs: number;
-  executionDeadlineMs: number;
+  executionDeadlineMs: number | null;
 };
 
 export type SessionProtocolClientToolCancelMessage = {
@@ -1628,7 +1628,7 @@ const sessionProtocolClientToolCallMessageSchema = z
     toolName: nonEmptyStringSchema,
     arguments: z.unknown(),
     ackDeadlineMs: z.number().int().positive(),
-    executionDeadlineMs: z.number().int().positive(),
+    executionDeadlineMs: z.number().int().positive().nullable(),
   })
   .strip();
 
@@ -1709,7 +1709,7 @@ const sessionProtocolClientToolDefinitionSchema = z
     name: nonEmptyStringSchema,
     description: z.string(),
     parameters: z.unknown(),
-    executionTimeoutMs: z.number().int().positive().optional(),
+    executionTimeoutMs: z.number().int().positive().nullable().optional(),
   })
   .strip();
 

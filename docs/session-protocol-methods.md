@@ -41,7 +41,7 @@ params: {
       name: string;
       description: string;
       parameters: unknown;
-      executionTimeoutMs?: number;
+      executionTimeoutMs?: number | null; // omitted: 60 seconds; null: no execution deadline
     }>;
   };
 }

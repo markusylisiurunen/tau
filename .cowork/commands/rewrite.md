@@ -1,0 +1,7 @@
+Use skill `delegate-prose` to have a writing peer rewrite the prose of this pull request. This command authorizes that delegation. Your part is to brief the peer and publish its result. Use skill `github-workflow` for the commit and your comment.
+
+Read the pull request description, any linked issue, and the discussion to understand what the pull request is for. Then brief the peer. Tell it what the pull request is for, and give it the base and head commits. Use the merge base with the base branch as the base, so that the diff contains only this pull request's changes. Ask the peer to look at what changed and think the prose through from a clean slate: the prose this pull request changes, and prose anywhere in the repository that it should have changed but did not. The peer edits the files where a change is warranted, and it may conclude that nothing should change. It must not change the behavior of any code, and it must not commit, push, or act on GitHub. If the comment that started this run contains instructions, pass them on to the peer.
+
+Trust the peer's edits. Do not review them, fix them, or ask it for more changes. When it has finished, commit any edits and push them to the pull request's head branch without force-pushing. Then post one short comment on the pull request that says what changed, or that the prose needed no changes.
+
+If the peer cannot launch or finish, do not write the prose yourself or switch to another model. Post a comment that explains the problem, and push nothing.

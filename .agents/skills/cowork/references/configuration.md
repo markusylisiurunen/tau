@@ -42,6 +42,20 @@ Prompts are refreshed from the default branch on every invocation, including res
 
 Built-in reviews can use parallel subreviews when trusted append guidance specifies an exact launch model. If that prompt is centrally managed, change its source instead of editing the generated prompt by hand. A replacement review prompt must define its own subagent behavior.
 
+## PR commands
+
+Each `.cowork/commands/<name>.md` defines a command that users start with a top-level PR comment such as `@markustherobot /rewrite`, optionally followed by guidance on later lines. The name must start with a lowercase letter and contain only lowercase letters, digits, or hyphens, up to 64 characters. The built-in names `implement`, `review`, `deslop`, `explain`, `diff`, and `restart` are reserved. Commands on issues or in inline review threads are rejected.
+
+The file is the complete task prompt, without frontmatter or template variables. It must be nonempty UTF-8 and at most 32 KiB. For example:
+
+```markdown
+Check that the changelog covers every user-visible change in this pull request. Add missing entries, commit, and push to the pull request branch. Then post a short comment on the pull request listing what you added.
+```
+
+Cowork wraps the prompt with its GitHub identity and writing rules, the PR and the triggering comment, and an instruction to check out the PR head. Workflow append prompts do not apply. The command decides the task and everything it publishes: the agent's final response is not posted, so the prompt must ask for any commits, pushes, description updates, reviews, or comments it wants.
+
+Each invocation gets a fresh session and workspace with the repository's normal Tau settings and runs in the PR's shared head queue. There are no command-specific settings. Definitions are read from the default branch when a run starts.
+
 ## Workspace hooks
 
 Optional executable files under `.cowork/scripts/` control workspace setup:

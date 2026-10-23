@@ -12,6 +12,7 @@ import {
   TOOL_NAME_WRITE,
 } from "../tools/tool_names.js";
 import type { PersonaSettings, ReasoningEffort } from "../types.js";
+import type { ClaudeCodeEffort, ClaudeCodeModel } from "./claude_code_models.js";
 
 export const SUBAGENT_TOOL_NAMES = [
   TOOL_NAME_BASH,
@@ -27,11 +28,10 @@ export const SUBAGENT_TOOL_NAMES = [
 
 export type SubagentToolName = (typeof SUBAGENT_TOOL_NAMES)[number];
 
-export type SubagentLaunchModel = {
-  model: Model<Api>;
-  reasoning: ReasoningEffort;
-  normalized: string;
-};
+export type SubagentLaunchModel = (
+  | { kind: "native"; model: Model<Api>; reasoning: ReasoningEffort }
+  | { kind: "claude-code"; model: ClaudeCodeModel; reasoning: ClaudeCodeEffort }
+) & { normalized: string };
 
 export type SubagentUsageSnapshot = {
   input: number;
@@ -139,10 +139,21 @@ export type SubagentEvent =
   | { type: "subagent_interrupt_requested"; state: SubagentStateSnapshot }
   | { type: "subagent_finished"; state: SubagentStateSnapshot };
 
-export type SubagentRuntimeConfig = {
+export type NativeSubagentConfig = {
+  kind: "native";
   systemPrompt: string;
   model: Model<Api>;
   settings: PersonaSettings;
   tools: SubagentToolName[];
   workingDirectory: string;
 };
+
+export type ClaudeCodeSubagentConfig = {
+  kind: "claude-code";
+  model: ClaudeCodeModel;
+  effort: ClaudeCodeEffort;
+  tools: SubagentToolName[];
+  workingDirectory: string;
+};
+
+export type SubagentRuntimeConfig = NativeSubagentConfig | ClaudeCodeSubagentConfig;

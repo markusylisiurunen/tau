@@ -10,7 +10,8 @@ The host makes model calls and runs services such as web search and remote histo
 
 | Operation | Where the credential belongs |
 | --- | --- |
-| Main-agent, subagent, sampling, and maintenance model calls | Session host |
+| Main-agent, native Tau subagent, sampling, and maintenance model calls | Session host |
+| Claude Code subagent subscription login | Claude Code on the execution environment |
 | OpenAI Codex OAuth accounts | Session host home |
 | Exa-backed `web.search` and `web.fetch` | Session host |
 | Remote history replication and queries | Session host |
@@ -21,6 +22,8 @@ The host makes model calls and runs services such as web search and remote histo
 | Standalone `tau tool` commands | The process running that command |
 
 With local `tau`, all of these are usually one machine. With `tau attach`, a key set only in the attached client's shell does not reach the remote host. Run `tau auth` on the host machine, and set host environment variables where `tau serve` or the SDK host runs. See [ownership and scope](ownership-and-scope.md) for the full boundary.
+
+Claude Code subagents use a Claude subscription login on the execution environment. Sign in with Claude Code there; `tau auth` does not manage this account. Tau checks the account before sending a task and does not fall back to API billing. See [Claude Code subagents](subagents.md#claude-code-subagents) for setup and extra-usage charges.
 
 ## Provider API keys
 

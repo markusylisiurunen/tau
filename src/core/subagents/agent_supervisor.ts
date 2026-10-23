@@ -11,7 +11,7 @@ import type { BashJobRegistry } from "../tools/bash_jobs.js";
 import { ToolCatalog } from "../tools/catalog.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
 import type { ToolRunPresentation } from "../tools/presentation.js";
-import type { Persona, ReasoningEffort } from "../types.js";
+import type { ReasoningEffort } from "../types.js";
 import {
   appendUsageLogEntry,
   getUsageCostTotal,
@@ -19,6 +19,8 @@ import {
   type UsageRecorder,
 } from "../usage/logs.js";
 import { extractAssistantText } from "../utils/messages.js";
+import type { ClaudeCodeEvent, ClaudeCodeTokenUsage } from "./claude_code_protocol.js";
+import { ClaudeCodeRuntime } from "./claude_code_runtime.js";
 import { formatActiveSubagentsForCompaction } from "./format.js";
 import type {
   SubagentCapacitySnapshot,
@@ -51,12 +53,12 @@ type SubagentRecord = {
   workingDirectory: string;
   createdAt: number;
   originHistoryEntryId: string;
-  runtimeConfig: SubagentRuntimeConfig;
   personaId?: string;
-  runtime: AgentRuntime;
+  runtime: AgentRuntime | ClaudeCodeRuntime;
   run: SubagentRunSnapshot;
   costTotal: number;
   usage: SubagentUsageSnapshot;
+  claudeMessageUsage: Map<string, ClaudeCodeTokenUsage | null>;
   toolPresentations: Map<string, ToolRunPresentation>;
   blockedToolCalls: Map<string, string>;
   completion: Promise<SubagentRecord>;
@@ -148,39 +150,54 @@ export class AgentSupervisor {
 
     const id = randomUUID();
     const runtimeConfig = { ...options.runtimeConfig, workingDirectory };
-    const persona: Persona = {
-      id: `${options.personaId ?? "agent"}-subagent`,
-      label: "subagent",
-      description: "Background agent",
-      source: "project",
-      systemPrompt: runtimeConfig.systemPrompt,
-      model: runtimeConfig.model,
-      settings: runtimeConfig.settings,
-      tools: runtimeConfig.tools,
-      subagentLaunchModels: [],
-    };
-    const runtime = new AgentRuntime({
-      spec: createAgentSpec({
-        autoCompactThresholdTokens: null,
-        ...resolveAgentModel(persona, options.config, {
-          includeModelNotice: true,
-          deps: this.deps,
+    let runtime: AgentRuntime | ClaudeCodeRuntime;
+    let reasoning: ReasoningEffort;
+    if (runtimeConfig.kind === "claude-code") {
+      runtime = new ClaudeCodeRuntime({
+        config: runtimeConfig,
+        backend: options.backend,
+        onEvent: async (event) => await this.recordClaudeCodeEvent(id, event),
+      });
+      reasoning = runtimeConfig.effort;
+    } else {
+      runtime = new AgentRuntime({
+        spec: createAgentSpec({
+          autoCompactThresholdTokens: null,
+          ...resolveAgentModel(
+            {
+              id: `${options.personaId ?? "agent"}-subagent`,
+              label: "subagent",
+              description: "Background agent",
+              source: "project",
+              systemPrompt: runtimeConfig.systemPrompt,
+              model: runtimeConfig.model,
+              settings: runtimeConfig.settings,
+              tools: runtimeConfig.tools,
+              subagentLaunchModels: [],
+            },
+            options.config,
+            {
+              includeModelNotice: true,
+              deps: this.deps,
+            },
+          ),
+          systemPrompt: runtimeConfig.systemPrompt,
+          tools: ToolCatalog.createSubagentRegistry(
+            runtimeConfig.tools,
+            options.backend,
+            workingDirectory,
+            options.config,
+            options.bashJobs,
+            options.history,
+            options.mcp,
+          ),
         }),
-        systemPrompt: runtimeConfig.systemPrompt,
-        tools: ToolCatalog.createSubagentRegistry(
-          runtimeConfig.tools,
-          options.backend,
-          workingDirectory,
-          options.config,
-          options.bashJobs,
-          options.history,
-          options.mcp,
-        ),
-      }),
-      eventSink: async (event) => await this.recordAgentEvent(id, event),
-      clock: this.deps.clock,
-      archiveAutoCompaction: createAutoCompactionArchiver(options.backend),
-    });
+        eventSink: async (event) => await this.recordAgentEvent(id, event),
+        clock: this.deps.clock,
+        archiveAutoCompaction: createAutoCompactionArchiver(options.backend),
+      });
+      reasoning = runtime.spec.attribution.reasoningEffort;
+    }
     const createdAt = this.deps.clock.now();
     const record: SubagentRecord = {
       id,
@@ -188,12 +205,11 @@ export class AgentSupervisor {
       model: {
         provider: runtimeConfig.model.provider,
         id: runtimeConfig.model.id,
-        reasoning: runtime.spec.attribution.reasoningEffort,
+        reasoning,
       },
       workingDirectory,
       createdAt,
       originHistoryEntryId: options.originHistoryEntryId,
-      runtimeConfig,
       personaId: options.personaId,
       runtime,
       run: {
@@ -209,8 +225,9 @@ export class AgentSupervisor {
         cacheRead: 0,
         cacheWrite: 0,
         contextWindowUsageTokens: 0,
-        contextWindow: runtimeConfig.model.contextWindow,
+        contextWindow: runtimeConfig.kind === "native" ? runtimeConfig.model.contextWindow : 0,
       },
+      claudeMessageUsage: new Map(),
       toolPresentations: new Map(),
       blockedToolCalls: new Map(),
       completion: Promise.resolve(undefined as never),
@@ -287,15 +304,23 @@ export class AgentSupervisor {
     record.completion = this.emit({ type: eventType, state: this.toSnapshot(record) })
       .then(async () => {
         if (record.run.interruptRequested) {
-          return {
-            aborted: true,
-            terminalResult: { aborted: true },
-          } satisfies AgentTurnResult;
+          this.finishInterrupted(record);
+        } else if (record.runtime instanceof ClaudeCodeRuntime) {
+          const completion = await record.runtime.submit(prompt);
+          if (record.run.interruptRequested || completion.status === "interrupted") {
+            this.finishInterrupted(record);
+          } else if (completion.result.failed) {
+            this.finishFailed(record, {
+              kind: "provider-error",
+              message: completion.result.response,
+              stopReason: "error",
+            });
+          } else {
+            this.finishSucceeded(record, completion.result.response);
+          }
+        } else {
+          this.applyTurnResult(record, await record.runtime.submit(prompt));
         }
-        return await record.runtime.submit(prompt);
-      })
-      .then((result) => {
-        this.applyTurnResult(record, result);
         return record;
       })
       .catch((error) => {
@@ -356,13 +381,17 @@ export class AgentSupervisor {
       return;
     }
 
+    this.finishSucceeded(record, extractAssistantText(result.finalMessage).trim());
+  }
+
+  private finishSucceeded(record: SubagentRecord, response: string): void {
     record.run = {
       revision: record.run.revision,
       status: "succeeded",
       startedAt: record.run.startedAt,
       finishedAt: this.deps.clock.now(),
       interruptRequested: false,
-      response: extractAssistantText(result.finalMessage).trim(),
+      response,
     };
   }
 
@@ -391,6 +420,94 @@ export class AgentSupervisor {
     };
   }
 
+  private async recordClaudeCodeEvent(id: string, event: ClaudeCodeEvent): Promise<void> {
+    const record = this.records.get(id);
+    if (!record) return;
+    if (event.type === "usage" || event.type === "result") {
+      let reported = event.usage;
+      if (event.type === "usage") {
+        const previous = record.claudeMessageUsage.get(event.messageId);
+        // Final result totals already cover these messages, including resumed replays.
+        if (previous === null) return;
+        const current = {
+          input: Math.max(previous?.input ?? 0, event.usage.input),
+          output: Math.max(previous?.output ?? 0, event.usage.output),
+          cacheRead: Math.max(previous?.cacheRead ?? 0, event.usage.cacheRead),
+          cacheWrite: Math.max(previous?.cacheWrite ?? 0, event.usage.cacheWrite),
+        };
+        record.claudeMessageUsage.set(event.messageId, current);
+        reported = {
+          input: record.usage.input + current.input - (previous?.input ?? 0),
+          output: record.usage.output + current.output - (previous?.output ?? 0),
+          cacheRead: record.usage.cacheRead + current.cacheRead - (previous?.cacheRead ?? 0),
+          cacheWrite: record.usage.cacheWrite + current.cacheWrite - (previous?.cacheWrite ?? 0),
+        };
+        if (getUsageTotals(current).total === getUsageTotals(previous).total) return;
+        record.usage.contextWindowUsageTokens = getUsageTotals(current).total;
+      } else {
+        for (const messageId of record.claudeMessageUsage.keys()) {
+          record.claudeMessageUsage.set(messageId, null);
+        }
+        record.usage.contextWindowUsageTokens = event.usage.contextWindowUsageTokens;
+        record.usage.contextWindow = event.usage.contextWindow;
+      }
+      // SDK totals include the history restored on resume. Record only the delta,
+      // and replace (rather than sum) the current context-window measurement.
+      const usage = getUsageTotals({
+        input: Math.max(0, reported.input - record.usage.input),
+        output: Math.max(0, reported.output - record.usage.output),
+        cacheRead: Math.max(0, reported.cacheRead - record.usage.cacheRead),
+        cacheWrite: Math.max(0, reported.cacheWrite - record.usage.cacheWrite),
+      });
+      const cost = event.type === "result" ? Math.max(0, event.cost - record.costTotal) : 0;
+      // Startup failures can report zero totals even for a resumed session.
+      record.costTotal += cost;
+      record.usage = {
+        ...record.usage,
+        input: record.usage.input + usage.input,
+        output: record.usage.output + usage.output,
+        cacheRead: record.usage.cacheRead + usage.cacheRead,
+        cacheWrite: record.usage.cacheWrite + usage.cacheWrite,
+      };
+      (this.options.recordUsage ?? appendUsageLogEntry)({
+        timestamp: this.deps.clock.now(),
+        sessionId: record.id,
+        personaId: record.personaId,
+        provider: record.model.provider,
+        model: record.model.id,
+        api: "claude-agent-sdk",
+        reasoningEffort: record.model.reasoning,
+        usage,
+        cost: { total: cost },
+        agent: { type: "subagent" },
+      });
+      await this.emit({ type: "subagent_updated", state: this.toSnapshot(record) });
+    } else if (event.type === "assistant") {
+      await this.emit({
+        type: "subagent_activity",
+        state: this.toSnapshot(record),
+        activity: { type: "assistant", text: event.text },
+      });
+    } else if (event.type === "tool") {
+      await this.emit({
+        type: "subagent_activity",
+        state: this.toSnapshot(record),
+        activity: {
+          type: "tool",
+          toolName: event.name,
+          outcome: event.failed ? "failed" : "succeeded",
+          presentation: {
+            action: event.failed ? "failed" : "completed",
+            subject: event.subject,
+            subjectWrap: "word",
+            details: [],
+            metadata: [],
+          },
+        },
+      });
+    }
+  }
+
   private async recordAgentEvent(id: string, event: AgentEvent): Promise<void> {
     const record = this.records.get(id);
     if (!record) return;
@@ -405,7 +522,7 @@ export class AgentSupervisor {
         cacheRead: record.usage.cacheRead + usage.cacheRead,
         cacheWrite: record.usage.cacheWrite + usage.cacheWrite,
         contextWindowUsageTokens: usage.input + usage.output + usage.cacheRead + usage.cacheWrite,
-        contextWindow: record.runtimeConfig.model.contextWindow,
+        contextWindow: record.usage.contextWindow,
       };
       (this.options.recordUsage ?? appendUsageLogEntry)({
         timestamp: event.message.timestamp,

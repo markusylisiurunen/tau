@@ -54,6 +54,7 @@ function createFailingStream(partialText, error) {
 function createSpawnOptions(overrides = {}) {
   return {
     runtimeConfig: {
+      kind: "native",
       systemPrompt: "child system",
       description: "child",
       workingDirectory: "/repo",

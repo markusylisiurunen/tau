@@ -1,6 +1,7 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { listProviders } from "../models/catalog.js";
 import { REASONING_LEVELS, ReasoningEffortSchema } from "../types.js";
+import { CLAUDE_CODE_PROVIDER, resolveClaudeCodeModel } from "./claude_code_models.js";
 import type { SubagentLaunchModel } from "./types.js";
 
 export type LaunchModelResolver = (provider: string, modelId: string) => Model<Api> | undefined;
@@ -11,7 +12,7 @@ function parseProvider(raw: string): string | undefined {
     return undefined;
   }
 
-  if (!listProviders().includes(provider)) {
+  if (provider !== CLAUDE_CODE_PROVIDER && !listProviders().includes(provider)) {
     return undefined;
   }
 
@@ -58,23 +59,35 @@ export function parseSubagentLaunchModel(
     return { error: `unknown provider '${providerPart.trim()}'` };
   }
 
-  const model = options.resolveModel(provider, modelIdPart);
-  if (!model) {
-    return { error: `unknown model '${provider}/${modelIdPart}'` };
-  }
-
   const reasoning = ReasoningEffortSchema.safeParse(effortPart);
   if (!reasoning.success) {
     return {
       error: `invalid reasoning effort. expected one of: ${REASONING_LEVELS.join(", ")}`,
     };
   }
-  const normalized = `${provider}/${model.id}:${reasoning.data}`;
+  if (provider === CLAUDE_CODE_PROVIDER) {
+    if (reasoning.data === "none" || reasoning.data === "minimal") {
+      return { error: "Claude Code launch models require low, medium, high, xhigh, or max effort" };
+    }
+    const model = resolveClaudeCodeModel(modelIdPart);
+    if (!model) return { error: `unknown model '${provider}/${modelIdPart}'` };
+    return {
+      launchModel: {
+        kind: "claude-code",
+        model,
+        reasoning: reasoning.data,
+        normalized: `${provider}/${model.id}:${reasoning.data}`,
+      },
+    };
+  }
+  const model = options.resolveModel(provider, modelIdPart);
+  if (!model) return { error: `unknown model '${provider}/${modelIdPart}'` };
   return {
     launchModel: {
+      kind: "native",
       model,
       reasoning: reasoning.data,
-      normalized,
+      normalized: `${provider}/${model.id}:${reasoning.data}`,
     },
   };
 }

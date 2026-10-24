@@ -40,6 +40,8 @@ Submitting hosted diff feedback hands the requested work to the persistent PR co
 
 When the service enables them, eligible non-draft PRs can also receive automatic reviews, hosted diffs, and explanations. These switches belong to the service, and repository configuration cannot change them.
 
+To opt a single PR out of these automatic workflows, put the exact marker `<!-- cowork:skip-auto -->` in its description. Cowork checks the description on each opened, ready-for-review, and synchronize event, so an automated PR should include the marker when it is created, and an existing PR needs it before the next push. Explicit commands still work on a marked PR. Adding the marker does not cancel work that Cowork already accepted, and removing it does not replay skipped events. Cowork has no versioned releases; the production service has supported the marker since its 2026-10-23 deployment, and older builds ignore it.
+
 ## Verify the change
 
 Check exact workflow IDs, supported fields, JSON or YAML syntax, prompt content, and hook executable permissions. Prefer append guidance over replacing built-in workflow instructions. Validate the change with the owning repository's existing checks. Do not run lifecycle scripts against a real workspace just to test them.

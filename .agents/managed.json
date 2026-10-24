@@ -227,7 +227,7 @@
     },
     ".cowork/prompts/pull-request-review.append.md": {
       "type": "file",
-      "hash": "902f619b1dfb1760a5fe5c13ad73f7f1cf7d389780804e60bfc3afae34065e55"
+      "hash": "2e9f19368f42a40d9d2a5e839e82b1c261bbd52813fc698c1f56c5e314cc2817"
     },
     ".tau/config.json": {
       "type": "file",

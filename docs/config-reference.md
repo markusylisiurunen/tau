@@ -30,7 +30,6 @@ Project and global content can change which persona ids exist. A configured defa
 | `subagents` | Object | Global, project | Most-specific `launchModels` list | Session runtime; `/reload` or new session |
 | `modelSystemNotices` | String map | Global, project | Merge by model target | Session runtime; `/reload`, affects later inputs |
 | `flySprites` | Object | Global, project | Merge connection fields | Host startup; host restart |
-| `nook` | Object | Global, project | Most-specific complete object | Host tool runtime; `/reload` or new session |
 | `history` | Object | Global only | One global object | Host startup; host restart |
 | `mcpServers` | Object keyed by server name | Global and project | Merge names; nearer entry replaces | Host startup; host restart |
 
@@ -179,29 +178,6 @@ Authentication, permission, rate-limit, and network errors during voice lookup d
 Speech uses Eleven v4 Turbo, the delivery note `[Brisk but relaxed, speaking naturally to a colleague]`, and a 1.15× tempo adjustment. GPT-6 Luna rewrites the text with reasoning disabled before ElevenLabs synthesis, so both OpenAI and ElevenLabs credentials are required. Voice Library API access may require a paid ElevenLabs plan, and shared voices can become unavailable.
 
 The TUI reads these speech settings from its own client configuration, including project configuration discovered from its startup directory, also when attached to a remote host. It does not load vocabulary from the remote session's repository. Telegram reads it from the runner's startup configuration, not from session workspaces. Restart the respective process after changes. This setting does not affect the explicit voices supplied to `tau tool speech-generate`.
-
-### `nook`
-
-Connection details for one existing Nook deployment:
-
-| Nested field | Type | Required | Contract |
-| --- | --- | --- | --- |
-| `domain` | Non-empty string | Yes | DNS hostname, optionally supplied as a plain `http://` or `https://` origin with no port, path, query, credentials, or fragment |
-| `accessClientId` | Non-empty string | No | Cloudflare Access service-token client id |
-| `accessClientSecret` | Non-empty string | No | Inline service-token secret |
-| `accessClientSecretEnv` | Non-empty string | No | Host environment variable containing the secret |
-
-```json
-{
-  "nook": {
-    "domain": "apps.example.com",
-    "accessClientId": "8f0c...access",
-    "accessClientSecretEnv": "NOOK_ACCESS_CLIENT_SECRET"
-  }
-}
-```
-
-Tau normalizes the domain to a lowercase hostname. A non-empty value from `accessClientSecretEnv` wins over `accessClientSecret`. The `nook` tool is available only when the active persona allows it and the effective configuration contains this object. See [Nook](nook.md).
 
 ### `history`
 

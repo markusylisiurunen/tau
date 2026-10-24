@@ -26,7 +26,6 @@ A native Tau subagent can receive these tools. [Claude Code subagents](#claude-c
 - `view_image`
 - `web`
 - `history`
-- `nook`, when Nook is configured
 - `mcp`, when the host has enabled MCP servers
 - `models`
 

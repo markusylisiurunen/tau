@@ -12,13 +12,13 @@ Sources and their roles:
 ## Hard rules
 
 - **Shared, dirty worktree.** Existing changes are intentional. Never revert, overwrite, reformat, or "fix" unrelated work. Read a file's current contents before editing it. If it changes between your read and write, stop and ask.
-- **Nested guides are mandatory.** `src/diff_tool/AGENTS.md` and `src/nook/AGENTS.md` add rules for their subtrees.
+- **Nested guide is mandatory.** `src/diff_tool/AGENTS.md` adds rules for its subtree.
 - **macOS and Linux only.** Never add Windows support or a Windows fallback (`src/core/platform_support.ts`).
 - **Pre-v1: no compatibility scaffolding,** except for stored sessions (see [Design principles](#design-principles)).
 - **Client, host, and execution environment are separate machines,** even in one process (see [Ownership](#ownership)).
 - **Never run `npm start` or `node dist/main.js`.** They need a real terminal.
 - **No commits, releases, or work-destroying git commands** unless the user explicitly asks for that exact operation. That includes `git reset --hard`, `git checkout -- <file>`, `git restore`, `git stash`, rebase, cherry-pick, and force-push.
-- **Never edit durable Tau state directly** (auth storage, session documents, history databases and outboxes, Telegram runner state, managed workspaces, Nook storage). Use the supported command, protocol, or recovery path.
+- **Never edit durable Tau state directly** (auth storage, session documents, history databases and outboxes, Telegram runner state, managed workspaces). Use the supported command, protocol, or recovery path.
 - **Confirm before destructive operations** such as deleting files or dropping data.
 - **Do only the requested change.** No surrounding cleanup, speculative config, or speculative abstractions. Match local naming, structure, error handling, and test style.
 
@@ -160,14 +160,13 @@ Start with the smallest owning area, its callers, and its tests.
 | Diff review | `src/core/diff_review/`, `src/diff_tool/` | `test/diff_review_protocol.test.js`, `test/diff_tool_builtin.test.js` |
 | History | `src/core/history/`, `src/history/worker/`, `src/core/code_mode/history.ts` | `test/history.test.js`, `docs/history.md` |
 | Telegram | `src/core/telegram/` | `test/telegram_adapter.test.js`, `test/telegram_workspace.test.js` |
-| Nook | `src/core/nook/`, `src/core/code_mode/nook.ts`, `src/nook/` | `test/nook.test.js`, `docs/nook.md` |
 | Docs packaging | `docs/manifest.json`, `scripts/copy-tau-docs.js`, `src/core/tools/tau_docs.ts` | `test/tau_docs.test.js`, `test/tau_docs_corpus.test.js` |
 
 **New slash command:** the union and registry in `src/core/commands/registry.ts`, the handler in `src/tui/session_chat_controller.ts`, suggestions in `src/tui/ui/slash_autocomplete.ts` if needed, tests for parsing and dispatch, and `docs/tui.md`.
 
 **History viewer development:** `npm run history:dev` runs the history Worker locally with Wrangler, a local-only D1 database, and a fixture conversation. Its dev credentials are in `src/history/worker/`. It is long-running, so ask the user to start it.
 
-**Isolated subtrees:** the diff tool (`src/diff_tool/`) is the only review interface and shares only narrow protocol types with core. Nook (`src/nook/`) is a deliberately narrow Cloudflare platform; do not infer a general provider abstraction from it. Both nested guides apply.
+**Isolated subtrees:** the diff tool (`src/diff_tool/`) is the only review interface and shares only narrow protocol types with core. The nested guide applies.
 
 ## Working method
 

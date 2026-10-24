@@ -702,29 +702,6 @@ if (argv[0] === "history") {
   }
 }
 
-if (argv[0] === "nook") {
-  const { NookCliError, printNookHelp, runNookCommand } = await import("./core/nook/index.js");
-  try {
-    const nookConfig = loadConfig(cwd, configDeps);
-    await runNookCommand(argv.slice(1), {
-      cwd,
-      env: process.env,
-      config: nookConfig,
-    });
-    process.exit(0);
-  } catch (err) {
-    if (err instanceof NookCliError) {
-      // eslint-disable-next-line no-console
-      console.error(err.message);
-      // eslint-disable-next-line no-console
-      console.error("");
-      printNookHelp();
-      process.exit(1);
-    }
-    throw err;
-  }
-}
-
 if (argv[0] === "telegram") {
   const {
     createLocalTelegramSessionClient,

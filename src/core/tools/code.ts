@@ -10,7 +10,6 @@ import type { CodeModeCapability } from "../code_mode/capability.js";
 import { createHistoryCapability } from "../code_mode/history.js";
 import { createMcpCapability } from "../code_mode/mcp.js";
 import { createModelsCapability } from "../code_mode/models.js";
-import { createNookCapability } from "../code_mode/nook.js";
 import { bindCodeModeSdk } from "../code_mode/sdk.js";
 import { createWebCapability } from "../code_mode/web.js";
 import type { Config } from "../config/index.js";
@@ -49,8 +48,6 @@ export function createCodeToolDefinition(options: {
     if (!options.history) throw new Error("history query is required when history is enabled");
     capabilities.push(createHistoryCapability(options.history));
   }
-  if (allowed.has("nook") && options.config.nook)
-    capabilities.push(createNookCapability(options.backend, options.config));
   if (allowed.has("mcp") && options.mcp?.available)
     capabilities.push(createMcpCapability(options.mcp));
   if (allowed.has("models"))

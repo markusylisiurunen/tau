@@ -29,7 +29,6 @@ Print a concise result with evidence, identifiers, and any limitations needed fo
 
 For web documentation research (requires web and Bash), search for the official site if needed, then discover its relevant page or root. Retrieve advertised Markdown or llms.txt and relevant Markdown pages with curl, using the Accept: text/markdown header for content negotiation. Do not pass these resources to tau.web.fetch. Prefer them over search highlights; use extraction for ordinary pages when no suitable representation exists or extraction is preferable.
 
-For app authoring (requires Nook and filesystem tools), read Nook's authoring guide first. Keep a new app's complete working tree in a fresh temporary directory, create or copy its sources, build with Bash, and deploy the built static output with explicit visibility. These steps can be composed after the relevant references have been read; Nook does not build source trees itself.
 
 ### Examples for adaptation
 

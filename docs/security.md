@@ -30,7 +30,7 @@ Trusting a repository therefore means trusting this content. Before using a repo
 
 - persona system prompts, tool lists, and model launch allowlists;
 - skill instructions and any scripts they direct the agent to run;
-- project configuration that sets Nook targets, model notices, or hosted-environment connections;
+- project configuration that sets model notices or hosted-environment connections;
 - `enabledClientTools`, which can turn on commands from your global configuration; and
 - provision scripts or other repository automation used by integrations such as Telegram.
 
@@ -46,7 +46,7 @@ A Tau host that runs models refreshes compatible provider catalogs from `pi.dev`
 
 ## Keep secrets with the process that needs them
 
-Most model and service credentials belong on the host, because the host makes model calls, web searches, history replication, and Nook requests for the session tool. TUI speech credentials and command client tool credentials belong on the client. Telegram bot, transcription, and voice credentials belong to the Telegram runner. Credentials for hosted execution environments belong in the host's startup configuration.
+Most model and service credentials belong on the host, because the host makes model calls, performs web searches, and replicates history. TUI speech credentials and command client tool credentials belong on the client. Telegram bot, transcription, and voice credentials belong to the Telegram runner. Credentials for hosted execution environments belong in the host's startup configuration.
 
 When attached to a remote host, a credential exported on the laptop does not reach the host. Putting a host credential into the execution environment's shell would needlessly expose it to every process there. See [credentials](credentials.md) for which source wins.
 
@@ -57,12 +57,11 @@ Never put credentials in:
 - committed project files;
 - persona, prompt, skill, `AGENTS.md`, or model-notice text;
 - Bash command lines likely to enter shell history or process listings;
-- tool results, session messages, issue comments, or debug output; or
-- Nook static assets or browser KV.
+- tool results, session messages, issue comments, or debug output.
 
 Do not debug authentication by printing an environment, a configuration file, `auth.json`, or a service response that includes headers. Check that the expected source is set up for the right process, then run a small operation that uses it. `tau auth list` shows Codex account identities and status without showing tokens.
 
-If a credential appears in a session, log, shell history, repository, Nook deployment, Telegram message, or history, treat it as exposed. First revoke or rotate it at the provider. Then replace the stored value through configuration or the auth command, restart the process that uses it if needed, and delete the exposed copy where retention rules allow. Redacting the copy does not replace rotation.
+If a credential appears in a session, log, shell history, repository, Telegram message, or history, treat it as exposed. First revoke or rotate it at the provider. Then replace the stored value through configuration or the auth command, restart the process that uses it if needed, and delete the exposed copy where retention rules allow. Redacting the copy does not replace rotation.
 
 ## Understand environment sanitization
 
@@ -161,16 +160,6 @@ With global `history` configuration, entries are still written to local SQLite f
 
 Before turning on remote history, confirm who runs the service, its retention policy and region, who holds access keys, and which projects may be sent. One service key can search the whole shared collection. Rotate it if exposed. Removing the configuration does not delete data that was already copied. See [history](history.md) for storage and service behavior.
 
-## Treat Nook output as published content
-
-Nook deploys static files to HTTPS URLs. Deployments are private by default, and `--public` makes a site's files reachable by anyone. Review the built output, not just the source, before deploying. Static files must never contain provider keys, source maps with secrets, private configuration, or data that should stay on the execution environment.
-
-Each site has a JSON KV store for the browser that survives redeploys. On a public site, anyone can read and write it. On a private site, it requires a Cloudflare Access identity, but it is still application data that every allowed user and the site's code can read. It is not a place for credentials.
-
-Cloudflare Access should protect only the `/__nook/*` control plane at the root. Public site paths must stay reachable without Access, while private sites sign in through `/__nook/auth`. The Nook Worker validates Access JWTs; service-token headers only get a request past Access. Follow the exact Access application, audience, cookie, and service token setup in [Nook](nook.md).
-
-The Nook session tool and the `tau nook` CLI can deploy, delete, copy, and change KV without asking for confirmation. The model's JavaScript never receives Access credentials, but Tau uses them for the Nook API calls the program makes.
-
 ## Edit configuration without widening authority accidentally
 
 A configuration change can redirect network traffic, expose tools, or send credentials somewhere new. Follow these steps:
@@ -196,7 +185,6 @@ Tau's internal files hold the state it needs to recover. They are not configurat
 - `~/.config/tau/history.sqlite` and its SQLite side files;
 - Telegram runner session and project-preference state;
 - managed Telegram workspaces or repository caches as a first-line repair;
-- code-mode or compaction temporary files as if they were durable state; or
-- Nook R2 or Durable Object records outside supported Nook operations.
+- code-mode or compaction temporary files as if they were durable state.
 
-Use `tau auth` for Codex accounts, TUI or session protocol operations for sessions, configuration for behavior, and the documented commands for history and Nook. If recovery reports corruption, keep the original data, stop any other process writing to it, write down the exact error and Tau version, and investigate through normal recovery before trying any repair that deletes data.
+Use `tau auth` for Codex accounts, TUI or session protocol operations for sessions, configuration for behavior, and the documented commands for history. If recovery reports corruption, keep the original data, stop any other process writing to it, write down the exact error and Tau version, and investigate through normal recovery before trying any repair that deletes data.

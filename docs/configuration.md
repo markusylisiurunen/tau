@@ -180,7 +180,7 @@ The Telegram runner loads its speech provider and its runner config at startup. 
 
 **Editing the host's files for a hosted environment.** A hosted execution environment has its own project files and home. Put project `.tau` content on that environment, not at a similar path on the host.
 
-**Expecting nested objects to deep-merge.** A nearer `mcpServers` entry replaces the whole entry with the same name, including its credentials, and a nearer `nook` object replaces the broader one completely. Repeat every setting the entry needs.
+**Expecting nested objects to deep-merge.** A nearer `mcpServers` entry replaces the whole entry with the same name, including its credentials. Repeat every setting the entry needs.
 
 **Expecting `/reload` to restart the client or server.** Reload affects only the current session. Restart the process that reads the setting at startup.
 

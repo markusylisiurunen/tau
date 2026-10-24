@@ -102,7 +102,7 @@ describe("Claude Code launch models", () => {
   it("maps inherited built-in tools and leaves MCP discovery to Claude Code", () => {
     expect(claudeCodeTools([])).toEqual([]);
     expect(claudeCodeTools(["view_image", "edit"])).toEqual(["Read", "Glob", "Grep", "Edit"]);
-    expect(claudeCodeTools(["history", "mcp", "models", "nook"])).toEqual([]);
+    expect(claudeCodeTools(["history", "mcp", "models"])).toEqual([]);
     const options = claudeCodeOptions(
       {
         prompt: "task",

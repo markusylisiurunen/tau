@@ -7,7 +7,7 @@ Use this skill when writing new text, rewriting existing text, or reviewing some
 
 ## The target voice
 
-Write as a thoughtful person who knows the subject well, explaining it to a respected colleague. In engineering text, picture an experienced engineer; in a blog post, picture the same person writing for interested readers outside the team. The reader is intelligent and busy. They want the point, the reasons that matter, and enough detail to act correctly or follow the argument.
+Write as a thoughtful person who knows the subject well, explaining it to a respected colleague. In engineering text, picture an experienced engineer. In a blog post, picture the same person writing for interested readers outside the team. The reader is intelligent and busy. They want the point, the reasons that matter, and enough detail to act correctly or follow the argument.
 
 Good writing in this style is plain and direct. Each sentence makes one clear claim in ordinary words, usually with a concrete subject and an active verb. The tone is calm and confident, without salesmanship or drama. Instructions read as instructions. Emphasis comes from what is said and where it is placed, so intensifiers and bold text are rarely needed.
 
@@ -51,11 +51,20 @@ AI-written text tends to share a recognizable set of habits. Each one is defensi
 
 **Slogans and aphorisms.** Sentences built to sound quotable, often closing a paragraph: "The goal is a coherent model, not uniformity for its own sake." If the sentence carries a real point, state it plainly. If it only restates the paragraph, delete it.
 
-**Commentary about the text itself.** "This is a reasoning discipline, not a mandatory output section." "This is iterative design, not an obligation to…" Turn these into the instruction they are trying to give: "Treat this as a check on your own reasoning; it does not need to appear in the output."
+**Commentary about the text itself.** "This is a reasoning discipline, not a mandatory output section." "This is iterative design, not an obligation to…" Turn these into the instruction they are trying to give: "Treat this as a check on your own reasoning. It does not need to appear in the output."
 
 **Abstract, stiff register.** Nominalizations and formal phrasing where a verb would do: "exercise judgment", "carry forward accumulated knowledge", "the size of the necessary redesign is not a reason to settle for a worse outcome". Use concrete subjects and ordinary verbs: "use judgment", "bring along what has been learned", "the size of the redesign is never a reason to settle for a worse outcome". Keep the real terms of the field, since the reader needs them, and replace words that only sound formal.
 
-**Overloaded sentences.** Several clauses chained with semicolons, colons, and qualifiers until the reader has to parse the sentence twice. Split it. One sentence, one claim.
+**Overloaded sentences.** Several clauses and qualifiers chained into one sentence until the reader has to parse it twice. Split it so that each sentence makes one claim.
+
+**Unstated connections.** Clauses joined only by punctuation can leave the reader to work out how they relate. A semicolon gives the same flat link to a cause, a consequence, a contrast, or an example, and used as a habit it gives that link to every pair of ideas. When the relationship is unclear, ask what it is and name it with a word such as "because", "so", "but", or "for example". When two ideas are separate points, give each its own sentence.
+
+Punctuation that already makes the relationship clear can stay. A colon can introduce an explanation or an example, and a semicolon can work when the connection is obvious and the two clauses read better side by side. Replacing an unclear semicolon with a dash, colon, or comma leaves the connection just as unclear, and replacing every semicolon the same way only moves the repetitive pattern to another mark. Splitting connected reasoning into a series of short sentences hides the connection in another way, so keep reasoning together when the reader needs to follow it as one step.
+
+- Before: "The token has expired; sign in again."
+- After: "Sign in again because your token has expired."
+- Before: "The cache is shared by all tenants; one busy tenant can evict entries the others need; each tenant now gets its own partition."
+- After: "The cache was shared by all tenants, so one busy tenant could evict entries that the others needed. Each tenant now gets its own partition."
 
 **Reflexive lists of three.** "Clear, concise, and actionable." Use as many items as there actually are. If two adjectives mean nearly the same thing, keep the more precise one.
 
@@ -65,7 +74,7 @@ AI-written text tends to share a recognizable set of habits. Each one is defensi
 
 **Repetition across sections.** The same principle restated in the introduction, the body, and the conclusion with slightly different words. Say it once where it belongs. Repeat it only when a later section applies it in a new way.
 
-**Typographic tics.** Em dashes as the default connector, bold on every other phrase, and headings that announce what the paragraph will say anyway. Prefer commas, parentheses, colons, or separate sentences. Use bold for terms a reader might scan for.
+**Typographic tics.** Em dashes as the default connector, bold on every other phrase, and headings that announce what the paragraph will say anyway. When a dash joins two clauses and their relationship is unclear, handle it like an unclear semicolon: name the connection or start a new sentence. Use parentheses for a true aside, and use bold for terms a reader might scan for.
 
 ## Longer examples
 
@@ -125,4 +134,4 @@ When asked to review, point to specific passages, name the habit or problem, and
 
 ## Final check
 
-Read the result once as its intended reader. Each sentence should say something, and the whole should be understandable on the first read. Before finishing, scan specifically for contrast framing and slogans; they are the habits most likely to survive a rewrite.
+Read the result once as its intended reader. Each sentence should say something, and the whole should be understandable on the first read. Before finishing, scan specifically for contrast framing and slogans, because they are the habits most likely to survive a rewrite. Then look at how the sentences connect. Repeated semicolons or dashes between clauses often mean a connecting word is missing, and a run of short, disconnected sentences may need one added back.

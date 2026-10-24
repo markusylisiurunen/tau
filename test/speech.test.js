@@ -121,7 +121,7 @@ describe("speech synthesis", () => {
         "The issue is at https://example.com/issues/620.",
         "See [https://example.com/help](https://example.com/help).",
       ].join("\n");
-      const spokenText = "Read the documentation. The issue is at the linked page. See the link.";
+      const spokenText = "Read the documentation. See issue 620. See the link.";
       const fetchMock = speechFetch(spokenText);
 
       await collect(synthesize({ ...credentials, sourceText, fetchImpl: fetchMock }));

@@ -83,6 +83,7 @@ async function createInProcessSdkHost(
     store: new FileSessionStore({ directory: getDefaultSessionStoreDirectory(home) }),
     history: HistoryManager.open(getDefaultHistoryDatabasePath(home), {
       reportReplicationFailure: options.onDiagnostic,
+      reportRecording: options.onDiagnostic,
     }),
     historyRemote: resolveHistoryRemoteTarget(config),
     mcpServers: config.mcpServers,

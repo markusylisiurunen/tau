@@ -20,7 +20,7 @@ const DIFF_REVIEW_ARGS_DESCRIPTION = [
 ].join(" ");
 
 const DIFF_REVIEW_PATCH_FILES_DESCRIPTION =
-  "Patch files to review when source is 'patch_files'. Required for patch_files. Files may be absolute or relative to the current working directory. Each file must contain git unified diff sections with diff --git headers. Use this for selected hunks or custom review scopes. Patch files may be generated in any way as long as they adhere to that format, for example with git commands, by running code that emits a patch, or by manually editing a temporary patch file. One common approach is using `mktemp` to create a patch file in the platform temporary directory, writing selected `git diff` output to it, and passing the reported path. Multiple patch files are allowed.";
+  "Patch files to review when source is 'patch_files'. Required for patch_files. Files may be absolute or relative to the selected working directory. Each file must contain git unified diff sections with diff --git headers. Use this for selected hunks or custom review scopes. Patch files may be generated in any way as long as they adhere to that format, for example with git commands, by running code that emits a patch, or by manually editing a temporary patch file. One common approach is using `mktemp` to create a patch file in the platform temporary directory, writing selected `git diff` output to it, and passing the reported path. Multiple patch files are allowed.";
 
 const DIFF_REVIEW_LABEL_DESCRIPTION =
   "Optional human-readable label for patch-file reviews, for example 'selected hunks from src/foo.ts'.";
@@ -34,6 +34,14 @@ export const DIFF_REVIEW_TOOL: Tool = {
         description: DIFF_REVIEW_SOURCE_DESCRIPTION,
         enum: ["git_diff", "patch_files"],
       }),
+      workingDirectory: Type.Optional(
+        Type.String({
+          minLength: 1,
+          pattern: "^[^\\r\\n]+$",
+          description:
+            "Working directory for this review. Defaults to the session working directory. Relative paths resolve from the session working directory. Git discovery and relative patch-file paths use this directory.",
+        }),
+      ),
       diffArgs: Type.Optional(
         Type.Array(Type.String({ minLength: 1 }), {
           description: DIFF_REVIEW_ARGS_DESCRIPTION,
@@ -57,6 +65,11 @@ export const DIFF_REVIEW_TOOL: Tool = {
 const diffReviewArgsSchema = z
   .object({
     source: z.enum(["git_diff", "patch_files"]),
+    workingDirectory: z
+      .string()
+      .min(1)
+      .regex(/^[^\r\n]+$/)
+      .optional(),
     diffArgs: z.array(z.string().trim().min(1)).optional(),
     patchFiles: z.array(z.string().trim().min(1)).optional(),
     label: z.string().trim().min(1).optional(),
@@ -74,6 +87,7 @@ const diffReviewArgsSchema = z
 
 export type ParsedDiffReviewToolArgs = {
   source: DiffReviewSnapshotSource;
+  workingDirectory?: string;
   command: string;
 };
 
@@ -110,6 +124,9 @@ export function parseDiffReviewToolArgs(
       ok: true,
       data: {
         source: { kind: "git_diff", diffArgs },
+        ...(parsed.data.workingDirectory !== undefined
+          ? { workingDirectory: parsed.data.workingDirectory }
+          : {}),
         command: formatDiffReviewScope(diffArgs),
       },
     };
@@ -125,6 +142,9 @@ export function parseDiffReviewToolArgs(
         patchFiles,
         scopeLabel,
       },
+      ...(parsed.data.workingDirectory !== undefined
+        ? { workingDirectory: parsed.data.workingDirectory }
+        : {}),
       command: scopeLabel,
     },
   };

@@ -10,7 +10,8 @@ The host makes model calls and runs services such as web search and remote histo
 
 | Operation | Where the credential belongs |
 | --- | --- |
-| Main-agent, subagent, sampling, and maintenance model calls | Session host |
+| Main-agent, native Tau subagent, sampling, and maintenance model calls | Session host |
+| Claude Code subagent subscription login | Claude Code on the execution environment |
 | OpenAI Codex OAuth accounts | Session host home |
 | Exa-backed `web.search` and `web.fetch` | Session host |
 | Remote history replication and queries | Session host |
@@ -20,6 +21,8 @@ The host makes model calls and runs services such as web search and remote histo
 | Standalone `tau tool` commands | The process running that command |
 
 With local `tau`, all of these are usually one machine. With `tau attach`, a key set only in the attached client's shell does not reach the remote host. Run `tau auth` on the host machine, and set host environment variables where `tau serve` or the SDK host runs. See [ownership and scope](ownership-and-scope.md) for the full boundary.
+
+Claude Code subagents use a Claude subscription login on the execution environment. Sign in with Claude Code there; `tau auth` does not manage this account. Tau checks the account before sending a task and does not fall back to API billing. See [Claude Code subagents](subagents.md#claude-code-subagents) for setup and extra-usage charges.
 
 ## Provider API keys
 
@@ -59,6 +62,27 @@ Features check the environment variable first, then global configuration:
 Set these on the process that runs the feature. For example, `/speak` in an attached TUI reads `OPENAI_API_KEY` and `ELEVENLABS_API_KEY` on the client machine, while a session that uses a Google model reads its key on the host.
 
 For `tau tool` commands, credentials and configuration belong to the machine that runs the command. The agent's Bash tool removes inherited API-key environment variables, so a command the agent runs may need its key in global configuration on that machine. See [configuration](configuration.md) for configuration file locations and [security](security.md) for command environment handling.
+
+## MCP OAuth
+
+HTTP MCP servers can use browser-based OAuth without an API token. Configure the server with `type: "http"` and its `url`, without an `Authorization` header, then run:
+
+```sh
+tau mcp login cloudflare-api
+tau mcp login cloudflare-api --scope dns.write
+tau mcp login cloudflare-api --all
+tau mcp logout cloudflare-api
+```
+
+Run these commands on the host, from the directory where it was launched, so the CLI resolves the same global and project MCP configuration. `login` without flags requests the authentication challenge's scopes (or the resource metadata's default scopes when the challenge has none) together with existing granted scopes. Repeat `--scope` to add specific permissions to the existing grant. `--all` requests every scope advertised by the authorization server and fails if it advertises none. When additional scopes exceed the client registration, login registers a new client and keeps the previous grant until authorization succeeds. The service decides which permissions it grants; requesting all does not guarantee unrestricted access. `--all` and `--scope` cannot be combined.
+
+OAuth requests and discovery redirects require HTTPS, except for HTTP on loopback. Registration and token requests do not follow redirects.
+
+Login prints an authorization URL. Open it in your browser and approve access at the service. The callback listener binds to loopback and waits up to five minutes. For a remote host, forward the printed callback port through SSH before opening the authorization URL in your local browser, for example `ssh -N -L <port>:127.0.0.1:<port> <host>`. A later login reuses the registered callback port, which must be free.
+
+OAuth credentials are stored privately in the host's `~/.config/tau/auth.json`, keyed by server URL. Servers with the same URL share the grant. Access-token refresh is automatic and coordinated across host processes. Existing sessions read updated credentials without restarting and reconnect to refresh available tools after login or logout. An explicit `Authorization` header takes precedence; remove it before OAuth login.
+
+When a call needs additional permissions, it fails with the required scopes and a login command. Tau does not open a browser, persist pending scope requests, or automatically repeat that operation after login. The user authorizes explicitly, then tells the agent to continue. Logout removes the local credentials but does not revoke the grant at the service; use the service's account settings to revoke it.
 
 ## OpenAI Codex OAuth
 

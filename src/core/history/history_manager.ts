@@ -1,11 +1,10 @@
-import { LocalHistoryStore } from "./local_history_store.js";
+import { setTimeout as delay } from "node:timers/promises";
 import { RemoteHistoryClient, RemoteHistoryError } from "./remote_history_client.js";
+import { type HistoryStore, ThreadedHistoryStore } from "./threaded_history_store.js";
 import type {
   HistoryEntry,
   HistoryQuery,
-  HistoryReadInput,
   HistoryRemoteTarget,
-  HistorySearchInput,
   HistorySessionRecord,
 } from "./types.js";
 
@@ -13,6 +12,8 @@ const REPLICATION_BATCH_SIZE = 10;
 const REPLICATION_LANE_BATCH_SIZE = 10;
 const REPLICATION_BATCH_BYTES = 6 * 1024 * 1024;
 const REPLICATION_TIMEOUT_MS = 15_000;
+const MAX_PENDING_BYTES = 64 * 1024 * 1024;
+const FLUSH_TIMEOUT_MS = 2_000;
 const PERMANENT_REPLICATION_ERROR_CODES = new Set([
   "immutable_conflict",
   "invalid_request",
@@ -33,48 +34,68 @@ export type HistoryReplicationFailureDiagnostic = {
   };
 };
 
+export type HistoryRecordingDiagnostic = {
+  event: "history_recording";
+  status: "delayed" | "dropped" | "recovered";
+  sessionId: string;
+  pendingOperations: number;
+  pendingBytes: number;
+  message: string;
+};
+
+export type HistoryDiagnostic = HistoryReplicationFailureDiagnostic | HistoryRecordingDiagnostic;
+
 export type HistoryManagerOptions = {
-  failureReason?: string;
   reportReplicationFailure?: (diagnostic: HistoryReplicationFailureDiagnostic) => void;
+  reportRecording?: (diagnostic: HistoryRecordingDiagnostic) => void;
+  maxPendingBytes?: number;
+};
+
+type RecordingChange =
+  | { type: "register" }
+  | { type: "append"; entries: HistoryEntry[] }
+  | { type: "truncate"; sourceIds: string[] };
+type PendingRecording = {
+  session: HistorySessionRecord;
+  remote?: HistoryRemoteTarget;
+  change: RecordingChange;
+  bytes: number;
 };
 
 export class HistoryManager {
   private readonly replicationRuns = new Map<string, Promise<void>>();
+  private readonly replicationRetries = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly targets = new Map<string, HistoryRemoteTarget>();
+  private readonly sessions = new Map<
+    string,
+    { session: HistorySessionRecord; references: number }
+  >();
+  private readonly pending: PendingRecording[] = [];
+  private pendingBytes = 0;
+  private recording: Promise<void> | undefined;
+  private closed = false;
+  private delayed = false;
+  private lastDropDiagnostic = 0;
+  private readonly stop = new AbortController();
   private readonly reportReplicationFailure: NonNullable<
     HistoryManagerOptions["reportReplicationFailure"]
   >;
-  private local: LocalHistoryStore | undefined;
-  private failureReason: string | undefined;
 
-  constructor(local: LocalHistoryStore | undefined, options: HistoryManagerOptions = {}) {
-    if (!local && !options.failureReason) {
-      throw new Error("history manager requires a local store or failure reason");
-    }
-    this.local = local;
-    this.failureReason = options.failureReason;
+  constructor(
+    private readonly local: HistoryStore,
+    private readonly options: HistoryManagerOptions = {},
+  ) {
     this.reportReplicationFailure = options.reportReplicationFailure ?? (() => {});
   }
 
-  static open(
-    path: string,
-    options: Omit<HistoryManagerOptions, "failureReason"> = {},
-  ): HistoryManager {
-    try {
-      return new HistoryManager(new LocalHistoryStore(path), options);
-    } catch (error) {
-      return new HistoryManager(undefined, {
-        ...options,
-        failureReason: formatFailureReason(error),
-      });
-    }
+  static open(path: string, options: HistoryManagerOptions = {}): HistoryManager {
+    return new HistoryManager(new ThreadedHistoryStore(path), options);
   }
 
   registerSession(session: HistorySessionRecord, remote?: HistoryRemoteTarget): string | undefined {
-    return this.runLocalMutation((local) => {
-      local.createSession(session, remote);
-      if (remote) this.scheduleReplication(remote);
-    });
+    const references = (this.sessions.get(session.sessionId)?.references ?? 0) + 1;
+    this.sessions.set(session.sessionId, { session: structuredClone(session), references });
+    return this.enqueue(session.sessionId, { type: "register" }, remote);
   }
 
   append(
@@ -82,10 +103,8 @@ export class HistoryManager {
     entries: HistoryEntry[],
     remote?: HistoryRemoteTarget,
   ): string | undefined {
-    return this.runLocalMutation((local) => {
-      const inserted = local.append(sessionId, entries, remote);
-      if (inserted.length > 0 && remote) this.scheduleReplication(remote);
-    });
+    if (entries.length === 0) return undefined;
+    return this.enqueue(sessionId, { type: "append", entries }, remote);
   }
 
   truncateFromSources(
@@ -93,98 +112,196 @@ export class HistoryManager {
     sourceIds: string[],
     remote?: HistoryRemoteTarget,
   ): string | undefined {
-    return this.runLocalMutation((local) => {
-      const truncated = local.truncateFromSources(sessionId, sourceIds, remote);
-      if (truncated !== undefined && remote) this.scheduleReplication(remote);
-    });
+    if (sourceIds.length === 0) return undefined;
+    return this.enqueue(sessionId, { type: "truncate", sourceIds }, remote);
+  }
+
+  forgetSession(sessionId: string): void {
+    const registration = this.sessions.get(sessionId);
+    if (!registration) return;
+    registration.references -= 1;
+    if (registration.references === 0) this.sessions.delete(sessionId);
   }
 
   query(remote?: HistoryRemoteTarget): HistoryQuery {
-    if (remote) {
-      const client = new RemoteHistoryClient(remote);
-      return {
-        search: async (input, signal) => {
-          this.requireLocal();
-          return await client.search(input, signal);
-        },
-        read: async (input, signal) => {
-          this.requireLocal();
-          return await client.read(input, signal);
-        },
-      };
-    }
-
+    if (remote) return new RemoteHistoryClient(remote);
     return {
-      search: async (input) => await this.searchLocal(input),
-      read: async (input) => await this.readLocal(input),
+      search: async (input) => {
+        await this.flushRecording();
+        return await this.local.search(input);
+      },
+      read: async (input) => {
+        await this.flushRecording();
+        return await this.local.read(input);
+      },
     };
   }
 
   async flush(): Promise<void> {
-    await Promise.allSettled([...this.replicationRuns.values()]);
+    await this.bounded(async () => {
+      await this.recording;
+      await Promise.allSettled([...this.replicationRuns.values()]);
+    });
   }
 
   async retryReplication(target: HistoryRemoteTarget, sessionId: string): Promise<void> {
     await this.replicationRuns.get(target.endpoint);
-    this.requireLocal().clearReplicationFailure(target.endpoint, sessionId);
+    await this.local.clearReplicationFailure(target.endpoint, sessionId);
     this.scheduleReplication(target);
     await this.replicationRuns.get(target.endpoint);
   }
 
   close(): void {
-    const local = this.local;
-    this.local = undefined;
-    this.failureReason ??= "history manager is closed";
-    if (!local) return;
+    if (this.closed) return;
+    if (this.pending[0])
+      this.reportRecording(
+        "dropped",
+        this.pending[0].session.sessionId,
+        "host closed with pending history",
+      );
+    this.closed = true;
+    this.stop.abort();
+    for (const timer of this.replicationRetries.values()) clearTimeout(timer);
+    this.replicationRetries.clear();
+    this.pending.length = 0;
+    this.pendingBytes = 0;
+    this.sessions.clear();
     try {
-      local.close();
+      void Promise.resolve(this.local.close()).catch(() => {});
     } catch {
-      // History is best-effort, including during host shutdown.
+      // History shutdown must not prevent the host from closing.
     }
   }
 
-  private runLocalMutation(action: (local: LocalHistoryStore) => void): string | undefined {
-    const local = this.local;
-    if (!local) return this.failureReason;
-    try {
-      action(local);
-      return undefined;
-    } catch (error) {
-      return this.disable(error);
+  private enqueue(
+    sessionId: string,
+    change: RecordingChange,
+    remote?: HistoryRemoteTarget,
+  ): string | undefined {
+    if (this.closed) return "history manager is closed";
+    const session = this.sessions.get(sessionId)?.session;
+    if (!session) return `history session '${sessionId}' was not registered`;
+    const bytes = Buffer.byteLength(JSON.stringify({ session, change }));
+    if (this.pendingBytes + bytes > (this.options.maxPendingBytes ?? MAX_PENDING_BYTES)) {
+      const message = "history buffer is full; this change was dropped";
+      this.reportRecording("dropped", sessionId, message);
+      return message;
     }
+    this.pending.push({ session, change: structuredClone(change), remote, bytes });
+    this.pendingBytes += bytes;
+    this.startRecording();
+    return undefined;
   }
 
-  private async searchLocal(input: HistorySearchInput) {
-    const local = this.requireLocal();
-    return await local.search(input);
+  private startRecording(): void {
+    if (this.closed || this.recording || this.pending.length === 0) return;
+    this.recording = this.drain().finally(() => {
+      this.recording = undefined;
+      this.startRecording();
+    });
   }
 
-  private async readLocal(input: HistoryReadInput) {
-    const local = this.requireLocal();
-    return await local.read(input);
-  }
-
-  private requireLocal(): LocalHistoryStore {
-    if (this.local) return this.local;
-    throw new Error(`session history is unavailable: ${this.failureReason ?? "unknown failure"}`);
-  }
-
-  private disable(error: unknown): string {
-    const reason = formatFailureReason(error);
-    this.failureReason = reason;
-    const local = this.local;
-    this.local = undefined;
-    if (local) {
+  private async drain(): Promise<void> {
+    let attempts = 0;
+    while (!this.closed && this.pending[0]) {
+      const item = this.pending[0];
       try {
-        local.close();
-      } catch {
-        // Preserve the original failure reason.
+        // Registration may have been dropped during an earlier buffer overflow.
+        await this.local.createSession(item.session, item.remote);
+        if (item.change.type === "append")
+          await this.local.append(item.session.sessionId, item.change.entries, item.remote);
+        else if (item.change.type === "truncate")
+          await this.local.truncateFromSources(
+            item.session.sessionId,
+            item.change.sourceIds,
+            item.remote,
+          );
+        if (this.closed) return;
+        if (this.delayed) {
+          this.delayed = false;
+          this.reportRecording("recovered", item.session.sessionId, "history recording resumed");
+        }
+        if (item.remote) this.scheduleReplication(item.remote);
+        attempts = 0;
+      } catch (error) {
+        if (this.closed) return;
+        if (isBusy(error)) {
+          if (!this.delayed) {
+            this.delayed = true;
+            this.reportRecording("delayed", item.session.sessionId, formatFailureReason(error));
+          }
+          const wait = Math.min(100 * 2 ** Math.min(attempts++, 5), 2_000);
+          await delay(wait + (Math.random() * wait) / 4, undefined, {
+            signal: this.stop.signal,
+            ref: false,
+          }).catch(() => {});
+          continue;
+        }
+        this.delayed = true;
+        this.reportRecording("dropped", item.session.sessionId, formatFailureReason(error));
       }
+      if (this.closed) return;
+      this.pending.shift();
+      this.pendingBytes -= item.bytes;
     }
-    return reason;
+  }
+
+  private async flushRecording(): Promise<void> {
+    await this.bounded(async () => {
+      await this.recording;
+    });
+  }
+
+  private async bounded(action: () => Promise<void>): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        action(),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, FLUSH_TIMEOUT_MS);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private reportRecording(
+    status: HistoryRecordingDiagnostic["status"],
+    sessionId: string,
+    message: string,
+  ): void {
+    if (status === "dropped") {
+      const now = Date.now();
+      if (now - this.lastDropDiagnostic < 1_000) return;
+      this.lastDropDiagnostic = now;
+    }
+    try {
+      this.options.reportRecording?.({
+        event: "history_recording",
+        status,
+        sessionId,
+        pendingOperations: this.pending.length,
+        pendingBytes: this.pendingBytes,
+        message,
+      });
+    } catch {
+      // Diagnostics must not stop recording or agent work.
+    }
+  }
+
+  private retryReplicationLater(target: HistoryRemoteTarget): void {
+    if (this.closed || this.replicationRetries.has(target.endpoint)) return;
+    const timer = setTimeout(() => {
+      this.replicationRetries.delete(target.endpoint);
+      this.scheduleReplication(target);
+    }, 5_000);
+    timer.unref();
+    this.replicationRetries.set(target.endpoint, timer);
   }
 
   private scheduleReplication(target: HistoryRemoteTarget): void {
+    if (this.closed) return;
     this.targets.set(target.endpoint, target);
     if (this.replicationRuns.has(target.endpoint)) return;
     const run = this.replicate(target.endpoint).finally(() => {
@@ -195,6 +312,7 @@ export class HistoryManager {
     this.replicationRuns.set(target.endpoint, run);
     void run.catch((error) => {
       this.emitReplicationFailure({ endpoint: target.endpoint, error });
+      this.retryReplicationLater(target);
     });
   }
 
@@ -202,10 +320,9 @@ export class HistoryManager {
     const target = this.targets.get(endpoint);
     if (!target) return;
     const client = new RemoteHistoryClient(target);
-    while (true) {
+    while (!this.closed) {
       const local = this.local;
-      if (!local) return;
-      const lanes = local.listPendingOperationLanes(
+      const lanes = await local.listPendingOperationLanes(
         endpoint,
         REPLICATION_LANE_BATCH_SIZE,
         REPLICATION_BATCH_SIZE,
@@ -218,11 +335,11 @@ export class HistoryManager {
         try {
           await client.applyOperations(
             batch.map((item) => item.operation),
-            AbortSignal.timeout(REPLICATION_TIMEOUT_MS),
+            AbortSignal.any([this.stop.signal, AbortSignal.timeout(REPLICATION_TIMEOUT_MS)]),
           );
         } catch (error) {
           if (isPermanentReplicationFailure(error)) {
-            local.quarantineReplicationSession({
+            await local.quarantineReplicationSession({
               endpoint,
               sessionId: first.sessionId,
               operationId: error.operationId ?? null,
@@ -245,9 +362,10 @@ export class HistoryManager {
             operationId: error instanceof RemoteHistoryError ? error.operationId : undefined,
             error,
           });
+          this.retryReplicationLater(target);
           return;
         }
-        local.acknowledgeOperations(batch.map((item) => item.rowId));
+        await local.acknowledgeOperations(batch.map((item) => item.rowId));
       }
     }
   }
@@ -308,4 +426,9 @@ function boundedReplicationBatch<T extends { operation: unknown }>(pending: T[])
     bytes += itemBytes;
   }
   return batch;
+}
+
+function isBusy(error: unknown): boolean {
+  const code = (error as { errcode?: unknown })?.errcode;
+  return typeof code === "number" && ((code & 0xff) === 5 || (code & 0xff) === 6);
 }

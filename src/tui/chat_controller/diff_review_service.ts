@@ -39,6 +39,7 @@ export type DiffReviewServiceOptions = {
   stopTurnTimer: () => void;
   startSession: (args: {
     source: DiffReviewSnapshotSource;
+    workingDirectory?: string;
     signal: AbortSignal;
   }) => Promise<StartedDiffReviewBridge>;
   onReviewReturned: (review: DiffReviewReturnedReview) => Promise<void>;
@@ -69,6 +70,7 @@ export class DiffReviewService {
   private readonly stopTurnTimer: () => void;
   private readonly startSession: (args: {
     source: DiffReviewSnapshotSource;
+    workingDirectory?: string;
     signal: AbortSignal;
   }) => Promise<StartedDiffReviewBridge>;
   private readonly onReviewReturned: (review: DiffReviewReturnedReview) => Promise<void>;
@@ -238,6 +240,9 @@ export class DiffReviewService {
     try {
       const started = await callbacks.startSession({
         source: parsedArgs.data.source,
+        ...(parsedArgs.data.workingDirectory !== undefined
+          ? { workingDirectory: parsedArgs.data.workingDirectory }
+          : {}),
         signal,
       });
       if (signal.aborted) {

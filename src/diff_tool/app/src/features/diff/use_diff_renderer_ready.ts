@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import type { DiffFile } from "./parse_diff.js";
 
 export const DIFF_CODE_THEME = "github-dark-dimmed";
+export const DIFF_HIGHLIGHTER = "highlights";
 
 export function useDiffRendererReady(files: DiffFile[]): boolean {
   const [ready, setReady] = useState(false);
@@ -38,6 +39,7 @@ async function prepareDiffRenderer(files: DiffFile[]): Promise<void> {
   await Promise.all([
     document.fonts?.ready ?? Promise.resolve(),
     preloadHighlighter({
+      preferredHighlighter: DIFF_HIGHLIGHTER,
       themes: [DIFF_CODE_THEME],
       langs: collectDiffLanguages(files),
     }).catch(() => undefined),

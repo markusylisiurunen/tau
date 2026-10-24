@@ -1,6 +1,6 @@
 ---
 name: cowork
-description: "Cowork is Markus's personal GitHub automation service, backed by Tau. The skill explains Cowork and helps configure its repository workflows, prompts, workspace hooks, and schedules. Use this skill when someone asks about Cowork or when you work on .cowork files. Trigger: balanced."
+description: "Cowork is Markus's personal GitHub automation service, backed by Tau. The skill explains Cowork and helps configure its repository workflows, prompts, PR commands, workspace hooks, and schedules. Use this skill when someone asks about Cowork or when you work on .cowork files. Trigger: balanced."
 ---
 
 Cowork turns GitHub events and recurring schedules into Tau agent sessions. GitHub holds the issues, pull requests, and discussion. Cowork handles triggers and workspaces. Tau agents do the work and respond on GitHub.
@@ -8,7 +8,7 @@ Cowork turns GitHub events and recurring schedules into Tau agent sessions. GitH
 ## Before changing configuration
 
 1. Read the repository instructions and existing `.cowork/` files. Check `.agents/managed.json` for centrally managed paths before editing them.
-2. Identify the requested change: session settings, workflow guidance, workspace setup, or a recurring task. Read the relevant section of [the configuration reference](references/configuration.md).
+2. Identify the requested change: session settings, workflow guidance, a PR command, workspace setup, or a recurring task. Read the relevant section of [the configuration reference](references/configuration.md).
 3. Respect ownership. If configuration is centrally managed, change it at its source instead of editing the generated files. Preserve repository-owned hooks, schedules, and other local content. Do not bypass ownership conflicts.
 4. Separate preparing files from activating automation. A `.cowork` directory does not prove that webhooks, repository access, or the service allowlist are configured. Enabling schedules is fine, since users review the change. Do not post bot commands, change service settings, or deploy unless the request authorizes those actions.
 
@@ -28,6 +28,7 @@ The default mention is `@markustherobot`, although the service can configure a d
 | PR      | `/explain`, with optional guidance on subsequent lines             | Updates a persistent explanation comment                                   |
 | PR      | `/restart` alone                                                   | Replaces the PR conversation and workspace without an agent turn           |
 | PR      | `/diff` alone                                                      | Creates a hosted interactive review of the current head                    |
+| PR      | `/<name>` from `.cowork/commands/`, with optional guidance         | Starts a fresh run of a repository-defined command                         |
 
 Ordinary messages may follow the mention on the same line. Commands must be the only token on their line after the mention; guidance starts on a later line, optionally after a blank line. Bare keywords are ordinary conversation. There is no explanation restart command.
 
@@ -38,6 +39,8 @@ Send `/restart` alone, then send the actual request in a separate comment. The r
 Submitting hosted diff feedback hands the requested work to the persistent PR conversation. That work uses the conversation's settings instead of the hosted discussion's settings. Posting a command or submitting feedback can start autonomous work, so do not treat these examples as permission to trigger it.
 
 When the service enables them, eligible non-draft PRs can also receive automatic reviews, hosted diffs, and explanations. These switches belong to the service, and repository configuration cannot change them.
+
+To opt a single PR out of these automatic workflows, put the exact marker `<!-- cowork:skip-auto -->` in its description. Cowork checks the description on each opened, ready-for-review, and synchronize event, so an automated PR should include the marker when it is created, and an existing PR needs it before the next push. Explicit commands still work on a marked PR. Adding the marker does not cancel work that Cowork already accepted, and removing it does not replay skipped events. Cowork has no versioned releases; the production service has supported the marker since its 2026-10-23 deployment, and older builds ignore it.
 
 ## Verify the change
 

@@ -208,6 +208,10 @@ The session host provides temporary review agents, and the local tool runs the b
 
 The TUI also offers diff review to the agent as a client tool, unless `--no-client-tools` is set. `/diff` works either way. See [client tools](client-tools.md) for what this means with several clients.
 
+Agent-launched diff reviews have no execution deadline. They remain open until submitted or closed, or until the turn is interrupted or the owning client disconnects. Acknowledgement and review initialization still have startup timeouts.
+
+The agent can use `diff_review` with `workingDirectory` to review another directory without changing the session directory. Paths refer to the session's execution environment; relative paths resolve from the session directory. The selected directory must be inside a Git repository and is used by review assistants and for relative patch-file paths. Omitting it uses the session directory.
+
 ## Use speech
 
 ### Dictation

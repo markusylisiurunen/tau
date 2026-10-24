@@ -234,48 +234,53 @@ export function createSpawnAgentToolDefinition(options: {
         launchModelOverride = parsedLaunchModel.launchModel;
       }
 
-      const cwd = workingDirectory ? resolve(baseCwd, workingDirectory) : baseCwd;
-      let effectiveSubagentPrompt = subagentSystemPrompt;
-      if (workingDirectory && cwd !== resolve(baseCwd)) {
-        if (!options.resolveSubagentPrompt) {
-          return executeTool(context, () =>
-            blocked("Working-directory context resolution is unavailable.", { title }),
-          );
-        }
-        try {
-          effectiveSubagentPrompt = await options.resolveSubagentPrompt({ cwd, persona });
-        } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          return executeTool(context, () =>
-            blocked(
-              `Could not build the subagent prompt for workingDirectory '${cwd}': ${errorMessage}`,
-              { title },
-              "failed",
-            ),
-          );
-        }
-      }
-
-      const systemPrompt = effectiveSubagentPrompt;
-      if (!systemPrompt) {
-        return executeTool(context, () =>
-          blocked(`The subagent system prompt is unavailable.`, {
-            title,
-          }),
-        );
-      }
-
       const effectiveSettings = resolveSubagentEffectiveSettings({
         persona,
         launchModel: launchModelOverride,
       });
-      const runtimeConfig: SubagentRuntimeConfig = {
-        systemPrompt,
-        workingDirectory: cwd,
-        ...effectiveSettings,
-      };
+      const cwd = workingDirectory ? resolve(baseCwd, workingDirectory) : baseCwd;
+      let runtimeConfig: SubagentRuntimeConfig;
+      if (effectiveSettings.kind === "claude-code") {
+        runtimeConfig = { ...effectiveSettings, workingDirectory: cwd };
+      } else {
+        let effectiveSubagentPrompt = subagentSystemPrompt;
+        if (workingDirectory && cwd !== resolve(baseCwd)) {
+          if (!options.resolveSubagentPrompt) {
+            return executeTool(context, () =>
+              blocked("Working-directory context resolution is unavailable.", { title }),
+            );
+          }
+          try {
+            effectiveSubagentPrompt = await options.resolveSubagentPrompt({ cwd, persona });
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            return executeTool(context, () =>
+              blocked(
+                `Could not build the subagent prompt for workingDirectory '${cwd}': ${errorMessage}`,
+                { title },
+                "failed",
+              ),
+            );
+          }
+        }
 
-      const modelLabel = `${runtimeConfig.model.provider}/${runtimeConfig.model.id}:${runtimeConfig.settings.reasoning ?? "none"}`;
+        const systemPrompt = effectiveSubagentPrompt;
+        if (!systemPrompt) {
+          return executeTool(context, () =>
+            blocked(`The subagent system prompt is unavailable.`, {
+              title,
+            }),
+          );
+        }
+
+        runtimeConfig = { ...effectiveSettings, systemPrompt, workingDirectory: cwd };
+      }
+
+      const reasoning =
+        runtimeConfig.kind === "native"
+          ? (runtimeConfig.settings.reasoning ?? "none")
+          : runtimeConfig.effort;
+      const modelLabel = `${runtimeConfig.model.provider}/${runtimeConfig.model.id}:${reasoning}`;
       const statusWorkingDirectory = formatCwd(runtimeConfig.workingDirectory);
       const statusPrefixParts = [modelLabel, statusWorkingDirectory];
 

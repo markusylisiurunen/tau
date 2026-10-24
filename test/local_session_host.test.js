@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,11 +15,13 @@ import {
   buildToolRunPresentation,
   TOOL_UI_FACET_VERSION,
 } from "../dist/core/tools/presentation.js";
+import { ModelRuntime } from "../dist/core/utils/model_stream.js";
 import {
   isTauUserMessageHidden,
   prependTauUserMetadata,
   stripTauUserDisplayText,
 } from "../dist/core/utils/user_metadata.js";
+import { LocalExecutionEnvironment } from "../dist/execution/local_execution_environment.js";
 import { HostedEphemeralAgentSession } from "../dist/host/hosted_ephemeral_agent_session.js";
 import { LocalSessionHost } from "../dist/host/local_session_host.js";
 import { EphemeralThreadBusyError } from "../dist/host/session_host.js";
@@ -67,6 +69,11 @@ function createTestExecutionEnvironment(
   snapshot = { kind: "local", cwd: "/repo", home: "/home/user" },
   toolBackend = createLocalToolExecutionBackend(),
 ) {
+  const runNodeScript = toolBackend.runNodeScript.bind(toolBackend);
+  toolBackend.runNodeScript = (script, args, options) =>
+    args[2] === "skills"
+      ? Promise.resolve({ exitCode: 0, output: JSON.stringify({ files: [] }), truncated: false })
+      : runNodeScript(script, args, options);
   return {
     resolveRuntimeConfig: async () => ({
       bootstrap: { modelResolver: { resolveModel } },
@@ -120,7 +127,7 @@ function createHost(store, options = {}) {
           },
         }),
     executionEnvironmentResolver,
-    includeAgentContext: false,
+    includeAgentContext: options.includeAgentContext ?? false,
     environment: createEnvironment(options.now),
     getRemoteModelCatalog: options.getRemoteModelCatalog ?? (() => new Map()),
     ...(options.recordUsage ? { recordUsage: options.recordUsage } : {}),
@@ -364,13 +371,13 @@ describe("HostedEphemeralAgentSession", () => {
       interrupt: vi.fn(),
       dispose: vi.fn(),
     };
-    const session = new HostedEphemeralAgentSession({
+    const session = await HostedEphemeralAgentSession.create({
+      cwd: "/repo",
       contextId: "context-1",
       sessionId: "session-1",
       sessionStartedAt: 0,
       persona: personas[0],
       config: {},
-      discoveredSkills: [],
       includeAgentContext: false,
       executionEnvironment: createTestExecutionEnvironment(),
       instructions: "review",
@@ -474,77 +481,51 @@ describe("LocalSessionHost", () => {
     },
   );
 
-  it("starts with a persistent warning when local history initialization fails", async () => {
+  it("starts and accepts agent work while background history initialization fails", async () => {
     const root = mkdtempSync(join(tmpdir(), "tau-unavailable-history-"));
     const parentFile = join(root, "not-a-directory");
     writeFileSync(parentFile, "file");
-    const history = HistoryManager.open(join(parentFile, "history.sqlite"));
+    const reportRecording = vi.fn();
+    const history = HistoryManager.open(join(parentFile, "history.sqlite"), { reportRecording });
     const host = createHost(new MemorySessionStore(), { history });
-
     try {
       const session = await host.createSession(localCreateInput);
+      await expect(session.record({ text: "keep working" })).resolves.toBeTruthy();
+      await history.flush();
+      expect(reportRecording).toHaveBeenCalledWith(
+        expect.objectContaining({ event: "history_recording", status: "dropped" }),
+      );
       const snapshot = await session.snapshot();
-
-      expect(snapshot.timeline.items).toContainEqual(
-        expect.objectContaining({
-          id: "notice-history-unavailable",
-          type: "notice",
-          notice: expect.objectContaining({
-            kind: "tau.history.unavailable",
-            severity: "warn",
-            presentation: {
-              title: "session history is unavailable",
-              content: [
-                expect.any(String),
-                "this session will continue without durable history recording or recall",
-              ],
-            },
-            subject: { type: "session" },
-          }),
-        }),
-      );
-      await expect(history.query().search({ limit: 10 })).rejects.toThrow(
-        "session history is unavailable",
-      );
+      expect(snapshot.messages.some((item) => item.message.role === "user")).toBe(true);
     } finally {
       await host.shutdown();
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it("continues turns and warns once when local history projection fails", async () => {
+  it("continues recording later messages after a history projection failure", async () => {
     const historyStore = new LocalHistoryStore(":memory:");
-    vi.spyOn(historyStore, "append").mockImplementation(() => {
+    vi.spyOn(historyStore, "append").mockImplementationOnce(() => {
       throw new Error("history disk failed");
     });
-    const host = createHost(new MemorySessionStore(), {
-      history: new HistoryManager(historyStore),
-    });
-
-    const session = await host.createSession(localCreateInput);
-    await expect(session.record({ text: "first" })).resolves.toBeTruthy();
-    await expect(session.record({ text: "second" })).resolves.toBeTruthy();
-
-    const snapshot = await session.snapshot();
-    expect(
-      snapshot.timeline.items.filter((item) => item.id === "notice-history-unavailable"),
-    ).toHaveLength(1);
-    expect(snapshot.messages).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          message: expect.objectContaining({
-            content: [expect.objectContaining({ type: "text", text: "first" })],
-          }),
-        }),
-        expect.objectContaining({
-          message: expect.objectContaining({
-            content: [expect.objectContaining({ type: "text", text: "second" })],
-          }),
-        }),
-      ]),
-    );
-
-    await host.shutdown();
+    const reportRecording = vi.fn();
+    const history = new HistoryManager(historyStore, { reportRecording });
+    const host = createHost(new MemorySessionStore(), { history });
+    try {
+      const session = await host.createSession(localCreateInput);
+      await expect(session.record({ text: "first" })).resolves.toBeTruthy();
+      await expect(session.record({ text: "second" })).resolves.toBeTruthy();
+      await history.flush();
+      expect(reportRecording).toHaveBeenCalledWith(expect.objectContaining({ status: "dropped" }));
+      const transcript = await historyStore.read({ sessionId: session.sessionId, limit: 10 });
+      expect(transcript.entries.filter((e) => e.type === "user").map((e) => e.content)).toEqual([
+        [{ type: "text", text: "second" }],
+      ]);
+      const snapshot = await session.snapshot();
+      expect(snapshot.messages.filter((item) => item.message.role === "user")).toHaveLength(2);
+    } finally {
+      await host.shutdown();
+    }
   });
 
   it("preserves provider thinking levels through disk recovery and request reconstruction", async () => {
@@ -1837,7 +1818,7 @@ describe("LocalSessionHost", () => {
   it("opens older stored conversations containing removed service tool names", async () => {
     const directory = mkdtempSync(join(tmpdir(), "tau-old-service-session-"));
     const store = new FileSessionStore({ directory });
-    const names = ["web", "history", "mcp"];
+    const names = ["web", "history", "nook", "mcp"];
     const historyEntries = names.flatMap((name) => [
       {
         id: `assistant-${name}`,
@@ -4362,6 +4343,143 @@ describe("LocalSessionHost", () => {
     }
   });
 
+  it("captures review context once and preserves the model prefix across forks", async () => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "tau-review-context-")));
+    const parent = join(home, "a");
+    const cwd = join(parent, "repo");
+    mkdirSync(join(cwd, ".git"), { recursive: true });
+    const skillDirectory = join(cwd, ".agents", "skills", "review-fixture");
+    mkdirSync(skillDirectory, { recursive: true });
+    writeFileSync(join(parent, "AGENTS.md"), "parent-context-marker");
+    const instructionsPath = join(cwd, "AGENTS.md");
+    const skillPath = join(skillDirectory, "SKILL.md");
+    writeFileSync(instructionsPath, "review-context-marker");
+    writeFileSync(
+      skillPath,
+      "---\nname: review-fixture\ndescription: review-skill-marker\n---\nReview fixture.\n",
+    );
+    const environments = [parent, cwd].map(
+      (directory) =>
+        new LocalExecutionEnvironment({
+          cwd: directory,
+          home,
+          backend: createLocalToolExecutionBackend(),
+        }),
+    );
+    const hosts = environments.map((environment) =>
+      createHostForEnvironment(new MemorySessionStore(), environment, {
+        includeAgentContext: true,
+        recordUsage: vi.fn(),
+      }),
+    );
+    const requests = [];
+    const responses = [];
+    const stream = vi
+      .spyOn(ModelRuntime.prototype, "streamModel")
+      .mockImplementation((_model, context) => {
+        requests.push(structuredClone(context));
+        const response =
+          context.messages.at(-1).role === "toolResult"
+            ? fauxAssistantMessage("done")
+            : fauxAssistantMessage([fauxToolCall("bash", { command: "pwd" })], {
+                stopReason: "toolUse",
+              });
+        responses.push(structuredClone(response));
+        return {
+          async *[Symbol.asyncIterator]() {
+            if (response.stopReason === "toolUse") {
+              yield { type: "toolcall_start", contentIndex: 0, partial: response };
+              yield {
+                type: "toolcall_end",
+                contentIndex: 0,
+                toolCall: response.content[0],
+                partial: response,
+              };
+            }
+          },
+          async result() {
+            return response;
+          },
+        };
+      });
+    try {
+      const sessions = await Promise.all(
+        hosts.map((host, index) =>
+          host.createSession({
+            ...localCreateInput,
+            executionEnvironment: { kind: "local", cwd: environments[index].cwd },
+          }),
+        ),
+      );
+      const contextReads = environments.map((environment) =>
+        vi.spyOn(environment, "resolveRuntimeContext"),
+      );
+      const contexts = await Promise.all(
+        sessions.map((session, index) =>
+          session.createEphemeralContext({
+            instructions: "review the diff",
+            tools: ["bash"],
+            ...(index === 0 ? { workingDirectory: "repo" } : {}),
+          }),
+        ),
+      );
+      const targetReads = environments.map((environment) =>
+        vi.spyOn(environment.getToolExecutionBackend(), "runNodeScript"),
+      );
+      writeFileSync(instructionsPath, "changed-context-marker");
+      writeFileSync(skillPath, "invalid skill after context creation");
+      const initialRequests = [];
+      for (const [index, session] of sessions.entries()) {
+        const submit = (threadId, forkFromThreadId) =>
+          session.submitEphemeralThread({
+            contextId: contexts[index].contextId,
+            threadId,
+            message: "review",
+            ...(forkFromThreadId ? { forkFromThreadId } : {}),
+          });
+        const start = requests.length;
+        await submit("guide");
+        const initial = requests[start];
+        initialRequests.push(initial);
+        expect(initial.systemPrompt).toContain("review-context-marker");
+        expect(initial.systemPrompt).toContain("review-skill-marker");
+        expect(initial.systemPrompt).not.toContain("changed-context-marker");
+        expect(requests[start + 1].messages.at(-1)).toMatchObject({
+          role: "toolResult",
+          content: expect.arrayContaining([
+            expect.objectContaining({ type: "text", text: expect.stringContaining(cwd) }),
+          ]),
+        });
+        const continuation = requests.length;
+        await submit("guide");
+        const fork = requests.length;
+        await submit("fork", "guide");
+        expect(requests[fork].systemPrompt).toBe(requests[continuation].systemPrompt);
+        expect(requests[fork].tools).toEqual(requests[continuation].tools);
+        expect(requests[fork].messages.slice(0, -1)).toEqual([
+          ...requests[fork - 1].messages,
+          responses[fork - 1],
+        ]);
+        await submit("discussion");
+        expect(requests.at(-1).systemPrompt).toBe(initial.systemPrompt);
+        expect(contextReads[index]).toHaveBeenCalledTimes(1);
+        expect(targetReads[index]).not.toHaveBeenCalled();
+        expect((await session.snapshot()).executionEnvironment.cwd).toBe(environments[index].cwd);
+        expect(
+          (await environments[index].getToolExecutionBackend().runBash("pwd")).stdout.trim(),
+        ).toBe(environments[index].cwd);
+      }
+      expect(initialRequests[0].systemPrompt.replace(sessions[0].sessionId, "session")).toBe(
+        initialRequests[1].systemPrompt.replace(sessions[1].sessionId, "session"),
+      );
+      expect(initialRequests[0].tools).toEqual(initialRequests[1].tools);
+    } finally {
+      stream.mockRestore();
+      await Promise.all(hosts.map((host) => host.shutdown()));
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("keeps execution-environment context in hosted ephemeral system prompts", async () => {
     const store = new MemorySessionStore();
     const executionEnvironment = createTestExecutionEnvironment();
@@ -5350,6 +5468,55 @@ describe("LocalSessionHost", () => {
     await host.shutdown();
   });
 
+  it("keeps recording history when a session reopens during eviction disposal", async () => {
+    const history = new HistoryManager(new LocalHistoryStore(":memory:"));
+    const disposalStarted = deferred();
+    const finishDisposal = deferred();
+    const executionEnvironment = createTestExecutionEnvironment();
+    executionEnvironment.dispose = async () => {
+      disposalStarted.resolve();
+      await finishDisposal.promise;
+    };
+    const host = createHost(new MemorySessionStore(), {
+      history,
+      executionEnvironmentResolver: {
+        resolve: async () => executionEnvironment,
+        canRestore: (snapshot) => snapshot.kind === "local",
+        restore: async (snapshot) => createTestExecutionEnvironment(snapshot),
+      },
+    });
+    try {
+      const session = await host.createSession(localCreateInput);
+      const first = await session.record({ text: "before eviction" });
+      host.releaseSession(session);
+      await disposalStarted.promise;
+
+      const reopened = await host.observeSession(session.sessionId);
+      expect(reopened).toBeDefined();
+      expect(reopened).not.toBe(session);
+      finishDisposal.resolve();
+      await session.dispose();
+
+      const removed = await reopened.record({ text: "after disposal" });
+      const readIds = async () =>
+        (await history.query().read({ sessionId: session.sessionId, limit: 10 })).entries.map(
+          (entry) => entry.id,
+        );
+      expect(await readIds()).toEqual([first.userHistoryEntryId, removed.userHistoryEntryId]);
+      await reopened.rewindToHistoryEntryId(removed.userHistoryEntryId);
+      const last = await reopened.record({ text: "after rewind" });
+      expect(await readIds()).toEqual([first.userHistoryEntryId, last.userHistoryEntryId]);
+
+      await reopened.dispose();
+      expect(
+        history.truncateFromSources(session.sessionId, [last.userHistoryEntryId]),
+      ).toBeDefined();
+    } finally {
+      finishDisposal.resolve();
+      await host.shutdown();
+    }
+  });
+
   it("persists Bash job failure diagnostics in the TUI facet and ordered deltas", async () => {
     const store = new MemorySessionStore();
     const host = createHost(store);
@@ -5716,7 +5883,7 @@ describe("LocalSessionHost", () => {
     });
     await store.commitSessionSnapshot(storedSnapshot);
     const host = createHost(store, {
-      history: new HistoryManager(undefined, { failureReason: "history unavailable" }),
+      history: new HistoryManager(new LocalHistoryStore(":memory:"), { maxPendingBytes: 0 }),
     });
 
     const recoveredSession = await host.observeSession("stored-draft");

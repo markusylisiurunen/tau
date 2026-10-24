@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import type { Api, AssistantMessage, Message, Model, ToolCall } from "@earendil-works/pi-ai";
 import type { AgentStateRecovery, AgentSubturnResult } from "../core/agent/agent_runtime.js";
@@ -385,6 +386,7 @@ export class LocalSessionHost implements TauSessionHost {
       (session) => {
         this.sessions.delete(session);
         this.sessionReferences.delete(session);
+        this.history.forgetSession(session.sessionId);
       },
     );
     const historyFailure = this.history.registerSession(
@@ -1439,37 +1441,43 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     options: Omit<SessionProtocolEphemeralCreateParams, "sessionId">,
   ): Promise<SessionProtocolEphemeralCreateResult> {
     this.assertActive();
-    const contextId = `ephemeral-${randomUUID()}`;
-    const session = new HostedEphemeralAgentSession({
-      bashJobs: this.runtime.bashJobs,
-      contextId,
-      sessionId: this.sessionId,
-      sessionStartedAt: this.createdAt,
-      persona: this.runtime.persona,
-      config: this.runtime.config,
-      discoveredSkills: this.bootstrap.discoveredSkills,
-      includeAgentContext: this.includeAgentContext,
-      executionEnvironment: this.executionEnvironment,
-      instructions: options.instructions,
-      tools: options.tools,
-      reasoning: options.reasoning ?? this.runtime.agent.spec.attribution.reasoningEffort,
-      recordUsage: this.recordUsage,
-      emitUpdate: (threadId, update) => {
-        this.emitEphemeral(
-          createSessionProtocolEphemeralMessage({
-            sessionId: this.session.sessionId,
-            event: {
-              type: "ephemeral-agent.thread-update",
-              contextId,
-              threadId,
-              update,
-            },
-          }),
-        );
-      },
+    return await this.runActiveWork(async (signal) => {
+      const contextId = `ephemeral-${randomUUID()}`;
+      const session = await HostedEphemeralAgentSession.create({
+        cwd: resolve(this.executionEnvironment.snapshot().cwd, options.workingDirectory ?? "."),
+        bashJobs: this.runtime.bashJobs,
+        contextId,
+        sessionId: this.sessionId,
+        sessionStartedAt: this.createdAt,
+        persona: this.runtime.persona,
+        config: this.runtime.config,
+        includeAgentContext: this.includeAgentContext,
+        executionEnvironment: this.executionEnvironment,
+        instructions: options.instructions,
+        tools: options.tools,
+        reasoning: options.reasoning ?? this.runtime.agent.spec.attribution.reasoningEffort,
+        recordUsage: this.recordUsage,
+        emitUpdate: (threadId, update) => {
+          this.emitEphemeral(
+            createSessionProtocolEphemeralMessage({
+              sessionId: this.session.sessionId,
+              event: {
+                type: "ephemeral-agent.thread-update",
+                contextId,
+                threadId,
+                update,
+              },
+            }),
+          );
+        },
+      });
+      if (signal.aborted) {
+        session.dispose();
+        signal.throwIfAborted();
+      }
+      this.ephemeralAgentSessions.set(contextId, session);
+      return { contextId };
     });
-    this.ephemeralAgentSessions.set(contextId, session);
-    return { contextId };
   }
 
   async submitEphemeralThread(
@@ -2036,9 +2044,9 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       version: 1,
       severity: "warn",
       subject: { type: "session" },
-      presentation: projectSessionProtocolNoticePresentation("session history is unavailable", [
+      presentation: projectSessionProtocolNoticePresentation("some history was not recorded", [
         reason,
-        "this session will continue without durable history recording or recall",
+        "agent work continues; later history changes can still be recorded",
       ]),
       data: {},
     });

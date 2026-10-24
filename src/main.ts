@@ -19,10 +19,7 @@ import type { Config } from "./core/config/schema.js";
 import { loadConfig } from "./core/config/schema.js";
 import type { ThemeDefinition } from "./core/config/theme_variants.js";
 import { resolveHistoryRemoteTarget } from "./core/history/config.js";
-import {
-  HistoryManager,
-  type HistoryReplicationFailureDiagnostic,
-} from "./core/history/history_manager.js";
+import { type HistoryDiagnostic, HistoryManager } from "./core/history/history_manager.js";
 import { getDefaultHistoryDatabasePath } from "./core/history/local_history_store.js";
 import {
   getDefaultModelCatalogStorePath,
@@ -59,7 +56,7 @@ function refreshRemoteModelCatalogAtStartup(): void {
   }
 }
 
-function reportHostDiagnostic(diagnostic: HistoryReplicationFailureDiagnostic): void {
+function reportHostDiagnostic(diagnostic: HistoryDiagnostic): void {
   process.stderr.write(`${JSON.stringify(diagnostic)}\n`);
 }
 
@@ -496,6 +493,7 @@ async function createLocalSessionHost(options: {
     store: new FileSessionStore({ directory: getDefaultSessionStoreDirectory(home) }),
     history: HistoryManager.open(getDefaultHistoryDatabasePath(home), {
       reportReplicationFailure: reportHostDiagnostic,
+      reportRecording: reportHostDiagnostic,
     }),
     historyRemote: resolveHistoryRemoteTarget(options.config),
     mcpServers: options.config.mcpServers,
@@ -527,6 +525,36 @@ let prompts: PromptTemplate[];
 let skills: Skill[];
 let themes: ThemeDefinition[] = [];
 let runtimeBootstrap: RuntimeBootstrap | undefined;
+
+if (argv[0] === "mcp") {
+  const { getAuthPath } = await import("./core/auth/auth_paths.js");
+  const { mcpHelp, parseMcpCliArgs, runMcpCommand } = await import("./core/mcp/cli.js");
+  const controller = new AbortController();
+  const onInterrupt = () => controller.abort(new Error("MCP login cancelled"));
+  process.once("SIGINT", onInterrupt);
+  process.once("SIGTERM", onInterrupt);
+  try {
+    const command = parseMcpCliArgs(argv.slice(1));
+    if (command.type === "help") console.log(mcpHelp);
+    else {
+      const config = loadConfig(cwd, configDeps);
+      await runMcpCommand({
+        command,
+        servers: config.mcpServers ?? {},
+        authPath: getAuthPath(hostHome),
+        signal: controller.signal,
+        log: console.log,
+      });
+    }
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : "MCP authorization failed");
+    process.exitCode = 1;
+  } finally {
+    process.removeListener("SIGINT", onInterrupt);
+    process.removeListener("SIGTERM", onInterrupt);
+  }
+  process.exit(process.exitCode ?? 0);
+}
 
 if (argv[0] === "auth") {
   const {
@@ -1086,7 +1114,7 @@ const initialUserMessage = await readPipedStdin();
 const terminalColors = detectTerminalColors();
 
 let sessionChatApp: SessionChatApp | undefined;
-const pendingHistoryDiagnostics: HistoryReplicationFailureDiagnostic[] = [];
+const pendingHistoryDiagnostics: HistoryDiagnostic[] = [];
 const clientTools = createTuiClientTools({
   enabled: !cli.noClientTools,
   getController: () => sessionChatApp?.getController(),
@@ -1104,7 +1132,7 @@ const sessionClient = await createTauSdkClientWithHostConfig(
     onDiagnostic: (diagnostic) => {
       const controller = sessionChatApp?.getController();
       if (controller) {
-        controller.showHistoryReplicationFailure(diagnostic);
+        controller.showHistoryDiagnostic(diagnostic);
       } else {
         pendingHistoryDiagnostics.push(diagnostic);
       }
@@ -1136,7 +1164,7 @@ const app = await SessionChatApp.open({
 });
 sessionChatApp = app;
 for (const diagnostic of pendingHistoryDiagnostics.splice(0)) {
-  app.getController().showHistoryReplicationFailure(diagnostic);
+  app.getController().showHistoryDiagnostic(diagnostic);
 }
 
 let isShuttingDown = false;

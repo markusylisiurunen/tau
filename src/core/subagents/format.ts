@@ -11,7 +11,8 @@ function formatRuntime(state: SubagentStateSnapshot): string {
 
 function formatContext(state: SubagentStateSnapshot): string {
   const { contextWindowUsageTokens, contextWindow } = state.usage;
-  const percent = contextWindow > 0 ? (contextWindowUsageTokens / contextWindow) * 100 : 0;
+  if (contextWindow === 0) return "context unavailable";
+  const percent = (contextWindowUsageTokens / contextWindow) * 100;
   return `context ${formatAdaptiveNumber(percent, 1, 3)}% (${formatTokenWindow(contextWindowUsageTokens)}/${formatTokenWindow(contextWindow)})`;
 }
 

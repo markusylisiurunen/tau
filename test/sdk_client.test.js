@@ -831,130 +831,133 @@ describe("sdk_client", () => {
     await client.close();
   });
 
-  it("advertises and executes client-provided tools", async () => {
-    const transport = new FakeSessionProtocolTransport();
-    const describeTool = vi.fn((args, context) => {
-      expect(context).toMatchObject({
-        sessionId: "session-1",
-        agentId: "agent-1",
-        callId: "call-1",
-      });
-      expect(context).not.toHaveProperty("executionEnvironment");
-      return describeClientTool("local_picker", args.choice ?? "local_picker");
-    });
-    const execute = vi.fn(async (args, context) => {
-      expect(args).toEqual({ choice: "a" });
-      expect(context).toMatchObject({
-        sessionId: "session-1",
-        agentId: "agent-1",
-        callId: "call-1",
-      });
-      expect(context.signal.aborted).toBe(false);
-      const execution = await context.executionEnvironment.exec("printf workspace", {
-        cwd: "/repo",
-      });
-      return {
-        content: [
-          { type: "text", text: `picked a from ${execution.output}` },
-          createProtocolImage(),
-          { type: "text", text: "after" },
-        ],
-        presentation: describeClientTool("local_picker", "picked a"),
-      };
-    });
-    const client = await createTauSdkClientFromTransport(transport, {
-      clientTools: [
-        {
-          schema: {
-            name: "local_picker",
-            description: "Pick a local item.",
-            parameters: {
-              type: "object",
-              properties: {},
-              additionalProperties: false,
-            },
-            executionTimeoutMs: 60_000,
-          },
-          describe: describeTool,
-          execute,
-        },
-      ],
-    });
-
-    expect(transport.initializeParams).toEqual({
-      client: {
-        name: "tau-sdk",
-        version: "1",
-        tools: [
-          {
-            name: "local_picker",
-            description: "Pick a local item.",
-            parameters: {
-              type: "object",
-              properties: {},
-              additionalProperties: false,
-            },
-            executionTimeoutMs: 60_000,
-          },
-        ],
-      },
-    });
-
-    transport.emitClientTool({
-      version: SESSION_PROTOCOL_VERSION,
-      type: "session.clientTool.call",
-      sessionId: "session-1",
-      agentId: "agent-1",
-      callId: "call-1",
-      toolName: "local_picker",
-      arguments: { choice: "a" },
-      ackDeadlineMs: 5000,
-      executionDeadlineMs: 60_000,
-    });
-
-    await waitForFakeRequest(
-      transport,
-      (request) =>
-        request.method === "session.clientTool.result" && request.params.callId === "call-1",
-    );
-    expect(describeTool).toHaveBeenCalledTimes(1);
-    expect(execute).toHaveBeenCalledTimes(1);
-    expect(transport.requests).toEqual([
-      {
-        method: "session.clientTool.ack",
-        params: {
+  it.each([60_000, null])(
+    "advertises and executes client-provided tools with timeout %s",
+    async (timeout) => {
+      const transport = new FakeSessionProtocolTransport();
+      const describeTool = vi.fn((args, context) => {
+        expect(context).toMatchObject({
           sessionId: "session-1",
+          agentId: "agent-1",
           callId: "call-1",
-          presentation: describeClientTool("local_picker", "a"),
-        },
-      },
-      {
-        method: "session.exec",
-        params: {
+        });
+        expect(context).not.toHaveProperty("executionEnvironment");
+        return describeClientTool("local_picker", args.choice ?? "local_picker");
+      });
+      const execute = vi.fn(async (args, context) => {
+        expect(args).toEqual({ choice: "a" });
+        expect(context).toMatchObject({
           sessionId: "session-1",
-          execId: expect.any(String),
-          command: "printf workspace",
+          agentId: "agent-1",
+          callId: "call-1",
+        });
+        expect(context.signal.aborted).toBe(false);
+        const execution = await context.executionEnvironment.exec("printf workspace", {
           cwd: "/repo",
-        },
-      },
-      {
-        method: "session.clientTool.result",
-        params: {
-          sessionId: "session-1",
-          callId: "call-1",
-          ok: true,
+        });
+        return {
           content: [
-            { type: "text", text: "picked a from raw output" },
+            { type: "text", text: `picked a from ${execution.output}` },
             createProtocolImage(),
             { type: "text", text: "after" },
           ],
           presentation: describeClientTool("local_picker", "picked a"),
-        },
-      },
-    ]);
+        };
+      });
+      const client = await createTauSdkClientFromTransport(transport, {
+        clientTools: [
+          {
+            schema: {
+              name: "local_picker",
+              description: "Pick a local item.",
+              parameters: {
+                type: "object",
+                properties: {},
+                additionalProperties: false,
+              },
+              executionTimeoutMs: timeout,
+            },
+            describe: describeTool,
+            execute,
+          },
+        ],
+      });
 
-    await client.close();
-  });
+      expect(transport.initializeParams).toEqual({
+        client: {
+          name: "tau-sdk",
+          version: "1",
+          tools: [
+            {
+              name: "local_picker",
+              description: "Pick a local item.",
+              parameters: {
+                type: "object",
+                properties: {},
+                additionalProperties: false,
+              },
+              executionTimeoutMs: timeout,
+            },
+          ],
+        },
+      });
+
+      transport.emitClientTool({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "session.clientTool.call",
+        sessionId: "session-1",
+        agentId: "agent-1",
+        callId: "call-1",
+        toolName: "local_picker",
+        arguments: { choice: "a" },
+        ackDeadlineMs: 5000,
+        executionDeadlineMs: timeout,
+      });
+
+      await waitForFakeRequest(
+        transport,
+        (request) =>
+          request.method === "session.clientTool.result" && request.params.callId === "call-1",
+      );
+      expect(describeTool).toHaveBeenCalledTimes(1);
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(transport.requests).toEqual([
+        {
+          method: "session.clientTool.ack",
+          params: {
+            sessionId: "session-1",
+            callId: "call-1",
+            presentation: describeClientTool("local_picker", "a"),
+          },
+        },
+        {
+          method: "session.exec",
+          params: {
+            sessionId: "session-1",
+            execId: expect.any(String),
+            command: "printf workspace",
+            cwd: "/repo",
+          },
+        },
+        {
+          method: "session.clientTool.result",
+          params: {
+            sessionId: "session-1",
+            callId: "call-1",
+            ok: true,
+            content: [
+              { type: "text", text: "picked a from raw output" },
+              createProtocolImage(),
+              { type: "text", text: "after" },
+            ],
+            presentation: describeClientTool("local_picker", "picked a"),
+          },
+        },
+      ]);
+
+      await client.close();
+    },
+  );
 
   it("reports structured client tool failures with terminal presentation", async () => {
     const transport = new FakeSessionProtocolTransport();

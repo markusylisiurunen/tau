@@ -45,7 +45,8 @@ async function printHelp(
       ...(operation === "decisions"
         ? [
             "  --input <path|->        required UTF-8 JSON containing state and questions; - reads stdin.",
-            "  --image <path>          repeatable PNG/JPEG/WebP attachment (Luna Decisions only).",
+            "  --image <path>          repeatable PNG/JPEG attachment; Luna also accepts WebP.",
+            "                          Jev: 256–1568 pixels per edge, at least 78,400 total pixels.",
           ]
         : operation === "chat"
           ? [

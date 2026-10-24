@@ -41,7 +41,7 @@ params: {
       name: string;
       description: string;
       parameters: unknown;
-      executionTimeoutMs?: number;
+      executionTimeoutMs?: number | null; // omitted: 60 seconds; null: no execution deadline
     }>;
   };
 }
@@ -475,6 +475,7 @@ Creates an agent context on the host that is not saved and is separate from the 
 params: {
   sessionId: string;
   instructions: string;
+  workingDirectory?: string;
   tools: Array<"bash" | "write" | "edit" | "view_image" | "web">;
   reasoning?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 }
@@ -483,7 +484,7 @@ result: {
 }
 ```
 
-The context uses the session's persona and execution environment, with the given instructions and exactly the given tools. `reasoning` sets the starting effort for new threads. Without it, the context uses the session's effort at creation time. Later changes to the session's settings do not affect the context. It does not survive a host restart.
+The context uses the session's persona and execution environment, with the given instructions and exactly the given tools. `workingDirectory` selects the directory for project instructions, skills, and tool defaults. Relative paths resolve against the session directory; omitting it uses the session directory. The main session stays unchanged. `reasoning` sets the starting effort for new threads. Without it, the context uses the session's effort at creation time. Later changes to the session's settings do not affect the context. It does not survive a host restart.
 
 ### `session.ephemeral.submit`
 

@@ -50,7 +50,7 @@ type PendingClientToolCall = {
   clientId: string;
   toolCall: ToolCall;
   ackTimer: NodeJS.Timeout;
-  executionTimer: NodeJS.Timeout;
+  executionTimer: NodeJS.Timeout | undefined;
   signal: AbortSignal;
   abortListener: () => void;
   emitActivity: ToolExecutionContext["emitActivity"];
@@ -195,7 +195,10 @@ export class ClientToolBroker {
 
     const callId = randomUUID();
     return new Promise((resolve) => {
-      const executionTimeoutMs = options.tool.executionTimeoutMs ?? DEFAULT_EXECUTION_TIMEOUT_MS;
+      const executionTimeoutMs =
+        options.tool.executionTimeoutMs === undefined
+          ? DEFAULT_EXECUTION_TIMEOUT_MS
+          : options.tool.executionTimeoutMs;
       const pending: PendingClientToolCall = {
         sessionId: options.sessionId,
         clientId: options.clientId,
@@ -208,12 +211,15 @@ export class ClientToolBroker {
             "blocked",
           );
         }, DEFAULT_ACK_TIMEOUT_MS),
-        executionTimer: setTimeout(() => {
-          this.fail(
-            callId,
-            `Client tool '${options.tool.name}' timed out after ${executionTimeoutMs}ms.`,
-          );
-        }, executionTimeoutMs),
+        executionTimer:
+          executionTimeoutMs === null
+            ? undefined
+            : setTimeout(() => {
+                this.fail(
+                  callId,
+                  `Client tool '${options.tool.name}' timed out after ${executionTimeoutMs}ms.`,
+                );
+              }, executionTimeoutMs),
         signal: options.signal,
         abortListener: () => this.abort(callId),
         emitActivity: options.emitActivity,

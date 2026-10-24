@@ -113,6 +113,25 @@ describe("speech synthesis", () => {
     expect(chunks[0].audio.subarray(44)).toEqual(Buffer.from([1, 2, 3, 4]));
   });
 
+  it.each([generateSpeechAudio, streamSpeechPcm])(
+    "%s sends link-bearing source text to the rewriter and synthesizes its result",
+    async (synthesize) => {
+      const sourceText = [
+        "Read [the documentation](https://example.com/docs).",
+        "The issue is at https://example.com/issues/620.",
+        "See [https://example.com/help](https://example.com/help).",
+      ].join("\n");
+      const spokenText = "Read the documentation. See issue 620. See the link.";
+      const fetchMock = speechFetch(spokenText);
+
+      await collect(synthesize({ ...credentials, sourceText, fetchImpl: fetchMock }));
+
+      const rewrite = JSON.parse(fetchMock.mock.calls[0][1].body);
+      expect(rewrite.input.endsWith(sourceText)).toBe(true);
+      expect(requestedTranscripts(fetchMock)).toEqual([spokenText]);
+    },
+  );
+
   it.each([
     {
       status: "incomplete",

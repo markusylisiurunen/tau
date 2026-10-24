@@ -262,6 +262,7 @@ Transcription uses Gemini and needs `GEMINI_API_KEY` or `apiKeys.google`. The TU
 - Longer responses are split into balanced parts, each aiming for at most two minutes of speech.
 - The source and rewritten text are limited to 10,000 Unicode characters, and generation stops after 32 MiB of raw audio.
 - Voice lookups and synthesis requests have a two-minute deadline.
+- The rewrite turns paths, commands, and formatting into spoken prose. It reads a link's label instead of its address, and refers to a bare address as a link. The rewrite is model-generated, so an address may occasionally still be read aloud.
 
 See [`speech` configuration](config-reference.md#speech) for the default Maisie and Caleb voices and for choosing your own.
 

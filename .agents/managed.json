@@ -31,7 +31,7 @@
     },
     ".agents/skills/delegate-prose/SKILL.md": {
       "type": "file",
-      "hash": "c216c6b8e1d284c88cbfdf80c6b7f73a25029315bffd4e79512f3c6b054f40d9"
+      "hash": "1fac550f2b545561841ac0c7e87c1e14f27d091a8dc257166e8ce7e158638467"
     },
     ".agents/skills/design-afresh/SKILL.md": {
       "type": "file",
@@ -51,7 +51,7 @@
     },
     ".agents/skills/github-workflow/SKILL.md": {
       "type": "file",
-      "hash": "6863ca43022059923a95e27674e53a0feffcd5a8737a2e3009670c3ecac6b292"
+      "hash": "11279313ea4e8467d3d7ac7ecbb93c80e87cee9d7ad7db48250d884803e57205"
     },
     ".agents/skills/guided-review/SKILL.md": {
       "type": "file",

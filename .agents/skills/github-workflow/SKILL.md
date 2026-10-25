@@ -36,7 +36,7 @@ Keep commit subjects short, imperative, and lowercase, without a prefix or trail
 
 Open pull requests ready for review by default. Reserve drafts for an explicit user request or work that is not yet ready for review. Pending CI or human review alone does not justify draft status.
 
-Use a concise sentence-case title describing the change. Write the body in prose with these sections:
+The title and body are the lasting description of the change. They can become its commit message, and people read them long after the work is done, without its history. Use a concise sentence-case title describing the change. Write the body in prose with these sections:
 
 ```markdown
 ## Why
@@ -48,7 +48,9 @@ The problem or need, and why the change matters.
 The resulting behavior and important decisions.
 ```
 
-Add `## Details` only when useful for limitations, compatibility, rollout, or other consequential context. Avoid file inventories, activity logs, and lists of routine verification commands. Mention a verification gap when it affects confidence in the change. Include focused screenshots only when they make review noticeably easier.
+Add `## Details` only when useful for limitations of the change, compatibility, rollout, or other consequential context. Include focused screenshots only when they make review noticeably easier.
+
+Leave out how the work was done, such as file inventories, implementation steps, the models or agents involved, and the checks you ran. Report verification outcomes and open questions to whoever asked for the work. Post a pull request comment only when reviewers would otherwise miss a problem that should block or change the merge, such as a check that fails because of the change or an important path you could not test. Routine verification results and minor open points do not need a comment.
 
 End with a closing-keyword line when the PR resolves an associated issue. Do not close an issue for partial work; state what remains instead.
 

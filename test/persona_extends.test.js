@@ -129,6 +129,7 @@ describe("custom personas", () => {
         [
           "gpt-6-astra",
           "gpt-6.1-sol",
+          "gpt-6.1-terra",
           "gpt-6-luna",
           "claude-opus-5-5",
           "claude-sonnet-5-5",
@@ -150,9 +151,9 @@ describe("custom personas", () => {
       expect(personas.find((persona) => persona.id === "sonnet-5.5-chat")).toBeUndefined();
       expect(personas.find((persona) => persona.id === "sonnet-5.5-coder")).toBeUndefined();
       expect(personas.find((persona) => persona.id === "gpt-6-astra-chat")).toBeUndefined();
-      expect(personas.some((persona) => /^gpt-(6(?:\.1)?-sol|6-luna)-/.test(persona.id))).toBe(
-        false,
-      );
+      expect(
+        personas.some((persona) => /^gpt-(6(?:\.1)?-sol|6\.1-terra|6-luna)-/.test(persona.id)),
+      ).toBe(false);
       expect(personas.find((persona) => persona.id === "gpt-6-astra-coder")).toBeUndefined();
       expect(personas.find((persona) => persona.id === "gpt-6-astra-chatgpt-chat")).toBeUndefined();
       expect(
@@ -316,6 +317,7 @@ describe("custom personas", () => {
   it.each([
     ["gpt-6-astra", "medium"],
     ["gpt-6.1-sol", "medium"],
+    ["gpt-6.1-terra", "medium"],
     ["gpt-6-luna", "medium"],
   ])("loads %s personas from both remote OpenAI catalogs", async (modelId, reasoning) => {
     const fx = setupFixture();

@@ -231,7 +231,7 @@
     },
     ".tau/config.json": {
       "type": "file",
-      "hash": "155330ce1e71e6971fb8bd7651b369869feb98fa77f670660f3b1ba6c5d07468"
+      "hash": "88156f2d4b37a6dfde9c3b9159afb9c916e59ed7fdb6d914ddf2427981630484"
     },
     ".tau/prompts/address-review-comments.md": {
       "type": "file",
@@ -303,7 +303,7 @@
     },
     "AGENTS.md": {
       "type": "section",
-      "hash": "8d42674e4d4c2e223eecad8cc92af23788a6f1c38deb3cb1d926aa5b400dd0da"
+      "hash": "7ac9a67a7ef86cdf20d4393dc58d2f40258d2015ed4b9836d5d695bfe12d81ef"
     }
   }
 }

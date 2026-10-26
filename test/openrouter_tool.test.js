@@ -160,6 +160,7 @@ describe("OpenRouter standalone commands", () => {
           : [
               "google/gemini-3.8-flash",
               "openai/gpt-6-luna",
+              "openai/gpt-6.1-terra",
               "openai/gpt-6.1-sol",
               "anthropic/claude-opus-5.5",
             ],
@@ -193,6 +194,30 @@ describe("OpenRouter standalone commands", () => {
     });
     expect(options.fetchImpl).toHaveBeenCalledTimes(1);
   });
+
+  it.each(["low", "medium", "high", "xhigh", "max"])(
+    "sends Terra chat requests with %s reasoning",
+    async (reasoning) => {
+      const options = harness();
+      await runOpenRouterCommand(
+        [
+          "chat",
+          "--model",
+          "openai/gpt-6.1-terra",
+          "--prompt",
+          "Question",
+          "--reasoning",
+          reasoning,
+        ],
+        options,
+      );
+      expect(JSON.parse(options.fetchImpl.mock.calls[0][1].body)).toMatchObject({
+        model: "openai/gpt-6.1-terra",
+        reasoning: { effort: reasoning },
+      });
+      expect(options.fetchImpl).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("reads prompt and system files relative to cwd and prefers the ambient credential", async () => {
     const cwd = await fixture();
@@ -312,6 +337,7 @@ describe("OpenRouter standalone commands", () => {
     [...chat, "--list-models"],
     ["chat", "--model", "arbitrary/model", "--prompt", "x"],
     ["chat", "--model", "openai/gpt-6.1-sol", "--prompt", "x", "--reasoning", "none"],
+    ["chat", "--model", "openai/gpt-6.1-terra", "--prompt", "x", "--reasoning", "none"],
   ])("rejects invalid flags before IO or billing: %j", async (...args) => {
     const options = harness();
     await expect(runOpenRouterCommand(args, options)).rejects.toThrow();

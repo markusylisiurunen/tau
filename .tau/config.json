@@ -26,7 +26,10 @@
       "openai-codex/gpt-6-luna:xhigh",
       "openai-codex/gpt-6.1-sol:high",
       "openai-codex/gpt-6.1-sol:low",
-      "openai-codex/gpt-6.1-sol:medium"
+      "openai-codex/gpt-6.1-sol:medium",
+      "openai-codex/gpt-6.1-terra:high",
+      "openai-codex/gpt-6.1-terra:low",
+      "openai-codex/gpt-6.1-terra:medium"
     ]
   }
 }

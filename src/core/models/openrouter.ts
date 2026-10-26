@@ -69,6 +69,12 @@ export const openRouterModels: Record<Operation, OpenRouterModel[]> = {
       role: "Cheap everyday extraction, summarization, and routine image understanding.",
     },
     {
+      id: "openai/gpt-6.1-terra",
+      inputs: ["text", "image"],
+      reasoning: ["low", "medium", "high", "xhigh", "max"],
+      role: "Efficient visual reasoning, writing, and everyday coding.",
+    },
+    {
       id: "openai/gpt-6.1-sol",
       inputs: ["text", "image"],
       reasoning: ["low", "medium", "high", "xhigh", "max"],

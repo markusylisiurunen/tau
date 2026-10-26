@@ -10,7 +10,7 @@ Built-in personas are generated from Tau's current model catalog. Most model fam
 
 The Opus 5.5 chat and coder personas are available only when `anthropic/claude-opus-5-5` is present in the effective model catalog. The Sonnet 5.5 variants (`sonnet-5.5-chat` and `sonnet-5.5-coder`) likewise require `anthropic/claude-sonnet-5-5`.
 
-GPT-6.1 Sol, GPT-6 Luna, and GPT-6 Astra have API and ChatGPT variants for chat and coding. Fast ChatGPT variants use priority service and are available only for coding. They are available only when the effective catalog contains the matching model ID (`gpt-6.1-sol`, `gpt-6-luna`, or `gpt-6-astra`) for the corresponding provider.
+GPT-6.1 Sol, GPT-6.1 Terra, GPT-6 Luna, and GPT-6 Astra have API and ChatGPT variants for chat and coding. Fast ChatGPT variants use priority service and are available only for coding. They are available only when the effective catalog contains the matching model ID (`gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-luna`, or `gpt-6-astra`) for the corresponding provider.
 
 All built-in personas default to medium reasoning. The startup default is `sonnet-5.5-coder`.
 

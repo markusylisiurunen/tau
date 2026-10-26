@@ -11,6 +11,8 @@ If you are the writing peer, do the assignment yourself using the `clear-writing
 
 ## Required peer
 
+Use skill `subagents` to launch and supervise the peer. Where this skill sets more specific rules, such as for the model, the assignment, and the handoff, follow this skill.
+
 Launch `claude-code/claude-opus-5-5:medium` through Tau's subagent support. Use exactly this model and effort level, and do not substitute another model or call the Anthropic API directly.
 
 If the peer fails to launch or to finish, follow the fallback that the caller or the active instructions define. That fallback may tell you to write the text yourself. If they define none, report the limitation, and do not write the text yourself or delegate it to another model. Whenever you do take over the writing, state that the text did not get the Opus pass, and inspect any partial edits before you continue.
@@ -21,11 +23,11 @@ Delegate as soon as the source material is reliable. If the writing depends on o
 
 Some prose lives inside code, such as prompts or instructions for an AI model, or Markdown stored in a source file. When you write that code, leave the prose to the peer, for example with clearly marked placeholders, and tell the peer where it goes. What the code requires of the prose is settled, such as the values it interpolates or an output format that something parses. How much prose there is, how it is organized, and how it is worded are the peer's decisions. Ordinary code text, such as comments, docstrings, and error messages, is part of the code. Write it yourself, and do not delegate it.
 
-The peer starts fresh in the project and knows only what your prompt tells it. Start every prompt with this preamble, and put the task-specific part after it:
+The peer starts fresh in the project and knows only what your prompt tells it. Start your first prompt to a new peer with the preamble below, and put the task-specific part after it. Later messages to the same peer do not repeat it, because the peer already has it.
 
 > You are a writing peer for another agent that is working in this project. That agent has handed a writing task to you and will review and integrate your result. The task below states what is already settled. Every other editorial decision is yours: whether anything needs to be written or changed, what to say, where it belongs, and how to word it. Use the `clear-writing` skill. Before you write, read the project's instructions, such as `AGENTS.md` files, and follow any guidance they give on writing. Read whatever source material and surrounding text you need. If something you do not know would affect the result, ask instead of inventing facts or product decisions. Do not delegate this task to another agent. When you finish, say what you did and anything the other agent should know.
 
-After the preamble, write a short note in plain prose, as you would to a capable colleague. Tell the peer what the work is for, what the user wants the result to achieve, and where to find the source material, and pass on everything else that is settled. Settled means what the work actually requires:
+After the preamble, write a short note in plain prose, as you would to a capable colleague. Tell the peer what the work is for, what the user wants the result to achieve, and where to find the source material. When the work belongs to an issue or pull request, name it and say where to find related discussion and decisions, so the peer can read them itself. Say what is already done and what is still pending, and pass on everything else that is settled. Settled means what the work actually requires:
 
 - The user's request, including any outline, length, or wording they asked for.
 - Facts and decisions in the source material, such as behavior the user agreed on.

@@ -2,14 +2,14 @@ Use skill `code-review` for the complete code review. Follow its guidance for in
 
 Decide whether to split the review into focused parts exactly as you would without the Claude Code peer described below. The peer does not count toward the limit of six focused reviewers. Its presence, availability, and findings are never reasons to launch fewer focused reviewers or to narrow their parts.
 
-Separately, at the start of the review, launch one Claude Code peer with the peer launch model given below. The peer is an extra reviewer that works in parallel with you. It reviews the same base and head commits in full, with the same scope and standards as your own review, and adds an independent perspective. It does not replace your own full review or any focused review. No reviewer, including the peer, may change files, act on GitHub, or launch agents of its own.
+Separately, at the start of the review, launch one Claude Code peer with the peer launch model given below. The peer is an extra reviewer that works in parallel with you. It reviews the same base and head commits in full, with the same scope and standards as your own review, and adds an independent perspective. It does not replace your own full review or any focused review. No reviewer, including the peer, may change files, post or change anything on GitHub, or launch agents of its own. Reading the pull request and its discussion on GitHub is allowed.
 
 Keep the peer's brief short so it forms its own view. Give it the pull request and commits, name the `code-review` skill, and ask for findings with evidence. Add any instructions for the peer from the user or from this guidance. Do not add your own assessment, focus areas, or summary of the change. For example:
 
 ```text
 Review pull request #<number> from base <base> to head <head>. Use skill `code-review`.
 
-Work read-only: do not change files, Git, or GitHub, and do not launch other agents. Report your findings with enough evidence for me to verify them.
+Work read-only: you may read the pull request and its discussion on GitHub, but do not change files, Git, or GitHub, and do not launch other agents. Report your findings with enough evidence for me to verify them.
 ```
 
 Wait for the peer before publishing, and verify its findings like any other candidates. If the peer cannot run, continue the review as planned and mention this in the top-level review body or the no-findings comment. Do not switch to the direct Anthropic API.

@@ -632,7 +632,7 @@ function formatCompositeAgentsFile(options: {
 
   lines.push(
     "",
-    "Each child directory is an independent Git repository. When asked to work in one or more repositories, read each relevant repository's root AGENTS.md file, if present, before making changes.",
+    "Each child directory is an independent Git repository. When asked to work in one or more repositories, read each relevant repository's root AGENTS.md file, if present, before making changes. Create disposable files with `mktemp`, or `mktemp -d` for a directory, instead of writing them into the repositories.",
   );
 
   if (options.project.instructions) {

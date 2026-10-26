@@ -188,6 +188,8 @@ Start with the smallest owning area, its callers, and its tests.
 - Use an explicit skill only when it is named by an exact `@@skill:<name>`, by active instructions, or by an active skill.
 - Spawn subagents only when the user or active instructions ask for delegation.
 
+**Temporary files.** Create disposable files with `mktemp`, or `mktemp -d` for a directory, instead of inventing paths or writing them into the worktree. Tau's own code gets temp paths as described in [Ownership](#ownership).
+
 **Code style.** Biome formats: 2 spaces, 100 columns, `PascalCase` types, `camelCase` values, lowercase filenames. Do not hand-sort imports or hand-wrap. Where a file is inconsistent, match the file.
 
 **Security.** Validate untrusted data at its owning boundary. Avoid shell, SQL, and HTML injection. Secrets stay with the process that owns them. Never print credentials, full environments, auth stores, or credential-bearing config.

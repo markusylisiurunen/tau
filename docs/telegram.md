@@ -46,7 +46,7 @@ A useful configuration defines at least one bot and one project:
 
 The bot token must be written in the file; it cannot come from an environment variable. Protect the file, never commit it, and rotate an exposed token through BotFather. Never print the config into a session or shared log.
 
-Unknown fields are removed, so a misspelled field silently has no effect.
+Unknown fields are removed, so a misspelled field silently has no effect. The exception is a `personaMenu` entry, where an unknown field makes the config invalid.
 
 ## Top-level fields
 
@@ -69,6 +69,7 @@ Each `bots.<id>` object supports:
 | --- | --- | --- |
 | `botToken` | Yes | Telegram Bot API token. |
 | `allowedProjectIds` | No | Non-empty unique subset of configured project IDs; omission exposes all projects. |
+| `personaMenu` | No | Ordered list of personas offered by `/persona`; omission offers every persona. See [persona menu](#persona-menu). |
 | `allowedUserIds` | No | Integer user IDs allowed to trigger turns, commands, and callbacks. |
 | `allowedChatIds` | No | Integer chat IDs allowed to interact with the bot; also opts groups in. |
 | `defaultProjectId` | No | Initial project preference, and must be allowed for this bot. |
@@ -143,6 +144,23 @@ In groups, commands must explicitly mention the bot. Accepted forms include:
 
 Commands addressed to other bots are ignored.
 
+### Persona menu
+
+By default, `/persona` offers every persona in the session. A bot's `personaMenu` replaces that list with the personas you name, in the order you list them, and can give each one a shorter label:
+
+```json
+"personaMenu": [
+  { "id": "gpt-6.1-sol-coder", "label": "sol" },
+  { "id": "sonnet-5.5-coder" }
+]
+```
+
+Each entry has a required `id`, the exact persona ID, and an optional `label`. Both must be non-empty after surrounding whitespace is trimmed, IDs must be unique, and no other fields are allowed. Without a label, the picker shows the persona's own label, or its ID if it has none. The label appears in the picker and in the switch confirmation. It changes nothing else, so the persona keeps its ID, prompt, model, tools, and reasoning settings, and the TUI still shows its normal name.
+
+The menu is matched against each session's personas when `/persona` runs, because different projects can define different personas. Listed personas that the session lacks are named in the picker message, and the rest of the menu still works. An empty list, `[]`, offers no personas.
+
+The menu only changes what the picker offers. It does not restrict which personas a session may use, and it does not change defaults. A project's `persona` still applies to new sessions even if the menu omits it. When the session's current persona is not in the menu, the picker message names it, but it is not added as a choice.
+
 ## DMs, groups, and active work
 
 In a DM, ordinary text goes to the active session. If none is selected but the chat has exactly one session, Tau selects it. Otherwise the bot asks for `/new`.
@@ -202,7 +220,7 @@ Do not verify bot tokens, provider keys, Access secrets, transcript contents, or
 
 ## Troubleshooting
 
-**The runner rejects its config.** Startup errors name every invalid bot or project field. Check the required `bots` and `projects` objects, exact project IDs, positive numbers, allowed project IDs, persona suffixes, and that each project defines exactly one of `repo`, `directory`, or `projectIds`. Check the JSON syntax without printing the file, which contains bot tokens, and restart the runner after fixing it. Relative paths in the file resolve from its directory.
+**The runner rejects its config.** Startup errors name every invalid bot or project field. Check the required `bots` and `projects` objects, exact project IDs, positive numbers, allowed project IDs, persona suffixes, `personaMenu` entries, and that each project defines exactly one of `repo`, `directory`, or `projectIds`. Check the JSON syntax without printing the file, which contains bot tokens, and restart the runner after fixing it. Relative paths in the file resolve from its directory.
 
 **The bot ignores a DM.** If `allowedChatIds` is set, the DM's chat ID must be listed. If `allowedUserIds` is set, the sender's user ID must be listed too.
 

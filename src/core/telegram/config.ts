@@ -60,6 +60,14 @@ const telegramBotSchema = z
   .object({
     botToken: nonEmptyStringSchema,
     allowedProjectIds: stringListSchema.min(1, "must not be empty.").optional(),
+    personaMenu: z
+      .array(
+        z.object({ id: nonEmptyStringSchema, label: nonEmptyStringSchema.optional() }).strict(),
+      )
+      .refine((entries) => new Set(entries.map((entry) => entry.id)).size === entries.length, {
+        message: "must contain unique persona ids.",
+      })
+      .optional(),
     allowedUserIds: idListSchema.optional(),
     allowedChatIds: idListSchema.optional(),
     defaultProjectId: nonEmptyStringSchema.optional(),

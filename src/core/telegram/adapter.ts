@@ -8,7 +8,7 @@ import type {
 } from "../../protocol/session_protocol.js";
 import { TauSessionProtocolResponseError } from "../../transport/errors.js";
 import { formatAutoCompactThreshold, parseAutoCompactThreshold } from "../commands/auto_compact.js";
-import type { TelegramProjectConfig } from "../config/schema.js";
+import type { TelegramBotConfig, TelegramProjectConfig } from "../config/schema.js";
 import { formatAdaptiveNumber, formatTokenWindow } from "../utils/format.js";
 import {
   createSpeechToTextTranscription,
@@ -154,6 +154,7 @@ export type TelegramAdapterOptions = {
   botId: string;
   botToken: string;
   projects: Record<string, TelegramProjectConfig>;
+  personaMenu?: TelegramBotConfig["personaMenu"];
   defaultProjectId?: string;
   systemMessage?: string;
   allowedUserIds?: number[];
@@ -1272,6 +1273,7 @@ class TelegramAdapterImpl {
   private readonly projects: Record<string, TelegramProjectConfig>;
   private readonly defaultProjectId?: string;
   private readonly systemMessage?: string;
+  private readonly personaMenu?: TelegramBotConfig["personaMenu"];
   private readonly allowedUserIds?: Set<number>;
   private readonly allowedChatIds?: Set<number>;
   private readonly botUsername: string;
@@ -1299,8 +1301,9 @@ class TelegramAdapterImpl {
     {
       token: string;
       sessionId: string;
-      personas: SessionProtocolSnapshot["catalog"]["personas"];
+      personas: { id: string; label: string }[];
       currentPersonaId: string;
+      text: string;
     }
   >();
   private readonly promptPickers = new Map<
@@ -1344,6 +1347,7 @@ class TelegramAdapterImpl {
     this.projects = options.projects;
     this.defaultProjectId = options.defaultProjectId;
     this.systemMessage = options.systemMessage?.trim() || undefined;
+    this.personaMenu = options.personaMenu;
     this.allowedUserIds =
       options.allowedUserIds && options.allowedUserIds.length > 0
         ? new Set(options.allowedUserIds)
@@ -2264,16 +2268,52 @@ class TelegramAdapterImpl {
         await this.reply(chatId, "the session is still preparing.");
         return;
       }
-      const personas = snapshot.catalog.personas;
+      const catalog = snapshot.catalog.personas;
+      const currentPersonaId = snapshot.settings.personaId;
+      const menu: { id: string; label?: string }[] =
+        this.personaMenu ?? catalog.map((persona) => ({ id: persona.id }));
+      const personas: { id: string; label: string }[] = [];
+      const missingIds: string[] = [];
+      for (const entry of menu) {
+        const persona = catalog.find((candidate) => candidate.id === entry.id);
+        if (persona)
+          personas.push({ id: persona.id, label: entry.label ?? persona.label ?? persona.id });
+        else missingIds.push(entry.id);
+      }
+      const currentLabel =
+        catalog.find((persona) => persona.id === currentPersonaId)?.label ?? currentPersonaId;
+      const missingText =
+        missingIds.length > 0
+          ? `these personas from this bot's menu aren't available in this session: ${missingIds.join(", ")}.`
+          : undefined;
       if (personas.length === 0) {
-        await this.reply(chatId, "this session has no personas.");
+        if (!this.personaMenu) {
+          await this.reply(chatId, "this session has no personas.");
+          return;
+        }
+        const emptyText =
+          this.personaMenu.length === 0
+            ? "this bot's persona menu is empty, so there are no personas to switch to."
+            : "none of the personas in this bot's menu are available in this session, so there are no personas to switch to.";
+        const lines = [emptyText, missingText, `this session is using ${currentLabel}.`];
+        await this.reply(chatId, lines.filter(Boolean).join("\n\n"));
         return;
       }
+      const currentOutsideText =
+        this.personaMenu && !personas.some((persona) => persona.id === currentPersonaId)
+          ? `this session is using ${currentLabel}, which isn't in this menu.`
+          : undefined;
+      const lines = [
+        "choose a persona for this session. switching is available only while Tau is idle.",
+        currentOutsideText,
+        missingText,
+      ];
       this.personaPickers.set(chatId, {
         token: randomUUID(),
         sessionId: session.id,
         personas,
-        currentPersonaId: snapshot.settings.personaId,
+        currentPersonaId,
+        text: lines.filter(Boolean).join("\n\n"),
       });
       await this.showPersonaPage(chatId, 0);
     } catch (error) {
@@ -2287,7 +2327,7 @@ class TelegramAdapterImpl {
     const start = page * 20;
     const keyboard = picker.personas.slice(start, start + 20).map((persona, index) => [
       {
-        text: `${persona.label ?? persona.id}${persona.id === picker.currentPersonaId ? " (current)" : ""}`,
+        text: `${persona.label}${persona.id === picker.currentPersonaId ? " (current)" : ""}`,
         callback_data: `persona:${picker.token}:select:${start + index}`,
       },
     ]);
@@ -2300,8 +2340,7 @@ class TelegramAdapterImpl {
     if (start + 20 < picker.personas.length)
       navigation.push({ text: "next", callback_data: `persona:${picker.token}:page:${page + 1}` });
     if (navigation.length > 0) keyboard.push(navigation);
-    const text =
-      "choose a persona for this session. switching is available only while Tau is idle.";
+    const text = picker.text;
     const replyMarkup = { inline_keyboard: keyboard };
     if (messageId !== undefined) {
       await this.sendWithRetry((signal) =>
@@ -2347,7 +2386,7 @@ class TelegramAdapterImpl {
       return;
     }
     this.personaPickers.delete(chatId);
-    const text = `switched to ${persona.label ?? persona.id}. this session is using ${snapshot.bootstrap.model.name || snapshot.bootstrap.model.id} with ${snapshot.settings.reasoning ?? "none"} reasoning.`;
+    const text = `switched to ${persona.label}. this session is using ${snapshot.bootstrap.model.name || snapshot.bootstrap.model.id} with ${snapshot.settings.reasoning ?? "none"} reasoning.`;
     await this.sendWithRetry((signal) => this.api.editMessage(chatId, messageId, text, { signal }));
   }
 

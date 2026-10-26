@@ -68,6 +68,47 @@ describe("telegram cli", () => {
     });
   });
 
+  it("loads per-bot persona menus without resolving project personas", () => {
+    const { path } = writeConfig({
+      bots: {
+        curated: {
+          botToken: "token",
+          personaMenu: [{ id: " project-persona ", label: " friendly " }, { id: "other" }],
+        },
+        empty: { botToken: "token", personaMenu: [] },
+        full: { botToken: "token" },
+      },
+      projects: { tau: { repo: "markusylisiurunen/tau" } },
+    });
+    const { bots } = loadTelegramConfig(path);
+    expect(bots.curated.personaMenu).toEqual([
+      { id: "project-persona", label: "friendly" },
+      { id: "other" },
+    ]);
+    expect(bots.empty.personaMenu).toEqual([]);
+    expect(bots.full.personaMenu).toBeUndefined();
+  });
+
+  it.each(
+    [
+      null,
+      "persona",
+      ["persona"],
+      [{}],
+      [{ id: " " }],
+      [{ id: "persona", label: " " }],
+      [{ id: "persona", label: 1 }],
+      [{ id: "persona", extra: true }],
+      [{ id: "persona" }, { id: " persona " }],
+    ].map((personaMenu) => [personaMenu]),
+  )("rejects invalid persona menus: %j", (personaMenu) => {
+    const { path } = writeConfig({
+      bots: { ops: { botToken: "token", personaMenu } },
+      projects: { tau: { repo: "markusylisiurunen/tau" } },
+    });
+    expect(() => loadTelegramConfig(path)).toThrow();
+  });
+
   it("loads persistent directory projects", () => {
     const { dir, path } = writeConfig({
       bots: {

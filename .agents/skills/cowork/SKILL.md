@@ -34,13 +34,15 @@ Ordinary messages may follow the mention on the same line. Commands must be the 
 
 The agent receives the request with the leading mention and recognized command removed and surrounding whitespace trimmed. Internal formatting stays unchanged. Agent-starting commands without guidance use “Run the selected workflow. No additional instructions were provided.” The original comment ID and URL remain available separately.
 
+The PR that `/implement` opens uses its title and description as the lasting record of the whole change, including the behavior decisions the agent made where the issue discussion left room. Open questions, assumptions to confirm, and verification failures or gaps go in one separate PR comment. This rule is part of the implementation workflow's execution contract, so append and replacement prompts cannot change it.
+
 Send `/restart` alone, then send the actual request in a separate comment. The request can follow immediately and queues behind the replacement. Eyes marks the pending restart; `+1` replaces it when the fresh session is ready. Success posts no comment. Trailing restart guidance is rejected. If restart fails or is interrupted before installation, the previous mapping is preserved but follow-ups fail explicitly instead of using it. Send `/restart` alone again, then resend blocked requests after it succeeds.
 
 Submitting hosted diff feedback hands the requested work to the persistent PR conversation. That work uses the conversation's settings instead of the hosted discussion's settings. Posting a command or submitting feedback can start autonomous work, so do not treat these examples as permission to trigger it.
 
 When the service enables them, eligible non-draft PRs can also receive automatic reviews, hosted diffs, and explanations. These switches belong to the service, and repository configuration cannot change them.
 
-To opt a single PR out of these automatic workflows, put the exact marker `<!-- cowork:skip-auto -->` in its description. Cowork checks the description on each opened, ready-for-review, and synchronize event, so an automated PR should include the marker when it is created, and an existing PR needs it before the next push. Explicit commands still work on a marked PR. Adding the marker does not cancel work that Cowork already accepted, and removing it does not replay skipped events. Cowork has no versioned releases; the production service has supported the marker since its 2026-10-23 deployment, and older builds ignore it.
+To opt a single PR out of these automatic workflows, put the exact marker `<!-- cowork:skip-auto -->` in its description. Cowork checks the description on each opened, ready-for-review, and synchronize event, so an automated PR should include the marker when it is created, and an existing PR needs it before the next push. Explicit commands still work on a marked PR. Adding the marker does not cancel work that Cowork already accepted, and removing it does not replay skipped events.
 
 ## Verify the change
 

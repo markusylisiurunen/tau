@@ -29,10 +29,6 @@
       "type": "file",
       "hash": "94cd97598fc2cab573b2bcd0b7cc48d24420a08ad69708fe714840def97e6fbb"
     },
-    ".agents/skills/delegate-prose/SKILL.md": {
-      "type": "file",
-      "hash": "1fac550f2b545561841ac0c7e87c1e14f27d091a8dc257166e8ce7e158638467"
-    },
     ".agents/skills/design-afresh/SKILL.md": {
       "type": "file",
       "hash": "cbabd89be614848269c159265a51e4ef9a26e91d3fc414e884fc7e5008857e6c"
@@ -105,18 +101,6 @@
       "type": "file",
       "hash": "88cf18d2aeff36b11002980f4d54ba4bfca4eca830adf081cd8257e412523d38"
     },
-    ".claude/commands/workflows/delegate-rewrite-branch.md": {
-      "type": "file",
-      "hash": "decec9465c5b1a72fe1b914e34aa3d241b9ff5e4e06cb24aed311fc7bb11b314"
-    },
-    ".claude/commands/workflows/delegate-rewrite-changes.md": {
-      "type": "file",
-      "hash": "1cf48820672188473f69ceddedae953da978c622e0c316a4d0d415510c5f0eb1"
-    },
-    ".claude/commands/workflows/delegate-rewrite.md": {
-      "type": "file",
-      "hash": "74d4d067267ca1554974a83f9312a406a1dbc8a9ad96edbb8389069e39246689"
-    },
     ".claude/commands/workflows/deslop-branch.md": {
       "type": "file",
       "hash": "add95d53616047b0e147020469f415c663873ab5ef858e2931624298af8ecaa9"
@@ -169,10 +153,6 @@
       "type": "symlink",
       "hash": "304e0c47e9d476de123063eafc63397605c8deb06d4bd6dcca631234b0abcbe4"
     },
-    ".claude/skills/delegate-prose": {
-      "type": "symlink",
-      "hash": "1f271b3df96fd450585e2ab9b4397e10ac8318ad0e6258b5db59403eac0977fb"
-    },
     ".claude/skills/design-afresh": {
       "type": "symlink",
       "hash": "4aba4c0ed4654524ab1eea569a3ee9ae9c8370548105f4efcb1006251114eb73"
@@ -199,7 +179,7 @@
     },
     ".cowork/commands/rewrite.md": {
       "type": "file",
-      "hash": "358c8419f9ae84f57e8c6dcdec69eb0f428814b9afb060f572bbde50b7b6bb6a"
+      "hash": "ed50f52e189f42605c7d6a8829f8c98166b402ec3974c07de40faa1419a92ec5"
     },
     ".cowork/config.json": {
       "type": "file",
@@ -207,7 +187,7 @@
     },
     ".cowork/prompts/issue-implement.append.md": {
       "type": "file",
-      "hash": "5beaae6a2389a8d6d161b1873d759c1fa8c056604441ea18f8bf6b9012c8dc68"
+      "hash": "baa0aefb48386494e94edb1d2772ccd13fce221d6830c482370bdcad98f74844"
     },
     ".cowork/prompts/issue-plan.append.md": {
       "type": "file",
@@ -215,7 +195,7 @@
     },
     ".cowork/prompts/pull-request-deslop.append.md": {
       "type": "file",
-      "hash": "c2fe7b4573a2766d1c38e798f00896da16a7354d6b653846ad9d1dabc85a49ae"
+      "hash": "cc1bfddb1f28f12630e84a548da13b8a68426723de8af14064bc74a4d9961ec2"
     },
     ".cowork/prompts/pull-request-explain.append.md": {
       "type": "file",
@@ -223,11 +203,11 @@
     },
     ".cowork/prompts/pull-request-fix.append.md": {
       "type": "file",
-      "hash": "17b926a7f78f909b7339c6a4c337d8a3fed75d6bec64989193fb606f18bcc1a3"
+      "hash": "28aa0adac26d3a7990b6adb2a69580eee227cdaf0db115f48b66e5e5abadd7fe"
     },
     ".cowork/prompts/pull-request-review.append.md": {
       "type": "file",
-      "hash": "2e9f19368f42a40d9d2a5e839e82b1c261bbd52813fc698c1f56c5e314cc2817"
+      "hash": "b924f53ef687e1a55f36df680e19483fc69592a0602ec19b43d6ce83d518dba3"
     },
     ".tau/config.json": {
       "type": "file",
@@ -292,6 +272,14 @@
     ".tau/prompts/plan.md": {
       "type": "file",
       "hash": "ff73f625e8b3492eab92629dda63aa1b64c9ce71fbfeb04410ee9c797250c9d3"
+    },
+    ".tau/skills/delegate-prose/SKILL.md": {
+      "type": "file",
+      "hash": "c573529acd2d2b5ef5579fc18a8531be5788c58698021ae92043d85baf947adb"
+    },
+    ".tau/skills/delegate-ui/SKILL.md": {
+      "type": "file",
+      "hash": "7984262198885e71feb31d551ee007bc39f4fe71ba3c0a9a0a8c0d71cf8ec115"
     },
     ".tau/skills/subagents/references/delegation-patterns.md": {
       "type": "file",

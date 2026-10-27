@@ -68,6 +68,8 @@ Optional executable files under `.cowork/scripts/` control workspace setup:
 
 Each file needs a valid shebang and executable permission committed to Git. Scripts run directly from the workspace root with closed stdin and a five-minute timeout. The environment excludes Cowork's own `COWORK_*` settings and package-manager production settings such as `NODE_ENV`. Never print credentials.
 
+Hooks keep the service's `TMPDIR`, which points to the `/agent-tmp` volume. The host deletes files there once they are older than seven days, even if something still uses them. Remove temporary files when you are done with them, and keep anything a later turn needs in the workspace. Programs that write to `/tmp` directly ignore `TMPDIR` and get the service's private `/tmp` instead.
+
 Hooks come from the trusted default branch. Cowork takes a snapshot of `activate` and `idle` before running `init`, so later branch changes cannot replace those scripts. A retained workspace keeps these pinned hooks.
 
 `activate` and `idle` can encounter a dirty worktree, a different branch, or missing component directories. Detect the files needed for setup, preserve tracked and untracked work, and never reset, clean, stash, or switch branches as lifecycle housekeeping. Failed runs can be retried, so make idle cleanup idempotent.

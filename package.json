@@ -49,16 +49,16 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.3.310",
+    "@anthropic-ai/claude-agent-sdk": "0.3.311",
     "@biomejs/biome": "2.6.3",
-    "@cloudflare/workers-types": "^5.20261026.1",
+    "@cloudflare/workers-types": "^5.20261027.1",
     "@types/node": "^24.19.2",
     "@types/ws": "^8.18.2",
     "esbuild": "0.28.2",
     "prettier": "^3.9.10",
     "typescript": "^7.0.2",
     "vitest": "^5.0.5",
-    "wrangler": "^4.152.0"
+    "wrangler": "^4.153.0"
   },
   "engines": {
     "node": ">=24.0.0"
@@ -68,6 +68,6 @@
     "protobufjs@7.6.6": false,
     "fsevents@2.3.3": true,
     "@google/genai@2.21.0": false,
-    "workerd@1.20261019.1": true
+    "workerd@1.20261023.1": true
   }
 }

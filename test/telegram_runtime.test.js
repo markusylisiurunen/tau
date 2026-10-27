@@ -69,6 +69,34 @@ describe("telegram runtime", () => {
     }
   });
 
+  it("passes each bot's persona menu to its adapter", async () => {
+    const adapters = new Map();
+    const personaMenu = [{ id: "project-persona", label: "friendly" }];
+    const runtime = await startTelegramRuntime({
+      config: createTelegramConfig({
+        bots: {
+          curated: { botToken: "token", personaMenu },
+          empty: { botToken: "token", personaMenu: [] },
+          full: { botToken: "token" },
+        },
+      }),
+      createSessionClient: vi.fn(),
+      deps: {
+        startTelegramAdapter: async (options) => {
+          adapters.set(options.botId, options);
+          return { close: async () => {} };
+        },
+      },
+    });
+    try {
+      expect(adapters.get("curated").personaMenu).toEqual(personaMenu);
+      expect(adapters.get("empty").personaMenu).toEqual([]);
+      expect(adapters.get("full").personaMenu).toBeUndefined();
+    } finally {
+      await runtime.close();
+    }
+  });
+
   it("binds file tools to each session's owning bot and chat", async () => {
     const root = await mkdtemp(join(tmpdir(), "tau-file-routing-"));
     const clients = [];

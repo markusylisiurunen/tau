@@ -195,6 +195,7 @@ export async function startTelegramRuntime(
         projects: scopedProjects,
         defaultProjectId: botConfig.defaultProjectId,
         systemMessage: botConfig.systemMessage,
+        personaMenu: botConfig.personaMenu,
         allowedUserIds: botConfig.allowedUserIds,
         allowedChatIds: botConfig.allowedChatIds,
         geminiApiKey: options.geminiApiKey,

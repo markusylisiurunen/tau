@@ -1,6 +1,6 @@
 ---
 name: github-workflow
-description: "Apply consistent Git and GitHub practices for branches, commits, issues, pull requests, comments, reviews, and CI interactions. Load this skill proactively before any Git or GitHub work, including reading discussions, drafting text, creating commits, or publishing changes, even when not explicitly requested. Trigger: eager."
+description: "Apply consistent Git and GitHub practices for branches, commits, issues, pull requests, comments, reviews, and CI interactions. Load this skill proactively before any Git or GitHub work, including reading discussions, drafting text, creating commits, merging pull requests, or publishing changes, even when not explicitly requested. Trigger: eager."
 ---
 
 Read this skill before starting Git or GitHub work. Use skill `clear-writing` for all GitHub communication, including issue text, PR descriptions, comments, and reviews.
@@ -55,6 +55,14 @@ Leave out how the work was done, such as file inventories, implementation steps,
 End with a closing-keyword line when the PR resolves an associated issue. Do not close an issue for partial work; state what remains instead.
 
 When updating a PR, base its title and body on the current complete diff against its target branch. Describe the resulting change. Remove descriptions of ideas or behavior that were dropped during development. Do not turn them into claims such as "Does not do X" just because an earlier revision did X. Mention a discarded approach only when it helps explain the final change.
+
+When authorized to merge a PR, squash and merge by default, using the PR title as the commit subject and the PR description as its body. Pass both explicitly to `gh pr merge --squash` rather than relying on repository defaults. If squash merging is unavailable, ask before choosing another method. For example, for PR 123:
+
+```bash
+title=$(gh pr view 123 --json title --jq .title) &&
+body=$(gh pr view 123 --json body --jq .body) &&
+gh pr merge 123 --squash --subject "$title" --body "$body"
+```
 
 ## Issues, comments, and reviews
 

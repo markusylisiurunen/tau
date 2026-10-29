@@ -124,13 +124,15 @@ export class HistoryManager {
   }
 
   query(remote?: HistoryRemoteTarget): HistoryQuery {
-    if (remote) return new RemoteHistoryClient(remote);
+    const remoteClient = remote ? new RemoteHistoryClient(remote) : undefined;
     return {
-      search: async (input) => {
+      search: async (input, signal) => {
+        if (remoteClient) return await remoteClient.search(input, signal);
         await this.flushRecording();
         return await this.local.search(input);
       },
-      read: async (input) => {
+      read: async (input, signal) => {
+        if (remoteClient && input.source !== "local") return await remoteClient.read(input, signal);
         await this.flushRecording();
         return await this.local.read(input);
       },

@@ -3,6 +3,7 @@ import { AgentRuntime } from "../dist/core/index.js";
 import { personas } from "../dist/core/personas.js";
 import { AgentSupervisor } from "../dist/core/subagents/agent_supervisor.js";
 import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
+import { ClientToolBroker } from "../dist/host/client_tool_broker.js";
 
 function createAssistant(text, options = {}) {
   const model = personas[0].model;
@@ -150,6 +151,85 @@ describe("AgentSupervisor", () => {
     ]);
     supervisor.reset();
   });
+
+  it.each(["result", "interrupt", "detach"])(
+    "runs attached-client tools with child attribution and handles %s",
+    async (ending) => {
+      const broker = new ClientToolBroker();
+      const sendCall = vi.fn();
+      const sendCancel = vi.fn();
+      const registration = broker.registerClient({
+        tools: [
+          {
+            name: "client_action",
+            description: "Client action",
+            parameters: { type: "object", properties: {}, additionalProperties: false },
+          },
+        ],
+        sendCall,
+        sendCancel,
+      });
+      registration.attachSession("parent-session");
+      const supervisor = new AgentSupervisor({ onEvent: () => {}, recordUsage: () => {} });
+      try {
+        const spawned = supervisor.spawn(
+          createSpawnOptions({
+            clientTools: () => broker.getToolDefinitions("parent-session"),
+          }),
+        );
+        const record = getRecord(supervisor, spawned.state.id);
+        const toolCall = {
+          type: "toolCall",
+          id: "client-call",
+          name: "client_action",
+          arguments: {},
+        };
+        const responses = [
+          { ...createAssistant(""), content: [toolCall], stopReason: "toolUse" },
+          createAssistant("done"),
+          createAssistant("follow-up"),
+        ];
+        record.runtime.spec.model.stream = vi.fn(() => {
+          const message = responses.shift();
+          return {
+            async *[Symbol.asyncIterator]() {
+              if (message.stopReason === "toolUse") {
+                yield { type: "toolcall_start", contentIndex: 0, partial: message };
+                yield { type: "toolcall_end", contentIndex: 0, toolCall, partial: message };
+              }
+            },
+            async result() {
+              return message;
+            },
+          };
+        });
+        await vi.waitFor(() => expect(sendCall).toHaveBeenCalledOnce());
+        const call = sendCall.mock.calls[0][0];
+        expect(call).toMatchObject({ sessionId: "parent-session", agentId: spawned.state.id });
+        expect(record.runtime.spec.tools.get("spawn_agent")).toBeUndefined();
+        if (ending === "result") {
+          expect(await broker.ack(call.sessionId, call.callId)).toBe(true);
+          broker.result(call.sessionId, call.callId, {
+            ok: true,
+            content: [{ type: "text", text: "client result" }],
+          });
+        } else if (ending === "interrupt") {
+          supervisor.interrupt(spawned.state.id);
+        } else {
+          registration.detachSession("parent-session");
+        }
+        await supervisor.waitForAgents([spawned.state.id]);
+        if (ending !== "result") expect(sendCancel).toHaveBeenCalled();
+        registration.detachSession("parent-session");
+        expect(supervisor.sendInput({ id: spawned.state.id, prompt: "follow up" }).ok).toBe(true);
+        await supervisor.waitForAgents([spawned.state.id]);
+        expect(record.runtime.spec.tools.get("client_action")).toBeUndefined();
+      } finally {
+        registration.unregister();
+        supervisor.reset();
+      }
+    },
+  );
 
   it("supports child wait and follow-up", async () => {
     const events = [];

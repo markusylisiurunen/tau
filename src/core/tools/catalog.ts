@@ -12,19 +12,40 @@ import { createEditToolDefinition } from "./edit.js";
 import { scopeToolExecutionBackend, type ToolExecutionBackend } from "./execution_backend.js";
 import { createInterruptAgentToolDefinition } from "./interrupt_agent.js";
 import { createListAgentsToolDefinition } from "./list_agents.js";
-import { ToolRegistry } from "./registry.js";
+import { type AgentTool, ToolRegistry } from "./registry.js";
 import { createSendInputToAgentToolDefinition } from "./send_input_to_agent.js";
 import { createSpawnAgentToolDefinition, type ResolveSubagentPrompt } from "./spawn_agent.js";
 import { createTauDocsToolDefinition } from "./tau_docs.js";
-import {
-  TOOL_NAME_BASH,
-  TOOL_NAME_EDIT,
-  TOOL_NAME_VIEW_IMAGE,
-  TOOL_NAME_WRITE,
-} from "./tool_names.js";
+import { TOOL_NAME_BASH } from "./tool_names.js";
 import { createViewImageToolDefinition } from "./view_image.js";
 import { createWaitForAgentsToolDefinition } from "./wait_for_agents.js";
 import { createWriteToolDefinition } from "./write.js";
+
+function createCommonTools(options: {
+  backend: ToolExecutionBackend;
+  cwd: string;
+  allowedTools: readonly string[];
+  config: Config;
+  bashJobs: BashJobRegistry;
+  history?: HistoryQuery;
+  mcp?: McpManager;
+}): AgentTool[] {
+  const backend = scopeToolExecutionBackend(options.backend, options.cwd);
+  const enabled = new Set(options.allowedTools);
+  const tools = [
+    createBashToolDefinition(backend, options.cwd, options.bashJobs),
+    createWriteToolDefinition(backend),
+    createEditToolDefinition(backend),
+    createViewImageToolDefinition(backend),
+  ];
+  const code = createCodeToolDefinition({ ...options, backend });
+  return [
+    ...tools.filter((tool) => enabled.has(tool.schema.name)),
+    ...(code ? [code] : []),
+    ...(enabled.has(TOOL_NAME_BASH) ? createBashJobToolDefinitions(options.bashJobs) : []),
+    createTauDocsToolDefinition(),
+  ];
+}
 
 export const ToolCatalog = {
   createDebugRegistry(options: {
@@ -56,12 +77,9 @@ export const ToolCatalog = {
     history: HistoryQuery;
     mcp?: McpManager;
     resolveSubagentPrompt?: ResolveSubagentPrompt;
+    clientTools?: () => AgentTool[];
   }): ToolRegistry {
     const tools = [
-      createBashToolDefinition(options.backend, options.cwd, options.bashJobs),
-      createWriteToolDefinition(options.backend),
-      createEditToolDefinition(options.backend),
-      createViewImageToolDefinition(options.backend),
       createSpawnAgentToolDefinition({
         backend: options.backend,
         supervisor: options.supervisor,
@@ -73,6 +91,7 @@ export const ToolCatalog = {
         history: options.history,
         mcp: options.mcp,
         cwd: options.cwd,
+        clientTools: options.clientTools,
         ...(options.resolveSubagentPrompt
           ? { resolveSubagentPrompt: options.resolveSubagentPrompt }
           : {}),
@@ -82,15 +101,11 @@ export const ToolCatalog = {
       createListAgentsToolDefinition(options.supervisor),
       createInterruptAgentToolDefinition(options.supervisor),
     ];
-    const code = createCodeToolDefinition({ ...options, allowedTools: options.persona.tools });
     const enabledToolNames = new Set<string>(options.persona.tools);
     return new ToolRegistry([
+      ...createCommonTools({ ...options, allowedTools: options.persona.tools }),
       ...tools.filter((tool) => enabledToolNames.has(tool.schema.name)),
-      ...(code ? [code] : []),
-      ...(enabledToolNames.has(TOOL_NAME_BASH)
-        ? createBashJobToolDefinitions(options.bashJobs)
-        : []),
-      createTauDocsToolDefinition(),
+      ...(options.clientTools?.() ?? []),
     ]);
   },
 
@@ -103,41 +118,16 @@ export const ToolCatalog = {
     history?: HistoryQuery,
     mcp?: McpManager,
   ): ToolRegistry {
-    const scopedBackend = scopeToolExecutionBackend(backend, cwd);
-    const definitions = [];
-    const seen = new Set<string>();
-    for (const tool of allowedTools) {
-      if (seen.has(tool)) continue;
-      seen.add(tool);
-      switch (tool) {
-        case TOOL_NAME_BASH:
-          definitions.push(createBashToolDefinition(scopedBackend, cwd, bashJobs));
-          definitions.push(...createBashJobToolDefinitions(bashJobs));
-          break;
-        case TOOL_NAME_WRITE:
-          definitions.push(createWriteToolDefinition(scopedBackend));
-          break;
-        case TOOL_NAME_EDIT:
-          definitions.push(createEditToolDefinition(scopedBackend));
-          break;
-        case TOOL_NAME_VIEW_IMAGE:
-          definitions.push(createViewImageToolDefinition(scopedBackend));
-          break;
-      }
-    }
-    const code = createCodeToolDefinition({
-      backend: scopedBackend,
-      cwd,
-      allowedTools,
-      config,
-      bashJobs,
-      history,
-      mcp,
-    });
-    return new ToolRegistry([
-      ...definitions,
-      ...(code ? [code] : []),
-      createTauDocsToolDefinition(),
-    ]);
+    return new ToolRegistry(
+      createCommonTools({
+        backend,
+        cwd,
+        config,
+        bashJobs,
+        history,
+        mcp,
+        allowedTools,
+      }),
+    );
   },
 };

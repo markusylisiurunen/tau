@@ -27,6 +27,7 @@ const searchInputSchema = z
 const readInputSchema = z
   .object({
     sessionId: z.string().trim().min(1).max(256),
+    source: z.literal("local").optional(),
     limit: z.number().int().min(1).max(100).default(50),
     cursor: z.string().min(1).max(2_048).optional(),
   })

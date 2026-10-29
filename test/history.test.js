@@ -685,6 +685,43 @@ describe("session history", () => {
     }
   });
 
+  it("routes local-only reads through SQLite even with remote history configured", async () => {
+    const store = new LocalHistoryStore(":memory:");
+    const history = new HistoryManager(store);
+    const remoteRead = vi.spyOn(RemoteHistoryClient.prototype, "read").mockResolvedValue({
+      session: { sessionId: "parent", attributes: {}, createdAt: 1, updatedAt: 1, snippets: [] },
+      entries: [],
+    });
+    const remoteSearch = vi
+      .spyOn(RemoteHistoryClient.prototype, "search")
+      .mockResolvedValue({ sessions: [] });
+    try {
+      history.registerSession({ sessionId: "parent", attributes: {}, createdAt: 1 });
+      history.append("parent", [createTextEntry("entry", "user", "local context", 2)]);
+      const query = history.query({ endpoint: "https://history.example.com", apiKey: "secret" });
+      const capability = createHistoryCapability(query);
+      const context = { signal: new AbortController().signal };
+      const page = await capability.api.read([{ sessionId: "parent", source: "local" }], context);
+      expect(page.entries.map((entry) => entry.id)).toEqual(["entry"]);
+      expect(remoteRead).not.toHaveBeenCalled();
+      await expect(
+        query.read({ sessionId: "missing", source: "local", limit: 25 }),
+      ).rejects.toThrow();
+      expect(remoteRead).not.toHaveBeenCalled();
+      await query.read({ sessionId: "parent", limit: 25 }, context.signal);
+      expect(remoteRead).toHaveBeenCalledWith({ sessionId: "parent", limit: 25 }, context.signal);
+      await query.search({ limit: 10 }, context.signal);
+      expect(remoteSearch).toHaveBeenCalledWith({ limit: 10 }, context.signal);
+      await expect(
+        capability.api.read([{ sessionId: "parent", source: "remote" }], context),
+      ).rejects.toThrow();
+    } finally {
+      history.close();
+      remoteRead.mockRestore();
+      remoteSearch.mockRestore();
+    }
+  });
+
   it("isolates permanent replication failures to one session lane", async () => {
     const store = new LocalHistoryStore(":memory:");
     const reportReplicationFailure = vi.fn();

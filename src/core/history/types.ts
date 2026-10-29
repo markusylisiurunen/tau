@@ -59,6 +59,7 @@ export type HistorySearchResult = {
 
 export type HistoryReadInput = {
   sessionId: string;
+  source?: "local";
   limit: number;
   cursor?: string;
 };

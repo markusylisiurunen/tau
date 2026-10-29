@@ -11,6 +11,7 @@ import type { BashJobRegistry } from "../tools/bash_jobs.js";
 import { ToolCatalog } from "../tools/catalog.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
 import type { ToolRunPresentation } from "../tools/presentation.js";
+import { type AgentTool, ToolRegistry } from "../tools/registry.js";
 import type { ReasoningEffort } from "../types.js";
 import {
   appendUsageLogEntry,
@@ -55,6 +56,7 @@ type SubagentRecord = {
   originHistoryEntryId: string;
   personaId?: string;
   runtime: AgentRuntime | ClaudeCodeRuntime;
+  refreshTools?: () => void;
   run: SubagentRunSnapshot;
   costTotal: number;
   usage: SubagentUsageSnapshot;
@@ -135,6 +137,7 @@ export class AgentSupervisor {
     history?: HistoryQuery;
     mcp?: McpManager;
     personaId?: string;
+    clientTools?: () => AgentTool[];
   }): SubagentSpawnResult {
     if (this.getActiveCount() >= MAX_ACTIVE_SUBAGENTS) {
       return {
@@ -152,6 +155,7 @@ export class AgentSupervisor {
     const runtimeConfig = { ...options.runtimeConfig, workingDirectory };
     let runtime: AgentRuntime | ClaudeCodeRuntime;
     let reasoning: ReasoningEffort;
+    let refreshTools: (() => void) | undefined;
     if (runtimeConfig.kind === "claude-code") {
       runtime = new ClaudeCodeRuntime({
         config: runtimeConfig,
@@ -161,6 +165,7 @@ export class AgentSupervisor {
       reasoning = runtimeConfig.effort;
     } else {
       runtime = new AgentRuntime({
+        agentId: id,
         spec: createAgentSpec({
           autoCompactThresholdTokens: null,
           ...resolveAgentModel(
@@ -196,6 +201,13 @@ export class AgentSupervisor {
         clock: this.deps.clock,
         archiveAutoCompaction: createAutoCompactionArchiver(options.backend),
       });
+      const nativeRuntime = runtime;
+      const tools = runtime.spec.tools.getEnabledTools();
+      refreshTools = () =>
+        nativeRuntime.updateSpec({
+          ...nativeRuntime.spec,
+          tools: new ToolRegistry([...tools, ...(options.clientTools?.() ?? [])]),
+        });
       reasoning = runtime.spec.attribution.reasoningEffort;
     }
     const createdAt = this.deps.clock.now();
@@ -212,6 +224,7 @@ export class AgentSupervisor {
       originHistoryEntryId: options.originHistoryEntryId,
       personaId: options.personaId,
       runtime,
+      refreshTools,
       run: {
         revision: 1,
         status: "running",
@@ -319,6 +332,7 @@ export class AgentSupervisor {
             this.finishSucceeded(record, completion.result.response);
           }
         } else {
+          record.refreshTools?.();
           this.applyTurnResult(record, await record.runtime.submit(prompt));
         }
         return record;

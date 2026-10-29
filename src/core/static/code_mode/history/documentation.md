@@ -71,6 +71,7 @@ Read one selected session in transcript order.
 ```ts
 type ReadOptions = {
   sessionId: string;
+  source?: "local";
   limit?: number;
   cursor?: string;
 };
@@ -99,7 +100,7 @@ type Entry = {
 type ReadResult = { session: Session; entries: Entry[]; nextCursor?: string };
 ```
 
-`sessionId` is a required nonblank identifier of at most 256 characters, returned by search. `limit` is an integer 1–100, default 50. Continue with `nextCursor` and the same session. Pages may contain fewer entries than requested to stay within the response byte budget; only absence of `nextCursor` means the transcript is exhausted. Cursors are opaque strings of at most 2,048 characters.
+`sessionId` is a required nonblank identifier of at most 256 characters, returned by search or given to you, such as a parent session ID. `source: "local"` reads only the history saved by the Tau instance running this conversation, without using a shared remote collection. Use it when your instructions say so. Omit it to read from the configured collection. `limit` is an integer 1–100, default 50. Continue with `nextCursor`, the same session, and the same `source`. Pages may contain fewer entries than requested to stay within the response byte budget; only absence of `nextCursor` means the transcript is exhausted. Cursors are opaque strings of at most 2,048 characters.
 
 Entry timestamps are Unix milliseconds. Rewind removes entries; compaction preserves original searchable history. Machine-local history retains complete payloads. In a shared remote collection, payload fields of entries larger than 1 MiB are middle-truncated with an explicit marker; identity and metadata remain intact.
 

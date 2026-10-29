@@ -87,6 +87,49 @@ describe("ToolCatalog", () => {
     }
   });
 
+  it("shares enabled capabilities while excluding agent management from child runtimes", () => {
+    const tools = [
+      "bash",
+      "write",
+      "edit",
+      "view_image",
+      "web",
+      "history",
+      "models",
+      "spawn_agent",
+      "list_agents",
+      "wait_for_agents",
+      "send_input_to_agent",
+      "interrupt_agent",
+    ];
+    const options = {
+      backend: createBackend(),
+      cwd: "/workspace",
+      config: {},
+      persona: { tools },
+      modelResolver: () => undefined,
+      history: {},
+    };
+    const main = ToolCatalog.createDebugRegistry(options);
+    const child = ToolCatalog.createSubagentRegistry(
+      tools,
+      options.backend,
+      options.cwd,
+      options.config,
+      new BashJobRegistry(),
+      options.history,
+    );
+    const management = [
+      "spawn_agent",
+      "list_agents",
+      "wait_for_agents",
+      "send_input_to_agent",
+      "interrupt_agent",
+    ];
+    expect(child.schemas).toEqual(main.schemas.filter((tool) => !management.includes(tool.name)));
+    for (const name of management) expect(child.get(name)).toBeUndefined();
+  });
+
   it("binds history for subagents without exposing its storage or credentials", () => {
     const history = {
       search: vi.fn(),

@@ -1,28 +1,44 @@
 import { describe, expect, it } from "vitest";
-import { renderSubagentWrapperPrompt } from "../dist/core/static/index.js";
+import { renderSubagentPrefixPrompt } from "../dist/core/static/index.js";
 
 describe("static prompts", () => {
-  it("interpolates inherited main prompt into the subagent wrapper", () => {
-    const prompt = renderSubagentWrapperPrompt({
-      inheritedInstructions: "main system prompt",
+  it("interpolates parent context into the subagent prefix", () => {
+    const prompt = renderSubagentPrefixPrompt({
+      historyEnabled: false,
+      parentSessionId: "main system prompt",
     });
 
-    expect(prompt).toContain("You are a subagent supporting the main agent.");
     expect(prompt).toContain("main system prompt");
-    expect(prompt).not.toContain("{{inherited_instructions}}");
+    expect(prompt).not.toContain("{{parent_context}}");
+  });
+
+  it("includes the parent history API only when both parent identity and access are available", () => {
+    for (const parentSessionId of [undefined, "parent-session"]) {
+      for (const historyEnabled of [false, true]) {
+        const prompt = renderSubagentPrefixPrompt({ parentSessionId, historyEnabled });
+        expect(prompt.includes("tau.history.read")).toBe(
+          Boolean(parentSessionId && historyEnabled),
+        );
+        expect(prompt.includes('source: "local"')).toBe(Boolean(parentSessionId && historyEnabled));
+        expect(prompt.includes("parent-session")).toBe(Boolean(parentSessionId));
+        expect(prompt).not.toContain("{{parent_context}}");
+      }
+    }
   });
 
   it("preserves literal replacement syntax characters", () => {
-    const prompt = renderSubagentWrapperPrompt({
-      inheritedInstructions: "$& $$ $1",
+    const prompt = renderSubagentPrefixPrompt({
+      historyEnabled: false,
+      parentSessionId: "$& $$ $1",
     });
 
     expect(prompt).toContain("$& $$ $1");
   });
 
   it("allows placeholder-like text in replacement values", () => {
-    const prompt = renderSubagentWrapperPrompt({
-      inheritedInstructions: "keep {{this}} literal",
+    const prompt = renderSubagentPrefixPrompt({
+      historyEnabled: false,
+      parentSessionId: "keep {{this}} literal",
     });
 
     expect(prompt).toContain("keep {{this}} literal");

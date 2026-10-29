@@ -12,7 +12,7 @@ There are three kinds of tools:
 | --- | --- |
 | Persona-selected host tools | The host provides them, and they act on the execution environment or host services. The active persona's `tools` list selects them. |
 | Built-in tools | Always present, whatever the persona selects. `tau_docs` is available to main agents and subagents. |
-| Client tools | An attached client offers and runs them. Examples are the TUI's `diff_review` and `prefill_input`, and configured command client tools. |
+| Client tools | An attached client offers and runs them. Examples are the TUI's `diff_review` and `prefill_input`, Telegram's file delivery tools, and tools that SDK clients define. |
 
 A tool schema tells the model how to call a tool. It grants no operating-system permissions. Host tools run with the permissions of the execution environment or the host service behind them. Client tools run with the permissions of their client, and can also ask to run commands in the execution environment. See [ownership and scope](ownership-and-scope.md) and [client tools](client-tools.md).
 
@@ -171,7 +171,7 @@ A subagent gets each of `bash`, `write`, `edit`, `view_image`, `web`, `history`,
 
 The TUI offers `diff_review` and `prefill_input` unless client tools are disabled. `diff_review` reads repository state from the execution environment and runs the review interface on the TUI machine. `prefill_input` puts a draft in an empty TUI editor. It never sends the text and refuses to overwrite an existing draft.
 
-Configured command client tools also belong to the client. They run processes on the client machine, and can run limited commands in the execution environment when the work belongs on the session machine. This matters with remote attachment, where the TUI and its tools may be on a laptop while the host and execution environment are elsewhere. See [client tools](client-tools.md) for configuration, protocol helpers, and limits, and [TUI](tui.md) for diff-tool configuration.
+Tools that SDK clients define also belong to the client. Their handlers run in the client process and can run commands in the execution environment when the work belongs on the session machine. This matters with remote attachment, where the client may be on a laptop while the host and execution environment are elsewhere. See [client tools](client-tools.md) for routing, helpers, and limits, and [TUI](tui.md) for diff-tool configuration.
 
 ### Sending files to Telegram
 
@@ -190,7 +190,7 @@ Files are read in chunks of at most 8,000,000 bytes. A file that is not a regula
 
 Read errors, cancellation, and Telegram delivery errors fail the tool call. Each call has five minutes and is never retried automatically, because an interrupted upload may already have reached Telegram.
 
-The runner holds the upload credentials, and the recipient is always the session's bot and chat; the agent cannot choose another. These tools are not affected by `enabledClientTools` and do not exist in TUI sessions or subagents. Viewing an image with `view_image` does not send it to Telegram. Automatic voice replies through `/tts_on` are separate from these tools.
+The runner holds the upload credentials, and the recipient is always the session's bot and chat; the agent cannot choose another. These tools do not exist in TUI sessions or subagents. Viewing an image with `view_image` does not send it to Telegram. Automatic voice replies through `/tts_on` are separate from these tools.
 
 ## When a tool is missing or fails
 

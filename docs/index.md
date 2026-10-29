@@ -19,7 +19,7 @@ These pages describe how to install, configure, operate, and integrate the versi
 - [Subagents](subagents.md): when agents can start subagents, which models they may use, and how to supervise them.
 - [Skills](skills.md): skill discovery, frontmatter, trigger sensitivity, and tool eligibility.
 - [Prompts and project context](prompts-and-project-context.md): prompt templates, `AGENTS.md`, and extra context files.
-- [Client tools](client-tools.md): command-backed tools that run on the machine of the attached client.
+- [Client tools](client-tools.md): tools that an attached TUI, Telegram runner, or SDK client offers and runs itself.
 - [Security](security.md): trust boundaries, secrets, process execution, and remote access.
 
 ## Build integrations

@@ -8,14 +8,14 @@ So before starting a session, decide which machine the agent may change, which c
 
 Host tools such as `bash`, `write`, and `edit` act in the session's execution environment. They have that environment's operating-system permissions and are not limited to the repository. Absolute paths work wherever the operating system allows. Changes to files and processes remain even if the tool output is truncated, the turn is interrupted, or the model request fails.
 
-Client tools have separate permissions. A command client tool runs as the client's user, with the client process's current directory and environment. It can also ask to run commands in the execution environment. In a remote session, one turn can therefore act with the permissions of two different machines.
+Client tools have separate permissions. A client tool runs in the client that offers it, such as the TUI, an SDK program, or the Telegram runner, with that process's user, current directory, and environment. It can also ask to run commands in the execution environment. In a remote session, one turn can therefore act with the permissions of two different machines. The TUI's built-in diff review tool runs as a process on the client machine.
 
 Give each part only the access it needs:
 
 - Run Tau and its execution environment as a dedicated, unprivileged user when the workspace does not need access to a personal home directory.
 - Use a container, virtual machine, or separate hosted environment when work should be isolated from the host. Tau respects that isolation, but not every execution environment type is a security sandbox.
 - Mount or copy only the repositories and files the task needs. Do not point an execution environment at a broad home directory for convenience.
-- Give the host only the provider and service credentials needed for its sessions. Give client-tool processes only the client-local credentials they need.
+- Give the host only the provider and service credentials needed for its sessions. Give client processes that offer tools only the client-local credentials they need.
 - Use a persona with a shorter `tools` list for work that should not change files or call external services. The built-in `tau_docs` tool is always available regardless of that list.
 
 Interruption, timeouts, output limits, and process-group termination limit how long and how much a command runs. They do not ask for approval and cannot undo anything already done. Review destructive commands, and use Tau's normal session operations instead of asking an agent to change Tau's internal files.
@@ -24,17 +24,14 @@ Interruption, timeouts, output limits, and process-group termination limit how l
 
 ## Treat project content as executable policy
 
-Tau loads more than source files from the execution environment. It reads project `.tau/config.json`, personas, prompts, skills, `.agents/skills`, and `AGENTS.md` from the working directory and its parents. This content can choose models and tools, add instructions, define workflows, and change which of your global client tools are offered.
+Tau loads more than source files from the execution environment. It reads project `.tau/config.json`, personas, prompts, skills, `.agents/skills`, and `AGENTS.md` from the working directory and its parents. This content can choose models and tools, add instructions, and define workflows.
 
 Trusting a repository therefore means trusting this content. Before using a repository with valuable credentials or write access, read its `.tau/`, `.agents/`, and `AGENTS.md` content, including nested levels. Look especially at:
 
 - persona system prompts, tool lists, and model launch allowlists;
 - skill instructions and any scripts they direct the agent to run;
-- project configuration that sets model notices or hosted-environment connections;
-- `enabledClientTools`, which can turn on commands from your global configuration; and
+- project configuration that sets model notices or hosted-environment connections; and
 - provision scripts or other repository automation used by integrations such as Telegram.
-
-Project configuration cannot define client tool commands. It can only select commands defined in global configuration. A repository therefore cannot add a new process to your machine, but a selected command can still do anything it was written to do.
 
 `--no-agent-context-files` turns off `AGENTS.md` loading and the list of nested `AGENTS.md` files. Project configuration, personas, skills, and tools still load. `--no-client-tools` turns off TUI client tools, not host tools. Neither flag is a general safe mode.
 
@@ -46,7 +43,7 @@ A Tau host that runs models refreshes compatible provider catalogs from `pi.dev`
 
 ## Keep secrets with the process that needs them
 
-Most model and service credentials belong on the host, because the host makes model calls, performs web searches, and replicates history. TUI speech credentials and command client tool credentials belong on the client. Telegram bot, transcription, and voice credentials belong to the Telegram runner. Credentials for hosted execution environments belong in the host's startup configuration.
+Most model and service credentials belong on the host, because the host makes model calls, performs web searches, and replicates history. TUI speech credentials and credentials that SDK client tool handlers use belong on the client. Telegram bot, transcription, and voice credentials belong to the Telegram runner. Credentials for hosted execution environments belong in the host's startup configuration.
 
 When attached to a remote host, a credential exported on the laptop does not reach the host. Putting a host credential into the execution environment's shell would needlessly expose it to every process there. See [credentials](credentials.md) for which source wins.
 
@@ -72,7 +69,7 @@ The filter has clear limits:
 - It is name-based, so a secret under another name is not recognized.
 - Variables set explicitly for the execution environment are applied after filtering and can add a secret back.
 - Hosted execution environments start from their own environment.
-- Command client tools inherit the client process environment unchanged.
+- Client tool handlers run in the client process with its environment unchanged.
 - Tau's own model and service code on the host uses the host credentials it needs.
 
 The filter is neither a secret store nor an access control. Avoid printing whole environments, and keep secrets out of every process that does not need them.
@@ -84,23 +81,6 @@ Tau runs each command in a fresh non-interactive login Bash. The execution envir
 These files run with the same permissions as every tool command. A compromised or careless startup file can change `PATH`, run commands, leak data, exit the shell, or print unexpected output. Review the startup files in each execution environment, especially ones created from shared images or existing user homes.
 
 Startup files must not print banners, prompt, read stdin, require a TTY, open an editor, or exit the shell. Tau does not suppress their output. There is no TTY and the agent's Bash calls have no stdin, so interactive logins and terminal prompts fail or hang until the timeout. Set up Git, SSH, package managers, and cloud CLIs to work without prompts.
-
-## Trust command client tools as local programs
-
-Command client tools are defined only in your global configuration, and projects can only select them. Tau starts the executable directly, without a shell, and validates the model's arguments against the configured schema. The command still runs as trusted local code, with the client's full environment and file permissions.
-
-Before enabling one:
-
-1. Review the executable and pin or control how it is updated.
-2. Use a narrow schema and describe side effects accurately for the model.
-3. Avoid building shell source from model-provided strings. Prefer fixed commands and argument arrays.
-4. Honor cancellation and set a bounded execution timeout.
-5. Return only the data the model needs, with diagnostics on stderr.
-6. Run commands in the execution environment only for work that really belongs on the session machine.
-
-A project's `enabledClientTools` can only select definitions you already trust globally. Unknown names are ignored without an error, so check which tools are actually offered after a change. Start an untrusted project with `--no-client-tools` until you have reviewed its selection.
-
-The TUI's built-in diff review tool also runs as a process on the client machine.
 
 ## Use code mode as a capability boundary
 

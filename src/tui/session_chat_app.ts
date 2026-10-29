@@ -1,9 +1,8 @@
 import { createInterface } from "node:readline/promises";
 import { Type } from "typebox";
 import { z } from "zod";
-import { createCommandClientTools } from "../core/client_tools/command_client_tools.js";
 import { createCommandRegistry } from "../core/commands/index.js";
-import type { CommandClientToolConfig, Config, ThemeDefinition } from "../core/config/index.js";
+import type { Config, ThemeDefinition } from "../core/config/index.js";
 import { DIFF_REVIEW_TOOL, parseDiffReviewToolArgs } from "../core/diff_review/index.js";
 import type { CoreDeps } from "../core/runtime/deps.js";
 import { TOOL_NAME_PREFILL_INPUT } from "../core/tools/tool_names.js";
@@ -22,7 +21,6 @@ import { SlashAutocompleteProvider } from "./ui/slash_autocomplete.js";
 export type SessionChatAppOptions = {
   sessionSelection: SessionChatSelection;
   client: TauSdkClient;
-  configuredClientToolNames: string[];
   targetLabel: string;
   terminalColors?: TerminalColors | Promise<TerminalColors>;
   themeId?: string;
@@ -32,10 +30,7 @@ export type SessionChatAppOptions = {
   initialUserMessage?: string;
 };
 
-export type SessionChatTransportOptions = Omit<
-  SessionChatAppOptions,
-  "client" | "configuredClientToolNames" | "targetLabel"
-> & {
+export type SessionChatTransportOptions = Omit<SessionChatAppOptions, "client" | "targetLabel"> & {
   clientToolsEnabled: boolean;
   transport: "websocket";
   url: string;
@@ -69,14 +64,12 @@ function createPrefillInputPresentation(args: unknown) {
 export function createTuiClientTools(options: {
   enabled: boolean;
   getController: () => SessionChatController | undefined;
-  commandTools?: CommandClientToolConfig[];
-  deps?: Pick<CoreDeps, "spawn">;
 }): TauSdkClientTool[] {
   if (!options.enabled) {
     return [];
   }
 
-  const tools: TauSdkClientTool[] = [
+  return [
     {
       schema: {
         ...DIFF_REVIEW_TOOL,
@@ -129,18 +122,6 @@ export function createTuiClientTools(options: {
       },
     },
   ];
-
-  tools.push(...createCommandClientTools(options.commandTools ?? [], options.deps));
-
-  const names = new Set<string>();
-  for (const tool of tools) {
-    if (names.has(tool.schema.name)) {
-      throw new Error(`duplicate TUI client tool '${tool.schema.name}'`);
-    }
-    names.add(tool.schema.name);
-  }
-
-  return tools;
 }
 
 export type SessionChatSelection =
@@ -180,8 +161,6 @@ export class SessionChatApp {
     const clientTools = createTuiClientTools({
       enabled: options.clientToolsEnabled,
       getController: () => controller,
-      commandTools: options.config?.clientTools,
-      deps: options.deps,
     });
     const transport = new WebSocketSessionProtocolTransport({
       url: options.url,
@@ -194,9 +173,6 @@ export class SessionChatApp {
     const app = await SessionChatApp.open({
       ...options,
       client,
-      configuredClientToolNames: options.clientToolsEnabled
-        ? (options.config?.clientTools ?? []).map((tool) => tool.name)
-        : [],
       targetLabel: options.url,
     });
     controller = app.controller;
@@ -223,7 +199,6 @@ export class SessionChatApp {
         snapshot,
         createSession: (input) => options.client.sessions.create(input),
         targetLabel: options.targetLabel,
-        configuredClientToolNames: options.configuredClientToolNames,
         config: options.config,
         deps: options.deps,
         themeIds: (options.themes ?? []).map((theme) => theme.id),

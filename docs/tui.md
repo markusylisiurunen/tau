@@ -25,9 +25,9 @@ Piped stdin becomes the first message of a local session:
 printf 'summarize the current changes' | tau
 ```
 
-Use `tau attach` for a session hosted elsewhere. The terminal, themes, clipboard, speech commands, built-in diff review tool, and command client tools stay on the attaching machine. Bash tools, file access, project configuration, and model calls use the session's execution environment. See [remote sessions](remote-sessions.md) for connecting and creating sessions.
+Use `tau attach` for a session hosted elsewhere. The terminal, themes, clipboard, speech commands, built-in diff review tool, and `prefill_input` stay on the attaching machine. Bash tools, file access, project configuration, and model calls use the session's execution environment. See [remote sessions](remote-sessions.md) for connecting and creating sessions.
 
-The startup summary lists discovered skills, project context files, configured client tools, and enabled MCP servers. MCP servers are shown as configured, not connected, because connections open on first use. In attached sessions, the MCP list comes from the host. Empty sections are left out.
+The startup summary lists discovered skills, project context files, and enabled MCP servers. MCP servers are shown as configured, not connected, because connections open on first use. In attached sessions, the MCP list comes from the host. Empty sections are left out.
 
 ## Work in the editor
 
@@ -281,7 +281,7 @@ See [`speech` configuration](config-reference.md#speech) for the default Maisie 
 
 Run `/reload` while idle after changing configuration, personas, prompts, skills, or `AGENTS.md` content in the execution environment. The host reads them again from the session's working directory, keeps the current persona if it still exists, and otherwise selects the first available persona. Warnings appear in the transcript.
 
-Restart the TUI instead after changing themes, speech settings, or configured client tools. Codex auth storage is read again on every new request. Restart the host after changing its Tau version, environment variables, `apiKeys`, WebSocket listener, or hosted execution environment settings. [Credentials](credentials.md) and [remote sessions](remote-sessions.md) explain which process owns what.
+Restart the TUI instead after changing themes or speech settings. Codex auth storage is read again on every new request. Restart the host after changing its Tau version, environment variables, `apiKeys`, WebSocket listener, or hosted execution environment settings. [Credentials](credentials.md) and [remote sessions](remote-sessions.md) explain which process owns what.
 
 ## Common mistakes
 

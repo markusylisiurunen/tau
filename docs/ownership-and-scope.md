@@ -6,7 +6,7 @@ Tau splits a session into three parts: the terminal or other interface you use, 
 
 ### Client
 
-The **client** is the interface attached to a session host. The terminal client owns the TUI, editor state, terminal colors, active theme, local speech commands, the diff-review process, and configured command client tools. An SDK program or Telegram adapter can also be a client.
+The **client** is the interface attached to a session host. The terminal client owns the TUI, editor state, terminal colors, active theme, local speech commands, the diff-review process, and its built-in client tools. An SDK program or Telegram adapter can also be a client.
 
 Client tools run on the client machine, which may differ from the machine where the agent's Bash tool runs. Client configuration is found from the client's startup working directory and home.
 
@@ -60,7 +60,7 @@ A Fly Sprite puts the execution environment on another machine while the host st
 | Local transcript history and remote history outbox | Host home | History follows the host, not an attached TUI or execution target. |
 | Terminal theme and `/theme` | TUI client | An attached client selects from Tau’s built-in themes. Themes are not session state. |
 | `/diff` process | TUI client | Tau’s built-in browser tool runs on the client machine. Repository capture still runs through the session execution environment. |
-| Configured command client tools | Owning client | Commands and their environment are on the client. File access they make on behalf of the session goes to the execution environment. |
+| Client tool handlers | Owning client | Handlers and their environment are on the client. File access they make on behalf of the session goes to the execution environment. |
 | `/listen` and `/speak` capture or playback | TUI client | Required programs, devices, and media credentials belong on the client machine. |
 | Host execution-environment targets | Host startup | Fly Sprite connection settings must be in the host's configuration before it accepts sessions that use them. |
 | Telegram bot token, routing, workspaces, and generated runner state | Telegram runner | Manage these through the Telegram config and runner commands, not project `config.json`. |
@@ -70,7 +70,7 @@ A Fly Sprite puts the execution environment on another machine while the host st
 Start from the behavior that consumes the setting:
 
 1. If it changes what the agent sees or can do in the project, edit configuration or content in the execution environment's discovery path.
-2. If it changes the TUI's theme, speech, or command client tools, edit the TUI client's configuration and restart that client.
+2. If it changes the TUI's theme or speech, edit the TUI client's configuration and restart that client.
 3. If it changes credentials, session storage, remote history, or hosted execution environment connections, set it for the host process and restart the host when required.
 4. If it changes Telegram routing or workspace preparation, edit the runner's `--config-file` on the runner machine.
 
@@ -86,7 +86,7 @@ tau attach --new --cwd /srv/ledger ws://devbox.example:8787
 
 The host and its local execution environment resolve `/srv/ledger`. Project personas and `.tau/config.json` are read from `/srv/ledger` and its parent directories on `devbox.example`. The laptop's current directory has no effect on the session.
 
-The laptop still loads its own theme and command client tools before attaching. `/diff` launches Tau’s built-in browser tool on the laptop. Git snapshot commands for the review run through the session and therefore see `/srv/ledger` on the execution environment.
+The laptop still loads its own theme before attaching. `/diff` launches Tau’s built-in browser tool on the laptop. Git snapshot commands for the review run through the session and therefore see `/srv/ledger` on the execution environment.
 
 The host on `devbox.example` makes the model calls, so it needs the provider credential. Export the provider's environment variable for `tau serve` there, or put the key in that host's global configuration. Setting it only in the laptop shell does not reach the remote host.
 

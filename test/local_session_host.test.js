@@ -4853,6 +4853,57 @@ describe("LocalSessionHost", () => {
     }
   });
 
+  it("recovers stored command-tool results without registering the removed tool", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "tau-command-tool-recovery-"));
+    const store = new FileSessionStore({ directory });
+    const toolCall = fauxToolCall("notify_desktop", { message: "done" }, { id: "old-command" });
+    const snapshot = createStoredSnapshot({
+      sessionId: "old-command-session",
+      historyEntries: [
+        {
+          id: "assistant-1",
+          message: { ...assistantMessageWithToolCalls([toolCall]), stopReason: "toolUse" },
+        },
+        {
+          id: "result-1",
+          message: {
+            role: "toolResult",
+            toolCallId: toolCall.id,
+            toolName: toolCall.name,
+            content: [{ type: "text", text: "delivered" }],
+            isError: false,
+          },
+        },
+      ],
+      tools: {
+        [toolCall.id]: {
+          id: toolCall.id,
+          toolCallId: toolCall.id,
+          toolName: toolCall.name,
+          status: "succeeded",
+          call: { messageId: "assistant-1", contentIndex: 0 },
+          resultMessageId: "result-1",
+          startedAt: 1,
+          finishedAt: 2,
+          facetIds: [],
+        },
+      },
+    });
+    const host = createHost(store);
+    try {
+      await store.commitSessionSnapshot(snapshot);
+      const session = await host.observeSession(snapshot.sessionId);
+      const recovered = await session.snapshot();
+      expect(recovered.messages).toEqual(snapshot.messages);
+      expect(recovered.tools).toEqual(snapshot.tools);
+      expect(session.runtime.agent.spec.tools.get(toolCall.name)).toBeUndefined();
+      expect(await store.loadSession(snapshot.sessionId)).toEqual(recovered);
+    } finally {
+      await host.shutdown();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("repairs and persists dangling tool calls when recovering a stored session", async () => {
     const store = new MemorySessionStore();
     const toolCall = fauxToolCall("bash", { command: "pwd" }, { id: "dangling-tool" });

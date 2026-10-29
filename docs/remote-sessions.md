@@ -130,7 +130,7 @@ An attached session involves three separate parts, even when two of them run on 
 - loaded themes and `defaultTheme`
 - `/listen`, `/speak`, and their local credentials and OS commands
 - the built-in diff tool process
-- configured command-backed client-tool processes
+- the `prefill_input` client tool
 - the client’s Tau binary and TUI behavior
 
 ### The session host owns
@@ -160,7 +160,7 @@ Each kind of change belongs to a different process:
 | Project config, personas, prompts, skills, or AGENTS.md in the execution environment | Wait for idle, then run `/reload`. |
 | Global model `apiKeys` on the host | Restart the host. |
 | Codex auth changed with `tau auth` | No restart needed; every new request reads auth storage again. |
-| Attaching themes, speech config, or configured client tools | Restart `tau attach`. |
+| Attaching themes or speech config | Restart `tau attach`. |
 | Host environment variables, history target, WebSocket listener, Fly Sprite connection, or host startup flags | Restart `tau serve`. |
 | Host Tau package, built-in tools, protocol, session recovery code, or built-in documentation | Upgrade and restart the host. |
 | TUI package, keybindings, rendering, local speech, or client-tool implementation | Upgrade and restart the attaching client. |
@@ -177,7 +177,7 @@ A clean `tau serve` shutdown interrupts running work, saves live sessions, and c
 
 Several WebSocket clients can observe the same live session and receive the same updates and pending messages. Every one of them can also submit, queue, steer, interrupt, or change the session. None is read-only, so agree on who, or which automation, is in charge.
 
-Each TUI offers its `diff_review` and `prefill_input` tools plus its enabled configured client tools. Only one client may offer a given tool name in a session. Start additional clients with:
+Each TUI offers its `diff_review` and `prefill_input` tools. Only one client may offer a given tool name in a session. Start additional clients with:
 
 ```sh
 tau attach --no-client-tools --session 0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3 ws://host.example:8787

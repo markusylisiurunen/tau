@@ -177,7 +177,7 @@ export function printHelp(personas: Persona[]): void {
       `                                optionally specify reasoning level. levels: ${reasoningList}.`,
       `                                if not specified, uses resolved config defaultPersona.`,
       "  --no-agent-context-files      disable AGENTS.md injection into the system prompt.",
-      "  --no-client-tools             disable built-in and configured TUI client tools.",
+      "  --no-client-tools             disable built-in TUI client tools.",
       "",
       "subcommands:",
       "  serve                         host Tau sessions over WebSocket.",

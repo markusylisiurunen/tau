@@ -13,13 +13,6 @@ import {
   normalizeSpeechToTextKeywords,
   speechToTextKeywordSchema,
 } from "../utils/speech_to_text_keywords.js";
-import type { CommandClientToolConfig } from "./client_tools.js";
-import {
-  parseCommandClientToolsConfig,
-  parseEnabledClientToolsConfig,
-  resolveCommandClientToolsConfig,
-  selectCommandClientTools,
-} from "./client_tools.js";
 import type { ConfigDeps } from "./deps.js";
 import { type MarkdownExportConfig, markdownExportConfigSchema } from "./markdown_export.js";
 import { type McpServersConfig, parseMcpServersConfig, resolveMcpServersConfig } from "./mcp.js";
@@ -33,8 +26,6 @@ export interface Config {
   speech?: { voiceId?: string; recordingShortcut?: RecordingShortcut; vocabulary?: string[] };
   defaultPersona?: string;
   defaultTheme?: string;
-  clientTools?: CommandClientToolConfig[];
-  enabledClientTools?: string[];
   subagents?: {
     launchModels?: string[];
   };
@@ -347,35 +338,6 @@ function validateConfigData(
   Object.assign(config as Record<string, unknown>, scalarResult.values);
   errors.push(...scalarResult.errors);
 
-  if (data.clientTools !== undefined && options.scope !== "global") {
-    errors.push(`${sourceLabel}: 'clientTools' may only be configured in the global config.`);
-  } else {
-    const clientToolsResult = parseCommandClientToolsConfig(data.clientTools, sourceLabel);
-    assignParsedConfigValue(
-      config,
-      errors,
-      "clientTools",
-      clientToolsResult.config,
-      clientToolsResult.errors,
-    );
-  }
-
-  if (data.enabledClientTools !== undefined && options.scope !== "project") {
-    errors.push(`${sourceLabel}: 'enabledClientTools' may only be configured in project config.`);
-  } else {
-    const enabledClientToolsResult = parseEnabledClientToolsConfig(
-      data.enabledClientTools,
-      sourceLabel,
-    );
-    assignParsedConfigValue(
-      config,
-      errors,
-      "enabledClientTools",
-      enabledClientToolsResult.config,
-      enabledClientToolsResult.errors,
-    );
-  }
-
   const subagentsResult = parseSubagentsConfig(data.subagents, sourceLabel, options.resolveModel);
   assignParsedConfigValue(
     config,
@@ -668,8 +630,6 @@ function mergeSubagentsConfig(
 function mergeConfigLevels(levels: ConfigLevel[], configs: Config[], home: string): Config {
   const merged: Config = getVirtualConfigDefaults();
   let apiKeys: Config["apiKeys"] | undefined;
-  let clientTools: CommandClientToolConfig[] | undefined;
-  let enabledClientTools: string[] | undefined;
   let subagents: Config["subagents"] | undefined;
   let modelSystemNotices: Config["modelSystemNotices"] | undefined;
   let flySprites: FlySpritesConfig | undefined;
@@ -693,12 +653,6 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[], home: strin
           : undefined;
       merged.speech = mergeOptionalObject(merged.speech, config.speech);
       if (vocabulary !== undefined) merged.speech!.vocabulary = vocabulary;
-    }
-    if (config.clientTools !== undefined) {
-      clientTools = resolveCommandClientToolsConfig(level, config.clientTools);
-    }
-    if (config.enabledClientTools !== undefined) {
-      enabledClientTools = [...config.enabledClientTools];
     }
     subagents = mergeSubagentsConfig(subagents, config.subagents);
     modelSystemNotices = mergeOptionalObject(modelSystemNotices, config.modelSystemNotices);
@@ -724,13 +678,6 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[], home: strin
 
   if (apiKeys && Object.keys(apiKeys).length > 0) {
     merged.apiKeys = apiKeys;
-  }
-
-  if (clientTools) {
-    const selectedClientTools = selectCommandClientTools(clientTools, enabledClientTools);
-    if (selectedClientTools.length > 0) {
-      merged.clientTools = selectedClientTools;
-    }
   }
 
   if (subagents && Object.keys(subagents).length > 0) {

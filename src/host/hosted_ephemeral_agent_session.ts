@@ -16,6 +16,7 @@ import { createAutoCompactionArchiver } from "../core/session/auto_compaction_ar
 import type { SubagentToolName } from "../core/subagents/types.js";
 import type { BashJobRegistry } from "../core/tools/bash_jobs.js";
 import { ToolCatalog } from "../core/tools/catalog.js";
+import type { CodeJobRegistry } from "../core/tools/code_jobs.js";
 import type { Persona, ReasoningEffort } from "../core/types.js";
 import {
   appendUsageLogEntry,
@@ -61,6 +62,7 @@ type EphemeralAgentThreadForkSource = {
 export type HostedEphemeralAgentSessionOptions = {
   cwd: string;
   bashJobs: BashJobRegistry;
+  codeJobs: CodeJobRegistry;
   contextId: string;
   sessionId: string;
   sessionStartedAt: number;
@@ -129,6 +131,7 @@ export class HostedEphemeralAgentSession {
         promptContext.cwd,
         options.config,
         options.bashJobs,
+        options.codeJobs,
       ),
     });
     return new HostedEphemeralAgentSession(options, spec);

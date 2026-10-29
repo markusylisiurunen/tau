@@ -22,6 +22,7 @@ import { AgentSupervisor } from "../subagents/agent_supervisor.js";
 import type { SubagentEvent } from "../subagents/types.js";
 import { BashJobRegistry } from "../tools/bash_jobs.js";
 import { ToolCatalog } from "../tools/catalog.js";
+import { CodeJobRegistry } from "../tools/code_jobs.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { ResolveSubagentPrompt } from "../tools/spawn_agent.js";
@@ -67,6 +68,7 @@ export type CreateChatRuntimeOptions = {
 export class ChatRuntime {
   readonly agent: AgentRuntime;
   readonly bashJobs = new BashJobRegistry();
+  readonly codeJobs = new CodeJobRegistry();
   readonly supervisor: AgentSupervisor;
   private currentPersona: Persona;
   private currentConfig: Config;
@@ -339,6 +341,7 @@ export class ChatRuntime {
       modelResolver: this.currentModelResolver,
       supervisor: this.supervisor,
       bashJobs: this.bashJobs,
+      codeJobs: this.codeJobs,
       history: this.historyQuery,
       clientTools: this.clientTools,
       mcp: this.mcp,

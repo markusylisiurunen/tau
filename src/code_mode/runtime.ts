@@ -23,6 +23,7 @@ const javascriptIdentifierPattern = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 const reservedNames = new Set([
   ...Object.getOwnPropertyNames(globalThis),
   "docs",
+  "input",
   "printText",
   "printImage",
   "truncate",
@@ -179,7 +180,11 @@ export async function executeTauCodeMode(
 }
 
 export async function runTauCodeMode(
-  options: ExecuteTauCodeModeOptions,
+  options: Omit<ExecuteTauCodeModeOptions, "timeoutMs"> & {
+    timeoutMs?: number | null;
+    input?: TauCodeModeJsonValue;
+    output?: CodeModeOutput;
+  },
 ): Promise<TauCodeModeRuntimeResult> {
   validateName(options.name);
   if (typeof options.code !== "string" || !options.code.trim()) {
@@ -194,7 +199,7 @@ export async function runTauCodeMode(
   const apiMethods = registerMethods(options.api, options.name);
   const apis: RegisteredApi[] = [{ name: options.name, methods: apiMethods }];
   const methods = apis.flatMap((api) => api.methods);
-  const orderedOutput = new CodeModeOutput();
+  const orderedOutput = options.output ?? new CodeModeOutput();
   let imageCount = 0;
   const imageMethodId = methods.length;
   methods.push({
@@ -222,7 +227,8 @@ export async function runTauCodeMode(
       }
     },
   });
-  const timeoutMs = options.timeoutMs ?? TAU_CODE_MODE_DEFAULT_TIMEOUT_MS;
+  const timeoutMs =
+    options.timeoutMs === undefined ? TAU_CODE_MODE_DEFAULT_TIMEOUT_MS : options.timeoutMs;
   const invocation = options.invocation ?? null;
   const executionEnvironment = options.executionEnvironment ?? null;
   const signal = options.signal ?? new AbortController().signal;
@@ -234,6 +240,7 @@ export async function runTauCodeMode(
       sandboxRunnerUrl,
       workerData: {
         code: options.code,
+        inputJson: JSON.stringify(options.input ?? null),
         docs,
         imageMethodId,
         apis: apis.map((api) => ({
@@ -243,7 +250,10 @@ export async function runTauCodeMode(
       },
       signal,
       timeoutMs,
-      onOutput: (text) => orderedOutput.appendText(text),
+      onOutput: (text, truncated) => {
+        orderedOutput.appendText(text);
+        orderedOutput.truncated ||= truncated;
+      },
       handleRequest: async (request, requestSignal) => {
         const method = methods[request.methodId];
         if (!method) throw new Error("unsupported code-mode API method");
@@ -334,8 +344,12 @@ function validateName(name: string): void {
   }
 }
 
-function validateTimeout(timeoutMs: number | undefined): void {
-  if (timeoutMs !== undefined && (!Number.isInteger(timeoutMs) || timeoutMs <= 0)) {
+function validateTimeout(timeoutMs: number | null | undefined): void {
+  if (
+    timeoutMs !== undefined &&
+    timeoutMs !== null &&
+    (!Number.isInteger(timeoutMs) || timeoutMs <= 0)
+  ) {
     throw new Error("code-mode timeoutMs must be a positive integer");
   }
 }
@@ -460,13 +474,18 @@ function serializeBridgeResult(value: unknown, name: string, path: string[]): st
   return json;
 }
 
-function buildRuntimeDocumentation(name: string, documentation: string, timeoutMs: number): string {
+function buildRuntimeDocumentation(
+  name: string,
+  documentation: string,
+  timeoutMs: number | null,
+): string {
   return [
     "# Code-mode runtime",
     "",
     "## Available globals",
     "",
     `- \`${name}\`: the explicitly exposed API documented below.`,
+    "- `input`: the JSON value supplied with the program, or `null` when none was supplied.",
     "- `printText(text)`: emits a string to the model.",
     "- `await printImage(block)`: emits a validated base64 image to the model.",
     "- `truncate(text, { maxChars, position? })`: bounds Unicode characters, including an omission marker.",
@@ -484,11 +503,15 @@ function buildRuntimeDocumentation(name: string, documentation: string, timeoutM
     `Each API request and response must be JSON-serializable and fit within ${formatBytes(CODE_MODE_MAX_BRIDGE_PAYLOAD_BYTES)}. Request smaller results using service filters or pagination when available; filtering after receiving a response cannot avoid this limit.`,
     "Undefined object properties are omitted from API arguments. Undefined arguments and array entries remain invalid.",
     `A program may make at most ${CODE_MODE_MAX_BRIDGE_REQUESTS} API calls, with at most ${CODE_MODE_MAX_CONCURRENT_BRIDGE_REQUESTS} unresolved calls concurrently. Exceeding these limits fails the program.`,
-    `The program must finish within ${formatDuration(timeoutMs)}.`,
+    timeoutMs === null
+      ? "This background program has no overall deadline."
+      : `The program must finish within ${formatDuration(timeoutMs)}.`,
     "",
     "## Output",
     "",
-    CODE_MODE_MAX_OUTPUT_TOKENS_DESCRIPTION,
+    timeoutMs === null
+      ? "Printed text and images become the background job's output. Read it with the code job tools, which return the latest output within their own output budget."
+      : CODE_MODE_MAX_OUTPUT_TOKENS_DESCRIPTION,
     "",
     "`printText` accepts only strings; objects and arrays throw a TypeError. Select relevant fields and explicitly format them as concise, readable plain text: labels and lines usually use fewer tokens than JSON envelopes and metadata. Filter or summarize large collections before printing. Keep identifiers and other fields needed for follow-up actions. Printed output consumes conversation context.",
     "",
@@ -543,7 +566,7 @@ function getExecutionStatus(execution: TauCodeModeExecutionCapture): TauCodeMode
 function appendTerminationNote(
   output: string,
   execution: TauCodeModeExecutionCapture,
-  timeoutMs: number,
+  timeoutMs: number | null,
 ): string {
   let notice: string | undefined;
   if (execution.timedOut) {

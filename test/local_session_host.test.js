@@ -5602,6 +5602,56 @@ describe("LocalSessionHost", () => {
     }
   });
 
+  it("retains background code across release and interrupts it before host shutdown waits", async () => {
+    const host = createHost(new MemorySessionStore());
+    const session = await host.createSession(localCreateInput);
+    const backend = createLocalToolExecutionBackend();
+    const entered = deferred();
+    let requestSignal;
+    try {
+      const id = session.runtime.codeJobs.start({
+        backend,
+        cwd: process.cwd(),
+        source: "inline code",
+        signal: new AbortController().signal,
+        program: {
+          name: "tau",
+          documentation: "test",
+          code: 'printText("ready"); await tau.wait();',
+          api: {
+            wait: async (_args, context) => {
+              requestSignal = context.signal;
+              entered.resolve();
+              await new Promise((_, reject) =>
+                context.signal.addEventListener("abort", () => reject(context.signal.reason), {
+                  once: true,
+                }),
+              );
+              return null;
+            },
+          },
+        },
+      });
+      await entered.promise;
+      session.interruptActiveWork();
+      host.releaseSession(session);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(session.isDisposed).toBe(false);
+      expect(requestSignal.aborted).toBe(false);
+      const reattached = await host.observeSession(session.sessionId);
+      expect(reattached).toBe(session);
+      host.releaseSession(reattached);
+      await host.shutdown();
+      expect(requestSignal.aborted).toBe(true);
+      expect((await session.runtime.codeJobs.inspect([id], false)).text).toContain(
+        "status: stopped",
+      );
+    } finally {
+      await host.shutdown();
+      await backend.dispose();
+    }
+  });
+
   it("evicts a released session when its last Bash job exits", async () => {
     const host = createHost(new MemorySessionStore());
     const session = await host.createSession(localCreateInput);

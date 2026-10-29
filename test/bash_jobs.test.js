@@ -11,9 +11,9 @@ const context = (signal = new AbortController().signal) => ({
 });
 const outputMetadata = (text) => [
   `~${Math.floor(Buffer.byteLength(text, "utf8") / 6)} tokens`,
-  `${text.split("\n").length} lines`,
+  `${text.split("\n").length} line${text.includes("\n") ? "s" : ""}`,
 ];
-const jobId = (text) => text.match(/`([^`]+)`/)[1];
+const jobId = (text) => text.match(/job ([^ ]+)/)[1];
 
 function createPendingBackend() {
   return {
@@ -121,14 +121,12 @@ it.each([
           expect(result.outcome).toBe("succeeded");
           const text = result.content[0].text;
           expect(text).toContain(
-            `\`${id}\` · ServerCommand\n${status}\ncwd /Workspace\nexit ${exitCode ?? "?"}`,
+            `id: ${id}\nstatus: ${status}\ncommand: "ServerCommand"\ncwd: "/Workspace"\nexit_code: ${exitCode ?? "null"}`,
           );
-          if (aborted) expect(text).toContain("Command was cancelled.");
-          if (closeSignal)
-            expect(text).toContain(`Command was terminated by signal ${closeSignal}.`);
+          if (closeSignal) expect(text).toContain(`signal: ${closeSignal}`);
           const hasOutput = name !== "list_bash_jobs" && includeOutput !== false;
           expect(text.includes("output line 0")).toBe(hasOutput);
-          expect(text.includes("Output truncated")).toBe(hasOutput);
+          expect(text.includes("capture: truncated")).toBe(hasOutput);
           const initial = tool.describe(call).presentation;
           const terminal = events.at(-1).presentation;
           expect(terminal.subject).toBe(initial.subject);
@@ -162,8 +160,8 @@ it.each([
 
 it.each([
   ["hello\n", ["hello"]],
-  ["", ["exit 0"]],
-  [" \t\n", ["exit 0"]],
+  ["", ["--- output ---"]],
+  [" \t\n", ["--- output ---"]],
   ["hello\r\n\r\nworld\r \t", ["hello", "", "world"]],
 ])("trims only presentation whitespace for job output %j", async (output, tail) => {
   const jobs = new BashJobRegistry();
@@ -177,7 +175,7 @@ it.each([
   try {
     const id = await jobs.start(backend, "command", "/Workspace", context().signal);
     await jobs.waitForIdle();
-    const expectedText = `\`${id}\` · command\nsucceeded\ncwd /Workspace\nexit 0\n\n${output}`;
+    const expectedText = `id: ${id}\nstatus: succeeded\ncommand: "command"\ncwd: "/Workspace"\nexit_code: 0${output ? "\ntext_log: unavailable" : ""}\n\n--- output ---\n${output}`;
     for (const tool of createBashJobToolDefinitions(jobs)) {
       const name = tool.schema.name;
       if (name === "list_bash_jobs") continue;
@@ -362,7 +360,8 @@ it("presents bounded cleanup diagnostics without changing backend text casing", 
     );
     expect(outcome.outcome).toBe("failed");
     expect(outcome.content[0].text).toBe(reason);
-    expect(jobs.format([id], false).text).toContain(reason);
+    expect(jobs.format([id], false).text).not.toContain(reason);
+    expect(jobs.format([id], true).text).toContain(reason);
     expect(events.at(-1).presentation.subject).toBe(id);
     const diagnostic = events
       .at(-1)
@@ -437,7 +436,7 @@ it("marks model-tail truncation across multiple jobs without counting hidden out
   const backend = {
     async runBash(_command, options) {
       options.onStarted();
-      options.onOutput(Buffer.from("日本語\n".repeat(2000)));
+      options.onOutput(Buffer.from("日本語\n".repeat(6000)));
       return { exitCode: 0, aborted: false, closeSignal: null, truncated: false };
     },
   };

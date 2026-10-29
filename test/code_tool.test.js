@@ -13,6 +13,7 @@ import { requestOpenRouterChat } from "../dist/core/models/openrouter.js";
 import { BashJobRegistry } from "../dist/core/tools/bash_jobs.js";
 import { ToolCatalog } from "../dist/core/tools/catalog.js";
 import { createCodeToolDefinition } from "../dist/core/tools/code.js";
+import { CodeJobRegistry } from "../dist/core/tools/code_jobs.js";
 import * as codeMode from "../dist/core/tools/code_mode.js";
 import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
 import { SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES } from "../dist/protocol/session_protocol.js";
@@ -58,6 +59,7 @@ describe("code composition", () => {
         allowedTools: ["bash"],
         config: {},
         bashJobs: new BashJobRegistry(),
+        codeJobs: new CodeJobRegistry(),
       });
       expect(tool.schema.parameters.properties.timeout).toMatchObject({
         type: "integer",
@@ -86,6 +88,7 @@ describe("code composition", () => {
         history,
         config: {},
         bashJobs: new BashJobRegistry(),
+        codeJobs: new CodeJobRegistry(),
       });
       const result = await tool.execute(
         {
@@ -107,6 +110,7 @@ describe("code composition", () => {
       allowedTools: ["bash"],
       config: {},
       bashJobs: new BashJobRegistry(),
+      codeJobs: new CodeJobRegistry(),
     });
     const executionContext = context();
     const result = await tool.execute(
@@ -153,6 +157,7 @@ describe("code composition", () => {
       allowedTools: ["bash"],
       config: {},
       bashJobs: new BashJobRegistry(),
+      codeJobs: new CodeJobRegistry(),
     });
     const code = 'printText("x".repeat(60_000))';
     let path;
@@ -188,6 +193,7 @@ describe("code composition", () => {
         history,
         config: {},
         bashJobs: new BashJobRegistry(),
+        codeJobs: new CodeJobRegistry(),
       });
       const result = await tool.execute(
         {
@@ -232,6 +238,7 @@ describe("code composition", () => {
       cwd: process.cwd(),
       config: {},
       bashJobs: new BashJobRegistry(),
+      codeJobs: new CodeJobRegistry(),
       mcp,
     };
     try {
@@ -247,6 +254,7 @@ describe("code composition", () => {
         options.cwd,
         {},
         options.bashJobs,
+        options.codeJobs,
         undefined,
         mcp,
       ).get("code");
@@ -280,6 +288,7 @@ describe("code composition", () => {
       history: {},
       mcp: { available: true, listServers: () => [{ name: "test" }] },
       bashJobs: new BashJobRegistry(),
+      codeJobs: new CodeJobRegistry(),
     });
     const description = tool.schema.description;
     for (const name of ["bash", "web", "history", "mcp", "models"])
@@ -362,6 +371,7 @@ describe("code composition", () => {
       history,
       config: {},
       bashJobs: jobs,
+      codeJobs: new CodeJobRegistry(),
     });
     const index = text(await execute(tool, "printText(docs)"));
     expect(index).toContain("tau.history");
@@ -385,6 +395,7 @@ describe("code composition", () => {
         allowedTools: [],
         config: {},
         bashJobs: jobs,
+        codeJobs: new CodeJobRegistry(),
       }),
     ).toBeUndefined();
   });
@@ -402,6 +413,7 @@ describe("code composition", () => {
       allowedTools: ["bash"],
       config: {},
       bashJobs: new BashJobRegistry(),
+      codeJobs: new CodeJobRegistry(),
     });
     const options = JSON.stringify({ command: "cat", stdin, timeout: 1000 });
     const result = await execute(
@@ -466,6 +478,7 @@ describe("code composition", () => {
         history,
         config: {},
         bashJobs: jobs,
+        codeJobs: new CodeJobRegistry(),
       });
       const result = await execute(
         tool,
@@ -486,7 +499,14 @@ describe("code composition", () => {
   it("shares composed background jobs with direct tools across registries", async () => {
     const backend = createLocalToolExecutionBackend();
     const jobs = new BashJobRegistry();
-    const registry = ToolCatalog.createSubagentRegistry(["bash"], backend, process.cwd(), {}, jobs);
+    const registry = ToolCatalog.createSubagentRegistry(
+      ["bash"],
+      backend,
+      process.cwd(),
+      {},
+      jobs,
+      new CodeJobRegistry(),
+    );
     try {
       const started = await execute(
         registry.get("code"),

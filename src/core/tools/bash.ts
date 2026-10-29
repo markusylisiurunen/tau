@@ -94,7 +94,7 @@ const BASH_TIMEOUT_DESCRIPTION =
   "Timeout in milliseconds for foreground commands only; cannot be combined with background: true. If omitted, defaults to 60 seconds. Use a longer timeout for known slow operations like builds or large clones.";
 
 const BASH_MAX_OUTPUT_TOKENS_DESCRIPTION = [
-  "Optional maximum number of output tokens to return to the model. Foreground only; omit for background jobs, which use bounded log tails.",
+  "Optional maximum number of output tokens to return to the model. Foreground only; for background jobs, set maxOutputTokens when reading or waiting for the job.",
   `Defaults to ${BASH_MODEL_DEFAULT_MAX_TOKENS} tokens if unset. Most commands should leave this unset. Usually it is better to run a more scoped command than to request more output. Do not set it speculatively or just in case. Only set it when you genuinely need more output, such as after a truncated result or when the user explicitly asks for more detail.`,
   `When more output is truly needed, set a value between ${BASH_MODEL_DEFAULT_MAX_TOKENS} and ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS}.`,
   `Only exceed ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS} when the user explicitly requests more output, up to ${BASH_MAX_OUTPUT_TOKENS}.`,
@@ -454,7 +454,7 @@ function parseBashArgs(raw: unknown):
     return {
       ok: false,
       error:
-        "maxOutputTokens is only available for foreground commands; background jobs use bounded log tails.",
+        "maxOutputTokens is only available for foreground commands; set it on a job read, wait, or stop instead.",
       commandForDisplay,
     };
   }
@@ -564,7 +564,7 @@ export function createBashToolDefinition(
           try {
             if (parsedArgs.data.background) {
               const id = await jobs.start(backend, command, effectiveWorkingDirectory, signal);
-              const text = `${jobs.format([id], false).text}\nApplication readiness has not been checked.`;
+              const text = `Started background Bash job ${id} in ${JSON.stringify(effectiveWorkingDirectory)}. Use read_bash_job to check progress or wait_for_bash_jobs to wait for completion. Application readiness has not been checked.`;
               const outcome = createTextToolOutcome(text, "succeeded");
               const uiEvent: ToolActivity = {
                 type: "bash_execution",

@@ -9,6 +9,7 @@ import { type CoreDeps, createDefaultCoreDeps } from "../runtime/deps.js";
 import { createAutoCompactionArchiver } from "../session/auto_compaction_archive.js";
 import type { BashJobRegistry } from "../tools/bash_jobs.js";
 import { ToolCatalog } from "../tools/catalog.js";
+import type { CodeJobRegistry } from "../tools/code_jobs.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
 import type { ToolRunPresentation } from "../tools/presentation.js";
 import type { ReasoningEffort } from "../types.js";
@@ -132,6 +133,7 @@ export class AgentSupervisor {
     config: Config;
     backend: ToolExecutionBackend;
     bashJobs: BashJobRegistry;
+    codeJobs: CodeJobRegistry;
     history?: HistoryQuery;
     mcp?: McpManager;
     personaId?: string;
@@ -189,6 +191,7 @@ export class AgentSupervisor {
             workingDirectory,
             options.config,
             options.bashJobs,
+            options.codeJobs,
             options.history,
             options.mcp,
           ),

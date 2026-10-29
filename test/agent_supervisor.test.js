@@ -4,6 +4,7 @@ import { personas } from "../dist/core/personas.js";
 import { AgentSupervisor } from "../dist/core/subagents/agent_supervisor.js";
 import { BashJobRegistry } from "../dist/core/tools/bash_jobs.js";
 import { ToolCatalog } from "../dist/core/tools/catalog.js";
+import { CodeJobRegistry } from "../dist/core/tools/code_jobs.js";
 import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
 import { ClientToolBroker } from "../dist/host/client_tool_broker.js";
 
@@ -149,6 +150,9 @@ describe("AgentSupervisor", () => {
     if (!spawned.ok) throw new Error(spawned.reason);
     expect(getRecord(supervisor, spawned.state.id).runtime.spec.tools.schemas).toEqual([
       expect.objectContaining({ name: "code" }),
+      ...["list_code_jobs", "read_code_job", "stop_code_job", "wait_for_code_jobs"].map((name) =>
+        expect.objectContaining({ name }),
+      ),
       expect.objectContaining({ name: "tau_docs" }),
     ]);
     supervisor.reset();
@@ -185,6 +189,7 @@ describe("AgentSupervisor", () => {
         modelResolver: () => undefined,
         supervisor,
         bashJobs: new BashJobRegistry(),
+        codeJobs: new CodeJobRegistry(),
         history: {},
         clientTools: () => broker.getToolDefinitions("parent-session"),
       });

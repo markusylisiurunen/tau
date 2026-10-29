@@ -568,16 +568,20 @@ export class LocalSessionHost implements TauSessionHost {
   private async evictReleasedSession(session: LocalHostedSessionHandle): Promise<void> {
     do {
       await session.waitForActiveWork().catch(() => undefined);
-      await session.runtime.bashJobs.waitForIdle();
+      await Promise.all([
+        session.runtime.bashJobs.waitForIdle(),
+        session.runtime.codeJobs.waitForIdle(),
+      ]);
       await session.waitForActiveWork().catch(() => undefined);
-    } while (session.runtime.bashJobs.hasRunning);
+    } while (session.runtime.bashJobs.hasRunning || session.runtime.codeJobs.hasRunning);
     if (this.shuttingDown || session.isDisposed || (this.sessionReferences.get(session) ?? 0) > 0) {
       return;
     }
 
     await session.snapshot();
     if (this.shuttingDown || (this.sessionReferences.get(session) ?? 0) > 0) return;
-    if (session.runtime.bashJobs.hasRunning) return await this.evictReleasedSession(session);
+    if (session.runtime.bashJobs.hasRunning || session.runtime.codeJobs.hasRunning)
+      return await this.evictReleasedSession(session);
 
     this.sessions.delete(session);
     this.sessionReferences.delete(session);
@@ -1446,6 +1450,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       const session = await HostedEphemeralAgentSession.create({
         cwd: resolve(this.executionEnvironment.snapshot().cwd, options.workingDirectory ?? "."),
         bashJobs: this.runtime.bashJobs,
+        codeJobs: this.runtime.codeJobs,
         contextId,
         sessionId: this.sessionId,
         sessionStartedAt: this.createdAt,
@@ -1554,6 +1559,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     const errors: unknown[] = [];
     this.interruptActiveWork();
     try {
+      await this.runtime.codeJobs.dispose();
       await this.runtime.bashJobs.dispose();
     } catch (error) {
       errors.push(error);

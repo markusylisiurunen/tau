@@ -2,6 +2,7 @@ import type { Tool, ToolCall } from "@earendil-works/pi-ai";
 import {
   runTauCodeMode,
   type TauCodeModeApi,
+  type TauCodeModeJsonValue,
   type TauCodeModeRuntimeResult,
 } from "../../code_mode/runtime.js";
 import type { ToolActivity } from "./activity.js";
@@ -18,7 +19,14 @@ import {
 } from "./registry.js";
 
 export type ParsedCodeModeArguments =
-  | { ok: true; code: string; maxOutputTokens: number; timeoutMs: number; subject: string }
+  | {
+      ok: true;
+      code: string;
+      maxOutputTokens: number;
+      timeoutMs: number;
+      subject: string;
+      input?: TauCodeModeJsonValue;
+    }
   | { ok: false; error: string; code: string; subject: string };
 
 export type CodeModeToolImplementation = {
@@ -27,6 +35,7 @@ export type CodeModeToolImplementation = {
   execute(input: {
     context: ToolExecutionContext;
     code: string;
+    input?: TauCodeModeJsonValue;
     maxOutputTokens: number;
     timeoutMs: number;
   }): Promise<TauCodeModeRuntimeResult>;
@@ -37,6 +46,7 @@ export function executeInternalCodeMode(options: {
   documentation: string;
   api: TauCodeModeApi;
   code: string;
+  input?: TauCodeModeJsonValue;
   maxOutputTokens: number;
   backend: ToolExecutionBackend;
   signal: AbortSignal;
@@ -47,6 +57,7 @@ export function executeInternalCodeMode(options: {
     documentation: options.documentation,
     api: options.api,
     code: options.code,
+    input: options.input,
     maxOutputTokens: options.maxOutputTokens,
     signal: options.signal,
     timeoutMs: options.timeoutMs,
@@ -125,6 +136,7 @@ export function createCodeModeToolDefinition(
             const runtime = await implementation.execute({
               context,
               code: parsed.code,
+              input: parsed.input,
               maxOutputTokens: parsed.maxOutputTokens,
               timeoutMs: parsed.timeoutMs,
             });

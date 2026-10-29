@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { printDebugInfo } from "../dist/core/debug.js";
 import { BashJobRegistry } from "../dist/core/tools/bash_jobs.js";
 import { ToolCatalog } from "../dist/core/tools/catalog.js";
+import { CodeJobRegistry } from "../dist/core/tools/code_jobs.js";
 
 function createBackend() {
   return {
@@ -117,6 +118,7 @@ describe("ToolCatalog", () => {
       options.cwd,
       options.config,
       new BashJobRegistry(),
+      new CodeJobRegistry(),
       options.history,
     );
     const management = [
@@ -141,10 +143,18 @@ describe("ToolCatalog", () => {
       "/workspace/child",
       {},
       new BashJobRegistry(),
+      new CodeJobRegistry(),
       history,
     );
 
-    expect(registry.schemas.map((tool) => tool.name)).toEqual(["code", "tau_docs"]);
+    expect(registry.schemas.map((tool) => tool.name)).toEqual([
+      "code",
+      "list_code_jobs",
+      "read_code_job",
+      "stop_code_job",
+      "wait_for_code_jobs",
+      "tau_docs",
+    ]);
   });
 
   it("shares Bash jobs across child registries without losing their working directory", async () => {
@@ -176,6 +186,7 @@ describe("ToolCatalog", () => {
       "/workspace/first",
       {},
       jobs,
+      new CodeJobRegistry(),
     );
     const second = ToolCatalog.createSubagentRegistry(
       ["bash"],
@@ -183,10 +194,11 @@ describe("ToolCatalog", () => {
       "/workspace/second",
       {},
       jobs,
+      new CodeJobRegistry(),
     );
     try {
       const started = await execute(first, "bash", { command: "server", background: true });
-      const id = started.content[0].text.match(/`([^`]+)`/)[1];
+      const id = started.content[0].text.match(/job ([^ ]+)/)[1];
       const listed = await execute(second, "list_bash_jobs", {});
       expect(listed.content[0].text).toContain(id);
       expect(listed.content[0].text).toContain("/workspace/first");
@@ -209,6 +221,7 @@ describe("ToolCatalog", () => {
       "/workspace/child",
       {},
       new BashJobRegistry(),
+      new CodeJobRegistry(),
     );
 
     await execute(registry, "write", { path: "created.txt", content: "created" });

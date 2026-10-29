@@ -152,12 +152,15 @@ const compartment = new Compartment({
     _requestApi: harden(requestApi),
     _writeOutput: harden(writeOutput),
     docs: workerData.docs,
+    _inputJson: workerData.inputJson,
   },
   __options__: true,
 });
 
 compartment.evaluate(String.raw`
 (() => {
+  Object.defineProperty(globalThis, "input", { value: JSON.parse(_inputJson) });
+  delete globalThis._inputJson;
   const apis = _apis;
   const requestApiBridge = _requestApi;
   const writeOutputBridge = _writeOutput;

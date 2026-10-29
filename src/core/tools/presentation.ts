@@ -392,8 +392,9 @@ export function parseToolRunPresentation(value: unknown): ToolRunPresentation {
 }
 
 function getToolRunActionLabels(toolName: string): ToolRunActionLabels {
-  return Object.hasOwn(TOOL_RUN_ACTION_LABELS, toolName)
-    ? (TOOL_RUN_ACTION_LABELS[toolName] ?? GENERIC_TOOL_RUN_ACTION_LABELS)
+  const key = toolName.replace(/^(list|read|stop|wait_for)_code_(job|jobs)$/, "$1_bash_$2");
+  return Object.hasOwn(TOOL_RUN_ACTION_LABELS, key)
+    ? (TOOL_RUN_ACTION_LABELS[key] ?? GENERIC_TOOL_RUN_ACTION_LABELS)
     : GENERIC_TOOL_RUN_ACTION_LABELS;
 }
 

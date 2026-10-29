@@ -173,21 +173,21 @@ type JobMetadata = {
       aborted: boolean;
       closeSignal: string | null;
     }
-  | { status: "failed"; error: string }
+  | { status: "failed" }
 );
 
-type Job = JobMetadata & { output: string };
+type Job = JobMetadata & { output: string; error?: string };
 \`\`\`
 
-An exited command has \`exitCode\`, \`aborted\`, and \`closeSignal\`. An execution error instead has \`error\`. A \`failed\` status can represent either a nonzero command exit or an execution error; inspect the corresponding fields. A \`stopped\` status indicates the job was aborted.
+An exited command has \`exitCode\`, \`aborted\`, and \`closeSignal\`. An execution error has none of these fields. \`read\`, \`wait\`, and \`stop\` report its message in \`error\`, and \`list\` omits it. A \`failed\` status can represent either a nonzero command exit or an execution error; inspect the corresponding fields. A \`stopped\` status indicates the job was aborted.
 
-\`command\` and \`workingDirectory\` are bounded display strings and may be truncated. Each job retains the last 64 KiB of combined output. \`truncated\` indicates that capture is incomplete.
+\`command\` and \`workingDirectory\` are bounded display strings and may be truncated. Each job retains the last 1 MiB of combined output. \`truncated\` indicates that capture is incomplete.
 
 Up to 64 job records are retained. Starting another job may evict an older completed record; if all records are running, launch fails. Unknown IDs throw and do not prove a command never ran. Check current process and output state before restarting it.
 
 ## \`tau.bash.list()\`
 
-List retained jobs without their output.
+List retained jobs without their output or error messages.
 
 \`\`\`ts
 type ListResult = JobMetadata[];

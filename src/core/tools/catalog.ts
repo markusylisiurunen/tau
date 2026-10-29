@@ -6,8 +6,13 @@ import { AgentSupervisor } from "../subagents/agent_supervisor.js";
 import type { SubagentToolName } from "../subagents/types.js";
 import type { Persona } from "../types.js";
 import { createBashToolDefinition } from "./bash.js";
-import { BashJobRegistry, createBashJobToolDefinitions } from "./bash_jobs.js";
+import {
+  BashJobRegistry,
+  createBashJobToolDefinitions,
+  createJobToolDefinitions,
+} from "./bash_jobs.js";
 import { createCodeToolDefinition } from "./code.js";
+import { CodeJobRegistry } from "./code_jobs.js";
 import { createEditToolDefinition } from "./edit.js";
 import { scopeToolExecutionBackend, type ToolExecutionBackend } from "./execution_backend.js";
 import { createInterruptAgentToolDefinition } from "./interrupt_agent.js";
@@ -27,6 +32,7 @@ function createCommonTools(options: {
   allowedTools: readonly string[];
   config: Config;
   bashJobs: BashJobRegistry;
+  codeJobs: CodeJobRegistry;
   history?: HistoryQuery;
   mcp?: McpManager;
 }): AgentTool[] {
@@ -41,7 +47,7 @@ function createCommonTools(options: {
   const code = createCodeToolDefinition({ ...options, backend });
   return [
     ...tools.filter((tool) => enabled.has(tool.schema.name)),
-    ...(code ? [code] : []),
+    ...(code ? [code, ...createJobToolDefinitions(options.codeJobs, "code")] : []),
     ...(enabled.has(TOOL_NAME_BASH) ? createBashJobToolDefinitions(options.bashJobs) : []),
     createTauDocsToolDefinition(),
   ];
@@ -60,6 +66,7 @@ export const ToolCatalog = {
       ...options,
       mcp: new McpManager(options.config.mcpServers),
       bashJobs: new BashJobRegistry(),
+      codeJobs: new CodeJobRegistry(),
       subagentSystemPrompt: undefined,
       supervisor: new AgentSupervisor({ onEvent: () => {} }),
     });
@@ -74,6 +81,7 @@ export const ToolCatalog = {
     modelResolver: ModelResolver;
     supervisor: AgentSupervisor;
     bashJobs: BashJobRegistry;
+    codeJobs: CodeJobRegistry;
     history: HistoryQuery;
     mcp?: McpManager;
     resolveSubagentPrompt?: ResolveSubagentPrompt;
@@ -84,6 +92,7 @@ export const ToolCatalog = {
         backend: options.backend,
         supervisor: options.supervisor,
         bashJobs: options.bashJobs,
+        codeJobs: options.codeJobs,
         persona: options.persona,
         config: options.config,
         modelResolver: options.modelResolver,
@@ -114,6 +123,7 @@ export const ToolCatalog = {
     cwd: string,
     config: Config,
     bashJobs: BashJobRegistry,
+    codeJobs: CodeJobRegistry,
     history?: HistoryQuery,
     mcp?: McpManager,
   ): ToolRegistry {
@@ -123,6 +133,7 @@ export const ToolCatalog = {
         cwd,
         config,
         bashJobs,
+        codeJobs,
         history,
         mcp,
         allowedTools,

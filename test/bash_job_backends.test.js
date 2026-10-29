@@ -40,9 +40,15 @@ for (const kind of ["local", "Sprite"]) {
         const result = await jobs.wait([id], 5000, signal, true);
         expect(result.text).toContain("TAIL");
         expect(result.text).toContain("truncated");
-        expect(result.text.length).toBeLessThan(14000);
+        expect(result.text.length).toBeLessThan(51000);
+        expect(jobs.format([id], true, 1000).text.length).toBeLessThan(7000);
+        expect(jobs.format([id], true, 20000).text).toContain("x".repeat(100000));
+        if (kind === "local") {
+          const path = result.text.match(/^text_log: (.+)$/m)[1];
+          expect((await backend.readFile(path)).content).toBe(`${"x".repeat(100000)}TAIL`);
+        }
         expect(jobs.read([id])).toEqual([
-          expect.objectContaining({ status: "succeeded", exitCode: 0, truncated: true }),
+          expect.objectContaining({ status: "succeeded", exitCode: 0, truncated: false }),
         ]);
         expect((await jobs.wait([id], 1, signal, true)).text).toContain("succeeded");
       } finally {

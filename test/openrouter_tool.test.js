@@ -159,9 +159,11 @@ describe("OpenRouter standalone commands", () => {
           ? ["openai/gpt-6-luna-decisions", "typesafe/jev-1.14"]
           : [
               "google/gemini-3.8-flash",
+              "google/gemini-4-argon",
               "openai/gpt-6-luna",
               "openai/gpt-6.1-terra",
               "openai/gpt-6.1-sol",
+              "anthropic/claude-sonnet-5.5",
               "anthropic/claude-opus-5.5",
             ],
       );

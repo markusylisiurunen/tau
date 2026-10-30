@@ -29,9 +29,11 @@ Every request needs an exact `--model` ID from this table. There is no default, 
 | `decisions` | `openai/gpt-6-luna-decisions` | Questions about text, structured state, or images; recommended first choice for decisions | Not supported |
 | `decisions` | `typesafe/jev-1.14` | Questions about text, structured state, or images; use for high-volume decisions when cost is the priority | Not supported |
 | `chat` | `google/gemini-3.8-flash` | Text, images, audio, video; first choice for audio/video and image-heavy analysis | `low`, `medium`, `high` |
+| `chat` | `google/gemini-4-argon` | Text, images, audio, video; multimodal analysis | `low`, `medium`, `high` |
 | `chat` | `openai/gpt-6-luna` | Text and images; cheap everyday extraction, summarization, and routine questions | `none`, `low`, `medium`, `high`, `xhigh`, `max` |
 | `chat` | `openai/gpt-6.1-terra` | Text and images; efficient visual reasoning, writing, and everyday coding | `low`, `medium`, `high`, `xhigh`, `max` |
 | `chat` | `openai/gpt-6.1-sol` | Text and images; coding, debugging, technical reasoning | `low`, `medium`, `high`, `xhigh`, `max` |
+| `chat` | `anthropic/claude-sonnet-5.5` | Text and images; writing, coding, and general-purpose reasoning | `low`, `medium`, `high`, `xhigh`, `max` |
 | `chat` | `anthropic/claude-opus-5.5` | Text and images; premium generalist for writing, synthesis, difficult reasoning, and second opinions | `low`, `medium`, `high`, `xhigh`, `max` |
 
 Roles are guidance for choosing, not guarantees or limits on what a model may be used for. Unsupported settings and media types fail locally; the command never switches models, transcribes audio, or extracts video frames instead.

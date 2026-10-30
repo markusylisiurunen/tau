@@ -2,7 +2,7 @@ import { realpathSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { McpClient } from "@earendil-works/pi-mcp";
+import { McpClient, McpConnectionClosedError } from "@earendil-works/pi-mcp";
 import { describe, expect, it, vi } from "vitest";
 import { createMcpCapability } from "../dist/core/code_mode/mcp.js";
 import { McpManager } from "../dist/core/mcp/manager.js";
@@ -373,6 +373,96 @@ describe("host-owned MCP connections", () => {
   });
 });
 
+describe("MCP HTTP notification failures", () => {
+  it("preserves an in-flight tool call when the notification stream exhausts retries", async () => {
+    const toolStarted = Promise.withResolvers();
+    const streamFailed = Promise.withResolvers();
+    const connect = McpClient.prototype.connect;
+    const connectSpy = vi.spyOn(McpClient.prototype, "connect").mockImplementation(function (
+      ...args
+    ) {
+      this.onError(streamFailed.resolve);
+      return connect.apply(this, args);
+    });
+    let toolResponse;
+    let toolMessage;
+    let getRequests = 0;
+    let toolCalls = 0;
+    let initializations = 0;
+    let deletions = 0;
+    const server = createServer(async (request, response) => {
+      if (request.method === "DELETE") {
+        deletions++;
+        response.writeHead(204).end();
+        return;
+      }
+      if (request.method === "GET") {
+        getRequests++;
+        await toolStarted.promise;
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        response.end("retry: 0\n\n");
+        return;
+      }
+      let body = "";
+      for await (const chunk of request) body += chunk;
+      const message = JSON.parse(body);
+      if (message.method === "tools/call") {
+        toolCalls++;
+        toolResponse = response;
+        toolMessage = message;
+        toolStarted.resolve();
+        return;
+      }
+      if (message.id === undefined) {
+        response.writeHead(202).end();
+        return;
+      }
+      if (message.method === "initialize") initializations++;
+      const result =
+        message.method === "initialize"
+          ? {
+              protocolVersion: message.params.protocolVersion,
+              capabilities: { tools: {} },
+              serverInfo: { name: "http-test", version: "1" },
+            }
+          : { tools: [{ name: "echo", inputSchema: { type: "object" } }] };
+      response.writeHead(200, {
+        "content-type": "application/json",
+        "mcp-session-id": "test-session",
+      });
+      response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result }));
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const client = new McpManager({
+      test: { type: "http", url: `http://127.0.0.1:${server.address().port}/mcp` },
+    });
+    try {
+      const pending = echo(client);
+      await Promise.race([streamFailed.promise, pending]);
+      expect(getRequests).toBeGreaterThan(1);
+      toolResponse.writeHead(200, { "content-type": "application/json" });
+      toolResponse.end(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: toolMessage.id,
+          result: { content: [], structuredContent: toolMessage.params.arguments },
+        }),
+      );
+      expect((await pending).structuredContent).toEqual({ message: "hello" });
+      expect(initializations).toBe(1);
+      expect(toolCalls).toBe(1);
+      expect(deletions).toBe(0);
+      await client.close();
+      expect(deletions).toBe(1);
+    } finally {
+      await client.close();
+      connectSpy.mockRestore();
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+});
+
 describe("MCP code-mode tool", () => {
   it("returns a clean result and strips metadata only at MCP content boundaries", async () => {
     const client = manager();
@@ -494,19 +584,28 @@ describe("MCP code-mode tool", () => {
     }
   });
 
-  it("rejects oversized resource responses without preventing later reads", async () => {
-    const client = manager({ timeoutMs: 1_000 });
+  it("rejects oversized resource responses and reconnects for later reads", async () => {
+    const client = manager();
     try {
+      const first = await echo(client);
+      const pending = expect(client.callTool("test", "slow", {}, signal())).rejects.toBeInstanceOf(
+        McpConnectionClosedError,
+      );
+      await vi.waitFor(async () => expect((await echo(client)).structuredContent.pending).toBe(1));
+      await expect(
+        client.readResource("test", "docs://oversized", signal()),
+      ).rejects.toBeInstanceOf(McpConnectionClosedError);
+      await pending;
       const tool = createCapabilityTool(backend(), createMcpCapability(client));
       const result = await runTool(
         tool,
-        'printText(JSON.stringify(await tau.mcp.readResource("test", "docs://oversized")))',
+        'printText((await tau.mcp.readResource("test", "docs://schema")).contents[0].text)',
       );
-      expect(result.outcome).toBe("failed");
-      expect(result.text).not.toContain("x".repeat(100));
-      expect((await client.readResource("test", "docs://schema", signal())).contents[0].text).toBe(
-        "resource context",
-      );
+      expect(result.outcome).toBe("succeeded");
+      expect(result.text).toBe("resource context");
+      const second = await echo(client);
+      expect(second.structuredContent.pid).not.toBe(first.structuredContent.pid);
+      expect(second.structuredContent.calls).toBe(1);
     } finally {
       await client.close();
     }

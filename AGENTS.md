@@ -136,6 +136,7 @@ Read `docs/tools.md`, `docs/client-tools.md`, and `docs/security.md` before chan
 - XML-like prompt tags use dash-case: `<available-skills>`, `<tool-result>`. Never snake_case.
 - Feedback titles: concise lowercase fragments, no trailing punctuation, failures as `failed to ...`. Diagnostics and IDs go in content. Error tone for failures, default tone for information, expected cancellation, and nonfatal degradation.
 - Tool cards: producers own a bounded `ToolRunPresentation`. One generic renderer, no tool-specific renderers, no expanded mode. Preview policy lives in `src/core/tools/presentation.ts`. Lifecycle: `preparing` → `queued` → `running` → terminal status.
+- New tools default to a middle-truncated preview derived from the exact result text returned to the model. Use the shared preview policy, and use a different result format only when explicitly requested. Test that the preview comes from the returned content and respects its bounds.
 - Presentation facets have their own version. Missing or historical presentation degrades to tool name, status, and text result without revealing stored arguments. Malformed current-version presentation fails validation.
 - TUI colors use semantic palette tokens (`src/tui/ui/theme/`). Add a new token for a new state; never reuse an unrelated one.
 - Telegram replies, notices, and button labels: natural lowercase sentences that weave identifiers into prose and translate internal states, never metadata-style labels. Never change the casing of user content, saved prompts, or model output.

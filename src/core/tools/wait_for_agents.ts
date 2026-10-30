@@ -6,7 +6,7 @@ import type { SubagentStateSnapshot } from "../subagents/types.js";
 import { truncateForTokens } from "../utils/truncate.js";
 import { parseToolArgs } from "../utils/zod.js";
 import type { ToolActivity } from "./activity.js";
-import { buildToolRunPresentation, type ToolCardLineInput } from "./presentation.js";
+import { buildToolRunPresentation, TOOL_CARD_MAX_LINE_CHARS } from "./presentation.js";
 import {
   type AgentTool,
   createTextToolOutcome,
@@ -81,10 +81,6 @@ function getWaitCostTotal(states: SubagentStateSnapshot[]): number {
     (sum, state) => (state.run.status === "running" ? sum : sum + state.costTotal),
     0,
   );
-}
-
-function buildWaitDetails(states: SubagentStateSnapshot[]): ToolCardLineInput[] {
-  return states.map((state) => ({ text: `${state.id} · ${state.title} · ${state.run.status}` }));
 }
 
 function formatAgentIdsSubject(ids: string[]): string {
@@ -175,8 +171,12 @@ export function createWaitForAgentsToolDefinition(supervisor: AgentSupervisor): 
             const presentation = buildToolRunPresentation({
               toolName: TOOL_NAME_WAIT_FOR_AGENTS,
               subject: dedupedTarget,
-              details: buildWaitDetails(states),
-              detailTruncation: false,
+              details: [{ text: resultText }],
+              detailTruncation: {
+                maxLines: 17,
+                maxLineChars: TOOL_CARD_MAX_LINE_CHARS,
+                strategy: "middle",
+              },
               metadata: formatSubagentMetadata({
                 costTotal: getWaitCostTotal(states),
                 durationMs: getWaitDurationMs(states),

@@ -67,8 +67,11 @@ export function createModelsCapability(
 
   return {
     name: "models",
-    description:
+    description: [
       "Call AI models through OpenRouter for focused, standalone tasks. Example uses include extraction and summarization, JSON answers that follow a supplied schema, image/audio/video analysis, typed classification or scoring, and second opinions. Each call uses only explicitly supplied inputs, without conversation context or agent tools.",
+      `Chat models: ${openRouterModels.chat.map((model) => model.id).join(", ")}.`,
+      `Decision models (classification and scoring): ${openRouterModels.decisions.map((model) => model.id).join(", ")}.`,
+    ].join("\n\n"),
     documentation: `# tau.models
 
 Use AI models for focused tasks with explicitly supplied inputs. Calls do not inherit the conversation, persona, tools, or an implicit system prompt. Use chat for text/media understanding, free-form answers, and JSON answers that follow a schema; use decisions for named classification, probability, or scoring questions.

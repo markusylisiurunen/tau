@@ -236,6 +236,42 @@ test("SubagentPanelComponent renders authoritative typed activities", () => {
   expect(renderText(panel, 80)).not.toContain("second task");
 });
 
+test("SubagentPanelComponent keeps resolved model settings with the selected worker's usage", () => {
+  const panel = new SubagentPanelComponent(createUiTheme("plain"));
+  const native = createSubagentState("native", "native task");
+  native.model = { provider: "openai-codex", id: "gpt-6-astra", reasoning: "medium" };
+  const claude = createSubagentState("claude", "claude task");
+  claude.model = { provider: "claude-code", id: "claude-opus-5-5", reasoning: "high" };
+  claude.costTotal = 0.04;
+  const snapshots = [native, claude].map((state) => ({
+    state,
+    activities: Array.from({ length: 6 }, (_, i) => ({ type: "assistant", text: `activity ${i}` })),
+  }));
+  panel.reconcile(snapshots);
+
+  const status = () => stripAnsi(panel.render(160).at(-2)).trim();
+  expect(status()).toContain("openai-codex/gpt-6-astra:medium · ");
+  panel.cycleSelection(1);
+  expect(status()).toContain("claude-code/claude-opus-5-5:high · ");
+  expect(status()).toContain("$0.04");
+  expect(panel.render(160)).toHaveLength(9);
+  for (let i = 0; i < 6; i++) {
+    expect(stripAnsi(panel.render(160)[i + 1])).toContain(`activity ${i}`);
+  }
+  for (const width of [1, 20, 40, 80]) {
+    expect(panel.render(width).every((line) => visibleWidth(line) === width)).toBe(true);
+  }
+
+  claude.model = { ...claude.model, reasoning: "low" };
+  panel.reconcile(snapshots);
+  expect(status()).toContain("claude-code/claude-opus-5-5:low · ");
+  panel.handleEvent({
+    type: "subagent_updated",
+    state: { ...claude, model: { ...claude.model, provider: "anthropic", reasoning: "medium" } },
+  });
+  expect(status()).toContain("anthropic/claude-opus-5-5:medium · ");
+});
+
 test("SessionDividerComponent renders a muted divider line", () => {
   const theme = createTagTheme();
   const component = new SessionDividerComponent(theme, { label: "new session" });

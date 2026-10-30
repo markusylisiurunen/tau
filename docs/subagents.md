@@ -206,8 +206,6 @@ Content of at most 4,096 bytes as JSON, without images, is inline in the entry. 
 
 A trace keeps the newest 4,096 entries, up to 16 MiB, for each subagent. When older entries are removed, trace pages report `historyEvicted: true`, and reading a removed entry or reference fails. A single content value larger than 6 MiB is replaced by a block that marks it unavailable. Traces last as long as the subagent and do not survive a host restart.
 
-These methods never call a model. When a program passes trace content to `tau.models`, the content is sent to [OpenRouter](openrouter.md).
-
 A failed call throws an error with a `code` and a `message`. The codes are `invalid_arguments`, `unknown_agent`, `invalid_cursor`, `expired_content`, `content_type`, `operation_failed`, and `cancelled`. A subagent's own failure is part of its state and trace, not a failed call.
 
 ## Detach, rewind, and recovery

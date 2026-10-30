@@ -21,7 +21,7 @@ Give one local PDF path, relative to the current directory. Quote paths containi
 tau tool pdf-unpack './docs/design review.pdf'
 ```
 
-The command uploads the PDF to Mistral for OCR and renders page images locally. Use it for a sensitive document only if you may send it to Mistral and keep the extracted files locally.
+The command uploads the PDF to Mistral for OCR and renders page images locally.
 
 ## Outputs and recovery
 

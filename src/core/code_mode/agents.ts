@@ -342,8 +342,6 @@ for (const entry of page.entries) {
   printText(\`#\${entry.seq}\${complete ? "" : " (shortened)"}: \${text}\`);
 }
 \`\`\`
-
-Passing trace content to \`tau.models\` sends it to OpenRouter. These methods never call a model themselves.
 `,
     api: {
       spawn: async (args, context) => {

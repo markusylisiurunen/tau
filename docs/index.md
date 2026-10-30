@@ -31,7 +31,8 @@ These pages describe how to install, configure, operate, and integrate the versi
 
 ## Work with sessions and services
 
-- [Tools](tools.md): built-in tools, when they are available, how they run and stop, and code-mode tools.
+- [Tools](tools.md): built-in tools, when they are available, and how they run and stop.
+- [Code mode](code-mode.md): the `code` tool, saved programs and input, output and limits, background code jobs, and capabilities.
 - [Sessions](sessions.md): creating sessions, turns, queueing, compaction, rewind, recovery, and storage.
 - [Remote sessions](remote-sessions.md): `serve`, `attach`, remote paths, and authentication.
 - [History](history.md): searchable local history, optional remote replication, and the history tool.

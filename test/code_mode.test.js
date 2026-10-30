@@ -389,6 +389,20 @@ describe("public code-mode runtime", () => {
     ).rejects.toThrow("Code-mode API arguments must be JSON-serializable values");
   });
 
+  it("keeps runtime documentation identical across execution modes and deadlines", async () => {
+    const guides = [];
+    for (const timeoutMs of [undefined, 10000, 900000, null]) {
+      const result = await runTauCodeMode({
+        ...createDefinition(),
+        code: "printText(docs)",
+        timeoutMs,
+      });
+      expect(result.status).toBe("succeeded");
+      guides.push(getTextContent(result.result));
+    }
+    expect(new Set(guides).size).toBe(1);
+  });
+
   it.concurrent("provides canonical documentation and executable output examples without dumping response metadata", async () => {
     const docs = await executeTauCodeMode({
       ...createDefinition(),
@@ -525,7 +539,21 @@ describe("public code-mode runtime", () => {
     await handlerFinished;
   });
 
-  it("passes SDK descriptions through unchanged", async () => {
+  it.each([undefined, 12345])(
+    "exposes the SDK deadline for timeout %s in its schema",
+    (timeoutMs) => {
+      const tool = createTauCodeModeClientTool({
+        ...createDefinition(),
+        timeoutMs,
+        description: "Use the Linear integration.",
+      });
+      expect(tool.schema.description).toContain(String(timeoutMs ?? 60000));
+      expect(tool.schema.executionTimeoutMs).toBe(timeoutMs);
+      expect(tool.schema.parameters.properties).not.toHaveProperty("timeout");
+    },
+  );
+
+  it("preserves supplied SDK guidance alongside its deadline", async () => {
     const description = "Use the Linear integration exactly as documented here.";
     const tool = createTauCodeModeClientTool({
       ...createDefinition(),
@@ -534,7 +562,7 @@ describe("public code-mode runtime", () => {
 
     expect(tool.schema).toMatchObject({
       name: "linear",
-      description,
+      description: expect.stringContaining(description),
       parameters: {
         type: "object",
         required: ["code"],
@@ -644,6 +672,36 @@ describe("public code-mode runtime", () => {
 });
 
 describe("code-mode command adapter", () => {
+  it.each([undefined, 12345])(
+    "documents the command deadline for timeout %s",
+    async (timeoutMs) => {
+      const moduleUrl = pathToFileURL(resolve("dist/code_mode/index.js")).href;
+      const script = [
+        `import { runTauCodeModeCommand } from ${JSON.stringify(moduleUrl)};`,
+        "await runTauCodeModeCommand({",
+        'name: "linear", documentation: "# Linear API",',
+        `timeoutMs: ${timeoutMs},`,
+        "api: { echo: async ([value]) => value },",
+        "});",
+      ].join("\n");
+      const result = await runCommandWithOpenStdin(script, {
+        version: 5,
+        type: "prepare",
+        ...invocation,
+        toolName: "linear",
+        arguments: { code: "printText(docs)" },
+      });
+      expect(result.status).toBe(0);
+      const frames = result.stdout
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      const outcome = frames.find((frame) => frame.type === "result");
+      expect(outcome.ok).toBe(true);
+      expect(getTextContent(outcome)).toContain(String(timeoutMs ?? 60000));
+    },
+  );
+
   it("reads and writes the command client-tool framing", async () => {
     const moduleUrl = pathToFileURL(resolve("dist/code_mode/index.js")).href;
     const script = [
@@ -856,3 +914,31 @@ function runCommandWithOpenStdin(script, request) {
     child.stdin.write(`${JSON.stringify(request)}\n`);
   });
 }
+
+it.each([1024, 1025])("enforces the total bridge budget at %s requests", async (count) => {
+  const ping = vi.fn(() => null);
+  const result = await runTauCodeMode({
+    ...createDefinition({ api: { ping } }),
+    code: `for (let i = 0; i < ${count}; i++) await linear.ping(); printText("done");`,
+  });
+  expect(result.status).toBe(count === 1024 ? "succeeded" : "failed");
+  expect(ping).toHaveBeenCalledTimes(1024);
+});
+
+it.each([32, 33])("enforces the concurrent bridge budget at %s requests", async (count) => {
+  const gate = Promise.withResolvers();
+  let active = 0;
+  const ping = vi.fn(async () => {
+    if (++active === 32) gate.resolve();
+    await gate.promise;
+    active--;
+    return null;
+  });
+  const result = await runTauCodeMode({
+    ...createDefinition({ api: { ping } }),
+    code: `await Promise.all(Array.from({ length: ${count} }, () => linear.ping())); printText("done");`,
+  });
+  expect(result.status).toBe(count === 32 ? "succeeded" : "failed");
+  expect(ping.mock.calls.length).toBeLessThanOrEqual(32);
+  if (count === 32) expect(ping).toHaveBeenCalledTimes(32);
+});

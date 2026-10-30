@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { printDebugInfo } from "../dist/core/debug.js";
 import { BashJobRegistry } from "../dist/core/tools/bash_jobs.js";
 import { ToolCatalog } from "../dist/core/tools/catalog.js";
+import { CodeJobRegistry } from "../dist/core/tools/code_jobs.js";
 
 function createBackend() {
   return {
@@ -117,6 +118,7 @@ describe("ToolCatalog", () => {
       options.cwd,
       options.config,
       new BashJobRegistry(),
+      new CodeJobRegistry(),
       options.history,
     );
     const management = [
@@ -141,14 +143,23 @@ describe("ToolCatalog", () => {
       "/workspace/child",
       {},
       new BashJobRegistry(),
+      new CodeJobRegistry(),
       history,
     );
 
-    expect(registry.schemas.map((tool) => tool.name)).toEqual(["code", "tau_docs"]);
+    expect(registry.schemas.map((tool) => tool.name)).toEqual([
+      "code",
+      "list_code_jobs",
+      "read_code_job",
+      "stop_code_job",
+      "wait_for_code_jobs",
+      "tau_docs",
+    ]);
   });
 
-  it("shares Bash jobs across child registries without losing their working directory", async () => {
+  it("isolates Bash jobs across child registries without losing their working directory", async () => {
     const jobs = new BashJobRegistry();
+    const otherJobs = new BashJobRegistry();
     const backend = createBackend();
     backend.runBash = vi.fn(
       (_command, options) =>
@@ -176,26 +187,29 @@ describe("ToolCatalog", () => {
       "/workspace/first",
       {},
       jobs,
+      new CodeJobRegistry(),
     );
     const second = ToolCatalog.createSubagentRegistry(
       ["bash"],
       backend,
       "/workspace/second",
       {},
-      jobs,
+      otherJobs,
+      new CodeJobRegistry(),
     );
     try {
       const started = await execute(first, "bash", { command: "server", background: true });
-      const id = started.content[0].text.match(/`([^`]+)`/)[1];
+      const id = started.content[0].text.match(/job ([^ ]+)/)[1];
       const listed = await execute(second, "list_bash_jobs", {});
-      expect(listed.content[0].text).toContain(id);
-      expect(listed.content[0].text).toContain("/workspace/first");
+      expect(listed.content[0].text).not.toContain(id);
+      expect((await execute(second, "read_bash_job", { id })).outcome).toBe("failed");
+      expect((await execute(second, "stop_bash_job", { id })).outcome).toBe("failed");
       expect(backend.runBash).toHaveBeenCalledWith(
         "server",
         expect.objectContaining({ cwd: "/workspace/first" }),
       );
       expect(backend.runBash.mock.calls[0][1].timeoutMs).toBeUndefined();
-      expect((await execute(second, "stop_bash_job", { id })).content[0].text).toContain("stopped");
+      expect((await execute(first, "stop_bash_job", { id })).content[0].text).toContain("stopped");
     } finally {
       await jobs.dispose();
     }
@@ -209,6 +223,7 @@ describe("ToolCatalog", () => {
       "/workspace/child",
       {},
       new BashJobRegistry(),
+      new CodeJobRegistry(),
     );
 
     await execute(registry, "write", { path: "created.txt", content: "created" });

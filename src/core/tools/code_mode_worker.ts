@@ -4,8 +4,8 @@ import { Worker } from "node:worker_threads";
 import { truncateToBytesFromEnd } from "../utils/truncate.js";
 import { type BashExecutionResult, DEFAULT_COMMAND_CAPTURE_BYTES } from "./execution_backend.js";
 
-export const CODE_MODE_MAX_BRIDGE_REQUESTS = 128;
-export const CODE_MODE_MAX_CONCURRENT_BRIDGE_REQUESTS = 8;
+export const CODE_MODE_MAX_BRIDGE_REQUESTS = 1024;
+export const CODE_MODE_MAX_CONCURRENT_BRIDGE_REQUESTS = 32;
 export const CODE_MODE_MAX_BRIDGE_PAYLOAD_BYTES = 64 * 1024 * 1024;
 
 const CODE_MODE_HANDLER_DRAIN_TIMEOUT_MS = 1_000;
@@ -22,9 +22,9 @@ type CodeModeWorkerOptions = {
   sandboxRunnerUrl: URL;
   workerData: Record<string, unknown>;
   signal: AbortSignal;
-  timeoutMs: number;
+  timeoutMs: number | null;
   handleRequest(request: CodeModeBridgeRequest, signal: AbortSignal): Promise<string>;
-  onOutput(text: string): void;
+  onOutput(text: string, truncated: boolean): void;
 };
 
 function appendCapture(current: string, chunk: string): string {
@@ -100,7 +100,7 @@ export function executeCodeModeWorker(
     const appendOutput = (target: "stdout" | "stderr", text: string): void => {
       if (!text) return;
       output = appendCapture(output, text);
-      options.onOutput(text);
+      options.onOutput(text, truncated);
       if (target === "stdout") {
         stdout = appendCapture(stdout, text);
       } else {
@@ -135,8 +135,11 @@ export function executeCodeModeWorker(
       void worker.terminate().catch(() => {});
     };
     const abortHandler = (): void => terminate("abort");
-    const timeout = setTimeout(() => terminate("timeout"), options.timeoutMs);
-    timeout.unref?.();
+    const timeout =
+      options.timeoutMs === null
+        ? undefined
+        : setTimeout(() => terminate("timeout"), options.timeoutMs);
+    timeout?.unref();
 
     const cleanup = (): void => {
       clearTimeout(timeout);
@@ -188,7 +191,7 @@ export function executeCodeModeWorker(
         output = appendCapture(output, entry.text);
         stdout = appendCapture(stdout, entry.stdout);
         stderr = appendCapture(stderr, entry.stderr);
-        options.onOutput(entry.text);
+        options.onOutput(entry.text, truncated);
         postResponse({ type: "output.ack", id: entry.id });
         return;
       }

@@ -9,6 +9,9 @@ type ImageSlot = { type: "image"; value?: ImageContent };
 export class CodeModeOutput {
   private parts: Array<TextContent | ImageSlot> = [];
   private textBytes = 0;
+  truncated = false;
+
+  constructor(private readonly maxCaptureBytes = DEFAULT_COMMAND_CAPTURE_BYTES) {}
 
   appendText(text: string): void {
     if (!text) return;
@@ -17,12 +20,13 @@ export class CodeModeOutput {
     else this.parts.push({ type: "text", text });
     this.textBytes += Buffer.byteLength(text);
     for (const part of this.parts) {
-      if (this.textBytes <= DEFAULT_COMMAND_CAPTURE_BYTES) break;
+      if (this.textBytes <= this.maxCaptureBytes) break;
       if (part.type !== "text") continue;
+      this.truncated = true;
       const bytes = Buffer.byteLength(part.text);
       part.text = truncateToBytesFromEnd(
         part.text,
-        Math.max(0, bytes - (this.textBytes - DEFAULT_COMMAND_CAPTURE_BYTES)),
+        Math.max(0, bytes - (this.textBytes - this.maxCaptureBytes)),
       );
       this.textBytes -= bytes - Buffer.byteLength(part.text);
     }

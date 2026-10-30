@@ -13,8 +13,10 @@ import {
 } from "../utils/truncate.js";
 import { formatZodError } from "../utils/zod.js";
 import type { ToolActivity } from "./activity.js";
-import { type BashJobRegistry, buildBashJobMetadata } from "./bash_jobs.js";
-import type { ToolExecutionBackend } from "./execution_backend.js";
+import { buildJobMetadata } from "./background_jobs.js";
+import type { BashJobRegistry } from "./bash_jobs.js";
+import { MAX_COMMAND_CAPTURE_BYTES, type ToolExecutionBackend } from "./execution_backend.js";
+import { writeOutputFile } from "./output_file.js";
 import {
   buildToolRunPresentation,
   formatToolDurationMs,
@@ -81,7 +83,7 @@ export const BASH_DEFAULT_TIMEOUT_MS = 60_000;
 const BASH_DESCRIPTION = [
   "Execute a command in a fresh non-interactive login Bash in the current working directory and return its output.",
   "Choose the mode that avoids unnecessary waiting. Use background: true when it lets you make useful independent progress, for example inspecting code while a test suite runs. If you would only wait for the command to finish, use foreground mode with an appropriate timeout. Runtime alone does not determine the mode.",
-  "Also use background: true to keep a service running or preserve execution across turns or interruptions. Launching several independent jobs and then waiting for them is valid concurrency. Use background mode instead of tmux or shell &. Returns a job ID after launch, not a readiness guarantee; use the Bash job tools to read, wait, or stop it. Jobs survive turns and interruptions, but job IDs and logs are not recovered after a session restart. If a previously returned job ID is unknown, do not assume the command never ran or is no longer running; check current process and output state before restarting it.",
+  "Also use background: true to keep a service running or preserve execution across turns or interruptions. Launching several independent jobs and then waiting for them is valid concurrency. Use background mode instead of tmux or shell &. Returns a job ID right away. Use the Bash job tools to read, wait for, or stop it. Jobs survive turns and interruptions, but job IDs and logs are not recovered after a session restart. If a previously returned job ID is unknown, do not assume the command never ran or is no longer running; check current process and output state before restarting it.",
   "Interactive commands are not supported (no TTY/stdin); commands that prompt or open editors will hang or fail.",
 ].join(" ");
 
@@ -94,7 +96,7 @@ const BASH_TIMEOUT_DESCRIPTION =
   "Timeout in milliseconds for foreground commands only; cannot be combined with background: true. If omitted, defaults to 60 seconds. Use a longer timeout for known slow operations like builds or large clones.";
 
 const BASH_MAX_OUTPUT_TOKENS_DESCRIPTION = [
-  "Optional maximum number of output tokens to return to the model. Foreground only; omit for background jobs, which use bounded log tails.",
+  "Optional maximum number of output tokens to return to the model. Foreground only; for background jobs, set maxOutputTokens when reading or waiting for the job.",
   `Defaults to ${BASH_MODEL_DEFAULT_MAX_TOKENS} tokens if unset. Most commands should leave this unset. Usually it is better to run a more scoped command than to request more output. Do not set it speculatively or just in case. Only set it when you genuinely need more output, such as after a truncated result or when the user explicitly asks for more detail.`,
   `When more output is truly needed, set a value between ${BASH_MODEL_DEFAULT_MAX_TOKENS} and ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS}.`,
   `Only exceed ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS} when the user explicitly requests more output, up to ${BASH_MAX_OUTPUT_TOKENS}.`,
@@ -110,7 +112,7 @@ export const BASH_TOOL: Tool = {
       background: Type.Optional(
         Type.Boolean({
           description:
-            "Run as a session-owned background job when useful independent work can proceed while it runs, for a persistent service, or for execution across turns or interruptions. If you would only wait for completion, omit or use false. Cannot be combined with timeout or maxOutputTokens.",
+            "Run as a background job when useful independent work can proceed while it runs, for a persistent service, or for execution across turns or interruptions. If you would only wait for completion, omit or use false. Cannot be combined with timeout or maxOutputTokens.",
         }),
       ),
       command: Type.String({
@@ -147,44 +149,6 @@ export interface BashTruncationInfo {
   fullOutputPath?: string;
 }
 
-const BASH_TEMP_FILE_TIMEOUT_MS = 2_000;
-const BASH_TEMP_FILE_SCRIPT = `
-const fs = require("node:fs");
-const os = require("node:os");
-const path = require("node:path");
-const { randomUUID } = require("node:crypto");
-const file = path.join(os.tmpdir(), "tau-bash-output." + randomUUID());
-fs.closeSync(fs.openSync(file, "wx"));
-process.stdout.write(file);
-`.trim();
-
-async function createBashTempFilePath(backend: ToolExecutionBackend): Promise<string | undefined> {
-  try {
-    const result = await backend.runNodeScript(BASH_TEMP_FILE_SCRIPT, [], {
-      timeoutMs: BASH_TEMP_FILE_TIMEOUT_MS,
-    });
-    if (result.exitCode !== 0) return undefined;
-    return result.stdout.trim() || undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-export async function writeBashTempFile(
-  backend: ToolExecutionBackend,
-  content: string,
-): Promise<string | undefined> {
-  if (!content) return undefined;
-  const tempPath = await createBashTempFilePath(backend);
-  if (!tempPath) return undefined;
-  try {
-    const result = await backend.writeFile(tempPath, content);
-    return result.path;
-  } catch {
-    return undefined;
-  }
-}
-
 function formatBashOutputFileHint(args: { path?: string }): string {
   if (!args.path) return "";
   return ` Full output saved to ${args.path}. To see more output, either read the file or re-run with a higher maxOutputTokens. If reading the file, be mindful of its size.`;
@@ -202,7 +166,7 @@ export async function prepareBashOutput(
     strategy: "middle",
   });
   const fullOutputPath = maxTruncation.truncated
-    ? await writeBashTempFile(backend, cleanOutput)
+    ? await writeOutputFile(backend, cleanOutput)
     : undefined;
 
   if (policy.gateOnExcess && maxTruncation.truncated) {
@@ -454,7 +418,7 @@ function parseBashArgs(raw: unknown):
     return {
       ok: false,
       error:
-        "maxOutputTokens is only available for foreground commands; background jobs use bounded log tails.",
+        "maxOutputTokens is only available for foreground commands; set it on a job read, wait, or stop instead.",
       commandForDisplay,
     };
   }
@@ -564,7 +528,7 @@ export function createBashToolDefinition(
           try {
             if (parsedArgs.data.background) {
               const id = await jobs.start(backend, command, effectiveWorkingDirectory, signal);
-              const text = `${jobs.format([id], false).text}\nApplication readiness has not been checked.`;
+              const text = `Started background Bash job ${id} in ${JSON.stringify(effectiveWorkingDirectory)}. Use read_bash_job to check progress or wait_for_bash_jobs to wait for completion.`;
               const outcome = createTextToolOutcome(text, "succeeded");
               const uiEvent: ToolActivity = {
                 type: "bash_execution",
@@ -575,7 +539,7 @@ export function createBashToolDefinition(
                   toolName: TOOL_NAME_BASH,
                   subject: command,
                   operation: "background",
-                  metadata: buildBashJobMetadata({
+                  metadata: buildJobMetadata({
                     text,
                     durationMs: Math.max(0, Date.now() - callStartedAt),
                     workingDirectory: effectiveWorkingDirectory,
@@ -598,6 +562,7 @@ export function createBashToolDefinition(
             } = await backend.runBash(command, {
               signal,
               timeoutMs: effectiveTimeoutMs,
+              maxCaptureBytes: MAX_COMMAND_CAPTURE_BYTES,
               cwd: effectiveWorkingDirectory,
             });
             const durationMs = Math.max(0, Date.now() - startedAt);

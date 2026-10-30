@@ -5,9 +5,12 @@ import type { ModelResolver } from "../models/catalog.js";
 import { AgentSupervisor } from "../subagents/agent_supervisor.js";
 import type { SubagentToolName } from "../subagents/types.js";
 import type { Persona } from "../types.js";
+import { AgentJobRegistry } from "./agent_jobs.js";
+import { createJobToolDefinitions } from "./background_jobs.js";
 import { createBashToolDefinition } from "./bash.js";
-import { BashJobRegistry, createBashJobToolDefinitions } from "./bash_jobs.js";
+import type { BashJobRegistry } from "./bash_jobs.js";
 import { createCodeToolDefinition } from "./code.js";
+import type { CodeJobRegistry } from "./code_jobs.js";
 import { createEditToolDefinition } from "./edit.js";
 import { scopeToolExecutionBackend, type ToolExecutionBackend } from "./execution_backend.js";
 import { createInterruptAgentToolDefinition } from "./interrupt_agent.js";
@@ -27,6 +30,7 @@ function createCommonTools(options: {
   allowedTools: readonly string[];
   config: Config;
   bashJobs: BashJobRegistry;
+  codeJobs: CodeJobRegistry;
   history?: HistoryQuery;
   mcp?: McpManager;
 }): AgentTool[] {
@@ -41,8 +45,8 @@ function createCommonTools(options: {
   const code = createCodeToolDefinition({ ...options, backend });
   return [
     ...tools.filter((tool) => enabled.has(tool.schema.name)),
-    ...(code ? [code] : []),
-    ...(enabled.has(TOOL_NAME_BASH) ? createBashJobToolDefinitions(options.bashJobs) : []),
+    ...(code ? [code, ...createJobToolDefinitions(options.codeJobs, "code")] : []),
+    ...(enabled.has(TOOL_NAME_BASH) ? createJobToolDefinitions(options.bashJobs, "bash") : []),
     createTauDocsToolDefinition(),
   ];
 }
@@ -56,10 +60,12 @@ export const ToolCatalog = {
     modelResolver: ModelResolver;
     history: HistoryQuery;
   }): ToolRegistry {
+    const jobs = new AgentJobRegistry();
     return this.createSessionRegistry({
       ...options,
+      jobs,
+      ...jobs.create(),
       mcp: new McpManager(options.config.mcpServers),
-      bashJobs: new BashJobRegistry(),
       subagentSystemPrompt: undefined,
       supervisor: new AgentSupervisor({ onEvent: () => {} }),
     });
@@ -73,7 +79,9 @@ export const ToolCatalog = {
     subagentSystemPrompt: string | undefined;
     modelResolver: ModelResolver;
     supervisor: AgentSupervisor;
+    jobs: AgentJobRegistry;
     bashJobs: BashJobRegistry;
+    codeJobs: CodeJobRegistry;
     history: HistoryQuery;
     mcp?: McpManager;
     resolveSubagentPrompt?: ResolveSubagentPrompt;
@@ -83,7 +91,7 @@ export const ToolCatalog = {
       createSpawnAgentToolDefinition({
         backend: options.backend,
         supervisor: options.supervisor,
-        bashJobs: options.bashJobs,
+        jobs: options.jobs,
         persona: options.persona,
         config: options.config,
         modelResolver: options.modelResolver,
@@ -114,6 +122,7 @@ export const ToolCatalog = {
     cwd: string,
     config: Config,
     bashJobs: BashJobRegistry,
+    codeJobs: CodeJobRegistry,
     history?: HistoryQuery,
     mcp?: McpManager,
   ): ToolRegistry {
@@ -123,6 +132,7 @@ export const ToolCatalog = {
         cwd,
         config,
         bashJobs,
+        codeJobs,
         history,
         mcp,
         allowedTools,

@@ -104,7 +104,7 @@ The TUI's built-in diff review tool also runs as a process on the client machine
 
 ## Use code mode as a capability boundary
 
-JavaScript written by the model for `code` and code-mode client tools runs in a restricted sandbox. It receives only the declared capabilities, `docs`, `printText`, the async `printImage`, the `truncate` and `truncateLines` helpers, the real `Date`, and `Math.random()`. It has no imports, processes, environment variables, credentials, timers, fetch, files, or network access of its own. When Bash is selected, `tau.bash` runs commands with the same permissions as the Bash tool, and the sandbox does not limit what those commands do.
+JavaScript written by the model for `code` and code-mode client tools runs in a restricted sandbox. It receives only the declared capabilities, `docs`, the JSON `input` value, `printText`, the async `printImage`, the `truncate` and `truncateLines` helpers, the real `Date`, and `Math.random()`. It has no imports, processes, environment variables, credentials, timers, fetch, files, or network access of its own. When Bash is selected, `tau.bash` runs commands with the same permissions as the Bash tool, and the sandbox does not limit what those commands do.
 
 The API behind each capability runs outside the sandbox, with whatever access the tool gives it. The sandbox limits the model's code to the declared capabilities, but a capability that is too powerful is still dangerous. Tool authors should validate every argument, offer narrow operations, keep credentials outside the sandbox, honor cancellation, and never return secrets.
 

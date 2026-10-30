@@ -386,6 +386,8 @@ Both helpers provide the call IDs, cancellation, the execution-environment API, 
 
 `await printImage(block)` emits ordered text/image blocks in `content`; see [tools](tools.md) for limits. `maxOutputTokens` defaults to 8,192 estimated tokens. Saving output requires a `persistOutput` callback.
 
+The definition's optional `timeoutMs` sets a deadline for each program, including time spent waiting for API calls. The default is 60,000 ms. Both helpers tell the model this deadline: the SDK helper appends it to the tool description, and the command helper appends it to `docs`. The SDK helper also uses `timeoutMs` as the tool's `executionTimeoutMs`. For a command tool, the configured `executionTimeoutMs` still limits the whole call, including preparation, so make it longer than the program deadline.
+
 If the tool can start processes or reach the network, say so in its description.
 
 ## Limits and failure behavior

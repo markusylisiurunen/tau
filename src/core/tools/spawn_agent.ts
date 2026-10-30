@@ -15,7 +15,7 @@ import type { Persona } from "../types.js";
 import { formatCwd } from "../utils/format.js";
 import { parseToolArgs } from "../utils/zod.js";
 import type { ToolActivity } from "./activity.js";
-import type { BashJobRegistry } from "./bash_jobs.js";
+import type { AgentJobRegistry } from "./agent_jobs.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import { buildToolRunPresentation } from "./presentation.js";
 import {
@@ -124,7 +124,7 @@ export type ResolveSubagentPrompt = (options: {
 
 export function createSpawnAgentToolDefinition(options: {
   backend: ToolExecutionBackend;
-  bashJobs: BashJobRegistry;
+  jobs: AgentJobRegistry;
   supervisor: AgentSupervisor;
   persona: Persona;
   config: Config;
@@ -314,7 +314,7 @@ export function createSpawnAgentToolDefinition(options: {
               originHistoryEntryId: context.assistantMessageId,
               config: options.config,
               backend,
-              bashJobs: options.bashJobs,
+              jobs: options.jobs,
               history: options.history,
               mcp: options.mcp,
               personaId: persona.id,

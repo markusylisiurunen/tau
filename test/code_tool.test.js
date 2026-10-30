@@ -13,6 +13,7 @@ import { requestOpenRouterChat } from "../dist/core/models/openrouter.js";
 import { BashJobRegistry } from "../dist/core/tools/bash_jobs.js";
 import { ToolCatalog } from "../dist/core/tools/catalog.js";
 import { createCodeToolDefinition } from "../dist/core/tools/code.js";
+import { CodeJobRegistry } from "../dist/core/tools/code_jobs.js";
 import * as codeMode from "../dist/core/tools/code_mode.js";
 import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
 import { SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES } from "../dist/protocol/session_protocol.js";
@@ -48,7 +49,7 @@ function chatReply() {
 describe("code composition", () => {
   it.each([
     { timeout: undefined, expected: 300_000 },
-    { timeout: 900_000, expected: 900_000 },
+    { timeout: 3_600_000, expected: 3_600_000 },
   ])("uses the selected program timeout $expected", async ({ timeout, expected }) => {
     const run = vi.spyOn(codeMode, "executeInternalCodeMode");
     try {
@@ -58,11 +59,12 @@ describe("code composition", () => {
         allowedTools: ["bash"],
         config: {},
         bashJobs: new BashJobRegistry(),
+        codeJobs: new CodeJobRegistry(),
       });
       expect(tool.schema.parameters.properties.timeout).toMatchObject({
         type: "integer",
         minimum: 1,
-        maximum: 900_000,
+        maximum: 3_600_000,
       });
       const result = await tool.execute(
         { id: "timeout", name: "code", arguments: { code: 'printText("done")', timeout } },
@@ -75,7 +77,7 @@ describe("code composition", () => {
     }
   });
 
-  it.each([0, -1, 1.5, 900_001, "300000", null])(
+  it.each([0, -1, 1.5, 3_600_001, "300000", null])(
     "rejects an invalid program timeout %s before execution",
     async (timeout) => {
       const history = { search: vi.fn() };
@@ -86,6 +88,7 @@ describe("code composition", () => {
         history,
         config: {},
         bashJobs: new BashJobRegistry(),
+        codeJobs: new CodeJobRegistry(),
       });
       const result = await tool.execute(
         {
@@ -107,6 +110,7 @@ describe("code composition", () => {
       allowedTools: ["bash"],
       config: {},
       bashJobs: new BashJobRegistry(),
+      codeJobs: new CodeJobRegistry(),
     });
     const executionContext = context();
     const result = await tool.execute(
@@ -132,13 +136,13 @@ describe("code composition", () => {
       "true",
       expect.objectContaining({ timeoutMs: 60_000 }),
     );
-    await capability.api.run([{ command: "true", timeout: 300_000 }], context());
+    await capability.api.run([{ command: "true", timeout: 3_600_000 }], context());
     expect(runBash).toHaveBeenLastCalledWith(
       "true",
-      expect.objectContaining({ timeoutMs: 300_000 }),
+      expect.objectContaining({ timeoutMs: 3_600_000 }),
     );
     runBash.mockClear();
-    for (const timeout of [0, -1, 1.5, 300_001, "60000", null]) {
+    for (const timeout of [0, -1, "60000", null, Infinity]) {
       await expect(capability.api.run([{ command: "true", timeout }], context())).rejects.toThrow();
     }
     expect(runBash).not.toHaveBeenCalled();
@@ -153,6 +157,7 @@ describe("code composition", () => {
       allowedTools: ["bash"],
       config: {},
       bashJobs: new BashJobRegistry(),
+      codeJobs: new CodeJobRegistry(),
     });
     const code = 'printText("x".repeat(60_000))';
     let path;
@@ -188,6 +193,7 @@ describe("code composition", () => {
         history,
         config: {},
         bashJobs: new BashJobRegistry(),
+        codeJobs: new CodeJobRegistry(),
       });
       const result = await tool.execute(
         {
@@ -232,6 +238,7 @@ describe("code composition", () => {
       cwd: process.cwd(),
       config: {},
       bashJobs: new BashJobRegistry(),
+      codeJobs: new CodeJobRegistry(),
       mcp,
     };
     try {
@@ -247,6 +254,7 @@ describe("code composition", () => {
         options.cwd,
         {},
         options.bashJobs,
+        options.codeJobs,
         undefined,
         mcp,
       ).get("code");
@@ -280,6 +288,7 @@ describe("code composition", () => {
       history: {},
       mcp: { available: true, listServers: () => [{ name: "test" }] },
       bashJobs: new BashJobRegistry(),
+      codeJobs: new CodeJobRegistry(),
     });
     const description = tool.schema.description;
     for (const name of ["bash", "web", "history", "mcp", "models"])
@@ -362,6 +371,7 @@ describe("code composition", () => {
       history,
       config: {},
       bashJobs: jobs,
+      codeJobs: new CodeJobRegistry(),
     });
     const index = text(await execute(tool, "printText(docs)"));
     expect(index).toContain("tau.history");
@@ -385,6 +395,7 @@ describe("code composition", () => {
         allowedTools: [],
         config: {},
         bashJobs: jobs,
+        codeJobs: new CodeJobRegistry(),
       }),
     ).toBeUndefined();
   });
@@ -402,6 +413,7 @@ describe("code composition", () => {
       allowedTools: ["bash"],
       config: {},
       bashJobs: new BashJobRegistry(),
+      codeJobs: new CodeJobRegistry(),
     });
     const options = JSON.stringify({ command: "cat", stdin, timeout: 1000 });
     const result = await execute(
@@ -466,6 +478,7 @@ describe("code composition", () => {
         history,
         config: {},
         bashJobs: jobs,
+        codeJobs: new CodeJobRegistry(),
       });
       const result = await execute(
         tool,
@@ -486,7 +499,14 @@ describe("code composition", () => {
   it("shares composed background jobs with direct tools across registries", async () => {
     const backend = createLocalToolExecutionBackend();
     const jobs = new BashJobRegistry();
-    const registry = ToolCatalog.createSubagentRegistry(["bash"], backend, process.cwd(), {}, jobs);
+    const registry = ToolCatalog.createSubagentRegistry(
+      ["bash"],
+      backend,
+      process.cwd(),
+      {},
+      jobs,
+      new CodeJobRegistry(),
+    );
     try {
       const started = await execute(
         registry.get("code"),

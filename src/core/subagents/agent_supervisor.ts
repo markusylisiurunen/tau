@@ -7,7 +7,7 @@ import type { McpManager } from "../mcp/manager.js";
 import { resolveAgentModel } from "../runtime/agent_model.js";
 import { type CoreDeps, createDefaultCoreDeps } from "../runtime/deps.js";
 import { createAutoCompactionArchiver } from "../session/auto_compaction_archive.js";
-import type { BashJobRegistry } from "../tools/bash_jobs.js";
+import type { AgentJobRegistry, AgentJobs } from "../tools/agent_jobs.js";
 import { ToolCatalog } from "../tools/catalog.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
 import type { ToolRunPresentation } from "../tools/presentation.js";
@@ -55,6 +55,7 @@ type SubagentRecord = {
   originHistoryEntryId: string;
   personaId?: string;
   runtime: AgentRuntime | ClaudeCodeRuntime;
+  jobs: AgentJobs | null;
   run: SubagentRunSnapshot;
   costTotal: number;
   usage: SubagentUsageSnapshot;
@@ -106,6 +107,7 @@ export class AgentSupervisor {
       if (originHistoryEntryIds.has(record.originHistoryEntryId)) continue;
       this.records.delete(id);
       record.runtime.dispose();
+      record.jobs?.release();
     }
   }
 
@@ -131,7 +133,7 @@ export class AgentSupervisor {
     originHistoryEntryId: string;
     config: Config;
     backend: ToolExecutionBackend;
-    bashJobs: BashJobRegistry;
+    jobs: AgentJobRegistry;
     history?: HistoryQuery;
     mcp?: McpManager;
     personaId?: string;
@@ -152,6 +154,7 @@ export class AgentSupervisor {
     const runtimeConfig = { ...options.runtimeConfig, workingDirectory };
     let runtime: AgentRuntime | ClaudeCodeRuntime;
     let reasoning: ReasoningEffort;
+    let jobs: AgentJobs | null = null;
     if (runtimeConfig.kind === "claude-code") {
       runtime = new ClaudeCodeRuntime({
         config: runtimeConfig,
@@ -160,6 +163,7 @@ export class AgentSupervisor {
       });
       reasoning = runtimeConfig.effort;
     } else {
+      jobs = options.jobs.create();
       runtime = new AgentRuntime({
         agentId: id,
         spec: createAgentSpec({
@@ -188,7 +192,8 @@ export class AgentSupervisor {
             options.backend,
             workingDirectory,
             options.config,
-            options.bashJobs,
+            jobs.bashJobs,
+            jobs.codeJobs,
             options.history,
             options.mcp,
           ),
@@ -213,6 +218,7 @@ export class AgentSupervisor {
       originHistoryEntryId: options.originHistoryEntryId,
       personaId: options.personaId,
       runtime,
+      jobs,
       run: {
         revision: 1,
         status: "running",

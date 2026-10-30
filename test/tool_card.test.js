@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { BashJobRegistry, createBashJobToolDefinitions } from "../dist/core/tools/bash_jobs.js";
+import { createJobToolDefinitions } from "../dist/core/tools/background_jobs.js";
+import { BashJobRegistry } from "../dist/core/tools/bash_jobs.js";
 import {
   buildToolRunPresentation,
   parseToolRunPresentation,
@@ -142,49 +143,49 @@ describe("tool cards", () => {
     );
   });
 
-  it.each([
-    ["list_bash_jobs", {}, "jobs", "listing", "listed", "list"],
-    ["read_bash_job", { id: "job-1" }, "job-1", "reading", "read", "read"],
-    ["stop_bash_job", { id: "job-1" }, "job-1", "stopping", "stopped", "stop"],
+  it.each(
     [
-      "wait_for_bash_jobs",
-      { ids: ["job-1", "job-2"] },
-      "job-1, job-2",
-      "waiting for",
-      "waited for",
-      "wait",
-    ],
-  ])(
-    "renders Bash-scoped lifecycle headings for %s",
-    (name, args, subject, running, succeeded, verb) => {
-      const tool = createBashJobToolDefinitions(new BashJobRegistry()).find(
-        (tool) => tool.schema.name === name,
+      ["list_bash_jobs", {}, "jobs", "listing", "listed", "list"],
+      ["read_bash_job", { id: "job-1" }, "job-1", "reading", "read", "read"],
+      ["stop_bash_job", { id: "job-1" }, "job-1", "stopping", "stopped", "stop"],
+      [
+        "wait_for_bash_jobs",
+        { ids: ["job-1", "job-2"] },
+        "job-1, job-2",
+        "waiting for",
+        "waited for",
+        "wait",
+      ],
+    ].flatMap((entry) => [entry, [entry[0].replace("bash", "code"), ...entry.slice(1)]]),
+  )("renders job lifecycle headings for %s", (name, args, subject, running, succeeded, verb) => {
+    const kind = name.includes("code") ? "code" : "bash";
+    const tool = createJobToolDefinitions(new BashJobRegistry(), kind).find(
+      (tool) => tool.schema.name === name,
+    );
+    const presentation = tool.describe({ id: "call", name, arguments: args }).presentation;
+    for (const [status, action] of Object.entries({
+      queued: `queued ${verb}`,
+      running,
+      succeeded,
+      failed: `failed to ${verb === "wait" ? "wait for" : verb}`,
+      blocked: `${verb} blocked`,
+      cancelled: `${verb} cancelled`,
+    })) {
+      const rendered = renderText(
+        new ToolCardComponent({
+          model: { toolCallId: "call", status, presentation },
+          theme,
+        }),
+        160,
       );
-      const presentation = tool.describe({ id: "call", name, arguments: args }).presentation;
-      for (const [status, action] of Object.entries({
-        queued: `queued ${verb}`,
-        running,
-        succeeded,
-        failed: `failed to ${verb === "wait" ? "wait for" : verb}`,
-        blocked: `${verb} blocked`,
-        cancelled: `${verb} cancelled`,
-      })) {
-        const rendered = renderText(
-          new ToolCardComponent({
-            model: { toolCallId: "call", status, presentation },
-            theme,
-          }),
-          160,
-        );
-        expect(rendered).toContain(
-          `<textMuted>${action} bash</textMuted> <brandAccent>${subject}</brandAccent>`,
-        );
-      }
-    },
-  );
+      expect(rendered).toContain(
+        `<textMuted>${action} ${kind}</textMuted> <brandAccent>${subject}</brandAccent>`,
+      );
+    }
+  });
 
   it("renders the footer from a completed Bash job tool", async () => {
-    const tool = createBashJobToolDefinitions(new BashJobRegistry()).find(
+    const tool = createJobToolDefinitions(new BashJobRegistry(), "bash").find(
       (tool) => tool.schema.name === "list_bash_jobs",
     );
     const events = [];

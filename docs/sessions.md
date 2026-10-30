@@ -25,7 +25,7 @@ Three parts can run on one machine but stay separate:
 
 The host saves sessions under `~/.config/tau/sessions` in the host user's home. These are versioned files that Tau manages. Never edit them directly. Use Tau's session operations, project configuration, and recovery instead.
 
-[Background Bash jobs](tools.md#bash) belong to the session. They survive turns, interruption, and clients detaching. A running job keeps a session loaded even when no client is attached, and does not block new turns. Jobs stop when the session is closed normally or the host shuts down, and are not restored after a restart. Cleanup after a crash or forced kill is not guaranteed.
+[Background Bash jobs](tools.md#bash) and [background code jobs](code-mode.md#background-code-jobs) belong to the agent that started them, and other agents in the session cannot see them. They survive turns, interruption, and clients detaching. A running job keeps a session loaded even when no client is attached, and does not block new turns. Every agent's jobs stop when the session is closed normally or the host shuts down, and are not restored after a restart. Cleanup after a crash or forced kill is not guaranteed.
 
 ## Submit, queue, and steer
 

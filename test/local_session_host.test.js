@@ -5569,7 +5569,7 @@ describe("LocalSessionHost", () => {
     const session = await host.createSession(localCreateInput);
     const backend = createLocalToolExecutionBackend();
     try {
-      const started = await session.runtime.bashJobs.start(
+      const started = await session.runtime.backgroundJobs.bashJobs.start(
         backend,
         "sleep 100",
         process.cwd(),
@@ -5592,10 +5592,59 @@ describe("LocalSessionHost", () => {
       expect(reattached).toBe(session);
       await session.record({ text: "second turn" });
       await session.runTurn();
-      expect(session.runtime.bashJobs.format([id]).text).toContain("running");
+      expect(session.runtime.backgroundJobs.bashJobs.format([id]).text).toContain("running");
       host.releaseSession(reattached);
       await host.shutdown();
-      expect(session.runtime.bashJobs.format([id]).text).toContain("stopped");
+      expect(session.runtime.backgroundJobs.bashJobs.format([id]).text).toContain("stopped");
+    } finally {
+      await host.shutdown();
+      await backend.dispose();
+    }
+  });
+
+  it("retains background code across release and interrupts it before host shutdown waits", async () => {
+    const host = createHost(new MemorySessionStore());
+    const session = await host.createSession(localCreateInput);
+    const backend = createLocalToolExecutionBackend();
+    const childJobs = session.runtime.jobs.create();
+    const entered = deferred();
+    let requestSignal;
+    try {
+      const id = childJobs.codeJobs.start({
+        backend,
+        cwd: process.cwd(),
+        source: "inline code",
+        signal: new AbortController().signal,
+        program: {
+          name: "tau",
+          documentation: "test",
+          code: 'printText("ready"); await tau.wait();',
+          api: {
+            wait: async (_args, context) => {
+              requestSignal = context.signal;
+              entered.resolve();
+              await new Promise((_, reject) =>
+                context.signal.addEventListener("abort", () => reject(context.signal.reason), {
+                  once: true,
+                }),
+              );
+              return null;
+            },
+          },
+        },
+      });
+      await entered.promise;
+      session.interruptActiveWork();
+      host.releaseSession(session);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(session.isDisposed).toBe(false);
+      expect(requestSignal.aborted).toBe(false);
+      const reattached = await host.observeSession(session.sessionId);
+      expect(reattached).toBe(session);
+      host.releaseSession(reattached);
+      await host.shutdown();
+      expect(requestSignal.aborted).toBe(true);
+      expect((await childJobs.codeJobs.inspect([id], false)).text).toContain("status: stopped");
     } finally {
       await host.shutdown();
       await backend.dispose();
@@ -5606,8 +5655,9 @@ describe("LocalSessionHost", () => {
     const host = createHost(new MemorySessionStore());
     const session = await host.createSession(localCreateInput);
     const backend = createLocalToolExecutionBackend();
+    const childJobs = session.runtime.jobs.create();
     try {
-      await session.runtime.bashJobs.start(
+      await childJobs.bashJobs.start(
         backend,
         "sleep 0.1",
         process.cwd(),

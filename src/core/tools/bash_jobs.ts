@@ -1,30 +1,22 @@
 import { randomUUID } from "node:crypto";
 import { StringDecoder } from "node:string_decoder";
-import stripAnsi from "strip-ansi";
-import { Type } from "typebox";
-import { z } from "zod";
-import { formatCwd } from "../utils/format.js";
-import { formatTokenEstimate } from "../utils/token.js";
-import { TRUNCATION_MARKER, truncateForTokens, truncateToBytesFromEnd } from "../utils/truncate.js";
-import { formatZodError } from "../utils/zod.js";
-import { formatBashToolResultText } from "./bash.js";
-import type { BashExecutionResult, ToolExecutionBackend } from "./execution_backend.js";
-import { buildToolRunPresentation, formatToolDurationMs } from "./presentation.js";
-import { type AgentTool, createTextToolOutcome, executeTool } from "./registry.js";
-
-const MAX_JOBS = 64;
-const MAX_OUTPUT_BYTES = 64 * 1024;
-export const BASH_JOB_WAIT_DEFAULT_MS = 60_000;
-export const BASH_JOB_WAIT_MAX_MS = 300_000;
+import { truncateForTokens } from "../utils/truncate.js";
+import { MAX_JOBS, waitForJobs } from "./background_jobs.js";
+import {
+  type BashExecutionResult,
+  MAX_COMMAND_CAPTURE_BYTES,
+  type ToolExecutionBackend,
+} from "./execution_backend.js";
+import { JobOutput } from "./job_output.js";
 
 interface BashJob {
   id: string;
   command: string;
   cwd: string;
-  output: string;
-  truncated: boolean;
+  log: JobOutput;
   controller: AbortController;
   done: Promise<void>;
+  active: boolean;
   state:
     | { status: "running" }
     | {
@@ -47,7 +39,7 @@ export class BashJobRegistry {
     signal.throwIfAborted();
     if (this.closed) throw new Error("Bash jobs are closed.");
     if (this.jobs.size >= MAX_JOBS) {
-      const oldest = [...this.jobs.values()].find((job) => job.state.status !== "running");
+      const oldest = [...this.jobs.values()].find((job) => !job.active);
       if (!oldest)
         throw new Error(
           `Bash job limit reached (${MAX_JOBS}). Stop a job before starting another.`,
@@ -62,10 +54,10 @@ export class BashJobRegistry {
       id: randomUUID(),
       command: truncateForTokens(command, { maxTokens: 128, strategy: "middle" }).content,
       cwd: truncateForTokens(cwd, { maxTokens: 128, strategy: "middle" }).content,
-      output: "",
-      truncated: false,
+      log: new JobOutput(backend, MAX_COMMAND_CAPTURE_BYTES),
       controller: new AbortController(),
       done: Promise.resolve(),
+      active: true,
       state: { status: "running" },
     };
     this.jobs.set(job.id, job);
@@ -77,24 +69,27 @@ export class BashJobRegistry {
         const result = await backend.runBash(command, {
           cwd,
           signal: job.controller.signal,
-          maxCaptureBytes: MAX_OUTPUT_BYTES,
+          maxCaptureBytes: MAX_COMMAND_CAPTURE_BYTES,
           onStarted: started,
           onOutput: (chunk) => {
-            const output = job.output + decoder.write(chunk);
-            job.truncated ||= Buffer.byteLength(output) > MAX_OUTPUT_BYTES;
-            job.output = truncateToBytesFromEnd(output, MAX_OUTPUT_BYTES);
+            const text = decoder.write(chunk);
+            job.log.capture.appendText(text);
           },
         });
-        job.output = truncateToBytesFromEnd(job.output + decoder.end(), MAX_OUTPUT_BYTES);
-        job.truncated ||= result.truncated;
+        const tail = decoder.end();
+        job.log.capture.appendText(tail);
+        job.log.capture.truncated ||= result.truncated;
         const { exitCode, aborted, closeSignal } = result;
         job.state = { status: "finished", result: { exitCode, aborted, closeSignal } };
       } catch (error) {
+        job.log.capture.appendText(`\n${error instanceof Error ? error.message : String(error)}`);
         job.state = {
           status: "failed",
           error: error instanceof Error ? error.message : String(error),
         };
       }
+      await job.log.finish();
+      job.active = false;
     })();
     try {
       await Promise.race([launched, job.done]);
@@ -123,8 +118,8 @@ export class BashJobRegistry {
         id: job.id,
         command: job.command,
         workingDirectory: job.cwd,
-        ...(includeOutput ? { output: stripAnsi(job.output) } : {}),
-        truncated: job.truncated,
+        ...(includeOutput ? { output: job.log.capture.text } : {}),
+        truncated: job.log.capture.truncated,
         status:
           state.status === "finished"
             ? state.result.aborted
@@ -134,59 +129,41 @@ export class BashJobRegistry {
                 : "failed"
             : state.status,
         ...(state.status === "finished" ? state.result : {}),
-        ...(state.status === "failed" ? { error: state.error } : {}),
+        ...(includeOutput && state.status === "failed" ? { error: state.error } : {}),
       };
     });
   }
 
-  format(ids: string[] = [...this.jobs.keys()], includeOutput = true) {
-    return this.formatJobs(
-      ids.map((id) => this.get(id)),
-      includeOutput,
-    );
-  }
-
-  private formatJobs(jobs: BashJob[], includeOutput: boolean) {
+  format(ids: string[] = [...this.jobs.keys()], includeOutput = true, maxOutputTokens = 8192) {
+    ids = [...new Set(ids)];
     let truncated = false;
     const text =
-      jobs
-        .map((job) => {
-          const id = job.id;
-          const state = job.state;
-          const status =
-            state.status === "finished"
-              ? state.result.aborted
-                ? "stopped"
-                : state.result.exitCode === 0
-                  ? "succeeded"
-                  : "failed"
-              : state.status;
-          const lines = [`\`${id}\` · ${job.command}`, status, `cwd ${job.cwd}`];
-          if (state.status === "failed") lines.push(state.error);
-          if (state.status === "finished") {
-            lines.push(state.result.exitCode === null ? "exit ?" : `exit ${state.result.exitCode}`);
-            if (state.result.aborted) lines.push("Command was cancelled.");
-            if (state.result.closeSignal)
-              lines.push(`Command was terminated by signal ${state.result.closeSignal}.`);
-          }
+      ids
+        .map((id) => {
+          const job = this.get(id);
+          const state = this.read([id], false)[0]!;
+          const lines = [
+            `id: ${id}`,
+            `status: ${state.status}`,
+            `command: ${JSON.stringify(job.command)}`,
+            `cwd: ${JSON.stringify(job.cwd)}`,
+          ];
+          if ("exitCode" in state) lines.push(`exit_code: ${state.exitCode ?? "null"}`);
+          if ("closeSignal" in state && state.closeSignal)
+            lines.push(`signal: ${state.closeSignal}`);
           if (includeOutput) {
-            const model = truncateForTokens(stripAnsi(job.output), {
-              maxTokens: Math.min(2048, Math.floor(8192 / Math.max(1, jobs.length))),
-              strategy: "tail",
-            });
-            truncated ||= model.truncated || job.truncated;
-            lines.push(
-              "",
-              formatBashToolResultText({
-                truncationInfo: { output: model.content, model, captureTruncated: job.truncated },
-                exitCode: null,
-              }),
-            );
+            const output = job.log.format(Math.floor(maxOutputTokens / Math.max(1, ids.length)));
+            truncated ||= output.truncated;
+            lines.push(...output.metadata, "", "--- output ---", output.projection.content);
           }
           return lines.join("\n");
         })
         .join("\n\n") || "No Bash jobs.";
     return { text, truncated };
+  }
+
+  async inspect(ids?: string[], includeOutput = true, maxOutputTokens = 8192) {
+    return this.format(ids, includeOutput, maxOutputTokens);
   }
 
   async stopJob(id: string): Promise<void> {
@@ -196,49 +173,16 @@ export class BashJobRegistry {
     if (job.state.status === "failed") throw new Error(job.state.error);
   }
 
-  async stop(id: string, includeOutput: boolean) {
-    await this.stopJob(id);
-    return this.format([id], includeOutput);
-  }
-
   async waitJobs(ids: string[], timeout: number, signal: AbortSignal): Promise<boolean> {
-    if (!Number.isInteger(timeout) || timeout <= 0 || timeout > BASH_JOB_WAIT_MAX_MS)
-      throw new Error(`timeout must be a positive integer up to ${BASH_JOB_WAIT_MAX_MS}.`);
-    const jobs = [...new Set(ids)].map((id) => this.get(id));
-    if (!jobs.length) throw new Error("ids must not be empty.");
-    signal.throwIfAborted();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let abort!: () => void;
-    try {
-      const timedOut = await Promise.race([
-        ...jobs.map((job) => job.done.then(() => false)),
-        new Promise<boolean>((resolve) => {
-          timer = setTimeout(() => resolve(true), timeout);
-        }),
-        new Promise<never>((_, reject) => {
-          abort = () => reject(signal.reason);
-          signal.addEventListener("abort", abort, { once: true });
-        }),
-      ]);
-      return timedOut;
-    } finally {
-      clearTimeout(timer);
-      signal.removeEventListener("abort", abort);
-    }
-  }
-
-  async wait(ids: string[], timeout: number, signal: AbortSignal, includeOutput: boolean) {
-    const timedOut = await this.waitJobs(ids, timeout, signal);
-    const result = this.format(ids, includeOutput);
-    return {
-      ...result,
-      text: `${result.text}${timedOut ? `\n\nWait timed out after ${timeout}ms; jobs are still running.` : ""}`,
-      timedOut,
-    };
+    return waitForJobs(
+      [...new Set(ids)].map((id) => this.get(id)),
+      timeout,
+      signal,
+    );
   }
 
   get hasRunning(): boolean {
-    return [...this.jobs.values()].some((job) => job.state.status === "running");
+    return [...this.jobs.values()].some((job) => job.active);
   }
 
   async waitForIdle(): Promise<void> {
@@ -249,7 +193,7 @@ export class BashJobRegistry {
 
   async dispose(): Promise<void> {
     this.closed = true;
-    const running = [...this.jobs.values()].filter((job) => job.state.status === "running");
+    const running = [...this.jobs.values()].filter((job) => job.active);
     for (const job of running) job.controller.abort();
     await Promise.all(running.map((job) => job.done));
     const errors = running.flatMap((job) =>
@@ -257,188 +201,4 @@ export class BashJobRegistry {
     );
     if (errors.length) throw new AggregateError(errors, "failed to stop Bash jobs");
   }
-}
-
-export function buildBashJobMetadata(args: {
-  text: string;
-  durationMs: number;
-  truncated?: boolean;
-  timedOut?: boolean;
-  workingDirectory?: string;
-}): string[] {
-  const lines = args.text.split("\n").length;
-  return [
-    ...(args.truncated ? [TRUNCATION_MARKER] : []),
-    ...(args.workingDirectory ? [formatCwd(args.workingDirectory)] : []),
-    formatToolDurationMs(args.durationMs),
-    formatTokenEstimate(Buffer.byteLength(args.text, "utf8")),
-    `${lines} line${lines === 1 ? "" : "s"}`,
-    ...(args.timedOut ? ["timed out"] : []),
-  ];
-}
-
-function buildBashJobPresentation(
-  toolName: string,
-  args: { id?: string; ids?: string[] } | undefined,
-  text?: string,
-  metadata?: string[],
-) {
-  const detailText = text?.replace(/\r\n?/g, "\n").trimEnd();
-  return buildToolRunPresentation({
-    toolName,
-    operation: "bash",
-    subject: args ? (args.ids?.join(", ") ?? args.id ?? "jobs") : "(invalid arguments)",
-    details: detailText ? detailText.split("\n").map((text) => ({ text })) : [],
-    metadata,
-  });
-}
-
-export function createBashJobToolDefinitions(jobs: BashJobRegistry): AgentTool[] {
-  const id = Type.String({ minLength: 1, pattern: "^[^\\r\\n]+$" });
-  const idSchema = z
-    .string()
-    .min(1)
-    .regex(/^[^\r\n]+$/);
-  const includeOutput = Type.Optional(
-    Type.Boolean({
-      description:
-        "Include the captured output tail; defaults to true. Set false for metadata only. Status, exit code, termination reason, and operational errors are always included.",
-    }),
-  );
-  return [
-    {
-      name: "list_bash_jobs",
-      description:
-        "List session-owned Bash jobs and their status. Up to 64 records are retained; older completed jobs are evicted when needed.",
-      parameters: Type.Object({}, { additionalProperties: false }),
-      parser: z.object({}).strict(),
-    },
-    {
-      name: "read_bash_job",
-      description:
-        "Read a Bash job's status and bounded output tail immediately (up to 2048 tokens from 64 KiB retained output).",
-      parameters: Type.Object({ id, includeOutput }, { additionalProperties: false }),
-      parser: z.object({ id: idSchema, includeOutput: z.boolean().optional() }).strict(),
-    },
-    {
-      name: "stop_bash_job",
-      description:
-        "Stop a Bash job and its process group, escalating to forced termination if needed.",
-      parameters: Type.Object({ id, includeOutput }, { additionalProperties: false }),
-      parser: z.object({ id: idSchema, includeOutput: z.boolean().optional() }).strict(),
-    },
-    {
-      name: "wait_for_bash_jobs",
-      description:
-        "Wait for any requested Bash job to exit, not for readiness. Use logs or readiness checks for servers. Returns after 60 seconds by default, at most 5 minutes. Timeout and interruption cancel only the wait, not jobs. Completed results remain readable.",
-      parameters: Type.Object(
-        {
-          includeOutput,
-          ids: Type.Array(id, { minItems: 1, maxItems: MAX_JOBS }),
-          timeout: Type.Optional(
-            Type.Integer({
-              minimum: 1,
-              maximum: BASH_JOB_WAIT_MAX_MS,
-              description: "Wait timeout in milliseconds; defaults to 60000.",
-            }),
-          ),
-        },
-        { additionalProperties: false },
-      ),
-      parser: z
-        .object({
-          includeOutput: z.boolean().optional(),
-          ids: z.array(idSchema).min(1).max(MAX_JOBS),
-          timeout: z.number().int().positive().max(BASH_JOB_WAIT_MAX_MS).optional(),
-        })
-        .strict(),
-    },
-  ].map(
-    ({ parser, ...schema }): AgentTool => ({
-      schema,
-      describe: (call) => {
-        const parsed = parser.safeParse(call.arguments);
-        return {
-          presentation: buildBashJobPresentation(
-            schema.name,
-            parsed.success ? parsed.data : undefined,
-          ),
-        };
-      },
-      execute: (call, context) =>
-        executeTool(context, async () => {
-          const startedAt = Date.now();
-          const parsed = parser.safeParse(call.arguments);
-          if (!parsed.success) {
-            const reason = `Invalid arguments: ${formatZodError(parsed.error)}`;
-            return {
-              ...createTextToolOutcome(reason, "blocked"),
-              uiEvent: {
-                type: "tool_call_blocked" as const,
-                toolCallId: call.id,
-                toolName: schema.name,
-                reason,
-                presentation: buildBashJobPresentation(schema.name, undefined, reason),
-              },
-            };
-          }
-          const args = parsed.data;
-          try {
-            context.signal.throwIfAborted();
-            const result =
-              "ids" in args
-                ? await jobs.wait(
-                    args.ids,
-                    args.timeout ?? BASH_JOB_WAIT_DEFAULT_MS,
-                    context.signal,
-                    args.includeOutput ?? true,
-                  )
-                : "id" in args
-                  ? schema.name === "stop_bash_job"
-                    ? await jobs.stop(args.id, args.includeOutput ?? true)
-                    : jobs.format([args.id], args.includeOutput ?? true)
-                  : jobs.format(undefined, false);
-            const { text } = result;
-            return {
-              ...createTextToolOutcome(text, "succeeded"),
-              uiEvent: {
-                type: "tool_call_finished" as const,
-                toolCallId: call.id,
-                toolName: schema.name,
-                status: "success" as const,
-                presentation: buildBashJobPresentation(
-                  schema.name,
-                  args,
-                  text,
-                  buildBashJobMetadata({
-                    ...result,
-                    durationMs: Math.max(0, Date.now() - startedAt),
-                  }),
-                ),
-              },
-            };
-          } catch (error) {
-            const reason = context.signal.aborted
-              ? "Bash job operation was cancelled."
-              : error instanceof Error
-                ? error.message
-                : String(error);
-            return {
-              ...createTextToolOutcome(reason, context.signal.aborted ? "cancelled" : "failed"),
-              uiEvent: {
-                type: "tool_call_finished" as const,
-                toolCallId: call.id,
-                toolName: schema.name,
-                status: "error" as const,
-                presentation: buildBashJobPresentation(
-                  schema.name,
-                  args,
-                  context.signal.aborted ? undefined : reason,
-                ),
-              },
-            };
-          }
-        }),
-    }),
-  );
 }

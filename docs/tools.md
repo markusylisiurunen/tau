@@ -49,7 +49,7 @@ interrupt_agent
 
 A custom persona that omits `tools` gets `bash`, `write`, `edit`, `view_image`, `web`, `history`, `mcp`, and `models`, plus the five subagent tools. Built-in personas get the same set.
 
-`web`, `history`, `mcp`, and `models` are not separate tools. Each enables a namespace inside the single `code` tool. `bash` enables both the Bash tools and `tau.bash` inside `code`. Tau adds `code` whenever at least one usable capability is selected; `code` itself cannot be listed. A namespace the persona does not select is missing from the `code` API and its documentation.
+`web`, `history`, `mcp`, and `models` are not separate tools. Each enables a namespace inside the single `code` tool. `bash` enables both the Bash tools and `tau.bash` inside `code`. Tau adds `code` and its [job tools](code-mode.md#background-code-jobs) whenever at least one usable capability is selected; `code` itself cannot be listed. A namespace the persona does not select is missing from the `code` API and its documentation.
 
 An empty list turns off every selectable tool:
 
@@ -89,7 +89,7 @@ Agents are told to choose the mode that avoids needless waiting. Background mode
 
 Background mode also fits a service that must keep running, or work that must survive turns and interruptions. Starting several independent jobs and then waiting for them is a valid way to run work in parallel. This is guidance for the agent; Tau does not enforce it.
 
-The default foreground timeout is 60 seconds. Tau captures at most 1 MiB of combined stdout and stderr, and keeps the end when there is more. By default the result the model sees is limited to about 8,192 estimated tokens. Longer output is replaced by a preview of about 2,048 tokens from the middle, with a notice. The command has still run in full, with all its side effects.
+The default foreground timeout is 60 seconds. Tau captures at most 24 MiB of combined stdout and stderr, and keeps the end when there is more. By default the result the model sees is limited to about 8,192 estimated tokens. Longer output is replaced by a preview of about 2,048 tokens that keeps the beginning and end, with a notice. The command has still run in full, with all its side effects.
 
 A narrower command is better than a higher limit. When more output is really needed, the agent can set `maxOutputTokens` between 8,192 and 16,384 on its own. Values above 16,384, up to 65,536, require an explicit user request. When output is truncated, Tau may save it to a temporary file in the execution environment and report the path.
 
@@ -97,21 +97,40 @@ In a local execution environment, Tau removes inherited environment variables wh
 
 The TUI commands `!<command>` and `!!<command>` run the same way, in a fresh login shell. `!` adds the result to the model's context and `!!` does not. They allow more output into context than an agent's tool call, but capture is still limited.
 
-With `background: true`, `bash` starts the command and returns a job ID for the session right away, without waiting for it to exit. A started job is not necessarily ready to use. Background jobs have no time limit, and combining `background: true` with `timeout` is invalid. Jobs keep running across turns and interruptions. Main agents, subagents, and ephemeral threads share the session's jobs.
+With `background: true`, `bash` starts the command and returns a job ID right away, without waiting for it to exit. Background jobs have no time limit, and combining `background: true` with `timeout` or `maxOutputTokens` is invalid. Jobs keep running across turns and interruptions.
 
-Enabling `bash` also enables `list_bash_jobs`, `read_bash_job`, `stop_bash_job`, and `wait_for_bash_jobs`. These cannot be listed separately in a persona. List returns short ID and status blocks. Read returns the same blocks with the end of the job's output. Stop terminates the job's process group, and kills it if it has not exited after a grace period. Tau keeps up to 64 job records and drops the oldest finished one when needed. Starting a job fails if all 64 are still running. Each job keeps 64 KiB of combined output. At most 2,048 estimated tokens are returned per job, and 8,192 in total when several jobs are observed at once. Background output ignores `maxOutputTokens` and is never saved to an overflow file.
+Each job belongs to the agent that started it, and only that agent can list, read, wait for, or stop it. The main agent, each subagent, and each ephemeral thread have separate jobs. A subagent keeps its jobs across follow-up messages. An ephemeral thread, including a fork, starts with no jobs.
 
-`read_bash_job`, `stop_bash_job`, and `wait_for_bash_jobs` accept `includeOutput`, which defaults to `true`. With `false`, the result leaves out stdout, stderr, and truncation notices, but still has the job ID, command, cwd, status, exit code once finished, termination reason, and errors. List never includes output.
+Enabling `bash` also enables `list_bash_jobs`, `read_bash_job`, `stop_bash_job`, and `wait_for_bash_jobs`. These cannot be listed separately in a persona. Each job appears as a block of labeled lines: `id`, `status`, `command`, `cwd`, and, once the command has exited, `exit_code` and any terminating `signal`. Read, stop, and wait add the job's output after an `--- output ---` line. List never includes output. For example:
 
-In the TUI, job tool cards have headings such as `reading bash <id>` and `listed bash jobs`, and show a seven-line preview from the middle of the result. A background start shows `started background <command>`, which means only that the command started.
+```text
+id: <job id>
+status: running
+command: "npm test"
+cwd: "/work/app"
+output: truncated; showing beginning and end
+
+--- output ---
+<beginning and end of output>
+```
+
+Stop terminates the job's process group, kills it if it has not exited after a grace period, and waits until it has stopped. Tau keeps up to 64 job records for each agent and drops the oldest finished one when needed. Starting a job fails if all 64 are still running.
+
+Each job keeps the last 24 MiB of combined output. Read, stop, and wait return that output within a budget of 8,192 estimated tokens for the whole response by default, divided evenly among the requested jobs. `maxOutputTokens` sets this budget, from 1 to 65,536. When a job's output exceeds its share, the result shows the beginning and the end. The `output: truncated` line means only that this response shows part of the output. A separate `capture: truncated` line means the job produced more than 24 MiB, so its earliest output is lost.
+
+When a job with output finishes, Tau writes all of its retained text to a temporary file in the execution environment. Later results that include output give the file's path as `text_log`, so the agent can read or search it instead of raising the budget or running the command again. A running job has no text log. If the file cannot be written, the result shows `text_log: unavailable`.
+
+`read_bash_job`, `stop_bash_job`, and `wait_for_bash_jobs` accept `includeOutput`, which defaults to `true`. With `false`, the result has only the labeled job lines. It leaves out output, truncation lines, the text log, and execution error messages.
+
+In the TUI, job tool cards have headings such as `reading bash <id>` and `listed bash jobs`, and show a seven-line preview from the middle of the result. A background start shows `started background <command>`.
 
 Background launch and job-tool footers show the tool call's duration, estimated tokens, and line count. Counts cover the exact text returned to the model after output limits, before the card preview is shortened. With `includeOutput: false`, only returned job information counts. The launch footer also includes the working directory. A `◆` marker means included command output was truncated; shortening the card preview alone does not add it. A wait that reaches its timeout appends `timed out` without making the card an error. Durations measure the tool call, not the job's lifetime, and cards remain snapshots of that call.
 
 When a job tool call is invalid or fails, the TUI card shows a short diagnostic as well as the model's result. A normal cancellation shows no details.
 
-`wait_for_bash_jobs({ids, timeout?, includeOutput?})` returns when any of the jobs exits or the wait times out. Jobs that already finished return immediately. The timeout is a positive integer in milliseconds, defaults to 60,000, and can be at most 300,000. A timeout counts as a successful result and does not stop the jobs. Interrupting the wait leaves them running too. The tool waits for a job to exit, not to become ready, so check a server's logs or readiness instead. A job finishing never starts an agent turn by itself.
+`wait_for_bash_jobs({ids, timeout?, includeOutput?, maxOutputTokens?})` returns when any of the jobs exits or the wait times out. Jobs that already finished return immediately. The timeout is a positive integer in milliseconds, defaults to 60,000, and can be at most 300,000. A timeout counts as a successful result. It starts with a note that the jobs are still running, followed by their current blocks, and does not stop the jobs. Interrupting the wait leaves them running too. A job finishing never starts an agent turn by itself.
 
-Jobs survive client disconnects while the host is running, and keep an idle session from being unloaded until they finish. Closing the session normally or shutting down the host stops them. Job IDs and logs are not saved or recovered, and an old ID fails with a clear error. An unknown ID does not mean the command never ran, that its side effects were undone, or that it has stopped. Agents are told to check running processes and output before starting such a command again. Cleanup does not cover processes that daemonize themselves, tmux sessions, or processes left behind by a host crash or forced kill.
+Jobs survive client disconnects while the host is running, and keep an idle session from being unloaded until they finish. Closing the session normally or shutting down the host stops the jobs of every agent in the session. Job records are not saved or recovered, and an old ID fails with a clear error. An unknown ID does not mean the command never ran, that its side effects were undone, or that it has stopped. Agents are told to check running processes and output before starting such a command again. Cleanup does not cover processes that daemonize themselves, tmux sessions, or processes left behind by a host crash or forced kill.
 
 ### Write and edit
 
@@ -142,52 +161,7 @@ Each guide covers setup, input, examples, outputs, and failures. Run `tau tool -
 
 ## Code-mode composition
 
-`code` runs a one-off JavaScript program that combines the enabled capabilities: `tau.web`, `tau.history`, `tau.mcp`, `tau.bash`, and `tau.models`. The Bash, write, edit, and image tools stay available as separate tools.
-
-### Documentation and output
-
-If the agent has not yet seen the runtime guide, it first runs a program that only prints it:
-
-```js
-printText(docs);
-```
-
-The guide covers runtime rules, capabilities, and examples. The agent reads each capability's reference it has not seen yet in a separate call that only prints documentation:
-
-```js
-printText(await tau.docs("web"));
-```
-
-The agent does not re-read documentation it has already seen. MCP tool descriptions are read separately. Programs do not need to print intermediate results.
-
-`printText` accepts only strings; objects and arrays throw a `TypeError`. The agent selects relevant fields and explicitly formats concise plain text to save tokens. `JSON.stringify` is reserved for cases where the structure matters or machine-readable JSON is requested, with fields selected first instead of dumping whole responses.
-
-Only `printText(string)` and awaited `printImage({ data, mimeType })` produce output, in the order they are called. Return values are ignored. Text is truncated in the middle to `maxOutputTokens` (default 8,192; range 1–65,536). The agent leaves it unset unless needed, and may raise it to 16,384 on its own. Higher values require an explicit user request. When text from the built-in `code` tool is truncated, Tau saves it to a temporary file in the execution environment when possible and reports the path. The agent reads that file instead of running the program again with its side effects. The file does not contain images or text lost to capture limits.
-
-JPEG, PNG, and WebP images are validated outside the sandbox and fitted to 4,096 pixels per dimension and 3.5 MiB each. Source images can be at most 40 megapixels, and a program can emit at most 16 images. Valid images are kept even if the built-in `code` program fails.
-
-The helper functions `truncate(text, { maxChars, position? })` and `truncateLines(text, { maxLines, position? })` return shortened strings with a marker where text was removed. `position` defaults to `middle`; `start` and `end` keep that end of the text. They do not print anything.
-
-```js
-const result = await tau.bash.run({ command: "npm test" });
-printText(truncate(result.stdout, { maxChars: 4000 }));
-```
-
-### Execution and limits
-
-Programs have no direct access to files, processes, environment variables, credentials, imports, timers, or the network. They can act only through the capabilities. Keep data in variables, and use `tau.bash` for files. There is no scratch-file API.
-
-`code` times out after 5 minutes by default. `timeout` accepts 1–900,000 ms (15 minutes). `tau.bash.run` times out after 60 seconds by default, and at most after 5 minutes or the program's own deadline, whichever comes first. A program can make 128 API requests, eight at a time. Each serialized request and response can be at most 64 MiB. Object properties set to `undefined` are dropped, while `undefined` arguments and array entries are rejected. Programs are never retried, and failure or cancellation does not undo actions already taken.
-
-### Capabilities
-
-- `tau.web`: metadata discovery, Exa search, and fetching page content. Search uses Auto with Dynamic Highlights to select evidence across results. An optional `objective` (1–4,096 nonblank characters) describes the broader task and facts to extract. Results include a `notices` array with retrieval qualifications such as relaxed query restrictions; each notice retains its `code`, `path`, `message`, and optional `details`. The agent prints notices alongside selected search results. The agent prefers local data, dedicated CLIs, first-party APIs, and structured sources over scraping web pages. For GitHub it uses `gh` or a Git checkout where suitable. Metadata discovery works without an Exa key; search and content fetching need one.
-- `tau.history`: read-only search and paginated transcripts. The agent uses it only when explicitly told to look at past sessions. It treats past content as data and never follows instructions in it. See [history](history.md).
-- `tau.mcp`: finding and calling tools and resources on configured MCP servers. When the persona allows MCP, enabled server names and optional configured descriptions are visible in the initial tool definition, before any tool call. Disabled servers and connection settings are omitted. These summaries guide discovery and do not grant permission to act. The agent reads each tool's description and schema before calling it. Connections are shared and opened on first use, and calls that change data are never retried. An `isError` result is returned as data, while protocol failures throw. MCP server configuration and trust rules apply. See [configuration reference](config-reference.md#mcpservers) and [security](security.md#trust-mcp-servers).
-- `tau.bash`: `run`, `start`, `list`, `read`, `wait`, and `stop`. `run` returns stdout, stderr, and exit and termination fields, capturing up to 24 MiB. Beyond that it keeps the end, so check `truncated` before parsing. Optional UTF-8 `stdin` is limited to 16 MiB and closed after writing. Without `stdin` the command has no stdin at all, while `""` gives it an empty one. `start` takes no stdin. Background jobs are the same jobs as the Bash tools', with the same output limits. Jobs survive the program ending and interruption, while foreground commands are cancelled. The shell rules above apply.
-- `tau.models`: lists a fixed set of OpenRouter models and runs standalone chats or typed decisions with them. These calls do not see the session's conversation or tools. Chat media can be paths on the agent's machine or inline padded base64 with a matching MIME type. Credentials stay on the host. Provider usage data is returned, but these charges are not included in the session's cost or usage logs. Requests can be cancelled and are never retried automatically. Limits on input, models, media, responses, and requests are the same as in [OpenRouter](openrouter.md). Check whether a response completed or was refused instead of assuming it is a full answer.
-
-SDK and command client tools built on code mode use the same sandbox functions and output rules, with their own declared APIs. Their programs time out after 60 seconds unless configured otherwise.
+`code` runs a JavaScript program, inline or from a saved file, that combines the enabled capabilities. It can also run the program as a background job. See [code mode](code-mode.md) for input, output, limits, background code jobs, and each capability.
 
 ## Subagent tools
 

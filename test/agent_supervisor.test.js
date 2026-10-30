@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import { AgentRuntime } from "../dist/core/index.js";
 import { personas } from "../dist/core/personas.js";
 import { AgentSupervisor } from "../dist/core/subagents/agent_supervisor.js";
+import { BashJobRegistry } from "../dist/core/tools/bash_jobs.js";
+import { ToolCatalog } from "../dist/core/tools/catalog.js";
 import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
+import { ClientToolBroker } from "../dist/host/client_tool_broker.js";
 
 function createAssistant(text, options = {}) {
   const model = personas[0].model;
@@ -149,6 +152,71 @@ describe("AgentSupervisor", () => {
       expect.objectContaining({ name: "tau_docs" }),
     ]);
     supervisor.reset();
+  });
+
+  it("keeps attached-client tools on the main agent across child runs", async () => {
+    const broker = new ClientToolBroker();
+    const sendCall = vi.fn();
+    const registration = broker.registerClient({
+      tools: [
+        {
+          name: "prefill_input",
+          description: "Prefill input",
+          parameters: { type: "object", properties: {}, additionalProperties: false },
+        },
+      ],
+      sendCall,
+      sendCancel: vi.fn(),
+    });
+    registration.attachSession("parent-session");
+    const supervisor = new AgentSupervisor({ onEvent: () => {}, recordUsage: () => {} });
+    const submit = vi.spyOn(AgentRuntime.prototype, "submit").mockImplementation(async function () {
+      expect(this.spec.tools.get("prefill_input")).toBeUndefined();
+      expect(this.spec.tools.get("spawn_agent")).toBeUndefined();
+      return { finalMessage: createAssistant("done"), aborted: false };
+    });
+    try {
+      const main = ToolCatalog.createSessionRegistry({
+        backend: createLocalToolExecutionBackend(),
+        cwd: "/repo",
+        config: {},
+        persona: { ...personas[0], tools: ["spawn_agent"] },
+        subagentSystemPrompt: "child system",
+        modelResolver: () => undefined,
+        supervisor,
+        bashJobs: new BashJobRegistry(),
+        history: {},
+        clientTools: () => broker.getToolDefinitions("parent-session"),
+      });
+      expect(main.get("prefill_input")).toBeDefined();
+      const outcome = await main.get("spawn_agent").execute(
+        {
+          id: "spawn-call",
+          name: "spawn_agent",
+          arguments: { title: "child", prompt: "do work" },
+        },
+        {
+          agentId: "parent-agent",
+          turnId: "parent-turn",
+          assistantMessageId: "parent-origin",
+          signal: new AbortController().signal,
+          emitActivity: async () => {},
+        },
+      );
+      expect(outcome.outcome).toBe("succeeded");
+      const [child] = supervisor.listSnapshots();
+      await supervisor.waitForAgents([child.id]);
+      expect(supervisor.getSnapshot(child.id).run.status).toBe("succeeded");
+      expect(supervisor.sendInput({ id: child.id, prompt: "follow up" }).ok).toBe(true);
+      await supervisor.waitForAgents([child.id]);
+      expect(supervisor.getSnapshot(child.id).run.status).toBe("succeeded");
+      expect(submit).toHaveBeenCalledTimes(2);
+      expect(sendCall).not.toHaveBeenCalled();
+    } finally {
+      submit.mockRestore();
+      registration.unregister();
+      supervisor.reset();
+    }
   });
 
   it("supports child wait and follow-up", async () => {

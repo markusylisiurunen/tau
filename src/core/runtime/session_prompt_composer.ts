@@ -1,6 +1,6 @@
 import { buildSubagentSystemPrompt } from "../subagents/prompt.js";
 import { formatSubagentsForPrompt } from "../subagents/registry.js";
-import { TOOL_NAME_SPAWN_AGENT } from "../tools/tool_names.js";
+import { TOOL_NAME_HISTORY, TOOL_NAME_SPAWN_AGENT } from "../tools/tool_names.js";
 import type { Persona } from "../types.js";
 import { buildBaseSystemPrompt, buildEnvironmentTag } from "../utils/context.js";
 export type ComposeSessionPromptsArgs = {
@@ -31,20 +31,21 @@ export function composeSessionPrompts(args: ComposeSessionPromptsArgs): SessionP
     platform: args.platform,
   });
 
-  const baseSystemPrompt = buildBaseSystemPrompt({
+  const promptContext = {
     personaSystemPrompt: args.persona.systemPrompt,
     skillsBlock: args.skillsBlock,
     projectContextBlock: args.projectContextBlock,
     environmentTag,
+  };
+  const baseSystemPrompt = buildBaseSystemPrompt({
+    ...promptContext,
     subagentsBlock: formatSubagentsForPrompt(args.persona),
   });
 
   const subagentSystemPrompt = args.persona.tools.includes(TOOL_NAME_SPAWN_AGENT)
-    ? buildBaseSystemPrompt({
-        personaSystemPrompt: buildSubagentSystemPrompt(args.persona.systemPrompt),
-        skillsBlock: args.skillsBlock,
-        projectContextBlock: args.projectContextBlock,
-        environmentTag,
+    ? buildSubagentSystemPrompt(buildBaseSystemPrompt(promptContext), {
+        parentSessionId: args.sessionId,
+        historyEnabled: args.persona.tools.includes(TOOL_NAME_HISTORY),
       })
     : undefined;
 

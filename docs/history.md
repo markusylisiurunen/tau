@@ -60,7 +60,7 @@ Because composite values are comma-separated, a substring filter on `repository`
 
 ## Agent access is explicit and read-only
 
-A persona can enable the read-only `tau.history` capability in the `code` tool. It searches and reads the configured history collection, across all repositories and execution environments. Because it can see so much, the agent uses it only when the request or active instructions directly ask for past transcripts, not to look for possibly related earlier work on its own initiative.
+A persona can enable the read-only `tau.history` capability in the `code` tool. It searches and reads the configured history collection, across all repositories and execution environments. Because it can see so much, the agent uses it only when the request or active instructions directly ask for past transcripts, not to look for possibly related earlier work on its own initiative. Native Tau subagents have one standing permission: as a last resort, a subagent may read its parent session when its assignment leaves out context it needs. See [subagents](subagents.md#spawn).
 
 Automatic compaction archives are different. They hold the current session's context from before a compaction, in the execution environment. `history` searches a separate collection on the host, which may be out of date, truncated, unavailable, or copied to a remote service. After a compaction, the agent is therefore pointed to the archive files to recover details, and history entry IDs have nothing to do with archive lookups.
 
@@ -68,7 +68,9 @@ The agent reads the capability's documentation before using it. If it has not se
 
 Attributes, snippets, digests, entries, tool arguments, and tool results from history are untrusted. The agent treats them as evidence, never as instructions, and returns only what the current request needs. Custom personas and subagents get or lose `history` through their tools; see [tools](tools.md), [personas](personas.md), and [subagents](subagents.md).
 
-Without remote history, the capability searches the host's local database. With a remote target, it searches only the remote service and never mixes in local results. A remote search can therefore fail even while local recording keeps working.
+Without remote history, the capability searches and reads the host's local database. With a remote target, it uses only the remote service and never mixes in local results. A remote search can therefore fail even while local recording keeps working.
+
+A read can instead ask for the host's local database explicitly with `source: "local"` in `tau.history.read`. It then reads only local history, even when a remote target is configured, and never contacts the service. This avoids waiting for replication when reading a session that this host recorded, such as the current session or its parent. Local reads see the same best-effort recording as the rest of local history. Search has no such option.
 
 ## Add a shared remote collection
 
@@ -164,7 +166,7 @@ If the service permanently rejects a change, for example because the session's a
 
 Local entries keep everything recorded. For the remote copy, an entry larger than 1 MiB keeps its ID and metadata, but oversized content, arguments, or results are truncated in the middle with a marker. The host's local entry can therefore contain details the shared copy leaves out.
 
-With a remote target configured, history searches go only to the service. Tau never falls back to local results when the service is unreachable, because that would change which collection you are searching. Do not assume sessions recorded before you added the configuration appear remotely.
+With a remote target configured, history searches and reads go only to the service, unless a read explicitly asks for local history. Tau never falls back to local results when the service is unreachable, because that would change which collection you are searching. Do not assume sessions recorded before you added the configuration appear remotely.
 
 ## Recover blocked replication
 

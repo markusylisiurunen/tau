@@ -23,7 +23,7 @@ import type { SubagentEvent } from "../subagents/types.js";
 import { BashJobRegistry } from "../tools/bash_jobs.js";
 import { ToolCatalog } from "../tools/catalog.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
-import { ToolRegistry } from "../tools/registry.js";
+import type { ToolRegistry } from "../tools/registry.js";
 import type { ResolveSubagentPrompt } from "../tools/spawn_agent.js";
 import type { Persona, ReasoningEffort } from "../types.js";
 import type { UsageRecorder } from "../usage/logs.js";
@@ -330,7 +330,7 @@ export class ChatRuntime {
   }
 
   private buildToolRegistry(composition: SessionPromptComposition): ToolRegistry {
-    const registry = ToolCatalog.createSessionRegistry({
+    return ToolCatalog.createSessionRegistry({
       backend: this.backend,
       cwd: this.promptContext.cwd,
       config: this.config,
@@ -340,13 +340,10 @@ export class ChatRuntime {
       supervisor: this.supervisor,
       bashJobs: this.bashJobs,
       history: this.historyQuery,
+      clientTools: this.clientTools,
       mcp: this.mcp,
       ...(this.resolveSubagentPrompt ? { resolveSubagentPrompt: this.resolveSubagentPrompt } : {}),
     });
-    const clientTools = this.clientTools?.() ?? [];
-    return clientTools.length === 0
-      ? registry
-      : new ToolRegistry([...registry.getEnabledTools(), ...clientTools]);
   }
 
   private composePromptSet(): SessionPromptComposition {

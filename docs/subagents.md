@@ -6,7 +6,7 @@ Subagents are background agents that the main agent starts and the host supervis
 
 Subagents are general-purpose workers. There are no named types. Several can run at once, each with its own task and conversation.
 
-A native Tau subagent behaves like the active main persona, wrapped in instructions that Tau maintains. Those instructions and the subagent's description cannot be configured. Put task-specific instructions, including any relevant skill guidance, in the launch prompt.
+A native Tau subagent works like a main agent of the active persona in the subagent's working directory. Its system prompt is the one a main agent would get there, with the same persona prompt, skills, project instructions, and environment context. Tau adds a short section in front that explains the subagent's role: work headless on the part of the main agent's task given in the assignment, never start other agents, leave contact with the user to the main agent, and return a self-contained result. The section also gives the parent session's ID. This section cannot be configured. Put task-specific instructions in the launch prompt.
 
 Whether the agent can start subagents depends on the main persona's tool list. Built-in personas, and custom personas that omit `tools`, enable all five subagent tools. A custom persona with a `tools` list that lacks `spawn_agent` cannot start subagents. Leave out all five subagent tools when no subagent interaction is wanted. There is no other setting to turn subagents on or off. See [personas](personas.md).
 
@@ -31,7 +31,9 @@ A native Tau subagent can receive these tools. [Claude Code subagents](#claude-c
 
 A subagent gets each of these that the main persona also has. For example, a main persona with `bash`, `edit`, `history`, and `spawn_agent` gives its subagents `bash`, `edit`, and `history`. Names such as `web` and `history` enable the matching capability in the subagent's `code` tool. MCP uses the host's existing connections, whatever the subagent's working directory. There is no separate tool list for subagents.
 
-Every native Tau subagent also gets the built-in `tau_docs` tool, and a persona's `tools` list cannot remove it. Subagents never get the subagent tools, client tools, or TUI tools, so a subagent cannot start subagents of its own. See [tools](tools.md) for how tool availability works in general.
+Every native Tau subagent also gets the built-in `tau_docs` tool, and a persona's `tools` list cannot remove it. Subagents never get the subagent tools, so a subagent cannot start or manage other agents.
+
+Subagents also never get [client tools](client-tools.md), such as the TUI's tools or a Telegram runner's file delivery tools. Only the main agent uses tools that attached clients offer. See [tools](tools.md) for how tool availability works in general.
 
 ## Models and settings
 
@@ -130,7 +132,9 @@ Each subagent has an ID that the host generates.
 
 ### Spawn
 
-`spawn_agent` takes a title, a prompt, an optional model, and an optional working directory. The prompt is the subagent's only initial input, so it should be self-contained. The call returns right away with the new ID, and the subagent keeps working in the background.
+`spawn_agent` takes a title, a prompt, an optional model, and an optional working directory. The prompt is the subagent's first message, and the subagent does not see the parent conversation, so the prompt should be self-contained. The call returns right away with the new ID, and the subagent keeps working in the background.
+
+When the main persona has `history`, a native Tau subagent may read the parent session's transcript as a last resort, when missing context would stop the work or force an important assumption. It reads with `tau.history.read` and `source: "local"`, so the read uses the host's local history even when a remote collection is configured. Local recording is best-effort, so the newest parent entries can occasionally be missing.
 
 At most eight subagents can be running at once in one main session. Subagents that have finished or been interrupted do not count toward this limit.
 

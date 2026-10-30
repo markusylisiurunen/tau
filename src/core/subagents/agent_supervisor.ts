@@ -161,6 +161,7 @@ export class AgentSupervisor {
       reasoning = runtimeConfig.effort;
     } else {
       runtime = new AgentRuntime({
+        agentId: id,
         spec: createAgentSpec({
           autoCompactThresholdTokens: null,
           ...resolveAgentModel(

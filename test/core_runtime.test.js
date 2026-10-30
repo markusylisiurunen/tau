@@ -304,7 +304,7 @@ describe("session prompt composer", () => {
       subagentLaunchModels: ["openai/gpt-5.4:high"],
     };
 
-    const result = composeSessionPrompts({
+    const context = {
       persona,
       sessionId: "session-1",
       skillsBlock: "### Skills\n\n- skill-a",
@@ -312,7 +312,14 @@ describe("session prompt composer", () => {
       cwd: "/repo",
       sessionStartedAt: "2026-01-01T00:00:00.000Z",
       platform: "darwin",
+    };
+    const result = composeSessionPrompts(context);
+    const withoutDelegation = composeSessionPrompts({
+      ...context,
+      persona: { ...persona, tools: persona.tools.filter((tool) => tool !== "spawn_agent") },
     });
+    expect(result.subagentSystemPrompt.endsWith(withoutDelegation.baseSystemPrompt)).toBe(true);
+    expect(withoutDelegation.subagentSystemPrompt).toBeUndefined();
 
     expect(result.baseSystemPrompt).toContain("main system prompt");
     expect(result.baseSystemPrompt).toContain("### Skills");
@@ -328,11 +335,11 @@ describe("session prompt composer", () => {
       "Omit the model override unless the user explicitly requests a specific model.",
     );
 
-    expect(result.subagentSystemPrompt).toContain("<inherited-instructions>");
+    expect(result.subagentSystemPrompt).not.toContain("<inherited-instructions>");
     expect(result.subagentSystemPrompt).toContain("main system prompt");
     expect(result.subagentSystemPrompt).toContain("- Session ID: `session-1`");
     expect(result.subagentSystemPrompt).not.toContain("{{inherited_instructions}}");
-    expect(result.subagentSystemPrompt).toContain("You are a subagent supporting the main agent.");
+    expect(result.subagentSystemPrompt).not.toContain("### Subagents");
     expect(typeof result.subagentSystemPrompt).toBe("string");
   });
 

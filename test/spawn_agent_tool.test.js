@@ -3,6 +3,7 @@ import { createAgentsCapability } from "../dist/core/code_mode/agents.js";
 import { loadModelResolver } from "../dist/core/models/catalog.js";
 import { personas } from "../dist/core/personas.js";
 import { AgentTrace } from "../dist/core/subagents/trace.js";
+import { truncateToolText } from "../dist/core/tools/presentation.js";
 import { createWaitForAgentsToolDefinition } from "../dist/core/tools/wait_for_agents.js";
 
 const context = () => ({ signal: new AbortController().signal });
@@ -151,15 +152,22 @@ describe("agents capability", () => {
       }),
       getLastResponse,
     });
+    const emitActivity = vi.fn();
     const outcome = await tool.execute(
       {
         id: "wait",
         name: "wait_for_agents",
         arguments: { ids: agents.map((state) => state.id), maxOutputTokens: 80 },
       },
-      { ...context(), emitActivity: async () => {} },
+      { ...context(), emitActivity },
     );
     const text = outcome.content[0].text;
+    const finished = emitActivity.mock.calls
+      .map(([activity]) => activity)
+      .find((activity) => activity.type === "tool_call_finished");
+    expect(finished.presentation.details.map((line) => line.text).join("\n")).toBe(
+      truncateToolText(text, { maxLines: 17, maxLineChars: 512, strategy: "middle" }),
+    );
     expect(text).toContain("done evidence");
     expect(text).toContain("partial evidence");
     expect(text).toContain("response_seq: 7");
@@ -169,6 +177,61 @@ describe("agents capability", () => {
     expect(text).not.toContain("evidence ".repeat(100));
     expect(getLastResponse.mock.calls.map(([id]) => id)).toEqual(["done", "partial", "empty"]);
   });
+
+  it.each([
+    { reason: "completed", response: "short answer", complete: true },
+    { reason: "failed", response: "partial answer", complete: false },
+    {
+      reason: "completed",
+      response: Array.from({ length: 30 }, (_, index) => `evidence ${index}`).join("\n"),
+      complete: true,
+    },
+  ])(
+    "previews the returned $reason response within 17 lines",
+    async ({ reason, response, complete }) => {
+      const agent = {
+        id: "worker",
+        title: "worker",
+        status: "idle",
+        reason,
+        pending: { queue: 0, steer: 0 },
+        ...(reason === "failed" ? { error: { code: "provider-error", message: "failed" } } : {}),
+      };
+      const tool = createWaitForAgentsToolDefinition({
+        waitForAgents: async () => [agent],
+        getSnapshot: () => ({
+          costTotal: 0.25,
+          run: {
+            status: reason === "failed" ? "failed" : "succeeded",
+            startedAt: 1,
+            finishedAt: 1001,
+          },
+        }),
+        getLastResponse: () => ({ seq: 7, text: response, complete }),
+      });
+      const emitActivity = vi.fn();
+      const outcome = await tool.execute(
+        { id: "wait", name: "wait_for_agents", arguments: { ids: [agent.id] } },
+        { ...context(), emitActivity },
+      );
+      const returnedLines = outcome.content[0].text.split("\n");
+      const finished = emitActivity.mock.calls
+        .map(([activity]) => activity)
+        .find((activity) => activity.type === "tool_call_finished");
+      const preview = finished.presentation.details.map((line) => line.text);
+      expect(preview.length).toBeLessThanOrEqual(17);
+      if (returnedLines.length <= 17) {
+        expect(preview).toEqual(returnedLines);
+      } else {
+        expect(preview).toHaveLength(17);
+        expect(preview.slice(0, 8)).toEqual(returnedLines.slice(0, 8));
+        expect(preview.slice(-8)).toEqual(returnedLines.slice(-8));
+        expect(preview[8]).not.toBe(returnedLines[8]);
+      }
+      expect(preview.at(-1)).toBe(response.split("\n").at(-1));
+      expect(finished.presentation.metadata).toHaveLength(2);
+    },
+  );
 
   it("accepts 512-character titles and rejects longer ones before spawning", async () => {
     const { api, supervisor } = fixture();

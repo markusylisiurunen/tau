@@ -2,7 +2,7 @@ import { realpathSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { McpClient } from "@earendil-works/pi-mcp";
+import { McpClient, McpConnectionClosedError } from "@earendil-works/pi-mcp";
 import { describe, expect, it, vi } from "vitest";
 import { createMcpCapability } from "../dist/core/code_mode/mcp.js";
 import { McpManager } from "../dist/core/mcp/manager.js";
@@ -494,19 +494,28 @@ describe("MCP code-mode tool", () => {
     }
   });
 
-  it("rejects oversized resource responses without preventing later reads", async () => {
-    const client = manager({ timeoutMs: 1_000 });
+  it("rejects oversized resource responses and reconnects for later reads", async () => {
+    const client = manager();
     try {
+      const first = await echo(client);
+      const pending = expect(client.callTool("test", "slow", {}, signal())).rejects.toBeInstanceOf(
+        McpConnectionClosedError,
+      );
+      await vi.waitFor(async () => expect((await echo(client)).structuredContent.pending).toBe(1));
+      await expect(
+        client.readResource("test", "docs://oversized", signal()),
+      ).rejects.toBeInstanceOf(McpConnectionClosedError);
+      await pending;
       const tool = createCapabilityTool(backend(), createMcpCapability(client));
       const result = await runTool(
         tool,
-        'printText(JSON.stringify(await tau.mcp.readResource("test", "docs://oversized")))',
+        'printText((await tau.mcp.readResource("test", "docs://schema")).contents[0].text)',
       );
-      expect(result.outcome).toBe("failed");
-      expect(result.text).not.toContain("x".repeat(100));
-      expect((await client.readResource("test", "docs://schema", signal())).contents[0].text).toBe(
-        "resource context",
-      );
+      expect(result.outcome).toBe("succeeded");
+      expect(result.text).toBe("resource context");
+      const second = await echo(client);
+      expect(second.structuredContent.pid).not.toBe(first.structuredContent.pid);
+      expect(second.structuredContent.calls).toBe(1);
     } finally {
       await client.close();
     }

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { printToolHelp, runToolCommand } from "../dist/core/tool/cli.js";
+import { printToolHelp, runToolCommand, ToolCliError } from "../dist/core/tool/cli.js";
 import { printImageGenerateHelp } from "../dist/core/tool/image_generate.js";
 import { printPdfUnpackHelp } from "../dist/core/tool/pdf_unpack.js";
 import { assembleSpeechWav, printSpeechGenerateHelp } from "../dist/core/tool/speech_generate.js";
@@ -92,6 +92,12 @@ function pcmResponse(samples, id) {
 }
 
 describe("standalone tool help", () => {
+  it("rejects unknown subcommands", async () => {
+    await expect(runToolCommand(["missing"], { config: {}, env: {} })).rejects.toBeInstanceOf(
+      ToolCliError,
+    );
+  });
+
   it.each([
     [printToolHelp, "tools.md"],
     [printPdfUnpackHelp, "pdf-unpacking.md"],

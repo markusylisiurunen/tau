@@ -29,6 +29,7 @@ export type OpenRouterChatInput = {
   prompt: string;
   system?: string;
   reasoning?: string;
+  schema?: Record<string, unknown>;
   attachments: OpenRouterAttachment[];
 };
 
@@ -244,6 +245,14 @@ export async function requestOpenRouterChat(
         model: input.model,
         messages,
         stream: false,
+        ...(input.schema === undefined
+          ? {}
+          : {
+              response_format: {
+                type: "json_schema",
+                json_schema: { name: "result", strict: true, schema: input.schema },
+              },
+            }),
         ...(input.reasoning === undefined ? {} : { reasoning: { effort: input.reasoning } }),
         provider: { require_parameters: true },
       },
@@ -259,7 +268,12 @@ export async function requestOpenRouterChat(
   return {
     requested_model: input.model,
     ...metadata,
-    answer: message.content,
+    answer:
+      input.schema === undefined
+        ? message.content
+        : finish_reason === "stop" && !message.refusal
+          ? parseMediaJson(message.content!, "OpenRouter structured answer")
+          : null,
     finish_reason,
     ...(native_finish_reason === undefined ? {} : { native_finish_reason }),
     ...(message.refusal === undefined ? {} : { refusal: message.refusal }),

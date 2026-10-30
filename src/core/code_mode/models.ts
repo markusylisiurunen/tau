@@ -19,6 +19,7 @@ const chatOptions = z.strictObject({
   prompt: z.string().min(1),
   system: z.string().min(1).optional(),
   reasoning: z.string().optional(),
+  schema: z.record(z.string(), z.json()).optional(),
   attachments: z.array(attachment).max(16).default([]),
 });
 const decisionOptions = z.strictObject({
@@ -67,10 +68,10 @@ export function createModelsCapability(
   return {
     name: "models",
     description:
-      "Call AI models through OpenRouter for focused, standalone tasks. Example uses include extraction and summarization, image/audio/video analysis, typed classification or scoring, and second opinions. Each call uses only explicitly supplied inputs, without conversation context or agent tools.",
+      "Call AI models through OpenRouter for focused, standalone tasks. Example uses include extraction and summarization, JSON answers that follow a supplied schema, image/audio/video analysis, typed classification or scoring, and second opinions. Each call uses only explicitly supplied inputs, without conversation context or agent tools.",
     documentation: `# tau.models
 
-Use AI models for focused tasks with explicitly supplied inputs. Calls do not inherit the conversation, persona, tools, or an implicit system prompt. Use chat for text/media understanding and free-form answers; use decisions for named classification, probability, or scoring questions.
+Use AI models for focused tasks with explicitly supplied inputs. Calls do not inherit the conversation, persona, tools, or an implicit system prompt. Use chat for text/media understanding, free-form answers, and JSON answers that follow a schema; use decisions for named classification, probability, or scoring questions.
 
 ## Interface
 
@@ -103,6 +104,7 @@ Listing makes no provider request and requires no credentials. Select an exact I
 Send one nonstreaming request.
 
 \`\`\`ts
+type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 type Attachment = { type: "image" | "audio" | "video" } & (
   | { path: string; data?: never; mimeType?: never }
   | { data: string; mimeType: string; path?: never }
@@ -112,12 +114,13 @@ type ChatOptions = {
   prompt: string;
   system?: string;
   reasoning?: string;
+  schema?: { [key: string]: Json };
   attachments?: Attachment[];
 };
 type ChatResult = {
   requested_model: string;
   model: string;
-  answer: string | null;
+  answer: string | Json | null;
   finish_reason: "stop" | "length" | "content_filter";
   id?: string;
   provider?: string;
@@ -145,6 +148,8 @@ Attachments follow the prompt in array order. Paths resolve from the current wor
 
 These statuses resolve normally. Invalid responses, unexpected tool calls, and a normal stop with neither answer nor refusal throw. No output token cap is sent; provider and model limits still apply.
 
+Without \`schema\`, \`answer\` is text. With \`schema\` (a JSON Schema object), the provider must return JSON that matches the schema, and \`answer\` is the parsed value. Use a complete answer directly as matching data, without validating it again. An incomplete or refused response keeps its status and refusal fields but returns \`answer: null\` and no partial output. A complete answer that is not valid JSON throws. The request goes only to providers that support structured outputs, so it fails if none can serve the selected model. Schemas work across the most providers when they use an object at the root, list every property in \`required\`, and set \`additionalProperties: false\` on every object.
+
 For example, select a listed image-capable model and supply an existing screenshot:
 
 \`\`\`js
@@ -161,12 +166,30 @@ if (result.finish_reason !== "stop" || result.refusal || !result.answer)
 printText(result.answer);
 \`\`\`
 
+Ask for the same screenshot's errors as data:
+
+\`\`\`js
+const result = await tau.models.chat({
+  model: "openai/gpt-6-luna",
+  prompt: "List every error message visible in the screenshot.",
+  attachments: [{ type: "image", path: "./screenshot.png" }],
+  schema: {
+    type: "object",
+    properties: { errors: { type: "array", items: { type: "string" } } },
+    required: ["errors"],
+    additionalProperties: false,
+  },
+});
+if (result.finish_reason !== "stop" || result.refusal)
+  throw new Error("model did not produce a complete answer");
+for (const error of result.answer.errors) printText(error);
+\`\`\`
+
 ## \`tau.models.decisions(options)\`
 
 Ask several named questions about one supplied state. Independent questions can share a request; dependent questions require separate calls.
 
 \`\`\`ts
-type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 type Guidance = string | Json[] | { [key: string]: Json };
 type Question =
   | { type: "noul"; instructions: Guidance; criteria?: { true: Guidance; false: Guidance } }

@@ -189,8 +189,6 @@ A subagent that is still working or stopping gets only its ID, title, status, an
 
 The response text of all requested subagents shares a budget of 8,192 estimated tokens, split evenly between them, working ones included. The optional `maxOutputTokens` sets a different budget, from 1 to 65,536.
 
-The TUI wait card previews this returned text in at most 17 lines across all requested subagents, including an omission marker when needed. It keeps the beginning and end and omits the middle. Each preview line is capped at 512 characters. Shortening the card preview does not change the text returned to the main agent.
-
 Inside a program, `waitUntilIdle` waits for one subagent with the same meaning of idle and returns its state without the response. Neither wait returns until queued input has been handled too. Cancelling a wait, or stopping the program that waits, does not interrupt the subagent.
 
 The host also sends live subagent activity to attached clients for display. It is a summary for display. The subagent's messages and tool results are in its trace.

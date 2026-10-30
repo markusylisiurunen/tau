@@ -118,12 +118,6 @@ When a job with output finishes, Tau writes all of its retained text to a tempor
 
 `read_bash_job`, `stop_bash_job`, and `wait_for_bash_jobs` accept `includeOutput`, which defaults to `true`. With `false`, the result has only the labeled job lines. It leaves out output, truncation lines, the text log, and execution error messages.
 
-In the TUI, job tool cards have headings such as `reading bash <id>` and `listed bash jobs`, and show a seven-line preview from the middle of the result. A background start shows `started background <command>`.
-
-Background launch and job-tool footers show the tool call's duration, estimated tokens, and line count. Counts cover the exact text returned to the model after output limits, before the card preview is shortened. With `includeOutput: false`, only returned job information counts. The launch footer also includes the working directory. A `◆` marker means included command output was truncated; shortening the card preview alone does not add it. A wait that reaches its timeout appends `timed out` without making the card an error. Durations measure the tool call, not the job's lifetime, and cards remain snapshots of that call.
-
-When a job tool call is invalid or fails, the TUI card shows a short diagnostic as well as the model's result. A normal cancellation shows no details.
-
 `wait_for_bash_jobs({ids, timeout?, includeOutput?, maxOutputTokens?})` returns when any of the jobs exits or the wait times out. Jobs that already finished return immediately. The timeout is a positive integer in milliseconds, defaults to 60,000, and can be at most 300,000. A timeout counts as a successful result. It starts with a note that the jobs are still running, followed by their current blocks, and does not stop the jobs. Interrupting the wait leaves them running too. A job finishing never starts an agent turn by itself.
 
 Jobs survive client disconnects while the host is running, and keep an idle session from being unloaded until they finish. Closing the session normally or shutting down the host stops the jobs of every agent in the session. Job records are not saved or recovered, and an old ID fails with a clear error. An unknown ID does not mean the command never ran, that its side effects were undone, or that it has stopped. Agents are told to check running processes and output before starting such a command again. Cleanup does not cover processes that daemonize themselves, tmux sessions, or processes left behind by a host crash or forced kill.

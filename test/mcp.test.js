@@ -373,6 +373,96 @@ describe("host-owned MCP connections", () => {
   });
 });
 
+describe("MCP HTTP notification failures", () => {
+  it("preserves an in-flight tool call when the notification stream exhausts retries", async () => {
+    const toolStarted = Promise.withResolvers();
+    const streamFailed = Promise.withResolvers();
+    const connect = McpClient.prototype.connect;
+    const connectSpy = vi.spyOn(McpClient.prototype, "connect").mockImplementation(function (
+      ...args
+    ) {
+      this.onError(streamFailed.resolve);
+      return connect.apply(this, args);
+    });
+    let toolResponse;
+    let toolMessage;
+    let getRequests = 0;
+    let toolCalls = 0;
+    let initializations = 0;
+    let deletions = 0;
+    const server = createServer(async (request, response) => {
+      if (request.method === "DELETE") {
+        deletions++;
+        response.writeHead(204).end();
+        return;
+      }
+      if (request.method === "GET") {
+        getRequests++;
+        await toolStarted.promise;
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        response.end("retry: 0\n\n");
+        return;
+      }
+      let body = "";
+      for await (const chunk of request) body += chunk;
+      const message = JSON.parse(body);
+      if (message.method === "tools/call") {
+        toolCalls++;
+        toolResponse = response;
+        toolMessage = message;
+        toolStarted.resolve();
+        return;
+      }
+      if (message.id === undefined) {
+        response.writeHead(202).end();
+        return;
+      }
+      if (message.method === "initialize") initializations++;
+      const result =
+        message.method === "initialize"
+          ? {
+              protocolVersion: message.params.protocolVersion,
+              capabilities: { tools: {} },
+              serverInfo: { name: "http-test", version: "1" },
+            }
+          : { tools: [{ name: "echo", inputSchema: { type: "object" } }] };
+      response.writeHead(200, {
+        "content-type": "application/json",
+        "mcp-session-id": "test-session",
+      });
+      response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result }));
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const client = new McpManager({
+      test: { type: "http", url: `http://127.0.0.1:${server.address().port}/mcp` },
+    });
+    try {
+      const pending = echo(client);
+      await Promise.race([streamFailed.promise, pending]);
+      expect(getRequests).toBeGreaterThan(1);
+      toolResponse.writeHead(200, { "content-type": "application/json" });
+      toolResponse.end(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: toolMessage.id,
+          result: { content: [], structuredContent: toolMessage.params.arguments },
+        }),
+      );
+      expect((await pending).structuredContent).toEqual({ message: "hello" });
+      expect(initializations).toBe(1);
+      expect(toolCalls).toBe(1);
+      expect(deletions).toBe(0);
+      await client.close();
+      expect(deletions).toBe(1);
+    } finally {
+      await client.close();
+      connectSpy.mockRestore();
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+});
+
 describe("MCP code-mode tool", () => {
   it("returns a clean result and strips metadata only at MCP content boundaries", async () => {
     const client = manager();

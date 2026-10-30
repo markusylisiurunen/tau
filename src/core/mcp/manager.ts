@@ -205,11 +205,13 @@ export class McpManager {
       requestTimeoutMs: server.discoveryTimeoutMs ?? DEFAULT_DISCOVERY_TIMEOUT_MS,
     });
     const transport = this.createTransport(name, server);
-    const unsubscribeTransportError = transport.onError(() => {
-      // A discarded or malformed reply cannot settle its request safely.
-      void this.closeClient(client).catch(() => {});
-    });
-    client.onClose(unsubscribeTransportError);
+    if (server.type === "stdio") {
+      const unsubscribeTransportError = transport.onError(() => {
+        // A discarded or malformed reply cannot settle its request safely.
+        void this.closeClient(client).catch(() => {});
+      });
+      client.onClose(unsubscribeTransportError);
+    }
     const connection: Connection = {
       grantId,
       client,

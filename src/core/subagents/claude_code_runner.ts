@@ -13,7 +13,26 @@ import {
   type ClaudeCodeInput,
   claudeCodeInputSchema,
 } from "./claude_code_protocol.js";
-import { boundedTraceBlocks, traceBlocks } from "./trace.js";
+import type { ContentBlock } from "./events.js";
+import { boundedTraceBlocks } from "./trace.js";
+
+type ClaudeMessageContent = SDKUserMessage["message"]["content"];
+type ClaudeToolResult = Extract<
+  Exclude<ClaudeMessageContent, string>[number],
+  { type: "tool_result" }
+>;
+function claudeContent(
+  content: ClaudeMessageContent | ClaudeToolResult["content"],
+): ContentBlock[] {
+  if (content === undefined) return [{ type: "unavailable", reason: "Unsupported content" }];
+  if (typeof content === "string") return [{ type: "text", text: content }];
+  return content.map((block): ContentBlock => {
+    if (block.type === "text") return { type: "text", text: block.text };
+    if (block.type === "image" && block.source.type === "base64")
+      return { type: "image", data: block.source.data, mimeType: block.source.media_type };
+    return { type: "unavailable", reason: `Unsupported content block: ${block.type}` };
+  });
+}
 
 export function claudeCodeTools(tools: string[]): string[] {
   const selected = new Set<string>();
@@ -241,7 +260,7 @@ export async function runClaudeCode(
         emitUsage(message.message);
         const content = message.message.content.filter((block) => block.type === "text");
         if (content.length)
-          emit({ type: "trace", event: { kind: "assistant", content: traceBlocks(content) } });
+          emit({ type: "trace", event: { kind: "assistant", content: claudeContent(content) } });
         for (const block of message.message.content) {
           if (block.type === "text" && block.text) {
             emit({ type: "assistant", text: block.text.slice(0, 8192) });
@@ -288,7 +307,7 @@ export async function runClaudeCode(
               callId: block.tool_use_id,
               toolName: call.name,
               outcome: block.is_error ? "failed" : "succeeded",
-              content: traceBlocks(block.content),
+              content: claudeContent(block.content),
             },
           });
         }

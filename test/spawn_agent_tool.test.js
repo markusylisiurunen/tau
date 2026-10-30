@@ -8,9 +8,9 @@ import { createWaitForAgentsToolDefinition } from "../dist/core/tools/wait_for_a
 const context = () => ({ signal: new AbortController().signal });
 function fixture(overrides = {}) {
   const supervisor = {
-    spawn: vi.fn(() => ({ ok: true, state: { id: "worker" } })),
+    spawn: vi.fn(() => ({ id: "worker", status: "working" })),
     read: vi.fn(() => ({ id: "worker", status: "working" })),
-    sendInput: vi.fn(() => ({ ok: true })),
+    sendInput: vi.fn(() => ({ id: "worker", status: "working" })),
     interrupt: vi.fn(),
     waitForAgents: vi.fn(async () => []),
     ...overrides.supervisor,
@@ -128,8 +128,8 @@ describe("agents capability", () => {
       run: { status: "succeeded", response: "secret report", startedAt: 1, finishedAt: 2 },
     };
     const tool = createWaitForAgentsToolDefinition({
-      waitForAgents: async () => [state],
-      read: () => ({ id: "worker", status: "idle", reason: "completed" }),
+      waitForAgents: async () => [{ id: "worker", status: "idle", reason: "completed" }],
+      getSnapshot: () => state,
     });
     const outcome = await tool.execute(
       { id: "wait", name: "wait_for_agents", arguments: { ids: ["worker"] } },

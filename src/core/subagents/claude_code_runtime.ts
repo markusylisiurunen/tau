@@ -1,12 +1,21 @@
 import { readFileSync } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
+import { getUsageTotals } from "../usage/logs.js";
 import {
   type ClaudeCodeEvent,
   type ClaudeCodeResult,
+  type ClaudeCodeTokenUsage,
   claudeCodeEventSchema,
   claudeCodeInputSchema,
 } from "./claude_code_protocol.js";
+import { runtimeFailure } from "./errors.js";
+import type { SubagentRuntimeEvent } from "./events.js";
+import type {
+  SubagentRuntime,
+  SubagentRuntimeOutcome,
+  SubagentRuntimeSettlement,
+} from "./runtime.js";
 import type { ClaudeCodeSubagentConfig } from "./types.js";
 
 const MAX_EVENT_BYTES = 8 * 1024 * 1024;
@@ -41,7 +50,16 @@ const RUNNER_BOOTSTRAP = `
 })().catch(() => { process.stderr.write("failed to start Claude Code runner\\n"); process.exitCode = 1; });
 `;
 
-export class ClaudeCodeRuntime {
+export class ClaudeCodeRuntime implements SubagentRuntime {
+  private pending: { prompt: string }[] = [];
+  private steeringDelivery = Promise.resolve();
+  private deliveryFailure?: Error;
+  private interrupted = false;
+  private readonly messageUsage = new Map<string, ClaudeCodeTokenUsage | null>();
+  private usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  private cost = 0;
+  private contextTokens = 0;
+  private contextSize = 0;
   private controller?: AbortController;
   private sessionId?: string;
   private disposed = false;
@@ -51,11 +69,12 @@ export class ClaudeCodeRuntime {
     private readonly options: {
       config: ClaudeCodeSubagentConfig;
       backend: ToolExecutionBackend;
-      onEvent: (event: ClaudeCodeEvent) => Promise<void>;
+      onEvent: (event: SubagentRuntimeEvent) => Promise<void>;
+      now: () => number;
     },
   ) {}
 
-  async steer(message: string): Promise<boolean> {
+  private async deliverInput(message: string): Promise<boolean> {
     if (!this.controlPath || !this.controller || this.controller.signal.aborted) return false;
     const result = await this.options.backend.runNodeScript(
       `
@@ -92,10 +111,59 @@ export class ClaudeCodeRuntime {
     return result.stdout.trim() === "accepted";
   }
 
-  interrupt(): boolean {
-    if (!this.controller || this.controller.signal.aborted) return false;
-    this.controller.abort();
-    return true;
+  get model() {
+    const { model, effort } = this.options.config;
+    return { provider: model.provider, id: model.id, reasoning: effort };
+  }
+  get contextWindow(): number {
+    return 0;
+  }
+  get pendingSteering(): number {
+    return this.pending.length;
+  }
+
+  steer(prompt: string): void {
+    this.pending.push({ prompt });
+    this.deliverSteering();
+  }
+
+  private deliverSteering(): void {
+    this.steeringDelivery = this.steeringDelivery.then(async () => {
+      for (const input of [...this.pending]) {
+        if (this.interrupted || this.deliveryFailure) return;
+        try {
+          if (!(await this.deliverInput(input.prompt))) return;
+        } catch (error) {
+          if (this.interrupted) return;
+          this.deliveryFailure = error instanceof Error ? error : new Error(String(error));
+          const index = this.pending.indexOf(input);
+          if (index >= 0) this.pending.splice(index, 1);
+          this.controller?.abort();
+          await this.options.onEvent({
+            type: "trace",
+            event: {
+              kind: "notice",
+              code: "input.discarded",
+              content: [
+                {
+                  type: "text",
+                  text: "Steering input discarded because delivery could not be confirmed.",
+                },
+              ],
+            },
+          });
+          return;
+        }
+        const index = this.pending.indexOf(input);
+        if (index >= 0) this.pending.splice(index, 1);
+      }
+    });
+  }
+
+  interrupt(): void {
+    this.interrupted = true;
+    this.pending = [];
+    this.controller?.abort();
   }
 
   dispose(): void {
@@ -103,7 +171,42 @@ export class ClaudeCodeRuntime {
     this.interrupt();
   }
 
-  async submit(
+  async submit(prompt: string): Promise<SubagentRuntimeSettlement> {
+    this.interrupted = false;
+    this.deliveryFailure = undefined;
+    let outcome: SubagentRuntimeOutcome;
+    try {
+      const completion = await this.run(prompt);
+      outcome =
+        completion.status === "interrupted"
+          ? { status: "interrupted" }
+          : completion.result.failed
+            ? {
+                status: "failed",
+                failure: {
+                  kind: "provider-error",
+                  message: completion.result.response,
+                  stopReason: "error",
+                },
+              }
+            : { status: "succeeded", response: completion.result.response };
+    } catch (error) {
+      outcome = runtimeFailure(error);
+    } finally {
+      try {
+        await this.steeringDelivery;
+      } catch (error) {
+        this.deliveryFailure = error instanceof Error ? error : new Error(String(error));
+      }
+      this.steeringDelivery = Promise.resolve();
+    }
+    if (this.deliveryFailure) outcome = runtimeFailure(this.deliveryFailure);
+    const unconsumed = this.interrupted ? [] : this.pending.map((input) => input.prompt);
+    this.pending = [];
+    return { outcome: this.interrupted ? { status: "interrupted" } : outcome, unconsumed };
+  }
+
+  private async run(
     prompt: string,
   ): Promise<{ status: "interrupted" } | { status: "completed"; result: ClaudeCodeResult }> {
     if (this.disposed) throw new Error("Claude Code subagent is disposed");
@@ -140,7 +243,7 @@ export class ClaudeCodeRuntime {
       events = events
         .then(async () => {
           try {
-            if (!failure) await this.options.onEvent(event);
+            if (!failure) await this.recordEvent(event);
           } finally {
             queuedEventBytes -= bytes;
           }
@@ -198,6 +301,94 @@ export class ClaudeCodeRuntime {
       await events;
       this.controller = undefined;
       this.controlPath = undefined;
+    }
+  }
+  private async recordEvent(event: ClaudeCodeEvent): Promise<void> {
+    if (event.type === "trace") await this.options.onEvent(event);
+    if (event.type === "control") this.deliverSteering();
+    if (event.type === "unconsumed_input" && !this.interrupted)
+      this.pending.push({ prompt: event.message });
+    if (event.type === "usage" || event.type === "result") {
+      let reported = event.usage;
+      if (event.type === "usage") {
+        const previous = this.messageUsage.get(event.messageId);
+        // Final result totals already cover these messages, including resumed replays.
+        if (previous === null) return;
+        const current = {
+          input: Math.max(previous?.input ?? 0, event.usage.input),
+          output: Math.max(previous?.output ?? 0, event.usage.output),
+          cacheRead: Math.max(previous?.cacheRead ?? 0, event.usage.cacheRead),
+          cacheWrite: Math.max(previous?.cacheWrite ?? 0, event.usage.cacheWrite),
+        };
+        this.messageUsage.set(event.messageId, current);
+        reported = {
+          input: this.usage.input + current.input - (previous?.input ?? 0),
+          output: this.usage.output + current.output - (previous?.output ?? 0),
+          cacheRead: this.usage.cacheRead + current.cacheRead - (previous?.cacheRead ?? 0),
+          cacheWrite: this.usage.cacheWrite + current.cacheWrite - (previous?.cacheWrite ?? 0),
+        };
+        if (getUsageTotals(current).total === getUsageTotals(previous).total) return;
+        this.contextTokens = getUsageTotals(current).total;
+      } else {
+        for (const messageId of this.messageUsage.keys()) {
+          this.messageUsage.set(messageId, null);
+        }
+        this.contextTokens = event.usage.contextWindowUsageTokens;
+        this.contextSize = event.usage.contextWindow;
+      }
+      // SDK totals include the history restored on resume. Record only the delta,
+      // and replace (rather than sum) the current context-window measurement.
+      const usage = getUsageTotals({
+        input: Math.max(0, reported.input - this.usage.input),
+        output: Math.max(0, reported.output - this.usage.output),
+        cacheRead: Math.max(0, reported.cacheRead - this.usage.cacheRead),
+        cacheWrite: Math.max(0, reported.cacheWrite - this.usage.cacheWrite),
+      });
+      const cost = event.type === "result" ? Math.max(0, event.cost - this.cost) : 0;
+      // Startup failures can report zero totals even for a resumed session.
+      this.cost += cost;
+      this.usage = {
+        ...this.usage,
+        input: this.usage.input + usage.input,
+        output: this.usage.output + usage.output,
+        cacheRead: this.usage.cacheRead + usage.cacheRead,
+        cacheWrite: this.usage.cacheWrite + usage.cacheWrite,
+      };
+      await this.options.onEvent({
+        type: "usage",
+        entry: {
+          timestamp: this.options.now(),
+          provider: this.model.provider,
+          model: this.model.id,
+          api: "claude-agent-sdk",
+          reasoningEffort: this.model.reasoning,
+          usage,
+          cost: { total: cost },
+        },
+        contextTokens: this.contextTokens,
+        contextWindow: this.contextSize,
+      });
+    } else if (event.type === "assistant") {
+      await this.options.onEvent({
+        type: "activity",
+        activity: { type: "assistant", text: event.text },
+      });
+    } else if (event.type === "tool") {
+      await this.options.onEvent({
+        type: "activity",
+        activity: {
+          type: "tool",
+          toolName: event.name,
+          outcome: event.failed ? "failed" : "succeeded",
+          presentation: {
+            action: event.failed ? "failed" : "completed",
+            subject: event.subject,
+            subjectWrap: "word",
+            details: [],
+            metadata: [],
+          },
+        },
+      });
     }
   }
 }

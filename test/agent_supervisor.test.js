@@ -100,8 +100,8 @@ describe("AgentSupervisor", () => {
           mcp,
         }),
       );
-      expect(spawned.ok).toBe(true);
-      const tool = getRecord(supervisor, spawned.state.id).runtime.spec.tools.get("code");
+
+      const tool = getRecord(supervisor, spawned.id).runtime.agent.spec.tools.get("code");
       expect(tool.schema.description).toContain(JSON.stringify({ name: "host" }));
       expect(tool.schema.description).not.toContain("target");
       expect(mcp.listServers).toHaveBeenCalledOnce();
@@ -113,7 +113,7 @@ describe("AgentSupervisor", () => {
           arguments: { code: "printText(JSON.stringify(await tau.mcp.listServers()))" },
         },
         {
-          agentId: spawned.state.id,
+          agentId: spawned.id,
           turnId: "turn",
           assistantMessageId: "assistant",
           signal: new AbortController().signal,
@@ -125,7 +125,7 @@ describe("AgentSupervisor", () => {
       expect(mcp.listServers).toHaveBeenCalledOnce();
       const excluded = supervisor.spawn(createSpawnOptions({ mcp }));
       expect(
-        getRecord(supervisor, excluded.state.id).runtime.spec.tools.get("code"),
+        getRecord(supervisor, excluded.id).runtime.agent.spec.tools.get("code"),
       ).toBeUndefined();
     } finally {
       supervisor.reset();
@@ -147,10 +147,7 @@ describe("AgentSupervisor", () => {
         history,
       }),
     );
-
-    expect(spawned.ok).toBe(true);
-    if (!spawned.ok) throw new Error(spawned.reason);
-    expect(getRecord(supervisor, spawned.state.id).runtime.spec.tools.schemas).toEqual([
+    expect(getRecord(supervisor, spawned.id).runtime.agent.spec.tools.schemas).toEqual([
       expect.objectContaining({ name: "code" }),
       ...["list_code_jobs", "read_code_job", "stop_code_job", "wait_for_code_jobs"].map((name) =>
         expect.objectContaining({ name }),
@@ -216,12 +213,12 @@ describe("AgentSupervisor", () => {
         },
       );
       expect(outcome.outcome).toBe("succeeded");
-      const [child] = supervisor.listSnapshots();
+      const [child] = supervisor.list();
       await supervisor.waitForAgents([child.id]);
       expect(supervisor.getSnapshot(child.id).run.status).toBe("succeeded");
-      expect(supervisor.sendInput({ mode: "queue", id: child.id, prompt: "follow up" }).ok).toBe(
-        true,
-      );
+      expect(
+        supervisor.sendInput({ mode: "queue", id: child.id, prompt: "follow up" }).status,
+      ).toBe("working");
       await supervisor.waitForAgents([child.id]);
       expect(supervisor.getSnapshot(child.id).run.status).toBe("succeeded");
       expect(submit).toHaveBeenCalledTimes(2);
@@ -241,37 +238,30 @@ describe("AgentSupervisor", () => {
       recordUsage,
     });
     const spawned = supervisor.spawn(createSpawnOptions());
-    expect(spawned.ok).toBe(true);
-    if (!spawned.ok) throw new Error(spawned.reason);
-    const record = getRecord(supervisor, spawned.state.id);
-    expect(record.runtime).toBeInstanceOf(AgentRuntime);
+    const record = getRecord(supervisor, spawned.id);
+    expect(record.runtime.agent).toBeInstanceOf(AgentRuntime);
     const responses = [createAssistant("first result"), createAssistant("follow-up result")];
-    record.runtime.spec.model.stream = vi.fn(() => createStream(responses.shift()));
+    record.runtime.agent.spec.model.stream = vi.fn(() => createStream(responses.shift()));
 
-    await expect(supervisor.waitForAgents([spawned.state.id])).resolves.toEqual([
+    await expect(supervisor.waitForAgents([spawned.id])).resolves.toEqual([
       expect.objectContaining({
-        id: spawned.state.id,
-        run: expect.objectContaining({
-          status: "succeeded",
-          response: "first result",
-        }),
+        id: spawned.id,
+        status: "idle",
+        reason: "completed",
       }),
     ]);
-    expect(supervisor.getSnapshot(spawned.state.id)).toMatchObject({
+    expect(supervisor.getSnapshot(spawned.id)).toMatchObject({
       run: { status: "succeeded", response: "first result" },
       costTotal: 0.01,
     });
 
-    expect(
-      supervisor.sendInput({ mode: "queue", id: spawned.state.id, prompt: "continue" }).ok,
-    ).toBe(true);
-    await expect(supervisor.waitForAgents([spawned.state.id])).resolves.toEqual([
+    expect(supervisor.sendInput({ mode: "queue", id: spawned.id, prompt: "continue" }).status).toBe(
+      "working",
+    );
+    await expect(supervisor.waitForAgents([spawned.id])).resolves.toEqual([
       expect.objectContaining({
-        run: expect.objectContaining({
-          revision: 2,
-          status: "succeeded",
-          response: "follow-up result",
-        }),
+        status: "idle",
+        reason: "completed",
       }),
     ]);
     expect(events.filter((event) => event.type === "subagent_spawned")).toHaveLength(1);
@@ -293,84 +283,70 @@ describe("AgentSupervisor", () => {
   it("marks compacted subagent state as a potentially stale snapshot", async () => {
     const supervisor = new AgentSupervisor({ onEvent: async () => {}, recordUsage: () => {} });
     const spawned = supervisor.spawn(createSpawnOptions());
-    expect(spawned.ok).toBe(true);
-    if (!spawned.ok) throw new Error(spawned.reason);
-    const record = getRecord(supervisor, spawned.state.id);
-    record.runtime.spec.model.stream = vi.fn(() => createStream(createAssistant("done")));
+    const record = getRecord(supervisor, spawned.id);
+    record.runtime.agent.spec.model.stream = vi.fn(() => createStream(createAssistant("done")));
 
     const context = supervisor.getActiveCompactionContext();
 
     const states = JSON.parse(context.split("\n\n")[1].split("\n</active-subagents>")[0]);
-    expect(states).toEqual([expect.objectContaining({ id: spawned.state.id, status: "working" })]);
+    expect(states).toEqual([expect.objectContaining({ id: spawned.id, status: "working" })]);
     expect(states[0]).not.toHaveProperty("run");
-    await supervisor.waitForAgents([spawned.state.id]);
+    await supervisor.waitForAgents([spawned.id]);
   });
 
   it("retains the latest response for repeated waits", async () => {
     const supervisor = new AgentSupervisor({ onEvent: async () => {}, recordUsage: () => {} });
     const spawned = supervisor.spawn(createSpawnOptions());
-    expect(spawned.ok).toBe(true);
-    if (!spawned.ok) throw new Error(spawned.reason);
-    const record = getRecord(supervisor, spawned.state.id);
-    record.runtime.spec.model.stream = vi.fn(() => createStream(createAssistant("retained")));
+    const record = getRecord(supervisor, spawned.id);
+    record.runtime.agent.spec.model.stream = vi.fn(() => createStream(createAssistant("retained")));
 
-    const first = await supervisor.waitForAgents([spawned.state.id]);
-    const second = await supervisor.waitForAgents([spawned.state.id]);
+    const first = await supervisor.waitForAgents([spawned.id]);
+    const second = await supervisor.waitForAgents([spawned.id]);
 
     expect(first).toEqual(second);
     expect(second[0]).toMatchObject({
-      run: { status: "succeeded", response: "retained" },
+      status: "idle",
+      reason: "completed",
     });
+    const trace = supervisor.getTrace(spawned.id);
+    const [answer] = trace.trace({ kinds: ["assistant"] }).entries;
+    expect(trace.readText(answer.seq)).toEqual({ text: "retained", complete: true });
   });
 
   it("distinguishes returned and streamed provider errors from successful empty responses", async () => {
     const supervisor = new AgentSupervisor({ onEvent: async () => {}, recordUsage: () => {} });
     const failed = supervisor.spawn(createSpawnOptions());
-    expect(failed.ok).toBe(true);
-    if (!failed.ok) throw new Error(failed.reason);
-    const failedRecord = getRecord(supervisor, failed.state.id);
-    failedRecord.runtime.spec.retryPolicy.delayMs = 0;
-    failedRecord.runtime.spec.model.stream = vi.fn(() =>
+    const failedRecord = getRecord(supervisor, failed.id);
+    failedRecord.runtime.agent.spec.retryPolicy.delayMs = 0;
+    failedRecord.runtime.agent.spec.model.stream = vi.fn(() =>
       createStream(
         createAssistant("", { stopReason: "error", errorMessage: "provider overloaded" }),
       ),
     );
 
-    await expect(supervisor.waitForAgents([failed.state.id])).resolves.toEqual([
+    await expect(supervisor.waitForAgents([failed.id])).resolves.toEqual([
       expect.objectContaining({
-        run: expect.objectContaining({
-          status: "failed",
-          failure: {
-            kind: "provider-error",
-            message: "provider overloaded",
-            stopReason: "error",
-          },
-        }),
+        status: "idle",
+        reason: "failed",
+        error: { code: "provider-error", message: "provider overloaded" },
       }),
     ]);
 
     const rejected = supervisor.spawn(createSpawnOptions());
-    expect(rejected.ok).toBe(true);
-    if (!rejected.ok) throw new Error(rejected.reason);
-    const rejectedRecord = getRecord(supervisor, rejected.state.id);
-    rejectedRecord.runtime.spec.retryPolicy = { maxRetries: 0, delayMs: 0 };
-    rejectedRecord.runtime.spec.model.stream = vi.fn(() =>
+    const rejectedRecord = getRecord(supervisor, rejected.id);
+    rejectedRecord.runtime.agent.spec.retryPolicy = { maxRetries: 0, delayMs: 0 };
+    rejectedRecord.runtime.agent.spec.model.stream = vi.fn(() =>
       createFailingStream("incomplete result", new Error("provider connection failed")),
     );
 
-    await expect(supervisor.waitForAgents([rejected.state.id])).resolves.toEqual([
+    await expect(supervisor.waitForAgents([rejected.id])).resolves.toEqual([
       expect.objectContaining({
-        run: expect.objectContaining({
-          status: "failed",
-          failure: {
-            kind: "provider-error",
-            message: "provider connection failed",
-            stopReason: "error",
-          },
-        }),
+        status: "idle",
+        reason: "failed",
+        error: { code: "provider-error", message: "provider connection failed" },
       }),
     ]);
-    expect(rejectedRecord.runtime.rawHistory.at(-1)).toMatchObject({
+    expect(rejectedRecord.runtime.agent.rawHistory.at(-1)).toMatchObject({
       role: "assistant",
       content: [{ type: "text", text: "incomplete result" }],
       stopReason: "error",
@@ -378,14 +354,13 @@ describe("AgentSupervisor", () => {
     });
 
     const empty = supervisor.spawn(createSpawnOptions());
-    expect(empty.ok).toBe(true);
-    if (!empty.ok) throw new Error(empty.reason);
-    const emptyRecord = getRecord(supervisor, empty.state.id);
-    emptyRecord.runtime.spec.model.stream = vi.fn(() => createStream(createAssistant("")));
+    const emptyRecord = getRecord(supervisor, empty.id);
+    emptyRecord.runtime.agent.spec.model.stream = vi.fn(() => createStream(createAssistant("")));
 
-    await expect(supervisor.waitForAgents([empty.state.id])).resolves.toEqual([
+    await expect(supervisor.waitForAgents([empty.id])).resolves.toEqual([
       expect.objectContaining({
-        run: expect.objectContaining({ status: "succeeded", response: "" }),
+        status: "idle",
+        reason: "completed",
       }),
     ]);
   });
@@ -415,9 +390,7 @@ describe("AgentSupervisor", () => {
         },
       }),
     );
-    expect(spawned.ok).toBe(true);
-    if (!spawned.ok) throw new Error(spawned.reason);
-    const record = getRecord(supervisor, spawned.state.id);
+    const record = getRecord(supervisor, spawned.id);
     const calls = [
       {
         id: "bash-1",
@@ -461,25 +434,23 @@ describe("AgentSupervisor", () => {
       createStream(createAssistant("finished after compaction")),
     ];
     const streamModel = vi.fn(() => streams.shift());
-    record.runtime.spec.model.stream = streamModel;
+    record.runtime.agent.spec.model.stream = streamModel;
 
-    await expect(supervisor.waitForAgents([spawned.state.id])).resolves.toEqual([
+    await expect(supervisor.waitForAgents([spawned.id])).resolves.toEqual([
       expect.objectContaining({
-        id: spawned.state.id,
-        run: expect.objectContaining({
-          status: "succeeded",
-          response: "finished after compaction",
-        }),
+        id: spawned.id,
+        status: "idle",
+        reason: "completed",
       }),
     ]);
 
     expect(
-      record.runtime.rawHistory.some((message) =>
+      record.runtime.agent.rawHistory.some((message) =>
         JSON.stringify(message).includes("compacted summary"),
       ),
     ).toBe(true);
     expect(backend.runBash).toHaveBeenCalledTimes(2);
-    const evidence = supervisor.getTrace(spawned.state.id).trace({}).entries;
+    const evidence = supervisor.getTrace(spawned.id).trace({}).entries;
     expect(
       evidence
         .filter((entry) => entry.kind === "tool_call")
@@ -526,19 +497,18 @@ describe("AgentSupervisor", () => {
       recordUsage: () => {},
     });
     const spawned = supervisor.spawn(createSpawnOptions());
-    expect(spawned.ok).toBe(true);
-    if (!spawned.ok) throw new Error(spawned.reason);
-    const record = getRecord(supervisor, spawned.state.id);
+    const record = getRecord(supervisor, spawned.id);
     const stream = vi.fn(() => createStream(createAssistant("too late")));
-    record.runtime.spec.model.stream = stream;
+    record.runtime.agent.spec.model.stream = stream;
 
-    const interruption = supervisor.interrupt(spawned.state.id);
+    const interruption = supervisor.interrupt(spawned.id);
     await vi.waitFor(() => expect(record.run.interruptRequested).toBe(true));
     releaseSpawn();
 
     await expect(interruption).resolves.toMatchObject({
-      id: spawned.state.id,
-      run: { status: "interrupted", failure: { kind: "interrupted" } },
+      id: spawned.id,
+      status: "idle",
+      reason: "interrupted",
     });
     expect(stream).not.toHaveBeenCalled();
   });
@@ -552,10 +522,8 @@ describe("AgentSupervisor", () => {
       recordUsage: () => {},
     });
     const spawned = supervisor.spawn(createSpawnOptions());
-    expect(spawned.ok).toBe(true);
-    if (!spawned.ok) throw new Error(spawned.reason);
-    const record = getRecord(supervisor, spawned.state.id);
-    record.runtime.spec.model.stream = vi.fn((_context, options) => ({
+    const record = getRecord(supervisor, spawned.id);
+    record.runtime.agent.spec.model.stream = vi.fn((_context, options) => ({
       async *[Symbol.asyncIterator]() {
         await new Promise((resolve) =>
           options.signal.addEventListener("abort", resolve, { once: true }),
@@ -566,12 +534,11 @@ describe("AgentSupervisor", () => {
       },
     }));
 
-    await vi.waitFor(() => expect(record.runtime.status).toBe("running"));
-    await expect(supervisor.interrupt(spawned.state.id)).rejects.toBe(interruptProjection);
-    await expect(record.completion).resolves.toMatchObject({
-      run: { status: "interrupted", failure: { kind: "interrupted" } },
-    });
-    expect(record.runtime.status).toBe("idle");
+    await vi.waitFor(() => expect(record.runtime.agent.status).toBe("running"));
+    await expect(supervisor.interrupt(spawned.id)).rejects.toBe(interruptProjection);
+    await record.completion;
+    expect(record.run.status).toBe("interrupted");
+    expect(record.runtime.agent.status).toBe("idle");
   });
 
   it("keeps a requested interruption when the child races to natural completion", async () => {
@@ -585,23 +552,22 @@ describe("AgentSupervisor", () => {
     });
     const supervisor = new AgentSupervisor({ onEvent: async () => {}, recordUsage: () => {} });
     const spawned = supervisor.spawn(createSpawnOptions());
-    expect(spawned.ok).toBe(true);
-    if (!spawned.ok) throw new Error(spawned.reason);
-    const record = getRecord(supervisor, spawned.state.id);
-    record.runtime.submit = vi.fn(async () => {
+    const record = getRecord(supervisor, spawned.id);
+    record.runtime.agent.submit = vi.fn(async () => {
       markSubmitStarted();
       await submitGate;
       return { aborted: false, stopReason: "stop" };
     });
     await submitStarted;
 
-    const interruption = supervisor.interrupt(spawned.state.id);
+    const interruption = supervisor.interrupt(spawned.id);
     await vi.waitFor(() => expect(record.run.interruptRequested).toBe(true));
     releaseSubmit();
 
     await expect(interruption).resolves.toMatchObject({
-      id: spawned.state.id,
-      run: { status: "interrupted", failure: { kind: "interrupted" } },
+      id: spawned.id,
+      status: "idle",
+      reason: "interrupted",
     });
     expect(record.run.failure).toMatchObject({ kind: "interrupted" });
   });
@@ -609,10 +575,8 @@ describe("AgentSupervisor", () => {
   it("interrupts a running child and reports an interrupted result", async () => {
     const supervisor = new AgentSupervisor({ onEvent: async () => {}, recordUsage: () => {} });
     const spawned = supervisor.spawn(createSpawnOptions());
-    expect(spawned.ok).toBe(true);
-    if (!spawned.ok) throw new Error(spawned.reason);
-    const record = getRecord(supervisor, spawned.state.id);
-    record.runtime.spec.model.stream = vi.fn((_context, options) => ({
+    const record = getRecord(supervisor, spawned.id);
+    record.runtime.agent.spec.model.stream = vi.fn((_context, options) => ({
       async *[Symbol.asyncIterator]() {
         await new Promise((resolve) =>
           options.signal.addEventListener("abort", resolve, { once: true }),
@@ -623,10 +587,11 @@ describe("AgentSupervisor", () => {
       },
     }));
 
-    await vi.waitFor(() => expect(record.runtime.status).toBe("running"));
-    await expect(supervisor.interrupt(spawned.state.id)).resolves.toMatchObject({
-      id: spawned.state.id,
-      run: { status: "interrupted", failure: { kind: "interrupted" } },
+    await vi.waitFor(() => expect(record.runtime.agent.status).toBe("running"));
+    await expect(supervisor.interrupt(spawned.id)).resolves.toMatchObject({
+      id: spawned.id,
+      status: "idle",
+      reason: "interrupted",
     });
     expect(supervisor.getActiveCount()).toBe(0);
   });
@@ -647,13 +612,11 @@ describe("AgentSupervisor", () => {
       recordUsage: () => {},
     });
     const spawned = supervisor.spawn(createSpawnOptions());
-    expect(spawned.ok).toBe(true);
-    if (!spawned.ok) throw new Error(spawned.reason);
-    const record = getRecord(supervisor, spawned.state.id);
-    record.runtime.spec.model.stream = vi.fn(() => createStream(createAssistant("done")));
+    const record = getRecord(supervisor, spawned.id);
+    record.runtime.agent.spec.model.stream = vi.fn(() => createStream(createAssistant("done")));
 
     let settled = false;
-    const waiting = supervisor.waitForAgents([spawned.state.id]).finally(() => {
+    const waiting = supervisor.waitForAgents([spawned.id]).finally(() => {
       settled = true;
     });
     await vi.waitFor(() => expect(finishedEventSeen).toBe(true));
@@ -663,8 +626,9 @@ describe("AgentSupervisor", () => {
     releaseFinished();
     await expect(waiting).resolves.toEqual([
       expect.objectContaining({
-        id: spawned.state.id,
-        run: expect.objectContaining({ status: "succeeded", response: "done" }),
+        id: spawned.id,
+        status: "idle",
+        reason: "completed",
       }),
     ]);
   });
@@ -687,16 +651,15 @@ describe("AgentSupervisor", () => {
       const result = supervisor.spawn(
         createSpawnOptions({ originHistoryEntryId: `origin-${index}` }),
       );
-      expect(result.ok).toBe(true);
-      if (result.ok) ids.push(result.state.id);
+
+      ids.push(result.id);
     }
 
-    expect(supervisor.spawn(createSpawnOptions())).toEqual({
-      ok: false,
-      reason: expect.stringContaining("Subagent limit reached"),
-    });
+    expect(() => supervisor.spawn(createSpawnOptions())).toThrow(
+      expect.objectContaining({ code: "operation_failed" }),
+    );
     supervisor.retainOrigins(new Set(["origin-0"]));
-    expect(supervisor.listSnapshots().map((snapshot) => snapshot.id)).toEqual([ids[0]]);
+    expect(supervisor.list().map((snapshot) => snapshot.id)).toEqual([ids[0]]);
     expect(supervisor.records.size).toBe(1);
     releaseProgress();
     await supervisor.interrupt(ids[0]);
@@ -754,13 +717,13 @@ it("isolates main and sibling jobs while retaining child jobs across follow-ups"
       const options = createSpawnOptions({ backend, jobs });
       options.runtimeConfig.tools = ["bash"];
       const result = supervisor.spawn(options);
-      expect(result.ok).toBe(true);
-      return result.state.id;
+
+      return result.id;
     });
     await supervisor.waitForAgents(children);
     const registries = [
       main,
-      ...children.map((id) => getRecord(supervisor, id).runtime.spec.tools),
+      ...children.map((id) => getRecord(supervisor, id).runtime.agent.spec.tools),
     ];
     for (const [owner, registry] of registries.entries()) {
       for (const kind of ["bash", "code"]) {
@@ -788,13 +751,13 @@ it("isolates main and sibling jobs while retaining child jobs across follow-ups"
         }
         if (owner === 1) {
           expect(
-            supervisor.sendInput({ mode: "queue", id: children[0], prompt: "follow up" }).ok,
-          ).toBe(true);
+            supervisor.sendInput({ mode: "queue", id: children[0], prompt: "follow up" }).status,
+          ).toBe("working");
           await supervisor.waitForAgents([children[0]]);
           expect(
             (
               await execute(
-                getRecord(supervisor, children[0]).runtime.spec.tools,
+                getRecord(supervisor, children[0]).runtime.agent.spec.tools,
                 `read_${kind}_job`,
                 { id },
               )
@@ -825,9 +788,9 @@ describe("worker conversation scheduling", () => {
     });
     const supervisor = new AgentSupervisor({ onEvent: () => {}, recordUsage: () => {} });
     const spawned = supervisor.spawn(createSpawnOptions());
-    const record = getRecord(supervisor, spawned.state.id);
+    const record = getRecord(supervisor, spawned.id);
     const answers = ["first", "second", "third"];
-    record.runtime.spec.model.stream = vi.fn(() =>
+    record.runtime.agent.spec.model.stream = vi.fn(() =>
       createStream(createAssistant(answers.shift()), gate),
     );
     supervisor.sendInput({ id: record.id, prompt: "second input", mode: "queue" });
@@ -857,12 +820,12 @@ describe("worker conversation scheduling", () => {
     });
     const supervisor = new AgentSupervisor({ onEvent: () => {}, recordUsage: () => {} });
     const spawned = supervisor.spawn(createSpawnOptions());
-    const record = getRecord(supervisor, spawned.state.id);
+    const record = getRecord(supervisor, spawned.id);
     const answers = ["preamble", "steered answer"];
-    record.runtime.spec.model.stream = vi.fn(() =>
+    record.runtime.agent.spec.model.stream = vi.fn(() =>
       createStream(createAssistant(answers.shift()), gate),
     );
-    await vi.waitFor(() => expect(record.runtime.status).toBe("running"));
+    await vi.waitFor(() => expect(record.runtime.agent.status).toBe("running"));
     supervisor.sendInput({ id: record.id, prompt: "change focus", mode: "steer" });
     release();
     await supervisor.waitForAgents([record.id]);
@@ -883,8 +846,10 @@ describe("worker conversation scheduling", () => {
     });
     const supervisor = new AgentSupervisor({ onEvent: () => {}, recordUsage: () => {} });
     const spawned = supervisor.spawn(createSpawnOptions());
-    const record = getRecord(supervisor, spawned.state.id);
-    record.runtime.spec.model.stream = vi.fn(() => createStream(createAssistant("done"), gate));
+    const record = getRecord(supervisor, spawned.id);
+    record.runtime.agent.spec.model.stream = vi.fn(() =>
+      createStream(createAssistant("done"), gate),
+    );
     supervisor.sendInput({ id: record.id, prompt: "queued", mode: "queue" });
     await expect(supervisor.waitForAgents([record.id], AbortSignal.abort())).rejects.toThrow();
     expect(supervisor.read(record.id).status).toBe("working");
@@ -948,8 +913,8 @@ it("keeps background orchestration attribution and cancels only its wait", async
       },
     );
     expect(launched.outcome).toBe("succeeded");
-    await vi.waitFor(() => expect(supervisor.listSnapshots()).toHaveLength(1));
-    const [worker] = supervisor.listSnapshots();
+    await vi.waitFor(() => expect(supervisor.list()).toHaveLength(1));
+    const [worker] = supervisor.list();
     expect(getRecord(supervisor, worker.id).originHistoryEntryId).toBe("launch-origin");
     await codeJobs.dispose();
     expect(supervisor.read(worker.id).status).toBe("working");

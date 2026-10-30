@@ -1,4 +1,11 @@
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout } from "node:timers/promises";
@@ -96,6 +103,7 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
 function createRuntimeOptions(directory, events) {
   const model = { id: "claude-sonnet-5-5", provider: "claude-code" };
   return {
+    now: Date.now,
     config: {
       model,
       kind: "claude-code",
@@ -146,14 +154,14 @@ describe("bundled Claude Agent SDK runner", () => {
                 id: event.state.id,
                 prompt: "updated instruction",
                 mode: "steer",
-              }).ok,
-            ).toBe(true);
+              }).status,
+            ).toBe("working");
           }
         },
       });
       try {
         const marker = fakeClaude(directory, true, "steering", outcome);
-        const { state } = supervisor.spawn({
+        const state = supervisor.spawn({
           runtimeConfig: options.config,
           backend: options.backend,
           config: {},
@@ -162,8 +170,8 @@ describe("bundled Claude Agent SDK runner", () => {
           originHistoryEntryId: "origin",
         });
         const [settled] = await supervisor.waitForAgents([state.id]);
-        expect(settled.run.status).toBe("succeeded");
-        expect(settled.run.revision).toBe(outcome === "success" ? 1 : 2);
+        expect(settled).toMatchObject({ status: "idle", reason: "completed" });
+        expect(supervisor.getSnapshot(state.id).run.revision).toBe(outcome === "success" ? 1 : 2);
         expect(JSON.parse(readFileSync(marker, "utf8")).message.message.content).toBe(
           "updated instruction",
         );
@@ -190,8 +198,8 @@ describe("bundled Claude Agent SDK runner", () => {
       const marker = fakeClaude(directory, true);
       const result = await runtime.submit("perform the task");
       expect(result).toMatchObject({
-        status: "completed",
-        result: { response: "finished", failed: false },
+        outcome: { status: "succeeded", response: "finished" },
+        unconsumed: [],
       });
       const sent = JSON.parse(readFileSync(marker, "utf8"));
       expect(sent.message.message.content).toBe("perform the task");
@@ -205,16 +213,18 @@ describe("bundled Claude Agent SDK runner", () => {
       expect(sent.args).toContain("--tools=Read,Glob,Grep,Bash,Skill");
       expect(sent.initialization).not.toHaveProperty("skills");
       expect(sent.cwd).toBe(realpathSync(directory));
-      expect(events).toContainEqual(expect.objectContaining({ type: "session" }));
-      expect(events).toContainEqual({
-        type: "tool",
-        name: "Bash",
-        subject: "npm test",
-        failed: false,
-      });
-      expect(events.filter((event) => event.type === "tool")).toHaveLength(2);
-      expect(events).toContainEqual({ type: "tool", name: "Read", subject: "Read", failed: true });
-      expect(events.filter((event) => event.type === "assistant")).toEqual([
+      const activities = events
+        .filter((event) => event.type === "activity")
+        .map((event) => event.activity);
+      expect(activities.filter((activity) => activity.type === "tool")).toEqual([
+        expect.objectContaining({
+          toolName: "Bash",
+          outcome: "succeeded",
+          presentation: expect.objectContaining({ subject: "npm test" }),
+        }),
+        expect.objectContaining({ toolName: "Read", outcome: "failed" }),
+      ]);
+      expect(activities.filter((activity) => activity.type === "assistant")).toEqual([
         { type: "assistant", text: "finished" },
       ]);
       expect(events.filter((event) => event.type === "trace")).toContainEqual(
@@ -225,19 +235,10 @@ describe("bundled Claude Agent SDK runner", () => {
           }),
         }),
       );
-      expect(events).toContainEqual(
-        expect.objectContaining({
-          type: "result",
-          usage: {
-            input: 7,
-            output: 4,
-            cacheRead: 7,
-            cacheWrite: 2,
-            contextWindowUsageTokens: 17,
-            contextWindow: 1000000,
-          },
-        }),
-      );
+      const usage = events.filter((event) => event.type === "usage");
+      expect(usage.reduce((total, event) => total + event.entry.usage.input, 0)).toBe(7);
+      expect(usage.reduce((total, event) => total + event.entry.usage.output, 0)).toBe(4);
+      expect(usage.at(-1)).toMatchObject({ contextTokens: 17, contextWindow: 1000000 });
     } finally {
       runtime.dispose();
       rmSync(directory, { recursive: true, force: true });
@@ -260,11 +261,12 @@ describe("bundled Claude Agent SDK runner", () => {
         fakeClaude(directory, true, false, outcome);
         const result = await runtime.submit("task");
         expect(result).toMatchObject({
-          status: "completed",
-          result: { failed: true, usage: { contextWindow: 0 } },
+          outcome: { status: "failed", failure: { kind: "provider-error" } },
+          unconsumed: [],
         });
-        expect(events.filter((event) => event.type === "result")).toHaveLength(1);
-        if (outcome === "error_during_execution") expect(result.result.usage.input).toBe(0);
+        const finalUsage = events.filter((event) => event.type === "usage").at(-1);
+        expect(finalUsage.contextWindow).toBe(0);
+        if (outcome === "error_during_execution") expect(finalUsage.entry.usage.input).toBe(0);
       } finally {
         runtime.dispose();
         rmSync(directory, { recursive: true, force: true });
@@ -279,18 +281,11 @@ describe("bundled Claude Agent SDK runner", () => {
     const runtime = new ClaudeCodeRuntime(createRuntimeOptions(directory, events));
     let pending;
     try {
-      fakeClaude(directory, true, true);
+      const marker = fakeClaude(directory, true, true);
       pending = runtime.submit("wait for interruption");
-      for (
-        let attempt = 0;
-        attempt < 500 && !events.some((event) => event.type === "session");
-        attempt++
-      ) {
-        await setTimeout(10);
-      }
-      expect(events.some((event) => event.type === "session")).toBe(true);
-      expect(runtime.interrupt()).toBe(true);
-      expect(await pending).toEqual({ status: "interrupted" });
+      await vi.waitFor(() => expect(existsSync(marker)).toBe(true));
+      runtime.interrupt();
+      expect(await pending).toEqual({ outcome: { status: "interrupted" }, unconsumed: [] });
       expect(readFileSync(join(directory, "terminated"), "utf8")).toBe("yes");
     } finally {
       runtime.dispose();
@@ -316,8 +311,8 @@ describe("bundled Claude Agent SDK runner", () => {
         prompt: "complete a model call then wait",
         originHistoryEntryId: "origin",
       });
-      expect(spawned.ok).toBe(true);
-      id = spawned.state.id;
+
+      id = spawned.id;
       for (
         let attempt = 0;
         attempt < 500 && supervisor.getSnapshot(id).usage.output !== 3;
@@ -327,20 +322,21 @@ describe("bundled Claude Agent SDK runner", () => {
       }
       expect(supervisor.getSnapshot(id).usage.output).toBe(3);
       const stopped = await supervisor.interrupt(id);
-      expect(stopped.run.status).toBe("interrupted");
+      expect(stopped.reason).toBe("interrupted");
       expect(stopped.usage).toEqual({
         input: 5,
         output: 3,
         cacheRead: 7,
         cacheWrite: 2,
-        contextWindowUsageTokens: 17,
+        contextTokens: 17,
+        cost: 0,
         contextWindow: 0,
       });
       expect(recordUsage.mock.calls.map(([entry]) => entry.usage)).toEqual([
         { input: 5, output: 0, cacheRead: 7, cacheWrite: 2, total: 14 },
         { input: 0, output: 3, cacheRead: 0, cacheWrite: 0, total: 3 },
       ]);
-      expect(stopped.costTotal).toBe(0);
+      expect(stopped.usage.cost).toBe(0);
       expect(readFileSync(join(directory, "terminated"), "utf8")).toBe("yes");
     } finally {
       if (id) await supervisor.interrupt(id);
@@ -355,7 +351,12 @@ describe("bundled Claude Agent SDK runner", () => {
     const runtime = new ClaudeCodeRuntime(createRuntimeOptions(directory, events));
     try {
       const marker = fakeClaude(directory, false);
-      await expect(runtime.submit("must not run")).rejects.toThrow(/subscription/);
+      await expect(runtime.submit("must not run")).resolves.toMatchObject({
+        outcome: {
+          status: "failed",
+          failure: { kind: "runtime-error", message: expect.stringMatching(/subscription/) },
+        },
+      });
       expect(() => readFileSync(marker)).toThrow();
       expect(events).toEqual([]);
     } finally {

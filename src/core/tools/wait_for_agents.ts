@@ -127,8 +127,8 @@ export function createWaitForAgentsToolDefinition(supervisor: AgentSupervisor): 
         context,
         async (): Promise<ToolImplementationOutcome> => {
           try {
-            const states = await supervisor.waitForAgents(ids, signal);
-            const agents = states.map((state) => supervisor.read(state.id));
+            const agents = await supervisor.waitForAgents(ids, signal);
+            const states = agents.map((state) => supervisor.getSnapshot(state.id)!);
             const resultText = JSON.stringify({
               ready: agents.filter((state) => state.status === "idle").map((state) => state.id),
               agents,

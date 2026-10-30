@@ -1,37 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { z } from "zod";
 import { AgentRequestError } from "./errors.js";
+import type { ContentBlock, ObservableEvent } from "./events.js";
 
-export const contentBlockSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("text"), text: z.string() }),
-  z.object({ type: z.literal("json"), value: z.json() }),
-  z.object({ type: z.literal("image"), mimeType: z.string(), data: z.string() }),
-  z.object({ type: z.literal("unavailable"), reason: z.string() }),
-]);
-export type ContentBlock = z.infer<typeof contentBlockSchema>;
-export const observableEventSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("notice"), code: z.string(), content: z.array(contentBlockSchema) }),
-  z.object({ kind: z.literal("assistant"), content: z.array(contentBlockSchema) }),
-  z.object({
-    kind: z.literal("tool_call"),
-    callId: z.string(),
-    toolName: z.string(),
-    arguments: z.array(contentBlockSchema),
-  }),
-  z.object({
-    kind: z.literal("tool_result"),
-    callId: z.string(),
-    toolName: z.string(),
-    outcome: z.enum(["succeeded", "failed", "blocked", "cancelled"]),
-    content: z.array(contentBlockSchema),
-  }),
-]);
 export type TraceContent =
   | { kind: "inline"; blocks: ContentBlock[] }
   | { kind: "reference"; ref: string; bytes: number };
 export type TraceEvent =
   | { kind: "input"; mode: "initial" | "queue" | "steer"; content: ContentBlock[] }
-  | z.infer<typeof observableEventSchema>
+  | ObservableEvent
   | {
       kind: "status";
       status: "working" | "stopping" | "idle";
@@ -200,20 +176,4 @@ export function boundedTraceBlocks(blocks: ContentBlock[]): ContentBlock[] {
   return Buffer.byteLength(JSON.stringify(blocks)) <= 6 * 1024 * 1024
     ? blocks
     : [{ type: "unavailable", reason: "Content exceeds the 6 MiB retention limit." }];
-}
-
-export function traceBlocks(content: unknown): ContentBlock[] {
-  if (typeof content === "string") return [{ type: "text", text: content }];
-  if (!Array.isArray(content)) return [{ type: "unavailable", reason: "Unsupported content" }];
-  return content.map((block): ContentBlock => {
-    if (!block || typeof block !== "object")
-      return { type: "unavailable", reason: "Unsupported content block" };
-    if (block.type === "text" && typeof block.text === "string")
-      return { type: "text", text: block.text };
-    if (block.type === "image" && typeof block.data === "string")
-      return { type: "image", data: block.data, mimeType: block.mimeType };
-    if (block.type === "image" && block.source?.type === "base64")
-      return { type: "image", data: block.source.data, mimeType: block.source.media_type };
-    return { type: "unavailable", reason: `Unsupported content block: ${block.type}` };
-  });
 }

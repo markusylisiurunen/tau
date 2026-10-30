@@ -147,10 +147,11 @@ describe("Claude Code supervised lifecycle", () => {
       return ok;
     });
     const spawned = f.spawn();
-    expect(spawned.ok).toBe(true);
-    const id = spawned.state.id;
+
+    const id = spawned.id;
     const [first] = await f.supervisor.waitForAgents([id]);
-    expect(first.run).toMatchObject({ status: "succeeded", response: "answer 1" });
+    expect(first).toMatchObject({ status: "idle", reason: "completed" });
+    expect(f.supervisor.getSnapshot(id).run.response).toBe("answer 1");
     expect(f.calls[0].input).toMatchObject({
       cwd: "/remote/workspace",
       prompt: "first task",
@@ -159,7 +160,7 @@ describe("Claude Code supervised lifecycle", () => {
     expect(f.calls[0].input).not.toHaveProperty("sessionId");
     expect(f.calls[0].input).not.toHaveProperty("systemPrompt");
     expect(f.calls[0].input).not.toHaveProperty("contextWindow");
-    expect(spawned.state.usage.contextWindow).toBe(0);
+    expect(spawned.usage.contextWindow).toBe(0);
     expect(first.usage.contextWindow).toBe(1_000_000);
     expect(f.calls[0].options.cwd).toBe("/remote/workspace");
     expect(f.events).toContainEqual(
@@ -168,13 +169,16 @@ describe("Claude Code supervised lifecycle", () => {
         activity: expect.objectContaining({ type: "tool", outcome: "failed", toolName: "Bash" }),
       }),
     );
-    expect(f.supervisor.sendInput({ mode: "queue", id, prompt: "follow up" }).ok).toBe(true);
+    expect(f.supervisor.sendInput({ mode: "queue", id, prompt: "follow up" }).status).toBe(
+      "working",
+    );
     const [second] = await f.supervisor.waitForAgents([id]);
-    expect(second.run).toMatchObject({ revision: 2, status: "succeeded", response: "answer 2" });
+    expect(second).toMatchObject({ status: "idle", reason: "completed" });
+    expect(f.supervisor.getSnapshot(id).run).toMatchObject({ revision: 2, response: "answer 2" });
     expect(f.calls[1].input).toMatchObject({ sessionId, prompt: "follow up" });
     expect(second.usage.input).toBe(20);
-    expect(second.usage.contextWindowUsageTokens).toBe(20);
-    expect(second.costTotal).toBe(0.2);
+    expect(second.usage.contextTokens).toBe(20);
+    expect(second.usage.cost).toBe(0.2);
     expect(f.recordUsage.mock.calls.map(([entry]) => entry.usage.input)).toEqual([10, 10]);
     expect(f.recordUsage.mock.calls.map(([entry]) => entry.cost.total)).toEqual([0.1, 0.1]);
     f.supervisor.reset();
@@ -203,10 +207,10 @@ describe("Claude Code supervised lifecycle", () => {
       }
       return ok;
     });
-    const id = f.spawn().state.id;
+    const id = f.spawn().id;
     const [interrupted] = await f.supervisor.waitForAgents([id]);
-    expect(interrupted.run.status).toBe("interrupted");
-    expect(interrupted.usage).toMatchObject({ input: 5, output: 3, contextWindowUsageTokens: 8 });
+    expect(interrupted.reason).toBe("interrupted");
+    expect(interrupted.usage).toMatchObject({ input: 5, output: 3, contextTokens: 8 });
     f.supervisor.sendInput({ mode: "queue", id, prompt: "continue" });
     await f.supervisor.waitForAgents([id]);
     f.supervisor.sendInput({ mode: "queue", id, prompt: "continue again" });
@@ -239,13 +243,13 @@ describe("Claude Code supervised lifecycle", () => {
       );
       return ok;
     });
-    const id = f.spawn().state.id;
+    const id = f.spawn().id;
     await f.supervisor.waitForAgents([id]);
     f.supervisor.sendInput({ mode: "queue", id, prompt: "retry" });
     const [failed] = await f.supervisor.waitForAgents([id]);
-    expect(failed.run.status).toBe("failed");
+    expect(failed.reason).toBe("failed");
     expect(failed.usage.input).toBe(10);
-    expect(failed.costTotal).toBe(0.1);
+    expect(failed.usage.cost).toBe(0.1);
     f.supervisor.sendInput({ mode: "queue", id, prompt: "retry again" });
     const [finished] = await f.supervisor.waitForAgents([id]);
     expect(finished.usage.input).toBe(20);
@@ -271,14 +275,16 @@ describe("Claude Code supervised lifecycle", () => {
       );
       return { ...ok, aborted: true };
     });
-    const id = f.spawn().state.id;
+    const id = f.spawn().id;
     await ready;
-    expect(f.supervisor.sendInput({ mode: "queue", id, prompt: "queued" }).ok).toBe(true);
+    expect(f.supervisor.sendInput({ mode: "queue", id, prompt: "queued" }).status).toBe("working");
     const stopped = await f.supervisor.interrupt(id);
-    expect(stopped.run.status).toBe("interrupted");
+    expect(stopped.reason).toBe("interrupted");
     expect(f.calls[0].options.signal.aborted).toBe(true);
-    expect(f.supervisor.sendInput({ mode: "queue", id, prompt: "continue" }).ok).toBe(true);
-    expect((await f.supervisor.waitForAgents([id]))[0].run.status).toBe("succeeded");
+    expect(f.supervisor.sendInput({ mode: "queue", id, prompt: "continue" }).status).toBe(
+      "working",
+    );
+    expect((await f.supervisor.waitForAgents([id]))[0].reason).toBe("completed");
     expect(f.calls[1].input.sessionId).toBe(sessionId);
     f.supervisor.reset();
   });
@@ -299,7 +305,7 @@ describe("Claude Code supervised lifecycle", () => {
     await ready;
     f.supervisor.retainOrigins(new Set());
     expect(f.calls[0].options.signal.aborted).toBe(true);
-    expect(f.supervisor.listSnapshots()).toEqual([]);
+    expect(f.supervisor.list()).toEqual([]);
   });
 
   it.each(["missing", "malformed", "provider", "exit", "truncated"])(
@@ -311,9 +317,9 @@ describe("Claude Code supervised lifecycle", () => {
         if (kind === "provider") emit(options, { ...result("provider rejected"), failed: true });
         return kind === "exit" ? { ...ok, exitCode: 1 } : ok;
       });
-      const id = f.spawn().state.id;
+      const id = f.spawn().id;
       const [state] = await f.supervisor.waitForAgents([id]);
-      expect(state.run.status).toBe("failed");
+      expect(state.reason).toBe("failed");
       expect(f.calls).toHaveLength(1);
       f.supervisor.reset();
     },
@@ -338,12 +344,12 @@ describe("Claude Code supervised lifecycle", () => {
       return ok;
     });
     try {
-      const id = f.spawn().state.id;
+      const id = f.spawn().id;
       await ready;
       f.supervisor.sendInput({ id, prompt: "queued task", mode: "queue" });
       f.supervisor.sendInput({ id, prompt: "uncertain steering", mode: "steer" });
       const [state] = await f.supervisor.waitForAgents([id]);
-      expect(state.run.status).toBe("succeeded");
+      expect(state.reason).toBe("completed");
       expect(f.calls.filter((call) => call.input).map((call) => call.input.prompt)).toEqual([
         "first task",
         "queued task",
@@ -363,47 +369,67 @@ describe("Claude Code supervised lifecycle", () => {
       for (const byte of bytes) options.onOutput(Buffer.from([byte]));
       return { ...ok, truncated: true };
     });
-    const id = f.spawn().state.id;
-    expect((await f.supervisor.waitForAgents([id]))[0].run.response).toBe("valmista: ää 漢");
+    const id = f.spawn().id;
+    await f.supervisor.waitForAgents([id]);
+    expect(f.supervisor.getSnapshot(id).run.response).toBe("valmista: ää 漢");
     f.supervisor.reset();
   });
 });
 
-it("does not cancel a confirmed steering delivery when the SDK finishes first", async () => {
-  let runtime;
-  let delivery;
-  let finishDelivery;
-  const deliveryGate = new Promise((resolve) => {
-    finishDelivery = resolve;
-  });
-  let deliverySignal;
-  runtime = new ClaudeCodeRuntime({
-    config: {
-      kind: "claude-code",
-      model: { provider: "claude-code", id: "claude-sonnet-5-5" },
-      effort: "medium",
-      tools: [],
-      workingDirectory: "/repo",
-    },
-    onEvent: async (event) => {
-      if (event.type === "control") delivery = runtime.steer("follow steering");
-    },
-    backend: {
-      runNodeScript: async (_script, _args, options) => {
-        const input = JSON.parse(options.stdin);
-        if (input.source) {
-          emit(options, { type: "control", path: "/target/control.sock" });
-          emit(options, result());
-          return ok;
-        }
-        deliverySignal = options.signal;
-        await deliveryGate;
-        return { ...ok, stdout: "accepted\n", aborted: options.signal.aborted };
+it.each([false, true])(
+  "settles steering before returning after process failure=%s",
+  async (fail) => {
+    let finishDelivery;
+    let deliveryStarted;
+    const ready = new Promise((resolve) => {
+      deliveryStarted = resolve;
+    });
+    const deliveryGate = new Promise((resolve) => {
+      finishDelivery = resolve;
+    });
+    let deliverySignal;
+    const runtime = new ClaudeCodeRuntime({
+      config: {
+        kind: "claude-code",
+        model: { provider: "claude-code", id: "claude-sonnet-5-5" },
+        effort: "medium",
+        tools: [],
+        workingDirectory: "/repo",
       },
-    },
-  });
-  await runtime.submit("task");
-  expect(deliverySignal.aborted).toBe(false);
-  finishDelivery();
-  expect(await delivery).toBe(true);
-});
+      now: Date.now,
+      onEvent: async () => {},
+      backend: {
+        runNodeScript: async (_script, _args, options) => {
+          const input = JSON.parse(options.stdin);
+          if (input.source) {
+            emit(options, { type: "control", path: "/target/control.sock" });
+            await ready;
+            if (fail) throw new Error("process failed");
+            emit(options, result());
+            return ok;
+          }
+          deliverySignal = options.signal;
+          deliveryStarted();
+          await deliveryGate;
+          return { ...ok, stdout: "accepted\n", aborted: options.signal.aborted };
+        },
+      },
+    });
+    runtime.steer("follow steering");
+    let settled = false;
+    const completion = runtime.submit("task").then((result) => {
+      settled = true;
+      return result;
+    });
+    await ready;
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(settled).toBe(false);
+    expect(deliverySignal.aborted).toBe(fail);
+    finishDelivery();
+    expect(await completion).toMatchObject({
+      outcome: { status: fail ? "failed" : "succeeded" },
+      unconsumed: [],
+    });
+    runtime.dispose();
+  },
+);

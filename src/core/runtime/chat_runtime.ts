@@ -241,7 +241,9 @@ export class ChatRuntime {
   }
 
   async interruptSubagent(id: string): Promise<boolean> {
-    return Boolean(await this.supervisor.interrupt(id));
+    if (!this.hasSubagent(id)) return false;
+    await this.supervisor.interrupt(id);
+    return true;
   }
 
   listRewindCandidates(): RewindCandidate[] {

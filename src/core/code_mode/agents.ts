@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { z } from "zod";
+import type { TauCodeModeHandler } from "../../code_mode/runtime.js";
 import type { Config } from "../config/index.js";
 import type { HistoryQuery } from "../history/types.js";
 import type { McpManager } from "../mcp/manager.js";
@@ -64,16 +65,11 @@ const traceOptions = z.strictObject({
   cursor: z.string().max(4096).optional(),
 });
 
-export function createAgentsCapability(
-  options: AgentsCapabilityOptions,
-  originHistoryEntryId: string,
-): CodeModeCapability {
-  const supervisor: AgentSupervisor = options.supervisor;
-  const capability: CodeModeCapability = {
-    name: "agents",
-    description:
-      "Start delegated workers, send them queued or steering input, interrupt and wait for them, and read selected parts of their conversations. Follow the delegation policy in your instructions. Workers keep running when a program ends or is cancelled.",
-    documentation: `# tau.agents
+export const agentsCapabilityMetadata = {
+  name: "agents",
+  description:
+    "Start delegated workers, send them queued or steering input, interrupt and wait for them, and read selected parts of their conversations. Follow the delegation policy in your instructions. Workers keep running when a program ends or is cancelled.",
+  documentation: `# tau.agents
 
 Start general-purpose workers, send them more input, and read what they did. Start workers only when the user or active instructions explicitly ask for delegation.
 
@@ -343,120 +339,118 @@ for (const entry of page.entries) {
 }
 \`\`\`
 `,
-    api: {
-      spawn: async (args, context) => {
-        const [input] = z.tuple([spawnOptions]).parse(args);
-        context.signal.throwIfAborted();
-        let launchModel: SubagentLaunchModel | undefined;
-        if (input.model) {
-          const parsed = parseSubagentLaunchModel(input.model, {
-            resolveModel: options.modelResolver,
-          });
-          if (
-            !parsed.launchModel ||
-            !options.persona.subagentLaunchModels.includes(parsed.launchModel.normalized)
-          )
-            throw new Error(parsed.error ?? "Subagent launch model is not allowed");
-          launchModel = parsed.launchModel;
-        }
-        const settings = resolveSubagentEffectiveSettings({
-          persona: options.persona,
-          launchModel,
+} satisfies Omit<CodeModeCapability, "api">;
+
+export function createAgentsCapability(
+  options: AgentsCapabilityOptions,
+  originHistoryEntryId: string,
+): CodeModeCapability {
+  const supervisor = options.supervisor;
+  const api: Record<string, TauCodeModeHandler> = {
+    spawn: async (args, context) => {
+      const [input] = z.tuple([spawnOptions]).parse(args);
+      context.signal.throwIfAborted();
+      let launchModel: SubagentLaunchModel | undefined;
+      if (input.model) {
+        const parsed = parseSubagentLaunchModel(input.model, {
+          resolveModel: options.modelResolver,
         });
-        const cwd = resolve(options.cwd, input.workingDirectory ?? ".");
-        let runtimeConfig: SubagentRuntimeConfig;
-        if (settings.kind === "claude-code") runtimeConfig = { ...settings, workingDirectory: cwd };
-        else {
-          const systemPrompt =
-            cwd === resolve(options.cwd)
-              ? options.subagentSystemPrompt
-              : await options.resolveSubagentPrompt?.({ cwd, persona: options.persona });
-          if (!systemPrompt)
-            throw new Error("Subagent working-directory instructions are unavailable");
-          runtimeConfig = { ...settings, workingDirectory: cwd, systemPrompt };
-        }
-        context.signal.throwIfAborted();
-        const result = supervisor.spawn({
-          ...options,
-          runtimeConfig,
-          prompt: input.prompt,
-          title: input.title,
-          originHistoryEntryId,
-          personaId: options.persona.id,
-        });
-        if (!result.ok) throw new Error(result.reason);
-        return supervisor.read(result.state.id);
-      },
-      list: (args) => {
-        z.tuple([]).parse(args);
-        return {
-          agents: supervisor.listSnapshots().map((state) => supervisor.read(state.id)),
-          capacity: supervisor.getCapacity(),
-        };
-      },
-      read: (args) => {
-        const [input] = z.tuple([idOptions]).parse(args);
-        return supervisor.read(input.id);
-      },
-      sendInput: (args, context) => {
-        const [input] = z
-          .tuple([z.strictObject({ id, message, mode: z.enum(["queue", "steer"]) })])
-          .parse(args);
-        context.signal.throwIfAborted();
-        supervisor.read(input.id);
-        const result = supervisor.sendInput({
-          id: input.id,
-          prompt: input.message,
-          mode: input.mode,
-        });
-        if (!result.ok) throw new Error(result.reason);
-        return supervisor.read(input.id);
-      },
-      interrupt: async (args, context) => {
-        const [input] = z.tuple([z.strictObject({ id, wait: z.boolean().optional() })]).parse(args);
-        context.signal.throwIfAborted();
-        supervisor.read(input.id);
-        await supervisor.interrupt(input.id, context.signal, input.wait ?? true);
-        return supervisor.read(input.id);
-      },
-      waitUntilIdle: async (args, context) => {
-        const [input] = z.tuple([idOptions]).parse(args);
-        await supervisor.waitForAgents([input.id], context.signal);
-        return supervisor.read(input.id);
-      },
-      trace: (args) => {
-        const [input] = z.tuple([traceOptions]).parse(args);
-        return supervisor.getTrace(input.id).trace(input);
-      },
-      readContent: (args) => {
-        const [input] = z
-          .tuple([
-            z.strictObject({
-              id,
-              ref: z.string().min(1).max(256),
-              cursor: z.string().max(4096).optional(),
-            }),
-          ])
-          .parse(args);
-        return supervisor.getTrace(input.id).readContent(input);
-      },
-      readText: (args) => {
-        const [input] = z
-          .tuple([
-            z.strictObject({
-              id,
-              seq: z.number().int().positive(),
-              maxChars: z.number().int().min(1).max(100000).optional(),
-            }),
-          ])
-          .parse(args);
-        return supervisor.getTrace(input.id).readText(input.seq, input.maxChars);
-      },
+        if (
+          !parsed.launchModel ||
+          !options.persona.subagentLaunchModels.includes(parsed.launchModel.normalized)
+        )
+          throw new Error(parsed.error ?? "Subagent launch model is not allowed");
+        launchModel = parsed.launchModel;
+      }
+      const settings = resolveSubagentEffectiveSettings({
+        persona: options.persona,
+        launchModel,
+      });
+      const cwd = resolve(options.cwd, input.workingDirectory ?? ".");
+      let runtimeConfig: SubagentRuntimeConfig;
+      if (settings.kind === "claude-code") runtimeConfig = { ...settings, workingDirectory: cwd };
+      else {
+        const systemPrompt =
+          cwd === resolve(options.cwd)
+            ? options.subagentSystemPrompt
+            : await options.resolveSubagentPrompt?.({ cwd, persona: options.persona });
+        if (!systemPrompt)
+          throw new Error("Subagent working-directory instructions are unavailable");
+        runtimeConfig = { ...settings, workingDirectory: cwd, systemPrompt };
+      }
+      context.signal.throwIfAborted();
+      return supervisor.spawn({
+        ...options,
+        runtimeConfig,
+        prompt: input.prompt,
+        title: input.title,
+        originHistoryEntryId,
+        personaId: options.persona.id,
+      });
+    },
+    list: (args) => {
+      z.tuple([]).parse(args);
+      return {
+        agents: supervisor.list(),
+        capacity: supervisor.getCapacity(),
+      };
+    },
+    read: (args) => {
+      const [input] = z.tuple([idOptions]).parse(args);
+      return supervisor.read(input.id);
+    },
+    sendInput: (args, context) => {
+      const [input] = z
+        .tuple([z.strictObject({ id, message, mode: z.enum(["queue", "steer"]) })])
+        .parse(args);
+      context.signal.throwIfAborted();
+      return supervisor.sendInput({
+        id: input.id,
+        prompt: input.message,
+        mode: input.mode,
+      });
+    },
+    interrupt: async (args, context) => {
+      const [input] = z.tuple([z.strictObject({ id, wait: z.boolean().optional() })]).parse(args);
+      context.signal.throwIfAborted();
+      return await supervisor.interrupt(input.id, context.signal, input.wait ?? true);
+    },
+    waitUntilIdle: async (args, context) => {
+      const [input] = z.tuple([idOptions]).parse(args);
+      const [state] = await supervisor.waitForAgents([input.id], context.signal);
+      return state;
+    },
+    trace: (args) => {
+      const [input] = z.tuple([traceOptions]).parse(args);
+      return supervisor.getTrace(input.id).trace(input);
+    },
+    readContent: (args) => {
+      const [input] = z
+        .tuple([
+          z.strictObject({
+            id,
+            ref: z.string().min(1).max(256),
+            cursor: z.string().max(4096).optional(),
+          }),
+        ])
+        .parse(args);
+      return supervisor.getTrace(input.id).readContent(input);
+    },
+    readText: (args) => {
+      const [input] = z
+        .tuple([
+          z.strictObject({
+            id,
+            seq: z.number().int().positive(),
+            maxChars: z.number().int().min(1).max(100000).optional(),
+          }),
+        ])
+        .parse(args);
+      return supervisor.getTrace(input.id).readText(input.seq, input.maxChars);
     },
   };
-  for (const [name, handler] of Object.entries(capability.api)) {
-    if (typeof handler !== "function") throw new Error("Agent methods must be callable");
-    capability.api[name] = async (args, context) => {
+  for (const [name, handler] of Object.entries(api)) {
+    api[name] = async (args, context) => {
       try {
         context.signal.throwIfAborted();
         return await handler(args, context);
@@ -473,5 +467,5 @@ for (const entry of page.entries) {
       }
     };
   }
-  return capability;
+  return { ...agentsCapabilityMetadata, api };
 }

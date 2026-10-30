@@ -4675,11 +4675,6 @@ describe("LocalSessionHost", () => {
         expect(prompt).not.toHaveProperty("description");
       }
       const spawn = vi.spyOn(recovered.runtime.supervisor, "spawn").mockReturnValue({
-        ok: true,
-        state: createRunningSubagentState(),
-        capacity: { running: 1, limit: 8 },
-      });
-      vi.spyOn(recovered.runtime.supervisor, "read").mockReturnValue({
         id: "worker",
         status: "working",
       });
@@ -6250,11 +6245,6 @@ describe("host-owned MCP tools", () => {
     try {
       const session = await host.createSession(localCreateInput);
       const spawn = vi.spyOn(session.runtime.supervisor, "spawn").mockReturnValue({
-        ok: true,
-        state: createRunningSubagentState(),
-        capacity: { running: 1, limit: 8 },
-      });
-      vi.spyOn(session.runtime.supervisor, "read").mockReturnValue({
         id: "worker",
         status: "working",
       });

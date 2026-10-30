@@ -7,7 +7,11 @@ import {
   TAU_CODE_MODE_DEFAULT_MAX_OUTPUT_TOKENS,
   TAU_CODE_MODE_MAX_OUTPUT_TOKENS,
 } from "../../code_mode/runtime.js";
-import { type AgentsCapabilityOptions, createAgentsCapability } from "../code_mode/agents.js";
+import {
+  type AgentsCapabilityOptions,
+  agentsCapabilityMetadata,
+  createAgentsCapability,
+} from "../code_mode/agents.js";
 import { createBashCapability } from "../code_mode/bash.js";
 import type { CodeModeCapability } from "../code_mode/capability.js";
 import { createHistoryCapability } from "../code_mode/history.js";
@@ -97,20 +101,19 @@ export function createCodeToolDefinition(options: {
     capabilities.push(createMcpCapability(options.mcp));
   if (allowed.has("models"))
     capabilities.push(createModelsCapability(options.backend, options.config));
-  if (options.agents) capabilities.push(createAgentsCapability(options.agents, ""));
-  if (!capabilities.length) return undefined;
+  const metadata = [...capabilities, ...(options.agents ? [agentsCapabilityMetadata] : [])];
+  if (!metadata.length) return undefined;
   const sdkFor = (origin: string) =>
-    bindCodeModeSdk(
-      capabilities.map((capability) =>
-        capability.name === "agents" ? createAgentsCapability(options.agents!, origin) : capability,
-      ),
-    );
+    bindCodeModeSdk([
+      ...capabilities,
+      ...(options.agents ? [createAgentsCapability(options.agents, origin)] : []),
+    ]);
   const schema: Tool = {
     name: TOOL_NAME_CODE,
     description: [
       "Run a JavaScript program using enabled Tau capabilities, either inline or from a saved .js file. Use it to chain dependent calls, combine independent work, or process results before printing a concise answer.",
-      `Available capabilities: ${capabilities.map((capability) => capability.name).join(", ")}.`,
-      ...capabilities.map((capability) => `tau.${capability.name}: ${capability.description}`),
+      `Available capabilities: ${metadata.map((capability) => capability.name).join(", ")}.`,
+      ...metadata.map((capability) => `tau.${capability.name}: ${capability.description}`),
       "When this tool is useful and its runtime guide is not visible, first run only printText(docs). Read it before writing a later program. Before using each capability, printText(await tau.docs(name)) in a documentation-only call unless that reference is already visible. Do not guess API signatures.",
       "Use printText(string) and await printImage({ data, mimeType }) for output. printText rejects objects and arrays: select relevant fields and format concise plain text to save tokens. Only use JSON.stringify on selected data when JSON structure is needed; do not dump whole responses. Return values are ignored. Programs have request and output limits, and foreground programs also have a deadline. Side effects are not rolled back and programs are not automatically retried.",
       "Use background: true only when you can make useful independent progress while the program runs. If you would only wait for it to finish, run it in the foreground with an appropriate timeout. A background launch returns a job ID; use the code job tools to read, wait for, or stop it. Jobs keep running across turns and interruptions, but are not recovered after a session restart.",

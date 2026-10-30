@@ -9,7 +9,7 @@ import { createBashCapability } from "../dist/core/code_mode/bash.js";
 import { createModelsCapability } from "../dist/core/code_mode/models.js";
 import { bindCodeModeSdk } from "../dist/core/code_mode/sdk.js";
 import { McpManager } from "../dist/core/mcp/manager.js";
-import { requestOpenRouterChat } from "../dist/core/models/openrouter.js";
+import { openRouterModels, requestOpenRouterChat } from "../dist/core/models/openrouter.js";
 import { BashJobRegistry } from "../dist/core/tools/bash_jobs.js";
 import { ToolCatalog } from "../dist/core/tools/catalog.js";
 import { createCodeToolDefinition } from "../dist/core/tools/code.js";
@@ -297,6 +297,9 @@ describe("code composition", () => {
       expect(description.toLowerCase()).toContain(`use tau.${name} only`);
     expect(description).not.toMatch(/(?:use this tool only|the tool is read-only)/i);
     expect(description).toContain("tau.history is read-only");
+    for (const models of Object.values(openRouterModels)) {
+      expect(description).toContain(models.map((model) => model.id).join(", "));
+    }
   });
 
   it("runs the SDK composition examples with bounded calls and selected output", async () => {
@@ -373,6 +376,9 @@ describe("code composition", () => {
       bashJobs: jobs,
       codeJobs: new CodeJobRegistry(),
     });
+    for (const model of Object.values(openRouterModels).flat()) {
+      expect(tool.schema.description).not.toContain(model.id);
+    }
     const index = text(await execute(tool, "printText(docs)"));
     expect(index).toContain("tau.history");
     expect(index).not.toContain("tau.bash:");

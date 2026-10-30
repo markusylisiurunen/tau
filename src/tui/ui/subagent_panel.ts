@@ -12,6 +12,7 @@ import type { Theme } from "./theme/index.js";
 type SubagentPanelEntry = {
   id: string;
   title: string;
+  model: SubagentStateSnapshot["model"];
   runRevision: number;
   status: SubagentStateSnapshot["run"]["status"];
   costTotal: number;
@@ -191,7 +192,8 @@ export class SubagentPanelComponent implements Component {
     const { palette } = this.theme;
     const contextUsage = formatUsageSnapshot(entry.usage);
     const cost = formatUsdCost(entry.costTotal);
-    return palette.textMuted(`${contextUsage} · ${cost}`);
+    const model = `${entry.model.provider}/${entry.model.id}:${entry.model.reasoning}`;
+    return palette.textMuted(`${model} · ${contextUsage} · ${cost}`);
   }
 
   private buildFooterLine(index: number, total: number): string {
@@ -225,6 +227,7 @@ export class SubagentPanelComponent implements Component {
     return {
       id: state.id,
       title: state.title,
+      model: state.model,
       runRevision: state.run.revision,
       status: state.run.status,
       costTotal: state.costTotal,
@@ -242,6 +245,7 @@ export class SubagentPanelComponent implements Component {
     entry.costTotal = state.costTotal;
     entry.usage = state.usage;
     entry.title = state.title;
+    entry.model = state.model;
   }
 }
 

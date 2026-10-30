@@ -319,6 +319,44 @@ describe("Claude Code supervised lifecycle", () => {
     },
   );
 
+  it("preserves queued input when steering delivery fails", async () => {
+    let started;
+    const ready = new Promise((resolve) => {
+      started = resolve;
+    });
+    const f = fixture(async (input, options) => {
+      if (!input) return { ...ok, exitCode: 1 };
+      if (input.prompt === "first task") {
+        emit(options, { type: "control", path: "/target/control.sock" });
+        started();
+        await new Promise((resolve) =>
+          options.signal.addEventListener("abort", resolve, { once: true }),
+        );
+        return { ...ok, aborted: true };
+      }
+      emit(options, result());
+      return ok;
+    });
+    try {
+      const id = f.spawn().state.id;
+      await ready;
+      f.supervisor.sendInput({ id, prompt: "queued task", mode: "queue" });
+      f.supervisor.sendInput({ id, prompt: "uncertain steering", mode: "steer" });
+      const [state] = await f.supervisor.waitForAgents([id]);
+      expect(state.run.status).toBe("succeeded");
+      expect(f.calls.filter((call) => call.input).map((call) => call.input.prompt)).toEqual([
+        "first task",
+        "queued task",
+      ]);
+      expect(f.supervisor.read(id).pending).toEqual({ queue: 0, steer: 0 });
+      expect(f.supervisor.getTrace(id).trace({ kinds: ["notice"] }).entries).toEqual(
+        expect.arrayContaining([expect.objectContaining({ code: "input.discarded" })]),
+      );
+    } finally {
+      f.supervisor.reset();
+    }
+  });
+
   it("decodes split UTF-8 events without relying on the truncated capture tail", async () => {
     const f = fixture(async (_input, options) => {
       const bytes = Buffer.from(`${prefix}${JSON.stringify(result("valmista: ää 漢"))}\n`);

@@ -25,6 +25,7 @@ export type ClaudeCodeInput = z.infer<typeof claudeCodeInputSchema>;
 
 export const claudeCodeEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("control"), path: z.string().min(1) }),
+  z.object({ type: z.literal("unconsumed_input"), message: z.string() }),
   z.object({ type: z.literal("trace"), event: observableEventSchema }),
   z.object({ type: z.literal("session"), id: z.string().uuid() }),
   z.object({ type: z.literal("assistant"), text: z.string().max(8192) }),

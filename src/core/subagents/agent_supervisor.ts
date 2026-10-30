@@ -289,22 +289,39 @@ export class AgentSupervisor {
   private deliverSteering(record: SubagentRecord): void {
     if (record.run.interruptRequested) return;
     if (record.runtime instanceof ClaudeCodeRuntime) {
-      record.steeringDelivery = record.steeringDelivery
-        .then(async () => {
-          const runtime = record.runtime as ClaudeCodeRuntime;
-          for (const input of [...record.pending]) {
-            if (input.mode !== "steer" || record.run.interruptRequested) continue;
+      const revision = record.run.revision;
+      record.steeringDelivery = record.steeringDelivery.then(async () => {
+        const runtime = record.runtime as ClaudeCodeRuntime;
+        for (const input of [...record.pending]) {
+          if (
+            record.run.revision !== revision ||
+            record.run.interruptRequested ||
+            record.deliveryFailure
+          )
+            return;
+          if (input.mode !== "steer") continue;
+          try {
             if (!(await runtime.steer(input.prompt))) break;
+          } catch (error) {
+            if (record.run.revision !== revision || record.run.interruptRequested) return;
+            record.deliveryFailure = error instanceof Error ? error : new Error(String(error));
             const index = record.pending.indexOf(input);
             if (index >= 0) record.pending.splice(index, 1);
+            record.trace.append({
+              kind: "notice",
+              code: "input.discarded",
+              content: traceBlocks(
+                "Steering input discarded because delivery could not be confirmed.",
+              ),
+            });
+            runtime.interrupt();
+            return;
           }
-        })
-        .catch((error) => {
-          if (record.run.interruptRequested) return;
-          record.deliveryFailure = error instanceof Error ? error : new Error(String(error));
-          record.pending = [];
-          record.runtime.interrupt();
-        });
+          if (record.run.revision !== revision) return;
+          const index = record.pending.indexOf(input);
+          if (index >= 0) record.pending.splice(index, 1);
+        }
+      });
     } else if (record.runtime.status === "running") {
       for (const input of [...record.pending]) {
         if (input.mode !== "steer") continue;
@@ -437,8 +454,9 @@ export class AgentSupervisor {
         if (record.run.interruptRequested) {
           this.finishInterrupted(record);
         } else if (record.runtime instanceof ClaudeCodeRuntime) {
-          const completion = await record.runtime.submit(prompt);
-          await record.steeringDelivery;
+          const completion = await record.runtime.submit(prompt).finally(async () => {
+            await record.steeringDelivery;
+          });
           if (record.deliveryFailure) throw record.deliveryFailure;
           if (record.run.interruptRequested || completion.status === "interrupted") {
             this.finishInterrupted(record);
@@ -573,6 +591,8 @@ export class AgentSupervisor {
     if (!record) return;
     if (event.type === "trace") record.trace.append(event.event);
     if (event.type === "control") this.deliverSteering(record);
+    if (event.type === "unconsumed_input" && !record.run.interruptRequested)
+      record.pending.push({ prompt: event.message, mode: "steer" });
     if (event.type === "usage" || event.type === "result") {
       let reported = event.usage;
       if (event.type === "usage") {

@@ -115,7 +115,7 @@ export async function runClaudeCode(
     finishPrompt = resolve;
   });
   const pending: { message: string; uuid: ReturnType<typeof randomUUID> }[] = [];
-  const outstanding = new Set<string>();
+  const outstanding = new Map<string, string>();
   let wake: (() => void) | undefined;
   let closing = false;
   const socketPath = join(directory, "input.sock");
@@ -138,7 +138,7 @@ export async function runClaudeCode(
         }
         const uuid = randomUUID();
         pending.push({ message: value.message, uuid });
-        outstanding.add(uuid);
+        outstanding.set(uuid, value.message);
         wake?.();
         socket.end("accepted\n");
       } catch {
@@ -330,7 +330,10 @@ export async function runClaudeCode(
           cost: message.total_cost_usd,
           usage,
         });
-        if (closing) return;
+        if (closing) {
+          for (const message of outstanding.values()) emit({ type: "unconsumed_input", message });
+          return;
+        }
       }
     }
   } finally {

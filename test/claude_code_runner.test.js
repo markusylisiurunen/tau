@@ -36,13 +36,17 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
     fs.writeFileSync(${JSON.stringify(marker)}, JSON.stringify({ message, initialization, cwd: process.cwd(), args: process.argv.slice(2) }));
     const session_id = "ce4518fa-4b3f-44ef-a1a3-2f7edc024b8d";
     send({ type: "system", subtype: "init", session_id });
-    if (${JSON.stringify(hang)} === "steering") {
+    if (${JSON.stringify(hang)} === "steering" && (firstUuid || message.message.content === "initial instruction")) {
       if (!firstUuid) {
         firstUuid = message.uuid;
         send({ type: "assistant", parent_tool_use_id: null, session_id, message: { id: "first", model: "claude-sonnet-5-5", role: "assistant", content: [{ type: "text", text: "working" }], usage: { input_tokens: 1, output_tokens: 1 } } });
         return;
       }
       const finish = (uuid, text) => send({ type: "result", subtype: "success", is_error: false, session_id, result: text, total_cost_usd: 0, modelUsage: {}, user_message_uuid: uuid, user_message_uuids: [uuid] });
+      if (${JSON.stringify(outcome)} !== "success") {
+        send({ type: "result", subtype: "error_during_execution", is_error: true, session_id, errors: ["stopped"], total_cost_usd: 0, modelUsage: {}, user_message_uuids: [firstUuid] });
+        return;
+      }
       finish(firstUuid, "old result");
       setTimeout(() => {
         send({ type: "assistant", parent_tool_use_id: null, session_id, message: { id: "second", model: "claude-sonnet-5-5", role: "assistant", content: [{ type: "text", text: message.message.content }], usage: { input_tokens: 1, output_tokens: 1 } } });
@@ -74,7 +78,7 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
     stream({ type: "message_delta", delta: { stop_reason: "tool_use", stop_sequence: null }, usage: { output_tokens: 3, input_tokens: null } });
     stream({ type: "message_stop" });
     if (${JSON.stringify(hang)} === "after-usage") { setInterval(() => {}, 1000); return; }
-    const outcome = ${JSON.stringify(outcome)};
+    const outcome = ${JSON.stringify(hang)} === "steering" ? "success" : ${JSON.stringify(outcome)};
     send({ type: "result", subtype: outcome === "api_error" ? "success" : outcome,
       is_error: outcome !== "success", session_id, result: "finished", errors: ["stopped"],
       total_cost_usd: 0.01, modelUsage: outcome === "error_during_execution" ? {} : {
@@ -126,33 +130,57 @@ function createRuntimeOptions(directory, events) {
 }
 
 describe("bundled Claude Agent SDK runner", () => {
-  it("keeps streamed steering alive across an earlier result", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "tau-claude-steer-"));
-    const events = [];
-    let runtime;
-    let delivery;
-    const options = createRuntimeOptions(directory, events);
-    options.onEvent = async (event) => {
-      events.push(event);
-      if (event.type === "assistant" && !delivery) delivery = runtime.steer("updated instruction");
-    };
-    runtime = new ClaudeCodeRuntime(options);
-    try {
-      fakeClaude(directory, true, "steering");
-      const result = await runtime.submit("initial instruction");
-      expect(await delivery).toBe(true);
-      expect(result.result.response).toBe("updated instruction");
-      expect(events.filter((event) => event.type === "result")).toHaveLength(2);
-      expect(
-        events
-          .filter((event) => event.type === "trace" && event.event.kind === "assistant")
-          .map((event) => event.event.content[0].text),
-      ).toEqual(["working", "updated instruction"]);
-    } finally {
-      runtime.dispose();
-      rmSync(directory, { recursive: true, force: true });
-    }
-  });
+  it.each(["success", "error_during_execution"])(
+    "preserves streamed steering across an earlier %s result",
+    async (outcome) => {
+      const directory = mkdtempSync(join(tmpdir(), "tau-claude-steer-"));
+      const options = createRuntimeOptions(directory, []);
+      let sent = false;
+      const supervisor = new AgentSupervisor({
+        recordUsage: vi.fn(),
+        onEvent: (event) => {
+          if (event.type === "subagent_activity" && event.activity.type === "assistant" && !sent) {
+            sent = true;
+            expect(
+              supervisor.sendInput({
+                id: event.state.id,
+                prompt: "updated instruction",
+                mode: "steer",
+              }).ok,
+            ).toBe(true);
+          }
+        },
+      });
+      try {
+        const marker = fakeClaude(directory, true, "steering", outcome);
+        const { state } = supervisor.spawn({
+          runtimeConfig: options.config,
+          backend: options.backend,
+          config: {},
+          title: "steering test",
+          prompt: "initial instruction",
+          originHistoryEntryId: "origin",
+        });
+        const [settled] = await supervisor.waitForAgents([state.id]);
+        expect(settled.run.status).toBe("succeeded");
+        expect(settled.run.revision).toBe(outcome === "success" ? 1 : 2);
+        expect(JSON.parse(readFileSync(marker, "utf8")).message.message.content).toBe(
+          "updated instruction",
+        );
+        expect(supervisor.read(state.id).pending).toEqual({ queue: 0, steer: 0 });
+        expect(
+          supervisor
+            .getTrace(state.id)
+            .trace({ kinds: ["assistant"] })
+            .entries.map((entry) => supervisor.getTrace(state.id).readText(entry.seq).text),
+        ).toEqual(["working", outcome === "success" ? "updated instruction" : "finished"]);
+      } finally {
+        supervisor.reset();
+        rmSync(directory, { recursive: true, force: true });
+      }
+    },
+    20_000,
+  );
 
   it("initializes the real SDK and sends the prompt only after subscription authentication", async () => {
     const directory = mkdtempSync(join(tmpdir(), "tau-claude-runner-"));

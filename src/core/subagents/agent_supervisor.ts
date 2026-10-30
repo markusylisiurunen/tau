@@ -38,6 +38,7 @@ type SubagentRecord = {
   usage: SubagentUsageSnapshot;
   completion: Promise<void>;
   trace: AgentTrace;
+  lastAssistantSeq?: number;
   pending: { prompt: string; mode: "queue" | "steer" }[];
 };
 
@@ -202,6 +203,7 @@ export class AgentSupervisor {
   }
 
   private beginFollowup(record: SubagentRecord, prompt: string): void {
+    record.lastAssistantSeq = undefined;
     record.run = {
       revision: record.run.revision + 1,
       status: "running",
@@ -280,6 +282,18 @@ export class AgentSupervisor {
     }
     if (wait) await raceWithAbort(this.waitForRecord(id), signal);
     return this.read(id);
+  }
+
+  getLastResponse(id: string): { seq: number; text: string; complete: boolean } | undefined {
+    const record = this.requireRecord(id);
+    const seq = record.lastAssistantSeq;
+    if (record.run.status === "running" || seq === undefined) return undefined;
+    try {
+      return { seq, ...record.trace.readText(seq, Number.POSITIVE_INFINITY) };
+    } catch (error) {
+      if (!(error instanceof AgentRequestError) || error.code !== "expired_content") throw error;
+      return { seq, text: "", complete: false };
+    }
   }
 
   getSnapshot(id: string): SubagentStateSnapshot | undefined {
@@ -384,7 +398,8 @@ export class AgentSupervisor {
     const record = this.records.get(id);
     if (!record) return;
     if (event.type === "trace") {
-      record.trace.append(event.event);
+      const seq = record.trace.append(event.event);
+      if (event.event.kind === "assistant") record.lastAssistantSeq = seq;
     } else if (event.type === "activity") {
       await this.emit({
         type: "subagent_activity",

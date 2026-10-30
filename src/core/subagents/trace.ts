@@ -23,7 +23,7 @@ export type TraceEntry = StoredEvent<TraceEvent> & { seq: number; timestamp: num
 
 const INLINE_BYTES = 4096;
 const PAGE_CHARS = 16384;
-const RETENTION_BYTES = 16 * 1024 * 1024;
+const RETENTION_BYTES = 64 * 1024 * 1024;
 
 export class AgentTrace {
   private entries: { entry: TraceEntry; bytes: number; ref?: string }[] = [];
@@ -33,7 +33,7 @@ export class AgentTrace {
   private evicted = false;
   private readonly key = randomUUID();
 
-  append(event: TraceEvent, timestamp = Date.now()): void {
+  append(event: TraceEvent, timestamp = Date.now()): number {
     const seq = ++this.sequence;
     let ref: string | undefined;
     let retainedBytes = 0;
@@ -64,6 +64,7 @@ export class AgentTrace {
       if (old.ref) this.contents.delete(old.ref);
       this.evicted = true;
     }
+    return seq;
   }
 
   trace(options: { kinds?: TraceKind[]; toolName?: string; limit?: number; cursor?: string }) {

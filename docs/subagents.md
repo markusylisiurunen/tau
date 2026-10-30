@@ -148,7 +148,7 @@ The agent reads the complete reference, with types and examples, by printing `aw
 
 ### Spawn
 
-`spawn` takes a single-line title of at most 256 characters, a prompt of at most 262,144 characters, an optional model, and an optional working directory. The prompt is the subagent's first message, and the subagent does not see the parent conversation, so the prompt should be self-contained. The call returns right away with the subagent's state, and the subagent keeps working in the background.
+`spawn` takes a single-line title of at most 512 characters, a prompt of at most 262,144 characters, an optional model, and an optional working directory. The prompt is the subagent's first message, and the subagent does not see the parent conversation, so the prompt should be self-contained. The call returns right away with the subagent's state, and the subagent keeps working in the background.
 
 When the main persona has `history`, a native Tau subagent may read the parent session's transcript as a last resort, when missing context would stop the work or force an important assumption. It reads with `tau.history.read` and `source: "local"`, so the read uses the host's local history even when a remote collection is configured. Local recording is best-effort, so the newest parent entries can occasionally be missing.
 
@@ -164,7 +164,32 @@ A subagent's state has its ID, title, model and reasoning, working directory, st
 
 `completed` means the turn ended normally. It does not mean the task succeeded, so the main agent reads the subagent's answer before relying on it. Background Bash and code jobs that a subagent started do not keep it working. A subagent that needs a job's result must wait for the job before it answers.
 
-`wait_for_agents` takes one or more IDs. It returns as soon as at least one of them is idle, with JSON listing the idle IDs in `ready` and the state of every requested subagent in `agents`. It returns no conversation content. Inside a program, `waitUntilIdle` waits for one subagent with the same meaning of idle. Neither wait returns until queued input has been handled too. Cancelling a wait, or stopping the program that waits, does not interrupt the subagent.
+`wait_for_agents` takes one or more IDs. It returns as soon as at least one of them is idle, with a text block for every requested subagent:
+
+```
+id: 0b6c2f1e-7d4a-4c1b-9a53-2e8f0d9c4b71
+title: "review authentication"
+status: idle
+reason: completed
+pending: queue=0 steer=0
+response_seq: 42
+response_complete: true
+response_partial: false
+
+--- response ---
+No problems found in the session expiry checks.
+```
+
+A subagent that is still working or stopping gets only its ID, title, status, and pending counts. An idle subagent also gets `reason`, an `error` line with the code and message after a failed turn, and the last assistant message from its latest turn:
+
+- `response_seq` is the message's `seq` in the trace. `readText({ id, seq, maxChars })` in `code` reads more retained text. For messages beyond its limit, use `trace` to get the content reference and page through it with `readContent`.
+- `response_complete` is `false` when the text was shortened to fit the budget, or when some of it is unavailable or was removed from the trace. Shortened text keeps its beginning and end, with a marker in the middle.
+- `response_partial` is `true` when the turn failed or was interrupted, so the message may be an unfinished answer.
+- `response: none` replaces these lines when the latest turn produced no assistant message. A message from an earlier turn is never returned.
+
+The response text of all requested subagents shares a budget of 8,192 estimated tokens, split evenly between them, working ones included. The optional `maxOutputTokens` sets a different budget, from 1 to 65,536.
+
+Inside a program, `waitUntilIdle` waits for one subagent with the same meaning of idle and returns its state without the response. Neither wait returns until queued input has been handled too. Cancelling a wait, or stopping the program that waits, does not interrupt the subagent.
 
 The host also sends live subagent activity to attached clients for display. It is a summary for display. The subagent's messages and tool results are in its trace.
 
@@ -204,7 +229,7 @@ Each entry has a sequence number `seq` and a timestamp. A `trace` call returns t
 
 Content of at most 4,096 bytes as JSON, without images, is inline in the entry. Larger content and all images are references. `readText` returns the text of one assistant message or tool result, up to 30,000 UTF-16 code units by default and at most 100,000. Its `complete` field is `false` when the text was cut or some content is unavailable. It does not detect output that the tool itself shortened. Content with JSON or images needs `readContent`, which returns one block per page. Text arrives in chunks of at most 16,384 UTF-16 code units that join to the exact text.
 
-A trace keeps the newest 4,096 entries, up to 16 MiB, for each subagent. When older entries are removed, trace pages report `historyEvicted: true`, and reading a removed entry or reference fails. A single content value larger than 6 MiB is replaced by a block that marks it unavailable. Traces last as long as the subagent and do not survive a host restart.
+A trace keeps the newest 4,096 entries, up to 64 MiB, for each subagent. When older entries are removed, trace pages report `historyEvicted: true`, and reading a removed entry or reference fails. A single content value larger than 6 MiB is replaced by a block that marks it unavailable. Traces last as long as the subagent and do not survive a host restart.
 
 A failed call throws an error with a `code` and a `message`. The codes are `invalid_arguments`, `unknown_agent`, `invalid_cursor`, `expired_content`, `content_type`, `operation_failed`, and `cancelled`. A subagent's own failure is part of its state and trace, not a failed call.
 

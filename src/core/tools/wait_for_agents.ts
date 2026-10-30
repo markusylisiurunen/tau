@@ -3,6 +3,7 @@ import { Type } from "typebox";
 import { z } from "zod";
 import type { AgentSupervisor } from "../subagents/agent_supervisor.js";
 import type { SubagentStateSnapshot } from "../subagents/types.js";
+import { truncateForTokens } from "../utils/truncate.js";
 import { parseToolArgs } from "../utils/zod.js";
 import type { ToolActivity } from "./activity.js";
 import { buildToolRunPresentation, type ToolCardLineInput } from "./presentation.js";
@@ -18,8 +19,12 @@ import { buildSubagentPresentation, formatSubagentMetadata } from "./subagent_ui
 import { TOOL_NAME_WAIT_FOR_AGENTS } from "./tool_names.js";
 
 const WAIT_FOR_AGENTS_DESCRIPTION = [
-  "Wait for one or more subagents and return their state as soon as at least one requested subagent finishes.",
-  "Returns compact state without conversation content. Read responses and tool evidence with tau.agents.trace and tau.agents.readText in code.",
+  "Wait until at least one of the requested subagents is idle, then return the state of every requested subagent.",
+  "For an idle subagent, the result also contains the last assistant message from its latest turn. A subagent that is not idle gets state only.",
+  "response_seq is that message's trace seq: read more retained text with tau.agents.readText({ id, seq }) in code, and tool evidence with tau.agents.trace.",
+  "response_complete is false when the text was shortened to fit the output budget or is no longer fully available.",
+  "response_partial is true when the turn failed or was interrupted, so the message may not be a final answer.",
+  "response: none means the latest turn produced no assistant message.",
 ].join(" ");
 
 const WAIT_FOR_AGENTS_IDS_DESCRIPTION = "List of single-line subagent ids to wait for.";
@@ -29,6 +34,14 @@ export const WAIT_FOR_AGENTS_TOOL: Tool = {
   description: WAIT_FOR_AGENTS_DESCRIPTION,
   parameters: Type.Object(
     {
+      maxOutputTokens: Type.Optional(
+        Type.Integer({
+          description:
+            "Estimated token budget for response text, split evenly across the requested subagents. Default 8192.",
+          minimum: 1,
+          maximum: 65536,
+        }),
+      ),
       ids: Type.Array(
         Type.String({
           description: WAIT_FOR_AGENTS_IDS_DESCRIPTION,
@@ -43,6 +56,7 @@ export const WAIT_FOR_AGENTS_TOOL: Tool = {
 
 const waitArgsSchema = z
   .object({
+    maxOutputTokens: z.number().int().min(1).max(65536).optional(),
     ids: z
       .array(
         z
@@ -129,10 +143,35 @@ export function createWaitForAgentsToolDefinition(supervisor: AgentSupervisor): 
           try {
             const agents = await supervisor.waitForAgents(ids, signal);
             const states = agents.map((state) => supervisor.getSnapshot(state.id)!);
-            const resultText = JSON.stringify({
-              ready: agents.filter((state) => state.status === "idle").map((state) => state.id),
-              agents,
-            });
+            const outputBudget = Math.floor((parsedArgs.data.maxOutputTokens ?? 8192) / ids.length);
+            const resultText = agents
+              .map((agent) => {
+                const lines = [
+                  `id: ${agent.id}`,
+                  `title: ${JSON.stringify(agent.title)}`,
+                  `status: ${agent.status}`,
+                  ...(agent.status === "idle" ? [`reason: ${agent.reason}`] : []),
+                  `pending: queue=${agent.pending.queue} steer=${agent.pending.steer}`,
+                ];
+                if (agent.status !== "idle") return lines.join("\n");
+                if (agent.reason === "failed") lines.push(`error: ${JSON.stringify(agent.error)}`);
+                const response = supervisor.getLastResponse(agent.id);
+                if (!response) {
+                  lines.push("response: none");
+                } else {
+                  const output = truncateForTokens(response.text, { maxTokens: outputBudget });
+                  lines.push(
+                    `response_seq: ${response.seq}`,
+                    `response_complete: ${response.complete && !output.truncated}`,
+                    `response_partial: ${agent.reason !== "completed"}`,
+                    "",
+                    "--- response ---",
+                    output.content,
+                  );
+                }
+                return lines.join("\n");
+              })
+              .join("\n\n");
             const presentation = buildToolRunPresentation({
               toolName: TOOL_NAME_WAIT_FOR_AGENTS,
               subject: dedupedTarget,

@@ -44,7 +44,7 @@ const spawnOptions = z.strictObject({
     .string()
     .trim()
     .min(1)
-    .max(256)
+    .max(512)
     .regex(/^[^\r\n]+$/),
   prompt: message,
   model: z.string().min(1).optional(),
@@ -133,7 +133,7 @@ type SpawnOptions = {
 };
 \`\`\`
 
-- \`title\`: required single line, 1–256 characters.
+- \`title\`: required single line, 1–512 characters.
 - \`prompt\`: required first message, at most 262,144 characters. The worker cannot see your conversation, so include everything it needs.
 - \`model\`: omit it to use your own model and settings. Set it only when the user or active instructions ask for a specific model; it must exactly match an allowed override from your instructions.
 - \`workingDirectory\`: absolute, or relative to your working directory. Defaults to your working directory.
@@ -188,7 +188,7 @@ Background Bash and code jobs that the worker started keep running. The worker s
 
 Waits until the worker has no active turn and no pending input, then returns its state. This includes queued messages. It returns immediately for an idle worker. A failed or interrupted worker returns idle state; the call does not throw for it. The wait does not include background jobs the worker started.
 
-Cancelling the wait, for example when the program stops, leaves the worker running. Wait for several workers with \`Promise.all\`. Outside a program, use the \`wait_for_agents\` tool.
+Cancelling the wait, for example when the program stops, leaves the worker running. Wait for several workers with \`Promise.all\`. The call returns state only; read the answer with \`trace\` and \`readText\`. Outside a program, use the \`wait_for_agents\` tool, which also returns each idle worker's latest answer.
 
 An idle state is an observation at one moment. Another caller can send the worker new input afterwards.
 
@@ -263,7 +263,7 @@ System prompts are not included.
 
 Content is inline when it is at most 4,096 bytes as JSON and has no images. Otherwise the entry holds a \`reference\`; read it with \`readText\` or \`readContent\`. A single content value larger than 6 MiB is replaced by an \`unavailable\` block.
 
-Each worker keeps its newest 4,096 entries, up to 16 MiB in total. Older entries and their references are then removed, and \`historyEvicted\` is \`true\`.
+Each worker keeps its newest 4,096 entries, up to 64 MiB in total. Older entries and their references are then removed, and \`historyEvicted\` is \`true\`.
 
 ## \`tau.agents.readText(options)\`
 

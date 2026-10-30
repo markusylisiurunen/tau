@@ -120,30 +120,80 @@ describe("agents capability", () => {
     expect(supervisor.spawn).not.toHaveBeenCalled();
   });
 
-  it("returns compact direct wait state without responses", async () => {
-    const state = {
-      id: "worker",
-      title: "child",
-      costTotal: 0,
-      run: { status: "succeeded", response: "secret report", startedAt: 1, finishedAt: 2 },
-    };
+  it("returns bounded settled responses and metadata for running workers", async () => {
+    const getLastResponse = vi.fn((id) =>
+      id === "empty"
+        ? undefined
+        : {
+            seq: 7,
+            text: `${id} ${"evidence ".repeat(100)}`,
+            complete: true,
+          },
+    );
+    const agents = [
+      { id: "done", status: "idle", reason: "completed" },
+      {
+        id: "partial",
+        status: "idle",
+        reason: "failed",
+        error: { code: "provider-error", message: "failed" },
+      },
+      { id: "empty", status: "idle", reason: "interrupted" },
+      { id: "busy", status: "working" },
+    ].map((state) => ({ ...state, title: state.id, pending: { queue: 0, steer: 0 } }));
     const tool = createWaitForAgentsToolDefinition({
-      waitForAgents: async () => [{ id: "worker", status: "idle", reason: "completed" }],
-      getSnapshot: () => state,
+      waitForAgents: async () => agents,
+      getSnapshot: (id) => ({
+        id,
+        title: id,
+        costTotal: 0,
+        run: { status: id === "busy" ? "running" : "succeeded", startedAt: 1, finishedAt: 2 },
+      }),
+      getLastResponse,
     });
     const outcome = await tool.execute(
-      { id: "wait", name: "wait_for_agents", arguments: { ids: ["worker"] } },
+      {
+        id: "wait",
+        name: "wait_for_agents",
+        arguments: { ids: agents.map((state) => state.id), maxOutputTokens: 80 },
+      },
       { ...context(), emitActivity: async () => {} },
     );
-    expect(JSON.parse(outcome.content[0].text)).toEqual({
-      ready: ["worker"],
-      agents: [{ id: "worker", status: "idle", reason: "completed" }],
-    });
-    expect(JSON.stringify(outcome)).not.toContain("secret report");
+    const text = outcome.content[0].text;
+    expect(text).toContain("done evidence");
+    expect(text).toContain("partial evidence");
+    expect(text).toContain("response_seq: 7");
+    expect(text).toContain("response_complete: false");
+    expect(text).toContain("response_partial: true");
+    expect(text).toContain("response: none");
+    expect(text).not.toContain("evidence ".repeat(100));
+    expect(getLastResponse.mock.calls.map(([id]) => id)).toEqual(["done", "partial", "empty"]);
+  });
+
+  it("accepts 512-character titles and rejects longer ones before spawning", async () => {
+    const { api, supervisor } = fixture();
+    await api.spawn([{ title: "x".repeat(512), prompt: "task" }], context());
+    await expect(
+      api.spawn([{ title: "x".repeat(513), prompt: "task" }], context()),
+    ).rejects.toMatchObject({ code: "invalid_arguments" });
+    expect(supervisor.spawn).toHaveBeenCalledOnce();
   });
 });
 
 describe("worker traces", () => {
+  it("retains image content beyond 16 MiB and evicts it at 64 MiB", () => {
+    const trace = new AgentTrace();
+    const content = [{ type: "image", mimeType: "image/png", data: "x".repeat(5 * 1024 * 1024) }];
+    trace.append({ kind: "assistant", content });
+    const first = trace.trace({}).entries[0];
+    for (let i = 1; i < 4; i++) trace.append({ kind: "assistant", content });
+    expect(trace.trace({}).historyEvicted).toBe(false);
+    expect(trace.readContent({ ref: first.content.ref }).blocks).toEqual(content);
+    for (let i = 4; i < 13; i++) trace.append({ kind: "assistant", content });
+    expect(trace.trace({}).historyEvicted).toBe(true);
+    expect(() => trace.readContent({ ref: first.content.ref })).toThrow();
+  });
+
   it("paginates a stable filtered view while new evidence arrives", () => {
     const trace = new AgentTrace();
     for (let i = 0; i < 5; i++)

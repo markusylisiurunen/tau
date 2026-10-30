@@ -839,6 +839,27 @@ describe("worker conversation scheduling", () => {
     supervisor.reset();
   });
 
+  it("does not return an earlier turn's answer when a follow-up has no text", async () => {
+    const supervisor = new AgentSupervisor({ onEvent: () => {}, recordUsage: () => {} });
+    try {
+      const spawned = supervisor.spawn(createSpawnOptions());
+      const record = getRecord(supervisor, spawned.id);
+      const answers = [createAssistant("first answer"), { ...createAssistant(""), content: [] }];
+      record.runtime.agent.spec.model.stream = vi.fn(() => createStream(answers.shift()));
+      await supervisor.waitForAgents([spawned.id]);
+      expect(supervisor.getLastResponse(spawned.id)).toMatchObject({
+        text: "first answer",
+        complete: true,
+      });
+      supervisor.sendInput({ id: spawned.id, prompt: "continue", mode: "queue" });
+      expect(supervisor.getLastResponse(spawned.id)).toBeUndefined();
+      await supervisor.waitForAgents([spawned.id]);
+      expect(supervisor.getLastResponse(spawned.id)).toBeUndefined();
+    } finally {
+      supervisor.reset();
+    }
+  });
+
   it("cancels a wait independently and clears queued work on nonblocking interruption", async () => {
     let release;
     const gate = new Promise((resolve) => {

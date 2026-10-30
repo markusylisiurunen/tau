@@ -8,11 +8,10 @@ Read [configuration](configuration.md) first for discovery and precedence. In th
 
 These are the defaults for fields you leave unset in this Tau version:
 
-| Field                              | Default            |
-| ---------------------------------- | ------------------ |
-| `defaultPersona`                   | `sonnet-5.5-coder` |
-| `defaultTheme`                     | `gold`             |
-| `clientTools[].executionTimeoutMs` | `60000` ms         |
+| Field            | Default            |
+| ---------------- | ------------------ |
+| `defaultPersona` | `sonnet-5.5-coder` |
+| `defaultTheme`   | `gold`             |
 
 Project and global content can change which persona ids exist. A configured default must match an available persona or built-in theme. Otherwise Tau reports a warning.
 
@@ -25,8 +24,6 @@ Project and global content can change which persona ids exist. A configured defa
 | `speech` | Object with optional `voiceId`, `recordingShortcut`, and `vocabulary` | Global, project | Merge by field; vocabulary is additive | TUI client or Telegram runner; process restart |
 | `defaultTheme` | Non-empty string | Global, project | Most-specific wins | TUI client; client restart |
 | `markdownExport` | Object with `url` and optional `token`, `tokenEnv` | Global only | One global object | TUI client; client restart |
-| `clientTools` | Array of objects | Global only | One global definition list | Owning client; TUI restart or new Telegram session client |
-| `enabledClientTools` | String array | Project only | Most-specific project list | Owning client; TUI restart or new Telegram session client |
 | `subagents` | Object | Global, project | Most-specific `launchModels` list | Session runtime; `/reload` or new session |
 | `modelSystemNotices` | String map | Global, project | Merge by model target | Session runtime; `/reload`, affects later inputs |
 | `flySprites` | Object | Global, project | Merge connection fields | Host startup; host restart |
@@ -256,61 +253,6 @@ The exact, case-sensitive id of a built-in theme. The shipped default is `gold`:
 ```
 
 An attached TUI uses its own client configuration. `/theme:<id>` changes only the current client and is not saved in the session. See [TUI](tui.md).
-
-## Command client tools
-
-### `clientTools`
-
-A global-only array of commands exposed as client-provided tools:
-
-| Nested field | Type | Required | Contract |
-| --- | --- | --- | --- |
-| `name` | Non-empty string | Yes | Unique within the array |
-| `defaultEnabled` | Boolean | Yes | Advertise when no project selection exists |
-| `description` | Non-empty string | Yes | Model-facing tool description |
-| `parameters` | JSON Schema object | Yes | Root `type` must be `"object"` |
-| `command` | Non-empty string | Yes | Executable name or path |
-| `args` | String array | No | Command arguments |
-| `executionTimeoutMs` | Positive integer | No | Invocation timeout, default `60000` |
-
-```json
-{
-  "clientTools": [
-    {
-      "name": "open-ticket",
-      "defaultEnabled": false,
-      "description": "Open a ticket in the client team's tracker.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "title": { "type": "string" }
-        },
-        "required": ["title"],
-        "additionalProperties": false
-      },
-      "command": "./bin/open-ticket"
-    }
-  ]
-}
-```
-
-Unknown properties inside `parameters` are kept as part of the schema. Unknown fields elsewhere in a tool object are removed. Because definitions are global, a command that contains `/` resolves from home. The command runs directly on the client, without a shell.
-
-The TUI flag `--no-client-tools` disables both configured command tools and the TUI's built-in client tools. See [client tools](client-tools.md).
-
-### `enabledClientTools`
-
-A project-only exact allowlist of names from global `clientTools`:
-
-```json
-{
-  "enabledClientTools": ["open-ticket"]
-}
-```
-
-Names are trimmed and duplicates removed. Unknown names are ignored without a warning. An empty list selects no tools. If no project level sets the field, Tau selects the tools with `defaultEnabled: true`.
-
-The most specific project list replaces broader ones. Project configuration cannot define client tool commands.
 
 ## Hosted execution environments
 

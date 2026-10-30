@@ -353,7 +353,7 @@ The execution result may include the same partial shape for the finished card. R
 
 Tau keeps every presentation field you set, up to the protocol limits, without truncating or normalizing it. `truncateTauClientToolText` truncates text for you by lines and characters, keeping the start or the middle. Use its result directly as a subject. For a block of detail text, split the result on `\n` and make each line one `details` entry; use `maxLines: 1` when the result goes into a single entry. The helper does not replace protocol validation. The SDK aborts handlers when the host cancels, the client closes, or the transport fails, and `client.close()` waits for running handlers to finish.
 
-Each assistant turn keeps the tool definitions it started with. Client tools are not affected by the persona's tool list. Names must not match host tools or tools of another observing client. See [client tools](client-tools.md) for authority, limits, command-backed tools, and disconnect behavior.
+Each assistant turn keeps the tool definitions it started with. Client tools are not affected by the persona's tool list. Names must not match host tools or tools of another observing client. See [client tools](client-tools.md) for authority, limits, and disconnect behavior.
 
 ### Build a code-mode tool
 
@@ -387,7 +387,7 @@ Each program must finish within the definition's `timeoutMs`, which defaults to 
 
 Code-mode calls and standalone runs accept an optional `maxOutputTokens` (1 through 65,536), with a default text budget of 8,192 tokens. Saving output to files is off unless the definition provides a `persistOutput` callback.
 
-The SDK also exports `executeTauCodeMode` for standalone runs. The separate `@markusylisiurunen/tau/code-mode` entry point also exports `runTauClientToolCommand` and `runTauCodeModeCommand` for command tools. Use these helpers instead of implementing the protocol yourself.
+The SDK also exports `executeTauCodeMode` for standalone runs. The separate `@markusylisiurunen/tau/code-mode` entry point exports the standalone runtime, the description builder, and `truncateTauClientToolText` without the rest of the SDK.
 
 ## Cancel and close deliberately
 

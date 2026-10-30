@@ -43,7 +43,7 @@ Confirm that part's machine, `cwd`, home, and tool paths. In an attached session
 
 The global level is skipped when the relevant `cwd` is outside home. Every project level on the path applies, with rules that depend on the field. Read the warnings and [configuration](configuration.md) for these common causes:
 
-- a nearer value, object, or `enabledClientTools` list replaced the broader one;
+- a nearer value or object replaced the broader one;
 - a merging field kept keys from another level;
 - a relative path resolved from the level that declared it;
 - an invalid nearer value was skipped, so a broader value still applies; or
@@ -124,23 +124,6 @@ For subagents, check three things:
 A running subagent keeps its model, tools, and working directory after a reload. Recovery does not restore subagents, so old IDs cannot receive follow-ups after a host restart. Use `list_agents` to see live subagents. See [subagents](subagents.md).
 
 If `tau_docs` is missing, the problem is the host's installation or version, not a persona. Check the host package and restart it.
-
-## A command client tool is missing or fails
-
-A command client tool exists only while its client observes the session. On the client side, check:
-
-1. The definition is in global configuration on the client machine, and the client's `cwd` is inside home.
-2. The entry is valid and its schema has an object root.
-3. The nearest project `enabledClientTools` includes the exact, case-sensitive name, or no project sets the field and `defaultEnabled` applies.
-4. The TUI was not started with `--no-client-tools`.
-5. No other client and no host tool uses the same name.
-6. The client was restarted or reconnected after the configuration change.
-
-Unknown names in the selection are ignored, and an empty `enabledClientTools` selects none. `/reload` does not refresh client tools.
-
-For failures, find which side failed. Launch, permission, `PATH`, timeout, stderr, framing, and nonzero-exit errors come from the client machine. Errors from `executionEnvironment.exec` come from the session machine. The executable runs directly, without a shell, with the client process's directory and environment.
-
-When the client detaches, its tools disappear and running calls are cancelled. Reconnecting does not resume the earlier process. See [client tools](client-tools.md).
 
 ## A credential is reported missing or rejected
 

@@ -337,7 +337,7 @@ function printAttachHelp(): void {
       "  --execution-kind <kind>        local or fly-sprite. default: local.",
       "  --fly-sprite <name>            already-provisioned Fly Sprite name.",
       "  --auth-token <token>           token for websocket servers started with --auth-token.",
-      "  --no-client-tools              disable built-in and configured TUI client tools.",
+      "  --no-client-tools              disable built-in TUI client tools.",
       "  --help, -h                     show this help and exit.",
       "",
       "examples:",
@@ -723,7 +723,6 @@ if (argv[0] === "telegram") {
         await createLocalTelegramSessionClient({
           client: options,
           hostConfig: telegramConfig,
-          configDeps,
           remoteModelCatalog,
           reportDiagnostic: reportHostDiagnostic,
         }),
@@ -1118,7 +1117,6 @@ const pendingHistoryDiagnostics: HistoryDiagnostic[] = [];
 const clientTools = createTuiClientTools({
   enabled: !cli.noClientTools,
   getController: () => sessionChatApp?.getController(),
-  commandTools: config.clientTools,
 });
 refreshRemoteModelCatalogAtStartup();
 const sessionClient = await createTauSdkClientWithHostConfig(
@@ -1143,9 +1141,6 @@ const sessionClient = await createTauSdkClientWithHostConfig(
 );
 const app = await SessionChatApp.open({
   client: sessionClient,
-  configuredClientToolNames: cli.noClientTools
-    ? []
-    : (config.clientTools ?? []).map((tool) => tool.name),
   targetLabel: "in-process",
   sessionSelection: {
     mode: "create",

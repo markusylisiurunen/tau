@@ -67,24 +67,13 @@ A few fields use other rules:
 - `modelSystemNotices` merges by normalized `<provider>/<model>` key.
 - `flySprites` configures one connection; more-specific connection fields replace broader values.
 - `subagents.launchModels` selects the most-specific list.
-- `clientTools` is defined only at global scope. `enabledClientTools` at the most-specific project level is an exact selection from those definitions.
 - `history` is accepted only at global scope.
-
-An empty `enabledClientTools` list in a project disables all command client tools for that project:
-
-```json
-{
-  "enabledClientTools": []
-}
-```
-
-Without `enabledClientTools`, Tau selects global client tools whose `defaultEnabled` value is `true`. Unknown selected names are ignored.
 
 ## How relative paths resolve
 
 A relative path resolves from the level that declares it:
 
-- A global `clientTools[].command` containing a slash resolves from home.
+- An `mcpServers` stdio `command` containing a slash, or a relative `cwd`, resolves from the directory of the level that defines the server.
 - A bare command such as `git` is left bare and resolves through the owning process's `PATH`.
 
 Other fields that contain paths are used as written, unless the field's reference entry says otherwise. For example, the `home` value of a hosted execution environment is passed on unchanged.
@@ -139,7 +128,6 @@ Never check a secret by printing the full config or environment into a shared tr
 Tau loads client configuration before opening the TUI. Restart the local TUI or `tau attach` to apply client changes such as:
 
 - `defaultTheme`
-- `clientTools` and `enabledClientTools`
 - client environment variables
 
 `/theme:<id>` changes only the current client's appearance. Themes are not saved in the session.
@@ -169,7 +157,6 @@ Some settings apply only when something new is created. `defaultPersona` and sta
 The Telegram runner loads its speech provider and its runner config at startup. Restart it after changing speech, projects, routing, or workspace preparation.
 
 - Workspace-preparation changes apply when a managed workspace is created or reconstructed. Restarting does not change a preserved workspace.
-- Command client tools are chosen when the runner creates the client for a session. Changes apply to new sessions, and also to existing sessions when a runner restart recovers them.
 - Existing sessions keep their recorded execution environment, unless recovery has to reconstruct a missing managed workspace (see [Telegram projects and workspaces](telegram-projects.md)).
 
 ## Common precedence mistakes
@@ -184,6 +171,6 @@ The Telegram runner loads its speech provider and its runner config at startup. 
 
 **Expecting `/reload` to restart the client or server.** Reload affects only the current session. Restart the process that reads the setting at startup.
 
-**Using a project file for global-only fields.** `apiKeys`, `clientTools`, and `history` are rejected outside global config. `enabledClientTools` is rejected outside project config.
+**Using a project file for global-only fields.** `apiKeys` and `history` are rejected outside global config.
 
 **Trusting a silent typo.** Unknown fields are removed without a warning. Valid JSON is not necessarily valid Tau configuration, so check exact names and confirm the setting changed behavior.

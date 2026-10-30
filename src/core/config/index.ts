@@ -1,4 +1,3 @@
-export type { CommandClientToolConfig } from "./client_tools.js";
 export { loadAllContent } from "./content_loader.js";
 export type { ConfigDeps } from "./deps.js";
 export { createDefaultConfigDeps } from "./deps.js";

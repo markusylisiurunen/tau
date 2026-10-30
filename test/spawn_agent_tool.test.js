@@ -719,14 +719,6 @@ describe("spawn_agent tool", () => {
     );
   });
 
-  it("passes the live client-tool provider to the supervisor", async () => {
-    const clientTools = vi.fn(() => []);
-    const { tool, supervisor } = createFixture({ clientTools });
-    const { result } = await execute(tool, baseArguments);
-    expect(result.toolResult.outcome).toBe("succeeded");
-    expect(supervisor.spawn).toHaveBeenCalledWith(expect.objectContaining({ clientTools }));
-  });
-
   it("treats a working directory resolving to the parent cwd as omission", async () => {
     const resolveSubagentPrompt = vi.fn();
     const { tool, supervisor, persona } = createFixture({ resolveSubagentPrompt });

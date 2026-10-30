@@ -19,7 +19,7 @@ Node SDK clients can pass `TauSdkClientTool` handlers when they initialize. Thei
 
 Only a client that is observing a session can add tools to it. The tools disappear when that client detaches or disconnects. When several clients observe one session, only one may offer a given tool name, and Tau rejects the later client if names collide. Client tool names also must not match host tools or built-in tools.
 
-Native Tau subagents in the session can call the same client tools as the main agent. Their calls go to the client that offers the tool and follow the same cancellation and detach rules. [Subagents](subagents.md#tools) explains when a subagent's tool set is updated.
+Only the session's main agent can call client tools. [Subagents](subagents.md#tools) never get them.
 
 ## Configure command client tools globally
 

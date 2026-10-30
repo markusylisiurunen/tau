@@ -134,7 +134,6 @@ export function createSpawnAgentToolDefinition(options: {
   mcp?: McpManager;
   cwd: string;
   resolveSubagentPrompt?: ResolveSubagentPrompt;
-  clientTools?: () => AgentTool[];
 }): AgentTool {
   const { backend, supervisor } = options;
   return {
@@ -319,7 +318,6 @@ export function createSpawnAgentToolDefinition(options: {
               history: options.history,
               mcp: options.mcp,
               personaId: persona.id,
-              clientTools: options.clientTools,
             });
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);

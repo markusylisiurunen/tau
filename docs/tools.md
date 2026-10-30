@@ -191,7 +191,7 @@ SDK and command client tools built on code mode use the same sandbox functions a
 
 ## Subagent tools
 
-A subagent gets each of `bash`, `write`, `edit`, `view_image`, `web`, `history`, `mcp`, and `models` that the main persona also has, plus `tau_docs`. A native Tau subagent also gets the client tools that attached clients currently offer. A subagent never gets the subagent tools. Its Bash and file tools start in the subagent's working directory. [Subagents](subagents.md#tools) has the details.
+A subagent gets each of `bash`, `write`, `edit`, `view_image`, `web`, `history`, `mcp`, and `models` that the main persona also has, plus `tau_docs`. It never gets the subagent tools or client tools. Its Bash and file tools start in the subagent's working directory. [Subagents](subagents.md#tools) has the details.
 
 ## Client-owned tools
 
@@ -216,7 +216,7 @@ Files are read in chunks of at most 8,000,000 bytes. A file that is not a regula
 
 Read errors, cancellation, and Telegram delivery errors fail the tool call. Each call has five minutes and is never retried automatically, because an interrupted upload may already have reached Telegram.
 
-The runner holds the upload credentials, and the recipient is always the session's bot and chat; the agent cannot choose another. These tools are not affected by `enabledClientTools` and do not exist in TUI sessions. Native Tau subagents in a Telegram session can use them. Viewing an image with `view_image` does not send it to Telegram. Automatic voice replies through `/tts_on` are separate from these tools.
+The runner holds the upload credentials, and the recipient is always the session's bot and chat; the agent cannot choose another. These tools are not affected by `enabledClientTools` and do not exist in TUI sessions or subagents. Viewing an image with `view_image` does not send it to Telegram. Automatic voice replies through `/tts_on` are separate from these tools.
 
 ## When a tool is missing or fails
 

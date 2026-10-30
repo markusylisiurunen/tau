@@ -91,7 +91,6 @@ export const ToolCatalog = {
         history: options.history,
         mcp: options.mcp,
         cwd: options.cwd,
-        clientTools: options.clientTools,
         ...(options.resolveSubagentPrompt
           ? { resolveSubagentPrompt: options.resolveSubagentPrompt }
           : {}),

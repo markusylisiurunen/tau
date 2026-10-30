@@ -1,6 +1,7 @@
 import { runTauClientToolCommand } from "../sdk/client_tool_command.js";
 import { truncateTauClientToolText } from "../sdk/client_tool_presentation.js";
 import {
+  describeCodeModeDeadline,
   executeTauCodeMode,
   parseCodeModeArguments,
   type TauCodeModeDefinition,
@@ -9,6 +10,7 @@ import {
 
 export async function runTauCodeModeCommand(definition: TauCodeModeDefinition): Promise<void> {
   validateTauCodeModeDefinition(definition);
+  const documentation = `${definition.documentation}\n\n${describeCodeModeDeadline(definition.timeoutMs)}`;
   await runTauClientToolCommand({
     name: definition.name,
     describe: (args) => createCodeModePresentation(parseCodeModeArguments(args).code),
@@ -16,6 +18,7 @@ export async function runTauCodeModeCommand(definition: TauCodeModeDefinition): 
       const { code, maxOutputTokens } = parseCodeModeArguments(args);
       const result = await executeTauCodeMode({
         ...definition,
+        documentation,
         code,
         maxOutputTokens,
         signal: context.signal,

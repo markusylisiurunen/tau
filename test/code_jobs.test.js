@@ -404,3 +404,94 @@ it.each(["bash", "code"])("routes %s job operations through the shared tools", a
   );
   expect(jobs.inspect).not.toHaveBeenCalled();
 });
+
+it.each([
+  ['printText("audit complete");', "succeeded"],
+  ['throw new Error("audit failed");', "failed"],
+  ['printText("audit started"); while (true) {}', "cancelled"],
+])("keeps the saved filename through foreground %s", async (source, expected) => {
+  const backend = {
+    readFileBinary: vi.fn(async (path) => ({ path, content: Buffer.from(source) })),
+  };
+  const tool = createCodeToolDefinition({
+    backend,
+    cwd: "/workspace",
+    config: {},
+    allowedTools: ["bash"],
+    bashJobs: new BashJobRegistry(),
+    codeJobs: new CodeJobRegistry(),
+  });
+  const invocation = {
+    id: "saved",
+    name: "code",
+    arguments: { file: "scripts/audit.js", timeout: 500 },
+  };
+  expect(tool.describe(invocation).presentation.subject).toBe("scripts/audit.js");
+  const events = [];
+  const result = await tool.execute(invocation, {
+    ...context(),
+    emitActivity: async (event) => events.push(event),
+  });
+  expect(result.outcome).toBe(expected);
+  expect(events.map((event) => event.type)).toEqual(["code_mode_started", "code_mode_finished"]);
+  for (const event of events) expect(event.presentation.subject).toBe("scripts/audit.js");
+  expect(backend.readFileBinary).toHaveBeenCalledExactlyOnceWith("/workspace/scripts/audit.js", {
+    maxBytes: 1024 * 1024,
+  });
+});
+
+it.each([false, true])(
+  "includes final output when a job finishes during log writing (failure: %s)",
+  async (fail) => {
+    const jobs = new CodeJobRegistry();
+    const paused = Promise.withResolvers();
+    const resume = Promise.withResolvers();
+    const writing = Promise.withResolvers();
+    const finishWrite = Promise.withResolvers();
+    const backend = {
+      runNodeScript: vi.fn(async () => ({ exitCode: 0, stdout: "/remote/output.txt" })),
+      writeFile: vi.fn(async (path) => {
+        writing.resolve();
+        await finishWrite.promise;
+        return { path };
+      }),
+    };
+    const id = jobs.start({
+      backend,
+      cwd: "/workspace",
+      source: "workflow.js",
+      signal: signal(),
+      program: {
+        name: "tau",
+        documentation: "test",
+        api: {
+          pause: async () => {
+            paused.resolve();
+            await resume.promise;
+            return null;
+          },
+        },
+        code: `printText("START"); await tau.pause(); ${fail ? 'throw new Error("FINAL DIAGNOSTIC");' : 'printText("FINAL RESULT");'}`,
+      },
+    });
+    try {
+      await paused.promise;
+      const inspection = jobs.inspect([id]);
+      await writing.promise;
+      resume.resolve();
+      await vi.waitFor(async () => {
+        expect((await jobs.inspect([id], false)).text).toContain(
+          `status: ${fail ? "failed" : "succeeded"}`,
+        );
+      });
+      finishWrite.resolve();
+      const result = await inspection;
+      expect(result.text).toContain(`status: ${fail ? "failed" : "succeeded"}`);
+      expect(result.text).toContain(fail ? "FINAL DIAGNOSTIC" : "FINAL RESULT");
+    } finally {
+      resume.resolve();
+      finishWrite.resolve();
+      await jobs.dispose();
+    }
+  },
+);

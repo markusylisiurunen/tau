@@ -539,7 +539,21 @@ describe("public code-mode runtime", () => {
     await handlerFinished;
   });
 
-  it("passes SDK descriptions through unchanged", async () => {
+  it.each([undefined, 12345])(
+    "exposes the SDK deadline for timeout %s in its schema",
+    (timeoutMs) => {
+      const tool = createTauCodeModeClientTool({
+        ...createDefinition(),
+        timeoutMs,
+        description: "Use the Linear integration.",
+      });
+      expect(tool.schema.description).toContain(String(timeoutMs ?? 60000));
+      expect(tool.schema.executionTimeoutMs).toBe(timeoutMs);
+      expect(tool.schema.parameters.properties).not.toHaveProperty("timeout");
+    },
+  );
+
+  it("preserves supplied SDK guidance alongside its deadline", async () => {
     const description = "Use the Linear integration exactly as documented here.";
     const tool = createTauCodeModeClientTool({
       ...createDefinition(),
@@ -548,7 +562,7 @@ describe("public code-mode runtime", () => {
 
     expect(tool.schema).toMatchObject({
       name: "linear",
-      description,
+      description: expect.stringContaining(description),
       parameters: {
         type: "object",
         required: ["code"],
@@ -658,6 +672,36 @@ describe("public code-mode runtime", () => {
 });
 
 describe("code-mode command adapter", () => {
+  it.each([undefined, 12345])(
+    "documents the command deadline for timeout %s",
+    async (timeoutMs) => {
+      const moduleUrl = pathToFileURL(resolve("dist/code_mode/index.js")).href;
+      const script = [
+        `import { runTauCodeModeCommand } from ${JSON.stringify(moduleUrl)};`,
+        "await runTauCodeModeCommand({",
+        'name: "linear", documentation: "# Linear API",',
+        `timeoutMs: ${timeoutMs},`,
+        "api: { echo: async ([value]) => value },",
+        "});",
+      ].join("\n");
+      const result = await runCommandWithOpenStdin(script, {
+        version: 5,
+        type: "prepare",
+        ...invocation,
+        toolName: "linear",
+        arguments: { code: "printText(docs)" },
+      });
+      expect(result.status).toBe(0);
+      const frames = result.stdout
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      const outcome = frames.find((frame) => frame.type === "result");
+      expect(outcome.ok).toBe(true);
+      expect(getTextContent(outcome)).toContain(String(timeoutMs ?? 60000));
+    },
+  );
+
   it("reads and writes the command client-tool framing", async () => {
     const moduleUrl = pathToFileURL(resolve("dist/code_mode/index.js")).href;
     const script = [

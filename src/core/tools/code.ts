@@ -19,7 +19,12 @@ import type { McpManager } from "../mcp/manager.js";
 import { formatZodError } from "../utils/zod.js";
 import type { BashJobRegistry } from "./bash_jobs.js";
 import type { CodeJobRegistry } from "./code_jobs.js";
-import { createCodeModeToolDefinition, executeInternalCodeMode } from "./code_mode.js";
+import {
+  type CodeModeToolImplementation,
+  createCodeModeToolDefinition,
+  executeCodeModeTool,
+  executeInternalCodeMode,
+} from "./code_mode.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import { buildToolRunPresentation } from "./presentation.js";
 import { type AgentTool, createTextToolOutcome, executeTool } from "./registry.js";
@@ -82,7 +87,7 @@ export function createCodeToolDefinition(options: {
     capabilities.push(createModelsCapability(options.backend, options.config));
   if (!capabilities.length) return undefined;
   const sdk = bindCodeModeSdk(capabilities);
-  const foreground = createCodeModeToolDefinition({
+  const implementation: CodeModeToolImplementation = {
     schema: {
       name: TOOL_NAME_CODE,
       description: [
@@ -144,10 +149,9 @@ export function createCodeToolDefinition(options: {
           ? raw.code
           : "";
       const subject =
-        code
-          .split(/\r?\n/)
-          .map((line) => line.trim())
-          .find(Boolean) ?? "(invalid code)";
+        typeof raw === "object" && raw !== null && "file" in raw && typeof raw.file === "string"
+          ? raw.file
+          : code || "(invalid code)";
       const parsed = argsSchema.safeParse(raw);
       return parsed.success
         ? {
@@ -172,17 +176,10 @@ export function createCodeToolDefinition(options: {
         timeoutMs,
       });
     },
-  });
+  };
+  const foreground = createCodeModeToolDefinition(implementation);
   return {
     ...foreground,
-    describe: (call) =>
-      foreground.describe({
-        ...call,
-        arguments:
-          typeof call.arguments === "object" && call.arguments !== null && "file" in call.arguments
-            ? { code: call.arguments.file }
-            : call.arguments,
-      }),
     execute: async (call, context) => {
       const parsed = argsSchema.safeParse(call.arguments);
       if (!parsed.success) return foreground.execute(call, context);
@@ -225,20 +222,14 @@ export function createCodeToolDefinition(options: {
             },
           }));
         }
-        return foreground.execute(
-          {
-            ...call,
-            arguments: {
-              code,
-              ...(args.input !== undefined ? { input: args.input } : {}),
-              ...(args.timeout !== undefined ? { timeout: args.timeout } : {}),
-              ...(args.maxOutputTokens !== undefined
-                ? { maxOutputTokens: args.maxOutputTokens }
-                : {}),
-            },
-          },
-          context,
-        );
+        return executeCodeModeTool(implementation, call, context, {
+          ok: true,
+          code,
+          input: args.input,
+          subject: args.file ?? code,
+          timeoutMs: args.timeout ?? CODE_DEFAULT_TIMEOUT_MS,
+          maxOutputTokens: args.maxOutputTokens ?? TAU_CODE_MODE_DEFAULT_MAX_OUTPUT_TOKENS,
+        });
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
         return executeTool(context, () => ({

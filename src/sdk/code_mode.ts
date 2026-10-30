@@ -1,5 +1,6 @@
 import {
   CODE_MODE_MAX_OUTPUT_TOKENS_DESCRIPTION,
+  describeCodeModeDeadline,
   executeTauCodeMode,
   parseCodeModeArguments,
   TAU_CODE_MODE_MAX_OUTPUT_TOKENS,
@@ -31,7 +32,7 @@ export function createTauCodeModeClientTool(
   return {
     schema: {
       name: options.name,
-      description: options.description,
+      description: `${options.description}\n\n${describeCodeModeDeadline(options.timeoutMs)}`,
       parameters: {
         type: "object",
         properties: {

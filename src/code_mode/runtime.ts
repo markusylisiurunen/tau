@@ -157,6 +157,10 @@ export function buildTauCodeModeToolDescription({
   ].join(" ");
 }
 
+export function describeCodeModeDeadline(timeoutMs = TAU_CODE_MODE_DEFAULT_TIMEOUT_MS): string {
+  return `Each program must finish within ${timeoutMs} ms, including time spent waiting for API calls.`;
+}
+
 export function validateTauCodeModeDefinition(definition: TauCodeModeDefinition): void {
   validateName(definition.name);
   if (!definition.documentation.trim()) {

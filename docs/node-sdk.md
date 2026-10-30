@@ -383,6 +383,8 @@ Pass `tickets` in `clientTools`. The model's code receives your API namespace, `
 
 Use `await printImage({ data, mimeType })` to return a base64 image. Results contain an ordered `content` array of text and image blocks, and SDK client tools keep that order: consecutive text output forms one block, and each image splits the text before and after it. The helper validates and prepares JPEG, PNG, or WebP images outside the sandbox, creates no files, and uses the limits described in [tools](tools.md).
 
+Each program must finish within the definition's `timeoutMs`, which defaults to 60,000 ms and includes time spent waiting for API calls. The helper appends this deadline to the tool description so the model can see it, and uses the same value as the tool's `executionTimeoutMs`.
+
 Code-mode calls and standalone runs accept an optional `maxOutputTokens` (1 through 65,536), with a default text budget of 8,192 tokens. Saving output to files is off unless the definition provides a `persistOutput` callback.
 
 The SDK also exports `executeTauCodeMode` for standalone runs. The separate `@markusylisiurunen/tau/code-mode` entry point also exports `runTauClientToolCommand` and `runTauCodeModeCommand` for command tools. Use these helpers instead of implementing the protocol yourself.

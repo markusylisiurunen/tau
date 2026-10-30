@@ -95,113 +95,122 @@ export function createCodeModeToolDefinition(
         presentation: buildToolRunPresentation({
           toolName: implementation.schema.name,
           operation: implementation.schema.name,
-          subject: parsed.code || parsed.subject,
+          subject: parsed.subject,
         }),
       };
     },
-    async execute(
-      toolCall: ToolCall,
-      context: ToolExecutionContext,
-    ): Promise<ToolExecutionOutcome> {
-      const parsed = implementation.parseArguments(toolCall.arguments);
-      const subject = parsed.subject;
-
-      const blocked = (
-        reason: string,
-        semanticOutcome: ToolExecutionOutcome["outcome"] = "blocked",
-      ): ToolImplementationOutcome => {
-        const outcome = createTextToolOutcome(reason, semanticOutcome);
-        const uiEvent: ToolActivity = {
-          type: "code_mode_blocked",
-          toolCallId: toolCall.id,
-          toolName: implementation.schema.name,
-          presentation: buildToolRunPresentation({
-            toolName: implementation.schema.name,
-            operation: implementation.schema.name,
-            subject: parsed.code || subject,
-            details: [{ text: reason }],
-          }),
-          reason,
-        };
-        return { content: outcome.content, outcome: outcome.outcome, uiEvent };
-      };
-
-      if (!parsed.ok) {
-        return executeTool(context, () => blocked(`Invalid arguments: ${parsed.error}`));
-      }
-
-      return executeTool(
+    execute: (toolCall, context) =>
+      executeCodeModeTool(
+        implementation,
+        toolCall,
         context,
-        async () => {
-          try {
-            const runtime = await implementation.execute({
-              context,
-              code: parsed.code,
-              input: parsed.input,
-              maxOutputTokens: parsed.maxOutputTokens,
-              timeoutMs: parsed.timeoutMs,
-            });
-            const execution = runtime.execution;
-            const terminationNote = getCodeModeTerminationNote(runtime, parsed.timeoutMs);
-            const isError = runtime.status !== "succeeded";
-            const semanticOutcome =
-              runtime.status === "cancelled" || runtime.status === "timed-out"
-                ? "cancelled"
-                : isError
-                  ? "failed"
-                  : "succeeded";
-            const outputPresentation = buildBashPresentation({
-              toolName: implementation.schema.name,
-              operation: implementation.schema.name,
-              subject: parsed.code || subject,
-              truncationInfo: {
-                output: runtime.projection.content,
-                model: runtime.projection,
-                captureTruncated: execution.truncated,
-                ...(runtime.persistedPath ? { fullOutputPath: runtime.persistedPath } : {}),
-              },
-              exitCode: execution.exitCode,
-              durationMs: runtime.durationMs,
-              includeExitCode: false,
-            });
-            const presentation = terminationNote
-              ? {
-                  ...outputPresentation,
-                  details: outputPresentation.details.map((line) =>
-                    line.text === terminationNote || line.text === `[${terminationNote}]`
-                      ? { ...line, wrap: "word" as const }
-                      : line,
-                  ),
-                }
-              : outputPresentation;
-            const uiEvent: ToolActivity = {
-              type: "code_mode_finished",
-              toolCallId: toolCall.id,
-              toolName: implementation.schema.name,
-              presentation,
-              status: isError ? "error" : "success",
-            };
-            return {
-              content: runtime.result.content,
-              outcome: semanticOutcome,
-              uiEvent,
-            };
-          } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            return blocked(`Could not execute program: ${errorMessage}`, "failed");
-          }
-        },
-        {
-          type: "code_mode_started",
+        implementation.parseArguments(toolCall.arguments),
+      ),
+  };
+}
+
+export async function executeCodeModeTool(
+  implementation: CodeModeToolImplementation,
+  toolCall: ToolCall,
+  context: ToolExecutionContext,
+  parsed: ParsedCodeModeArguments,
+): Promise<ToolExecutionOutcome> {
+  const subject = parsed.subject;
+
+  const blocked = (
+    reason: string,
+    semanticOutcome: ToolExecutionOutcome["outcome"] = "blocked",
+  ): ToolImplementationOutcome => {
+    const outcome = createTextToolOutcome(reason, semanticOutcome);
+    const uiEvent: ToolActivity = {
+      type: "code_mode_blocked",
+      toolCallId: toolCall.id,
+      toolName: implementation.schema.name,
+      presentation: buildToolRunPresentation({
+        toolName: implementation.schema.name,
+        operation: implementation.schema.name,
+        subject,
+        details: [{ text: reason }],
+      }),
+      reason,
+    };
+    return { content: outcome.content, outcome: outcome.outcome, uiEvent };
+  };
+
+  if (!parsed.ok) {
+    return executeTool(context, () => blocked(`Invalid arguments: ${parsed.error}`));
+  }
+
+  return executeTool(
+    context,
+    async () => {
+      try {
+        const runtime = await implementation.execute({
+          context,
+          code: parsed.code,
+          input: parsed.input,
+          maxOutputTokens: parsed.maxOutputTokens,
+          timeoutMs: parsed.timeoutMs,
+        });
+        const execution = runtime.execution;
+        const terminationNote = getCodeModeTerminationNote(runtime, parsed.timeoutMs);
+        const isError = runtime.status !== "succeeded";
+        const semanticOutcome =
+          runtime.status === "cancelled" || runtime.status === "timed-out"
+            ? "cancelled"
+            : isError
+              ? "failed"
+              : "succeeded";
+        const outputPresentation = buildBashPresentation({
+          toolName: implementation.schema.name,
+          operation: implementation.schema.name,
+          subject,
+          truncationInfo: {
+            output: runtime.projection.content,
+            model: runtime.projection,
+            captureTruncated: execution.truncated,
+            ...(runtime.persistedPath ? { fullOutputPath: runtime.persistedPath } : {}),
+          },
+          exitCode: execution.exitCode,
+          durationMs: runtime.durationMs,
+          includeExitCode: false,
+        });
+        const presentation = terminationNote
+          ? {
+              ...outputPresentation,
+              details: outputPresentation.details.map((line) =>
+                line.text === terminationNote || line.text === `[${terminationNote}]`
+                  ? { ...line, wrap: "word" as const }
+                  : line,
+              ),
+            }
+          : outputPresentation;
+        const uiEvent: ToolActivity = {
+          type: "code_mode_finished",
           toolCallId: toolCall.id,
           toolName: implementation.schema.name,
-          presentation: buildToolRunPresentation({
-            toolName: implementation.schema.name,
-            operation: implementation.schema.name,
-            subject: parsed.code || subject,
-          }),
-        },
-      );
+          presentation,
+          status: isError ? "error" : "success",
+        };
+        return {
+          content: runtime.result.content,
+          outcome: semanticOutcome,
+          uiEvent,
+        };
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return blocked(`Could not execute program: ${errorMessage}`, "failed");
+      }
     },
-  };
+    {
+      type: "code_mode_started",
+      toolCallId: toolCall.id,
+      toolName: implementation.schema.name,
+      presentation: buildToolRunPresentation({
+        toolName: implementation.schema.name,
+        operation: implementation.schema.name,
+        subject,
+      }),
+    },
+  );
 }

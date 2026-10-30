@@ -64,6 +64,12 @@ export const openRouterModels: Record<Operation, OpenRouterModel[]> = {
       role: "Audio/video understanding and image-heavy analysis.",
     },
     {
+      id: "google/gemini-4-argon",
+      inputs: ["text", "image", "audio", "video"],
+      reasoning: ["low", "medium", "high"],
+      role: "Multimodal analysis of text, images, audio, and video.",
+    },
+    {
       id: "openai/gpt-6-luna",
       inputs: ["text", "image"],
       reasoning: ["none", "low", "medium", "high", "xhigh", "max"],
@@ -80,6 +86,12 @@ export const openRouterModels: Record<Operation, OpenRouterModel[]> = {
       inputs: ["text", "image"],
       reasoning: ["low", "medium", "high", "xhigh", "max"],
       role: "Coding, debugging, and technical reasoning.",
+    },
+    {
+      id: "anthropic/claude-sonnet-5.5",
+      inputs: ["text", "image"],
+      reasoning: ["low", "medium", "high", "xhigh", "max"],
+      role: "Writing, coding, and general-purpose reasoning.",
     },
     {
       id: "anthropic/claude-opus-5.5",

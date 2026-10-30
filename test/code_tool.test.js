@@ -564,6 +564,111 @@ describe("code composition", () => {
     expect(text(result.result)).not.toContain("secret");
   });
 
+  it("passes a chat schema to OpenRouter and returns parsed data through code mode", async () => {
+    const schema = {
+      type: "object",
+      properties: { person: { type: "string" } },
+      required: ["person"],
+      additionalProperties: false,
+    };
+    const reply = chatReply();
+    reply.choices[0].message.content = '{"person":"Ada"}';
+    const fetchImpl = vi.fn(async () => Response.json(reply));
+    const sdk = bindCodeModeSdk([
+      createModelsCapability({}, { apiKeys: { openrouter: "secret" } }, fetchImpl),
+    ]);
+    const result = await runTauCodeMode({
+      name: "tau",
+      ...sdk,
+      code: `const result = await tau.models.chat({ model: "openai/gpt-6-luna", prompt: "Extract Ada", schema: ${JSON.stringify(schema)} }); printText(result.answer.person); printText(JSON.stringify(result.usage));`,
+    });
+    expect(result.status).toBe("succeeded");
+    expect(text(result.result).split("\n")[0]).toBe("Ada");
+    expect(JSON.parse(text(result.result).split("\n")[1])).toEqual(reply.usage);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toMatchObject({
+      response_format: {
+        type: "json_schema",
+        json_schema: { name: "result", strict: true, schema },
+      },
+      provider: { require_parameters: true },
+    });
+  });
+
+  it.each([null, true, "schema", []])(
+    "rejects a non-object chat schema %j before requesting inference",
+    async (schema) => {
+      const fetchImpl = vi.fn();
+      const sdk = bindCodeModeSdk([
+        createModelsCapability({}, { apiKeys: { openrouter: "secret" } }, fetchImpl),
+      ]);
+      const result = await runTauCodeMode({
+        name: "tau",
+        ...sdk,
+        code: `await tau.models.chat({ model: "openai/gpt-6-luna", prompt: "Extract", schema: ${JSON.stringify(schema)} })`,
+      });
+      expect(result.status).toBe("failed");
+      expect(fetchImpl).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([null, false, 0, "", [1, 2], { unexpected: true }])(
+    "parses structured JSON %j without locally enforcing the schema",
+    async (answer) => {
+      const reply = chatReply();
+      reply.choices[0].message.content = JSON.stringify(answer);
+      const result = await requestOpenRouterChat(
+        {
+          model: "openai/gpt-6-luna",
+          prompt: "Extract",
+          schema: { type: "object" },
+          attachments: [],
+        },
+        {
+          config: { apiKeys: { openrouter: "secret" } },
+          env: {},
+          signal: new AbortController().signal,
+          mediaAdapter: {},
+          fetchImpl: async () => Response.json(reply),
+        },
+      );
+      expect(result.answer).toEqual(answer);
+    },
+  );
+
+  it.each([
+    { finish_reason: "stop", content: "not JSON", failed: true },
+    { finish_reason: "length", content: '{"partial":', failed: false },
+    { finish_reason: "length", content: '{"complete":true}', failed: false },
+    { finish_reason: "content_filter", content: "blocked", failed: false },
+    { finish_reason: "stop", content: "refused", refusal: "policy", failed: false },
+  ])(
+    "handles structured completion status $finish_reason with content $content",
+    async ({ finish_reason, content, refusal, failed }) => {
+      const reply = chatReply();
+      reply.choices = [{ finish_reason, message: { role: "assistant", content, refusal } }];
+      const fetchImpl = vi.fn(async () => Response.json(reply));
+      const sdk = bindCodeModeSdk([
+        createModelsCapability({}, { apiKeys: { openrouter: "secret" } }, fetchImpl),
+      ]);
+      const result = await runTauCodeMode({
+        name: "tau",
+        ...sdk,
+        code: 'const result = await tau.models.chat({ model: "openai/gpt-6-luna", prompt: "Extract", schema: { type: "object" } }); printText(JSON.stringify(result));',
+      });
+      expect(result.status).toBe(failed ? "failed" : "succeeded");
+      expect(fetchImpl).toHaveBeenCalledOnce();
+      if (!failed) {
+        expect(JSON.parse(text(result.result))).toMatchObject({
+          answer: null,
+          finish_reason,
+          usage: reply.usage,
+          ...(refusal === undefined ? {} : { refusal }),
+        });
+      }
+    },
+  );
+
   it("exposes Luna Decisions through the shared catalog and validates its score limits", async () => {
     const reply = {
       model: "openai/gpt-6-luna-decisions-20261006",

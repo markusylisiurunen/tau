@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { resolveModel } from "../dist/core/models/catalog.js";
 import { AgentSupervisor } from "../dist/core/subagents/agent_supervisor.js";
 import { claudeCodeOptions, claudeCodeTools } from "../dist/core/subagents/claude_code_runner.js";
+import { ClaudeCodeRuntime } from "../dist/core/subagents/claude_code_runtime.js";
 import { parseSubagentLaunchModel } from "../dist/core/subagents/launch_model.js";
 
 const sessionId = "ce4518fa-4b3f-44ef-a1a3-2f7edc024b8d";
@@ -167,7 +168,7 @@ describe("Claude Code supervised lifecycle", () => {
         activity: expect.objectContaining({ type: "tool", outcome: "failed", toolName: "Bash" }),
       }),
     );
-    expect(f.supervisor.sendInput({ id, prompt: "follow up" }).ok).toBe(true);
+    expect(f.supervisor.sendInput({ mode: "queue", id, prompt: "follow up" }).ok).toBe(true);
     const [second] = await f.supervisor.waitForAgents([id]);
     expect(second.run).toMatchObject({ revision: 2, status: "succeeded", response: "answer 2" });
     expect(f.calls[1].input).toMatchObject({ sessionId, prompt: "follow up" });
@@ -206,9 +207,9 @@ describe("Claude Code supervised lifecycle", () => {
     const [interrupted] = await f.supervisor.waitForAgents([id]);
     expect(interrupted.run.status).toBe("interrupted");
     expect(interrupted.usage).toMatchObject({ input: 5, output: 3, contextWindowUsageTokens: 8 });
-    f.supervisor.sendInput({ id, prompt: "continue" });
+    f.supervisor.sendInput({ mode: "queue", id, prompt: "continue" });
     await f.supervisor.waitForAgents([id]);
-    f.supervisor.sendInput({ id, prompt: "continue again" });
+    f.supervisor.sendInput({ mode: "queue", id, prompt: "continue again" });
     const [finished] = await f.supervisor.waitForAgents([id]);
     expect(finished.usage).toMatchObject({ input: 15, output: 15 });
     expect(
@@ -240,12 +241,12 @@ describe("Claude Code supervised lifecycle", () => {
     });
     const id = f.spawn().state.id;
     await f.supervisor.waitForAgents([id]);
-    f.supervisor.sendInput({ id, prompt: "retry" });
+    f.supervisor.sendInput({ mode: "queue", id, prompt: "retry" });
     const [failed] = await f.supervisor.waitForAgents([id]);
     expect(failed.run.status).toBe("failed");
     expect(failed.usage.input).toBe(10);
     expect(failed.costTotal).toBe(0.1);
-    f.supervisor.sendInput({ id, prompt: "retry again" });
+    f.supervisor.sendInput({ mode: "queue", id, prompt: "retry again" });
     const [finished] = await f.supervisor.waitForAgents([id]);
     expect(finished.usage.input).toBe(20);
     expect(f.recordUsage.mock.calls.map(([entry]) => entry.usage.input)).toEqual([10, 0, 10]);
@@ -272,11 +273,11 @@ describe("Claude Code supervised lifecycle", () => {
     });
     const id = f.spawn().state.id;
     await ready;
-    expect(f.supervisor.sendInput({ id, prompt: "too early" }).ok).toBe(false);
+    expect(f.supervisor.sendInput({ mode: "queue", id, prompt: "queued" }).ok).toBe(true);
     const stopped = await f.supervisor.interrupt(id);
     expect(stopped.run.status).toBe("interrupted");
     expect(f.calls[0].options.signal.aborted).toBe(true);
-    expect(f.supervisor.sendInput({ id, prompt: "continue" }).ok).toBe(true);
+    expect(f.supervisor.sendInput({ mode: "queue", id, prompt: "continue" }).ok).toBe(true);
     expect((await f.supervisor.waitForAgents([id]))[0].run.status).toBe("succeeded");
     expect(f.calls[1].input.sessionId).toBe(sessionId);
     f.supervisor.reset();
@@ -328,4 +329,43 @@ describe("Claude Code supervised lifecycle", () => {
     expect((await f.supervisor.waitForAgents([id]))[0].run.response).toBe("valmista: ää 漢");
     f.supervisor.reset();
   });
+});
+
+it("does not cancel a confirmed steering delivery when the SDK finishes first", async () => {
+  let runtime;
+  let delivery;
+  let finishDelivery;
+  const deliveryGate = new Promise((resolve) => {
+    finishDelivery = resolve;
+  });
+  let deliverySignal;
+  runtime = new ClaudeCodeRuntime({
+    config: {
+      kind: "claude-code",
+      model: { provider: "claude-code", id: "claude-sonnet-5-5" },
+      effort: "medium",
+      tools: [],
+      workingDirectory: "/repo",
+    },
+    onEvent: async (event) => {
+      if (event.type === "control") delivery = runtime.steer("follow steering");
+    },
+    backend: {
+      runNodeScript: async (_script, _args, options) => {
+        const input = JSON.parse(options.stdin);
+        if (input.source) {
+          emit(options, { type: "control", path: "/target/control.sock" });
+          emit(options, result());
+          return ok;
+        }
+        deliverySignal = options.signal;
+        await deliveryGate;
+        return { ...ok, stdout: "accepted\n", aborted: options.signal.aborted };
+      },
+    },
+  });
+  await runtime.submit("task");
+  expect(deliverySignal.aborted).toBe(false);
+  finishDelivery();
+  expect(await delivery).toBe(true);
 });

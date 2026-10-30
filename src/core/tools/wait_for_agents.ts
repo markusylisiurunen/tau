@@ -2,7 +2,6 @@ import type { Tool, ToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { z } from "zod";
 import type { AgentSupervisor } from "../subagents/agent_supervisor.js";
-import { formatWaitForAgentsResult } from "../subagents/format.js";
 import type { SubagentStateSnapshot } from "../subagents/types.js";
 import { parseToolArgs } from "../utils/zod.js";
 import type { ToolActivity } from "./activity.js";
@@ -20,12 +19,10 @@ import { TOOL_NAME_WAIT_FOR_AGENTS } from "./tool_names.js";
 
 const WAIT_FOR_AGENTS_DESCRIPTION = [
   "Wait for one or more subagents and return their state as soon as at least one requested subagent finishes.",
-  "Completed agents include their latest response; running agents include their current state.",
-  "Responses are retained and may be read repeatedly by calling this tool again with a completed agent id.",
+  "Returns compact state without conversation content. Read responses and tool evidence with tau.agents.trace and tau.agents.readText in code.",
 ].join(" ");
 
 const WAIT_FOR_AGENTS_IDS_DESCRIPTION = "List of single-line subagent ids to wait for.";
-const WAIT_FOR_AGENTS_RESPONSE_MAX_LINES = 17;
 
 export const WAIT_FOR_AGENTS_TOOL: Tool = {
   name: TOOL_NAME_WAIT_FOR_AGENTS,
@@ -72,38 +69,8 @@ function getWaitCostTotal(states: SubagentStateSnapshot[]): number {
   );
 }
 
-function truncateResponseLines(response: string): string[] {
-  const text = response.replace(/\r\n?/g, "\n").trimEnd() || "(empty response)";
-  const lines = text.split("\n");
-  if (lines.length <= WAIT_FOR_AGENTS_RESPONSE_MAX_LINES) return lines;
-
-  const head = lines.slice(0, 8);
-  const tail = lines.slice(-8);
-  return [...head, `…${lines.length - 16} more lines…`, ...tail];
-}
-
 function buildWaitDetails(states: SubagentStateSnapshot[]): ToolCardLineInput[] {
-  return states.flatMap((state): ToolCardLineInput[] => {
-    if (state.run.status === "running") return [];
-
-    const details: ToolCardLineInput[] = [
-      { text: `${state.id} · ${state.title} · ${state.run.status}` },
-    ];
-    if (state.run.status === "succeeded") {
-      details.push(
-        { text: "Response:" },
-        ...truncateResponseLines(state.run.response).map((text) => ({ text })),
-      );
-      return details;
-    }
-
-    const stopReason =
-      state.run.failure.kind === "provider-error"
-        ? ` (stop reason: ${state.run.failure.stopReason})`
-        : "";
-    details.push({ text: `${state.run.failure.message}${stopReason}` });
-    return details;
-  });
+  return states.map((state) => ({ text: `${state.id} · ${state.title} · ${state.run.status}` }));
 }
 
 function formatAgentIdsSubject(ids: string[]): string {
@@ -161,8 +128,11 @@ export function createWaitForAgentsToolDefinition(supervisor: AgentSupervisor): 
         async (): Promise<ToolImplementationOutcome> => {
           try {
             const states = await supervisor.waitForAgents(ids, signal);
-            const capacity = supervisor.getCapacity();
-            const resultText = formatWaitForAgentsResult(states, capacity);
+            const agents = states.map((state) => supervisor.read(state.id));
+            const resultText = JSON.stringify({
+              ready: agents.filter((state) => state.status === "idle").map((state) => state.id),
+              agents,
+            });
             const presentation = buildToolRunPresentation({
               toolName: TOOL_NAME_WAIT_FOR_AGENTS,
               subject: dedupedTarget,

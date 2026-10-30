@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { AgentRuntime, type AgentTurnResult, createAgentSpec } from "../agent/agent_runtime.js";
+import { AgentRuntime, type AgentSubturnResult, createAgentSpec } from "../agent/agent_runtime.js";
 import type { AgentEvent } from "../agent/events.js";
 import type { Config } from "../config/index.js";
 import type { HistoryQuery } from "../history/types.js";
@@ -21,9 +21,12 @@ import {
 import { extractAssistantText } from "../utils/messages.js";
 import type { ClaudeCodeEvent, ClaudeCodeTokenUsage } from "./claude_code_protocol.js";
 import { ClaudeCodeRuntime } from "./claude_code_runtime.js";
+import { AgentRequestError } from "./errors.js";
 import { formatActiveSubagentsForCompaction } from "./format.js";
+import { AgentTrace, traceBlocks } from "./trace.js";
 import type {
   SubagentCapacitySnapshot,
+  SubagentConversationState,
   SubagentEvent,
   SubagentRunFailure,
   SubagentRunSnapshot,
@@ -61,8 +64,14 @@ type SubagentRecord = {
   usage: SubagentUsageSnapshot;
   claudeMessageUsage: Map<string, ClaudeCodeTokenUsage | null>;
   toolPresentations: Map<string, ToolRunPresentation>;
+  toolOutcomes: Map<string, "succeeded" | "failed" | "blocked" | "cancelled">;
   blockedToolCalls: Map<string, string>;
   completion: Promise<SubagentRecord>;
+  trace: AgentTrace;
+  pending: { prompt: string; mode: "queue" | "steer" }[];
+  steering: number;
+  steeringDelivery: Promise<void>;
+  deliveryFailure?: Error;
 };
 
 async function raceWithAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
@@ -122,7 +131,7 @@ export class AgentSupervisor {
   getActiveCompactionContext(): string | undefined {
     const active = this.listSnapshots().filter((state) => state.availability === "running");
     if (active.length === 0) return undefined;
-    const state = formatActiveSubagentsForCompaction(active);
+    const state = formatActiveSubagentsForCompaction(active.map((state) => this.read(state.id)));
     return `<active-subagents>\n${state}\n</active-subagents>`;
   }
 
@@ -236,62 +245,175 @@ export class AgentSupervisor {
       },
       claudeMessageUsage: new Map(),
       toolPresentations: new Map(),
+      toolOutcomes: new Map(),
       blockedToolCalls: new Map(),
       completion: Promise.resolve(undefined as never),
+      trace: new AgentTrace(),
+      pending: [],
+      steering: 0,
+      steeringDelivery: Promise.resolve(),
     };
     this.records.set(id, record);
+    record.trace.append({ kind: "input", mode: "initial", content: traceBlocks(options.prompt) });
     this.startRun(record, options.prompt, "subagent_spawned");
     return { ok: true, state: this.toSnapshot(record), capacity: this.getCapacity() };
   }
 
-  sendInput(options: { id: string; prompt: string }): SubagentSendInputResult {
+  sendInput(options: {
+    id: string;
+    prompt: string;
+    mode: "queue" | "steer";
+  }): SubagentSendInputResult {
     const record = this.records.get(options.id);
     if (!record) return { ok: false, reason: `Unknown subagent ID: ${options.id}` };
+    if (record.run.interruptRequested && record.run.status === "running")
+      return { ok: false, reason: "Subagent is stopping" };
+    if (record.run.status !== "running" && this.getActiveCount() >= MAX_ACTIVE_SUBAGENTS)
+      return { ok: false, reason: "Subagent capacity reached" };
+    if (record.pending.length + record.steering >= 64)
+      return { ok: false, reason: "Subagent input queue is full" };
+    record.trace.append({
+      kind: "input",
+      mode: options.mode,
+      content: traceBlocks(options.prompt),
+    });
     if (record.run.status === "running") {
-      return {
-        ok: false,
-        reason: `Subagent ${options.id} is already running. Wait for it to finish before sending input.`,
-      };
+      record.pending.push({ prompt: options.prompt, mode: options.mode });
+      this.deliverSteering(record);
+    } else {
+      this.beginFollowup(record, options.prompt);
     }
-    if (this.getActiveCount() >= MAX_ACTIVE_SUBAGENTS) {
-      return {
-        ok: false,
-        reason: `Subagent limit reached (max ${MAX_ACTIVE_SUBAGENTS} active). Wait for existing agents to finish.`,
-      };
-    }
+    return { ok: true, state: this.toSnapshot(record), capacity: this.getCapacity() };
+  }
 
+  private deliverSteering(record: SubagentRecord): void {
+    if (record.run.interruptRequested) return;
+    if (record.runtime instanceof ClaudeCodeRuntime) {
+      record.steeringDelivery = record.steeringDelivery
+        .then(async () => {
+          const runtime = record.runtime as ClaudeCodeRuntime;
+          for (const input of [...record.pending]) {
+            if (input.mode !== "steer" || record.run.interruptRequested) continue;
+            if (!(await runtime.steer(input.prompt))) break;
+            const index = record.pending.indexOf(input);
+            if (index >= 0) record.pending.splice(index, 1);
+          }
+        })
+        .catch((error) => {
+          if (record.run.interruptRequested) return;
+          record.deliveryFailure = error instanceof Error ? error : new Error(String(error));
+          record.pending = [];
+          record.runtime.interrupt();
+        });
+    } else if (record.runtime.status === "running") {
+      for (const input of [...record.pending]) {
+        if (input.mode !== "steer") continue;
+        const submission = record.runtime.steer(input.prompt);
+        record.pending.splice(record.pending.indexOf(input), 1);
+        record.steering++;
+        void submission.applied.then(
+          () => {
+            record.steering--;
+          },
+          () => {
+            record.steering--;
+            if (!record.run.interruptRequested) record.pending.unshift(input);
+          },
+        );
+        void submission.result.catch(() => {});
+      }
+    }
+  }
+
+  private beginFollowup(record: SubagentRecord, prompt: string): void {
     record.run = {
       revision: record.run.revision + 1,
       status: "running",
       startedAt: this.deps.clock.now(),
       interruptRequested: false,
     };
+    record.deliveryFailure = undefined;
     record.toolPresentations.clear();
+    record.toolOutcomes.clear();
     record.blockedToolCalls.clear();
-    this.startRun(record, options.prompt, "subagent_run_started");
-    return { ok: true, state: this.toSnapshot(record), capacity: this.getCapacity() };
+    this.startRun(record, prompt, "subagent_run_started");
+  }
+
+  read(id: string): SubagentConversationState {
+    const record = this.records.get(id);
+    if (!record) throw new AgentRequestError("unknown_agent", `Unknown subagent ID: ${id}`);
+    const { run } = record;
+    return {
+      id,
+      title: record.title,
+      model: `${record.model.provider}/${record.model.id}:${record.model.reasoning}`,
+      workingDirectory: record.workingDirectory,
+      ...(run.status === "running"
+        ? { status: run.interruptRequested ? "stopping" : "working" }
+        : run.status === "failed"
+          ? {
+              status: "idle",
+              reason: "failed",
+              error: { code: run.failure.kind, message: run.failure.message },
+            }
+          : { status: "idle", reason: run.status === "succeeded" ? "completed" : "interrupted" }),
+      pending: {
+        queue: record.pending.filter((input) => input.mode === "queue").length,
+        steer: record.steering + record.pending.filter((input) => input.mode === "steer").length,
+      },
+      usage: {
+        input: record.usage.input,
+        output: record.usage.output,
+        cacheRead: record.usage.cacheRead,
+        cacheWrite: record.usage.cacheWrite,
+        contextTokens: record.usage.contextWindowUsageTokens,
+        contextWindow: record.usage.contextWindow,
+        cost: record.costTotal,
+      },
+    };
+  }
+
+  getTrace(id: string): AgentTrace {
+    const record = this.records.get(id);
+    if (!record) throw new AgentRequestError("unknown_agent", `Unknown subagent ID: ${id}`);
+    return record.trace;
   }
 
   async waitForAgents(ids: string[], signal?: AbortSignal): Promise<SubagentStateSnapshot[]> {
     const missing = ids.filter((id) => !this.records.has(id));
-    if (missing.length > 0) throw new Error(`Unknown subagent ID(s): ${missing.join(", ")}`);
+    if (missing.length > 0)
+      throw new AgentRequestError("unknown_agent", `Unknown subagent ID(s): ${missing.join(", ")}`);
     await raceWithAbort(Promise.race(ids.map((id) => this.waitForRecord(id))), signal);
     return ids.map((id) => {
       const record = this.records.get(id);
-      if (!record) throw new Error(`Unknown subagent ID: ${id}`);
+      if (!record) throw new AgentRequestError("unknown_agent", `Unknown subagent ID: ${id}`);
       return this.toSnapshot(record);
     });
   }
 
-  async interrupt(id: string, signal?: AbortSignal): Promise<SubagentStateSnapshot | undefined> {
+  async interrupt(
+    id: string,
+    signal?: AbortSignal,
+    wait = true,
+  ): Promise<SubagentStateSnapshot | undefined> {
     const record = this.records.get(id);
     if (!record) return undefined;
     if (record.run.status === "running") {
+      if (record.pending.length || record.steering)
+        record.trace.append({
+          kind: "notice",
+          code: "input.discarded",
+          content: traceBlocks("Pending inputs discarded by interruption."),
+        });
+      record.pending = [];
       record.run.interruptRequested = true;
+      record.trace.append({ kind: "status", status: "stopping" });
       record.runtime.interrupt();
       await this.emit({ type: "subagent_interrupt_requested", state: this.toSnapshot(record) });
     }
-    return this.toSnapshot(await raceWithAbort(this.waitForRecord(id), signal));
+    return wait
+      ? this.toSnapshot(await raceWithAbort(this.waitForRecord(id), signal))
+      : this.toSnapshot(record);
   }
 
   getSnapshot(id: string): SubagentStateSnapshot | undefined {
@@ -308,12 +430,16 @@ export class AgentSupervisor {
     prompt: string,
     eventType: "subagent_spawned" | "subagent_run_started",
   ): void {
-    record.completion = this.emit({ type: eventType, state: this.toSnapshot(record) })
-      .then(async () => {
+    record.trace.append({ kind: "status", status: "working" });
+    record.completion = (async () => {
+      try {
+        await this.emit({ type: eventType, state: this.toSnapshot(record) });
         if (record.run.interruptRequested) {
           this.finishInterrupted(record);
         } else if (record.runtime instanceof ClaudeCodeRuntime) {
           const completion = await record.runtime.submit(prompt);
+          await record.steeringDelivery;
+          if (record.deliveryFailure) throw record.deliveryFailure;
           if (record.run.interruptRequested || completion.status === "interrupted") {
             this.finishInterrupted(record);
           } else if (completion.result.failed) {
@@ -326,30 +452,40 @@ export class AgentSupervisor {
             this.finishSucceeded(record, completion.result.response);
           }
         } else {
-          this.applyTurnResult(record, await record.runtime.submit(prompt));
+          const result = await record.runtime.submit(prompt);
+          this.applyTurnResult(record, result.terminalResult);
         }
-        return record;
-      })
-      .catch((error) => {
-        if (record.run.interruptRequested) {
-          this.finishInterrupted(record);
-        } else {
+      } catch (error) {
+        if (record.run.interruptRequested) this.finishInterrupted(record);
+        else
           this.finishFailed(record, {
             kind: "runtime-error",
             message: error instanceof Error ? error.message : String(error),
           });
+      }
+      if (this.records.get(record.id) === record) {
+        const next = record.pending.shift();
+        if (next && !record.run.interruptRequested) {
+          this.beginFollowup(record, next.prompt);
+          return await record.completion;
         }
-        return record;
-      })
-      .then(async (resolved) => {
-        if (this.records.get(resolved.id) === resolved) {
-          await this.emit({ type: "subagent_finished", state: this.toSnapshot(resolved) });
-        }
-        return resolved;
-      });
+        record.trace.append({
+          kind: "status",
+          status: "idle",
+          reason:
+            record.run.status === "succeeded"
+              ? "completed"
+              : record.run.status === "interrupted"
+                ? "interrupted"
+                : "failed",
+        });
+        await this.emit({ type: "subagent_finished", state: this.toSnapshot(record) });
+      }
+      return record;
+    })();
   }
 
-  private applyTurnResult(record: SubagentRecord, result: AgentTurnResult): void {
+  private applyTurnResult(record: SubagentRecord, result: AgentSubturnResult): void {
     if (
       record.run.interruptRequested ||
       result.aborted ||
@@ -417,6 +553,11 @@ export class AgentSupervisor {
     record: SubagentRecord,
     failure: Exclude<SubagentRunFailure, { kind: "interrupted" }>,
   ): void {
+    record.trace.append({
+      kind: "notice",
+      code: failure.kind,
+      content: traceBlocks(failure.message),
+    });
     record.run = {
       revision: record.run.revision,
       status: "failed",
@@ -430,6 +571,8 @@ export class AgentSupervisor {
   private async recordClaudeCodeEvent(id: string, event: ClaudeCodeEvent): Promise<void> {
     const record = this.records.get(id);
     if (!record) return;
+    if (event.type === "trace") record.trace.append(event.event);
+    if (event.type === "control") this.deliverSteering(record);
     if (event.type === "usage" || event.type === "result") {
       let reported = event.usage;
       if (event.type === "usage") {
@@ -519,7 +662,42 @@ export class AgentSupervisor {
     const record = this.records.get(id);
     if (!record) return;
 
+    this.deliverSteering(record);
+    if (event.type === "tool_call_admitted")
+      record.trace.append({
+        kind: "tool_call",
+        callId: event.toolCall.id,
+        toolName: event.toolCall.name,
+        arguments: [{ type: "json", value: JSON.parse(JSON.stringify(event.toolCall.arguments)) }],
+      });
+    if (event.type === "tool_run_finished" || event.type === "tool_run_blocked")
+      record.toolOutcomes.set(
+        event.toolCallId,
+        event.type === "tool_run_blocked" ? "blocked" : event.outcome,
+      );
+    const results =
+      event.type === "tool_result"
+        ? [event.message]
+        : event.type === "tool_recovery"
+          ? event.toolResults
+          : [];
+    for (const message of results) {
+      const outcome = record.toolOutcomes.get(message.toolCallId);
+      if (!outcome) throw new Error(`Missing outcome for tool result ${message.toolCallId}`);
+      record.trace.append({
+        kind: "tool_result",
+        callId: message.toolCallId,
+        toolName: message.toolName,
+        outcome,
+        content: traceBlocks(message.content),
+      });
+      record.toolOutcomes.delete(message.toolCallId);
+    }
+    if (event.type === "compaction_end")
+      record.trace.append({ kind: "notice", code: `compaction.${event.outcome}`, content: [] });
     if (event.type === "assistant_final") {
+      const content = event.message.content.filter((block) => block.type === "text");
+      if (content.length) record.trace.append({ kind: "assistant", content: traceBlocks(content) });
       const usage = getUsageTotals(event.message.usage);
       const cost = getUsageCostTotal(event.message.usage);
       record.costTotal += cost;
@@ -632,8 +810,11 @@ export class AgentSupervisor {
 
   private async waitForRecord(id: string): Promise<SubagentRecord> {
     const record = this.records.get(id);
-    if (!record) throw new Error(`Unknown subagent ID: ${id}`);
-    return await record.completion;
+    if (!record) throw new AgentRequestError("unknown_agent", `Unknown subagent ID: ${id}`);
+    do {
+      await record.completion;
+    } while (record.run.status === "running");
+    return record;
   }
 
   private toSnapshot(record: SubagentRecord): SubagentStateSnapshot {

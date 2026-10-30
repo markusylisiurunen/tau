@@ -147,8 +147,8 @@ export function printDebugInfo(args: {
   console.log(`\n${promptComposition.baseSystemPrompt}`);
 
   // Sub-agents
-  section(`active sub-agents (${selectedPersona.tools.includes("spawn_agent") ? 1 : 0})`);
-  if (!selectedPersona.tools.includes("spawn_agent")) {
+  section(`active sub-agents (${selectedPersona.tools.includes("agents") ? 1 : 0})`);
+  if (!selectedPersona.tools.includes("agents")) {
     console.log("\n  (none)");
   } else {
     console.log("\n- subagent");

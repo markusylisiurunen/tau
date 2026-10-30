@@ -111,7 +111,7 @@ The option works for local TUI sessions and for hosts started with `tau serve`. 
 
 ## Alternate subagent working directories
 
-A subagent normally uses the parent session's working directory and context. When `spawn_agent` sets a different `workingDirectory`, Tau rebuilds the parts of the context that depend on the directory:
+A subagent normally uses the parent session's working directory and context. When `tau.agents.spawn` sets a different `workingDirectory`, Tau rebuilds the parts of the context that depend on the directory:
 
 - environment and repository details
 - the applicable `AGENTS.md` files

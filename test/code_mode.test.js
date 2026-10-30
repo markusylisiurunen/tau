@@ -480,6 +480,20 @@ describe("public code-mode runtime", () => {
     expect(getTextContent(result)).toContain("saved to /tmp/linear-output");
   });
 
+  it("preserves structured capability error codes inside the sandbox", async () => {
+    const result = await executeTauCodeMode({
+      ...createDefinition({
+        api: {
+          fail: () => {
+            throw Object.assign(new Error("expired"), { code: "expired_content" });
+          },
+        },
+      }),
+      code: "try { await linear.fail(); } catch (error) { printText(error.code); }",
+    });
+    expect(getTextContent(result)).toContain("expired_content");
+  });
+
   it("offers failed output to optional persistence", async () => {
     const persistOutput = vi.fn(async () => undefined);
 

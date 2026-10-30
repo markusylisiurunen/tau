@@ -1,10 +1,10 @@
 import {
+  TOOL_NAME_AGENTS,
   TOOL_NAME_BASH,
   TOOL_NAME_EDIT,
   TOOL_NAME_HISTORY,
   TOOL_NAME_MCP,
   TOOL_NAME_MODELS,
-  TOOL_NAME_SPAWN_AGENT,
   TOOL_NAME_VIEW_IMAGE,
   TOOL_NAME_WEB,
   TOOL_NAME_WRITE,
@@ -94,7 +94,7 @@ export function resolveSubagentEffectiveSettings(args: {
 }
 
 export function formatSubagentsForPrompt(persona: Persona): string | undefined {
-  if (!persona.tools.includes(TOOL_NAME_SPAWN_AGENT)) {
+  if (!persona.tools.includes(TOOL_NAME_AGENTS)) {
     return undefined;
   }
 
@@ -109,7 +109,9 @@ export function formatSubagentsForPrompt(persona: Persona): string | undefined {
     "",
     "### Subagents",
     "",
-    "You can spawn general-purpose background subagents to work on independent tasks. Spawn them only when the user or active instructions explicitly request delegation; do not infer authorization from generic task overlap.",
+    "You can start general-purpose background subagents to work on independent tasks. Start them only when the user or active instructions explicitly request delegation; do not infer authorization from generic task overlap.",
+    "",
+    'Start and manage subagents with `tau.agents` in the `code` tool, and read its reference with `tau.docs("agents")` first. It can send a subagent queued or steering input, interrupt it, and read selected parts of its conversation. Use the `wait_for_agents` tool when you want to wait for subagents yourself instead of from a program.',
     "",
     `Inherited model: \`${effective.model.provider}/${effective.model.id}:${reasoning}\``,
     `Allowed model overrides: ${launchModelsText}`,

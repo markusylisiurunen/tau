@@ -17,6 +17,7 @@ function fakeClaude(directory, subscription, hang = false, outcome = "success") 
 const readline = require("node:readline");
 const fs = require("node:fs");
 let initialization;
+let firstUuid;
 process.on("SIGTERM", () => { fs.writeFileSync(${JSON.stringify(join(directory, "terminated"))}, "yes"); process.exit(0); });
 const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
 readline.createInterface({ input: process.stdin }).on("line", line => {
@@ -35,6 +36,20 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
     fs.writeFileSync(${JSON.stringify(marker)}, JSON.stringify({ message, initialization, cwd: process.cwd(), args: process.argv.slice(2) }));
     const session_id = "ce4518fa-4b3f-44ef-a1a3-2f7edc024b8d";
     send({ type: "system", subtype: "init", session_id });
+    if (${JSON.stringify(hang)} === "steering") {
+      if (!firstUuid) {
+        firstUuid = message.uuid;
+        send({ type: "assistant", parent_tool_use_id: null, session_id, message: { id: "first", model: "claude-sonnet-5-5", role: "assistant", content: [{ type: "text", text: "working" }], usage: { input_tokens: 1, output_tokens: 1 } } });
+        return;
+      }
+      const finish = (uuid, text) => send({ type: "result", subtype: "success", is_error: false, session_id, result: text, total_cost_usd: 0, modelUsage: {}, user_message_uuid: uuid, user_message_uuids: [uuid] });
+      finish(firstUuid, "old result");
+      setTimeout(() => {
+        send({ type: "assistant", parent_tool_use_id: null, session_id, message: { id: "second", model: "claude-sonnet-5-5", role: "assistant", content: [{ type: "text", text: message.message.content }], usage: { input_tokens: 1, output_tokens: 1 } } });
+        finish(message.uuid, message.message.content);
+      }, 20);
+      return;
+    }
     if (${JSON.stringify(hang)} === true) { setInterval(() => {}, 1000); return; }
     const stream = (event) => send({ type: "stream_event", parent_tool_use_id: null, session_id, event });
     stream({ type: "message_start", message: { id: "message-1", usage: { input_tokens: 5, output_tokens: 0, cache_read_input_tokens: 7, cache_creation_input_tokens: 2 } } });
@@ -100,6 +115,8 @@ function createRuntimeOptions(directory, events) {
           killGraceMs: 100,
           timeoutMs: 15_000,
           maxCaptureBytes: options.maxCaptureBytes,
+          maxCaptureMode: "ignore",
+          maxCaptureStrategy: "tail",
           captureOutput: "combined-and-split",
         });
         return { ...result, truncated: result.captureLimitExceeded };
@@ -109,6 +126,34 @@ function createRuntimeOptions(directory, events) {
 }
 
 describe("bundled Claude Agent SDK runner", () => {
+  it("keeps streamed steering alive across an earlier result", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "tau-claude-steer-"));
+    const events = [];
+    let runtime;
+    let delivery;
+    const options = createRuntimeOptions(directory, events);
+    options.onEvent = async (event) => {
+      events.push(event);
+      if (event.type === "assistant" && !delivery) delivery = runtime.steer("updated instruction");
+    };
+    runtime = new ClaudeCodeRuntime(options);
+    try {
+      fakeClaude(directory, true, "steering");
+      const result = await runtime.submit("initial instruction");
+      expect(await delivery).toBe(true);
+      expect(result.result.response).toBe("updated instruction");
+      expect(events.filter((event) => event.type === "result")).toHaveLength(2);
+      expect(
+        events
+          .filter((event) => event.type === "trace" && event.event.kind === "assistant")
+          .map((event) => event.event.content[0].text),
+      ).toEqual(["working", "updated instruction"]);
+    } finally {
+      runtime.dispose();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("initializes the real SDK and sends the prompt only after subscription authentication", async () => {
     const directory = mkdtempSync(join(tmpdir(), "tau-claude-runner-"));
     const events = [];
@@ -144,7 +189,14 @@ describe("bundled Claude Agent SDK runner", () => {
       expect(events.filter((event) => event.type === "assistant")).toEqual([
         { type: "assistant", text: "finished" },
       ]);
-      expect(JSON.stringify(events)).not.toContain("large-output");
+      expect(events.filter((event) => event.type === "trace")).toContainEqual(
+        expect.objectContaining({
+          event: expect.objectContaining({
+            kind: "tool_result",
+            content: [{ type: "text", text: "large-output".repeat(100000) }],
+          }),
+        }),
+      );
       expect(events).toContainEqual(
         expect.objectContaining({
           type: "result",

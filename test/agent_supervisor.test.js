@@ -179,7 +179,11 @@ describe("AgentSupervisor", () => {
     const submit = vi.spyOn(AgentRuntime.prototype, "submit").mockImplementation(async function () {
       expect(this.spec.tools.get("prefill_input")).toBeUndefined();
       expect(this.spec.tools.get("spawn_agent")).toBeUndefined();
-      return { finalMessage: createAssistant("done"), aborted: false };
+      return {
+        finalMessage: createAssistant("done"),
+        aborted: false,
+        terminalResult: { finalMessage: createAssistant("done"), aborted: false },
+      };
     });
     try {
       const main = ToolCatalog.createSessionRegistry({
@@ -187,7 +191,7 @@ describe("AgentSupervisor", () => {
         jobs: new AgentJobRegistry(),
         cwd: "/repo",
         config: {},
-        persona: { ...personas[0], tools: ["spawn_agent"] },
+        persona: { ...personas[0], tools: ["agents"] },
         subagentSystemPrompt: "child system",
         modelResolver: () => undefined,
         supervisor,
@@ -197,11 +201,11 @@ describe("AgentSupervisor", () => {
         clientTools: () => broker.getToolDefinitions("parent-session"),
       });
       expect(main.get("prefill_input")).toBeDefined();
-      const outcome = await main.get("spawn_agent").execute(
+      const outcome = await main.get("code").execute(
         {
           id: "spawn-call",
           name: "spawn_agent",
-          arguments: { title: "child", prompt: "do work" },
+          arguments: { code: 'await tau.agents.spawn({ title: "child", prompt: "do work" });' },
         },
         {
           agentId: "parent-agent",
@@ -215,7 +219,9 @@ describe("AgentSupervisor", () => {
       const [child] = supervisor.listSnapshots();
       await supervisor.waitForAgents([child.id]);
       expect(supervisor.getSnapshot(child.id).run.status).toBe("succeeded");
-      expect(supervisor.sendInput({ id: child.id, prompt: "follow up" }).ok).toBe(true);
+      expect(supervisor.sendInput({ mode: "queue", id: child.id, prompt: "follow up" }).ok).toBe(
+        true,
+      );
       await supervisor.waitForAgents([child.id]);
       expect(supervisor.getSnapshot(child.id).run.status).toBe("succeeded");
       expect(submit).toHaveBeenCalledTimes(2);
@@ -256,7 +262,9 @@ describe("AgentSupervisor", () => {
       costTotal: 0.01,
     });
 
-    expect(supervisor.sendInput({ id: spawned.state.id, prompt: "continue" }).ok).toBe(true);
+    expect(
+      supervisor.sendInput({ mode: "queue", id: spawned.state.id, prompt: "continue" }).ok,
+    ).toBe(true);
     await expect(supervisor.waitForAgents([spawned.state.id])).resolves.toEqual([
       expect.objectContaining({
         run: expect.objectContaining({
@@ -292,12 +300,9 @@ describe("AgentSupervisor", () => {
 
     const context = supervisor.getActiveCompactionContext();
 
-    expect(context).toContain(
-      "This subagent state was captured at the time of compaction and may have changed since then.",
-    );
-    expect(context).toContain("Use list_agents to inspect the current state.");
-    expect(context).toContain(`\`${spawned.state.id}\` · child task`);
-    expect(context).not.toContain("Agents ·");
+    const states = JSON.parse(context.split("\n\n")[1].split("\n</active-subagents>")[0]);
+    expect(states).toEqual([expect.objectContaining({ id: spawned.state.id, status: "working" })]);
+    expect(states[0]).not.toHaveProperty("run");
     await supervisor.waitForAgents([spawned.state.id]);
   });
 
@@ -474,6 +479,19 @@ describe("AgentSupervisor", () => {
       ),
     ).toBe(true);
     expect(backend.runBash).toHaveBeenCalledTimes(2);
+    const evidence = supervisor.getTrace(spawned.state.id).trace({}).entries;
+    expect(
+      evidence
+        .filter((entry) => entry.kind === "tool_call")
+        .map((entry) => entry.arguments.blocks[0].value.command),
+    ).toEqual(["printf first", "printf second"]);
+    expect(
+      evidence.filter((entry) => entry.kind === "tool_result").map((entry) => entry.outcome),
+    ).toEqual(["succeeded", "succeeded"]);
+    expect(
+      evidence.some((entry) => entry.kind === "notice" && entry.code === "compaction.compacted"),
+    ).toBe(true);
+
     expect(
       events
         .filter((event) => event.type === "subagent_activity" && event.activity.type === "tool")
@@ -691,6 +709,7 @@ it("isolates main and sibling jobs while retaining child jobs across follow-ups"
   const submit = vi.spyOn(AgentRuntime.prototype, "submit").mockResolvedValue({
     finalMessage: createAssistant("done"),
     aborted: false,
+    terminalResult: { finalMessage: createAssistant("done"), aborted: false },
   });
   const backend = createLocalToolExecutionBackend();
   backend.runBash = vi.fn(
@@ -768,7 +787,9 @@ it("isolates main and sibling jobs while retaining child jobs across follow-ups"
           }
         }
         if (owner === 1) {
-          expect(supervisor.sendInput({ id: children[0], prompt: "follow up" }).ok).toBe(true);
+          expect(
+            supervisor.sendInput({ mode: "queue", id: children[0], prompt: "follow up" }).ok,
+          ).toBe(true);
           await supervisor.waitForAgents([children[0]]);
           expect(
             (
@@ -793,5 +814,152 @@ it("isolates main and sibling jobs while retaining child jobs across follow-ups"
     await jobs.dispose();
     supervisor.reset();
     submit.mockRestore();
+  }
+});
+
+describe("worker conversation scheduling", () => {
+  it("waits through FIFO queued inputs and retains earlier assistant messages", async () => {
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const supervisor = new AgentSupervisor({ onEvent: () => {}, recordUsage: () => {} });
+    const spawned = supervisor.spawn(createSpawnOptions());
+    const record = getRecord(supervisor, spawned.state.id);
+    const answers = ["first", "second", "third"];
+    record.runtime.spec.model.stream = vi.fn(() =>
+      createStream(createAssistant(answers.shift()), gate),
+    );
+    supervisor.sendInput({ id: record.id, prompt: "second input", mode: "queue" });
+    supervisor.sendInput({ id: record.id, prompt: "third input", mode: "queue" });
+    expect(supervisor.read(record.id).pending.queue).toBe(2);
+    const wait = supervisor.waitForAgents([record.id]);
+    release();
+    await wait;
+    expect(supervisor.read(record.id)).toMatchObject({
+      status: "idle",
+      reason: "completed",
+      pending: { queue: 0, steer: 0 },
+    });
+    expect(
+      supervisor
+        .getTrace(record.id)
+        .trace({ kinds: ["assistant"] })
+        .entries.map((entry) => supervisor.getTrace(record.id).readText(entry.seq).text),
+    ).toEqual(["first", "second", "third"]);
+    supervisor.reset();
+  });
+
+  it("steers at a native boundary and settles with the continuation answer", async () => {
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const supervisor = new AgentSupervisor({ onEvent: () => {}, recordUsage: () => {} });
+    const spawned = supervisor.spawn(createSpawnOptions());
+    const record = getRecord(supervisor, spawned.state.id);
+    const answers = ["preamble", "steered answer"];
+    record.runtime.spec.model.stream = vi.fn(() =>
+      createStream(createAssistant(answers.shift()), gate),
+    );
+    await vi.waitFor(() => expect(record.runtime.status).toBe("running"));
+    supervisor.sendInput({ id: record.id, prompt: "change focus", mode: "steer" });
+    release();
+    await supervisor.waitForAgents([record.id]);
+    expect(record.run.response).toBe("steered answer");
+    expect(
+      supervisor
+        .getTrace(record.id)
+        .trace({ kinds: ["input"] })
+        .entries.at(-1).mode,
+    ).toBe("steer");
+    supervisor.reset();
+  });
+
+  it("cancels a wait independently and clears queued work on nonblocking interruption", async () => {
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const supervisor = new AgentSupervisor({ onEvent: () => {}, recordUsage: () => {} });
+    const spawned = supervisor.spawn(createSpawnOptions());
+    const record = getRecord(supervisor, spawned.state.id);
+    record.runtime.spec.model.stream = vi.fn(() => createStream(createAssistant("done"), gate));
+    supervisor.sendInput({ id: record.id, prompt: "queued", mode: "queue" });
+    await expect(supervisor.waitForAgents([record.id], AbortSignal.abort())).rejects.toThrow();
+    expect(supervisor.read(record.id).status).toBe("working");
+    await supervisor.interrupt(record.id, undefined, false);
+    expect(supervisor.read(record.id)).toMatchObject({ status: "stopping", pending: { queue: 0 } });
+    release();
+    await supervisor.waitForAgents([record.id]);
+    expect(supervisor.read(record.id)).toMatchObject({ status: "idle", reason: "interrupted" });
+    expect(
+      supervisor
+        .getTrace(record.id)
+        .trace({ kinds: ["notice"] })
+        .entries.some((entry) => entry.code === "input.discarded"),
+    ).toBe(true);
+    supervisor.reset();
+  });
+});
+
+it("keeps background orchestration attribution and cancels only its wait", async () => {
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const supervisor = new AgentSupervisor({ onEvent: () => {}, recordUsage: () => {} });
+  const jobs = new AgentJobRegistry();
+  const codeJobs = new CodeJobRegistry();
+  const submit = vi.spyOn(AgentRuntime.prototype, "submit").mockImplementation(async () => {
+    await gate;
+    return { terminalResult: { finalMessage: createAssistant("done"), aborted: false } };
+  });
+  try {
+    const registry = ToolCatalog.createSessionRegistry({
+      backend: createLocalToolExecutionBackend(),
+      jobs,
+      codeJobs,
+      bashJobs: new BashJobRegistry(),
+      cwd: "/repo",
+      config: {},
+      persona: { ...personas[0], tools: ["agents"] },
+      subagentSystemPrompt: "child system",
+      modelResolver: () => undefined,
+      supervisor,
+      history: {},
+    });
+    const tool = registry.get("code");
+    const launched = await tool.execute(
+      {
+        id: "orchestrate",
+        name: "code",
+        arguments: {
+          background: true,
+          code: 'const worker = await tau.agents.spawn({ title: "child", prompt: "task" }); await tau.agents.waitUntilIdle({ id: worker.id }); printText("done");',
+        },
+      },
+      {
+        agentId: "main",
+        turnId: "turn",
+        assistantMessageId: "launch-origin",
+        signal: new AbortController().signal,
+        emitActivity: async () => {},
+      },
+    );
+    expect(launched.outcome).toBe("succeeded");
+    await vi.waitFor(() => expect(supervisor.listSnapshots()).toHaveLength(1));
+    const [worker] = supervisor.listSnapshots();
+    expect(getRecord(supervisor, worker.id).originHistoryEntryId).toBe("launch-origin");
+    await codeJobs.dispose();
+    expect(supervisor.read(worker.id).status).toBe("working");
+    release();
+    await supervisor.waitForAgents([worker.id]);
+    expect(supervisor.read(worker.id)).toMatchObject({ status: "idle", reason: "completed" });
+  } finally {
+    release();
+    submit.mockRestore();
+    supervisor.reset();
+    await codeJobs.dispose();
   }
 });

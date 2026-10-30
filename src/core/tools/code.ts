@@ -7,6 +7,7 @@ import {
   TAU_CODE_MODE_DEFAULT_MAX_OUTPUT_TOKENS,
   TAU_CODE_MODE_MAX_OUTPUT_TOKENS,
 } from "../../code_mode/runtime.js";
+import { type AgentsCapabilityOptions, createAgentsCapability } from "../code_mode/agents.js";
 import { createBashCapability } from "../code_mode/bash.js";
 import type { CodeModeCapability } from "../code_mode/capability.js";
 import { createHistoryCapability } from "../code_mode/history.js";
@@ -81,6 +82,7 @@ export function createCodeToolDefinition(options: {
   codeJobs: CodeJobRegistry;
   history?: HistoryQuery;
   mcp?: McpManager;
+  agents?: AgentsCapabilityOptions;
 }): AgentTool | undefined {
   const allowed = new Set(options.allowedTools);
   const capabilities: CodeModeCapability[] = [];
@@ -95,8 +97,14 @@ export function createCodeToolDefinition(options: {
     capabilities.push(createMcpCapability(options.mcp));
   if (allowed.has("models"))
     capabilities.push(createModelsCapability(options.backend, options.config));
+  if (options.agents) capabilities.push(createAgentsCapability(options.agents, ""));
   if (!capabilities.length) return undefined;
-  const sdk = bindCodeModeSdk(capabilities);
+  const sdkFor = (origin: string) =>
+    bindCodeModeSdk(
+      capabilities.map((capability) =>
+        capability.name === "agents" ? createAgentsCapability(options.agents!, origin) : capability,
+      ),
+    );
   const schema: Tool = {
     name: TOOL_NAME_CODE,
     description: [
@@ -157,7 +165,7 @@ export function createCodeToolDefinition(options: {
     execute: async ({ code, input, maxOutputTokens, timeoutMs, context }) => {
       return await executeInternalCodeMode({
         name: "tau",
-        ...sdk,
+        ...sdkFor(context.assistantMessageId),
         code,
         input,
         maxOutputTokens,
@@ -205,7 +213,12 @@ export function createCodeToolDefinition(options: {
             cwd: options.cwd,
             backend: options.backend,
             signal: context.signal,
-            program: { name: "tau", ...sdk, code, input: args.input },
+            program: {
+              name: "tau",
+              ...sdkFor(context.assistantMessageId),
+              code,
+              input: args.input,
+            },
           });
           const text = `Started background code job ${id} from ${JSON.stringify(source)} in ${JSON.stringify(options.cwd)}. Use read_code_job to check progress or wait_for_code_jobs to wait for completion.`;
           return executeTool(context, () => ({

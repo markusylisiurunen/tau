@@ -4655,6 +4655,9 @@ describe("LocalSessionHost", () => {
       for (const persona of legacy.catalog.personas) {
         persona.skills = "*";
         persona.subagents = { default: { launchModels: persona.subagentLaunchModels } };
+        persona.tools = persona.tools?.flatMap((name) =>
+          name === "agents" ? ["spawn_agent", "wait_for_agents"] : [name],
+        );
         delete persona.subagentLaunchModels;
       }
       writeFileSync(
@@ -4676,13 +4679,19 @@ describe("LocalSessionHost", () => {
         state: createRunningSubagentState(),
         capacity: { running: 1, limit: 8 },
       });
-      const tool = recovered.runtime.agent.spec.tools.get("spawn_agent");
+      vi.spyOn(recovered.runtime.supervisor, "read").mockReturnValue({
+        id: "worker",
+        status: "working",
+      });
+      const tool = recovered.runtime.agent.spec.tools.get("code");
       const result = await tool.execute(
         {
           type: "toolCall",
           id: "spawn-call",
           name: "spawn_agent",
-          arguments: { title: "independent task", prompt: "inspect the changes" },
+          arguments: {
+            code: 'await tau.agents.spawn({ title: "independent task", prompt: "inspect the changes" });',
+          },
         },
         {
           agentId: "main",
@@ -6245,18 +6254,22 @@ describe("host-owned MCP tools", () => {
         state: createRunningSubagentState(),
         capacity: { running: 1, limit: 8 },
       });
-      const spawned = await session.runtime.agent.spec.tools
-        .get("spawn_agent")
-        .execute(
-          fauxToolCall("spawn_agent", { title: "service task", prompt: "use the service" }),
-          {
-            agentId: "main",
-            turnId: "turn",
-            assistantMessageId: "assistant",
-            signal: new AbortController().signal,
-            emitActivity: async () => {},
-          },
-        );
+      vi.spyOn(session.runtime.supervisor, "read").mockReturnValue({
+        id: "worker",
+        status: "working",
+      });
+      const spawned = await session.runtime.agent.spec.tools.get("code").execute(
+        fauxToolCall("code", {
+          code: 'await tau.agents.spawn({ title: "service task", prompt: "use the service" });',
+        }),
+        {
+          agentId: "main",
+          turnId: "turn",
+          assistantMessageId: "assistant",
+          signal: new AbortController().signal,
+          emitActivity: async () => {},
+        },
+      );
       expect(spawned.outcome).toBe("succeeded");
       const launch = spawn.mock.calls[0][0];
       expect(launch.runtimeConfig.tools).toContain("mcp");

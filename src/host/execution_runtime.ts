@@ -1,6 +1,6 @@
 import { loadSkillsFromToolBackend } from "../core/config/runtime_config_snapshot.js";
 import { composeSessionPrompts } from "../core/runtime/session_prompt_composer.js";
-import type { ResolveSubagentPrompt } from "../core/tools/spawn_agent.js";
+import type { ResolveSubagentPrompt } from "../core/subagents/types.js";
 import type { ExecutionEnvironment } from "../execution/execution_environment.js";
 
 export function createExecutionEnvironmentSubagentPromptResolver(options: {

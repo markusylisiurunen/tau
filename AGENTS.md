@@ -71,7 +71,8 @@ Rules that follow:
 - Neighbors: `ChatRuntime` resolves model, prompt, and the bound `AgentSpec`. `src/core/tools/catalog.ts` binds tool dependencies. `model_sampler.ts` does stateless inference against a target the caller chooses; never couple it to the active persona. `src/core/subagents/agent_supervisor.ts` owns child lifecycle, limits, waits, usage, and cleanup. `src/host/hosted_ephemeral_agent_session.ts` owns ephemeral threads and forks.
 - A logical turn captures its full `AgentSpec` (tools, model settings) for all its subturns and steering continuations. A settings change applies to the next turn, not the active one.
 - **Event sink contract.** Every `AgentRuntime` has one required, awaited `AgentEventSink` (`src/core/agent/events.ts`). Mutate durable state, emit the event, await acknowledgement, then continue. Sink failure aborts execution. Never add fire-and-forget semantic events.
-- Subagents are general-purpose workers. Do not add named worker types or configurable worker definitions; only the launch-model allowlist is configurable. Persona tool selection controls whether they can be launched. Children inherit the prompt and eligible tools.
+- Subagents are general-purpose workers. Do not add named worker types or configurable worker definitions; only the launch-model allowlist is configurable. Persona tool selection (`agents`) controls whether they can be launched. Children inherit the prompt and eligible tools, never `agents`.
+- The main agent manages subagents through the `tau.agents` code-mode capability (`src/core/code_mode/agents.ts`) and waits with `wait_for_agents`. Do not add other direct management tools. Each runtime adapter translates its own events into the shared observable events, and one trace recorder (`src/core/subagents/trace.ts`) owns ordering, retention, pagination, and completeness for every runtime. A new runtime adds an adapter, never its own trace store or query logic. Traces live as long as the worker and are never persisted or recovered. A worker is idle when it has no active turn and no pending input. Only parent input starts an idle worker's turn; its background jobs and notifications must never wake it.
 - A subagent with another working directory rebuilds only target-dependent context (environment, repository, `AGENTS.md`, context files, skills). Persona, model catalog and settings, and tool policy stay with the parent.
 
 ## Sessions, snapshots, and protocol
@@ -156,7 +157,7 @@ Start with the smallest owning area, its callers, and its tests.
 | Credentials | `src/core/auth/` | `test/auth_storage.test.js`, `test/auth_cli.test.js`, `docs/credentials.md` |
 | Host tools, code mode | `src/core/tools/`, `src/code_mode/`, `src/core/code_mode/`, `src/core/static/code_mode/` | `test/tool_catalog.test.js`, `test/code_mode.test.js`, `docs/tools.md` |
 | Client tools | `src/core/config/client_tools.ts`, `src/core/client_tools/`, `src/host/client_tool_broker.ts`, `src/sdk/client_tool_command.ts` | `test/client_tool_broker.test.js`, `test/command_client_tools.test.js` |
-| Subagents | `src/core/subagents/`, agent tools in `src/core/tools/` | `test/agent_supervisor.test.js`, `test/spawn_agent_tool.test.js` |
+| Subagents | `src/core/subagents/`, `src/core/code_mode/agents.ts`, `src/core/tools/wait_for_agents.ts` | `test/agent_supervisor.test.js`, `test/spawn_agent_tool.test.js` |
 | TUI | `src/tui/` | `test/session_chat_controller.test.js`, `test/tool_card.test.js`, `docs/tui.md` |
 | Diff review | `src/core/diff_review/`, `src/diff_tool/` | `test/diff_review_protocol.test.js`, `test/diff_tool_builtin.test.js` |
 | History | `src/core/history/`, `src/history/worker/`, `src/core/code_mode/history.ts` | `test/history.test.js`, `docs/history.md` |

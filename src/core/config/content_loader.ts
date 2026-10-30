@@ -3,17 +3,13 @@ import { z } from "zod";
 import type { ModelResolver } from "../models/catalog.js";
 import type { PromptTemplate } from "../prompts.js";
 import {
+  TOOL_NAME_AGENTS,
   TOOL_NAME_BASH,
   TOOL_NAME_EDIT,
   TOOL_NAME_HISTORY,
-  TOOL_NAME_INTERRUPT_AGENT,
-  TOOL_NAME_LIST_AGENTS,
   TOOL_NAME_MCP,
   TOOL_NAME_MODELS,
-  TOOL_NAME_SEND_INPUT_TO_AGENT,
-  TOOL_NAME_SPAWN_AGENT,
   TOOL_NAME_VIEW_IMAGE,
-  TOOL_NAME_WAIT_FOR_AGENTS,
   TOOL_NAME_WEB,
   TOOL_NAME_WRITE,
   type ToolName,
@@ -175,11 +171,7 @@ const PERSONA_TOOL_NAMES = [
   TOOL_NAME_HISTORY,
   TOOL_NAME_MCP,
   TOOL_NAME_MODELS,
-  TOOL_NAME_SPAWN_AGENT,
-  TOOL_NAME_SEND_INPUT_TO_AGENT,
-  TOOL_NAME_WAIT_FOR_AGENTS,
-  TOOL_NAME_LIST_AGENTS,
-  TOOL_NAME_INTERRUPT_AGENT,
+  TOOL_NAME_AGENTS,
 ] as const satisfies ReadonlyArray<ToolName>;
 
 const PERSONA_TOOL_NAME_SET = new Set<ToolName>(PERSONA_TOOL_NAMES);
@@ -193,13 +185,7 @@ const DEFAULT_PERSONA_TOOLS = [
   TOOL_NAME_MCP,
   TOOL_NAME_MODELS,
 ] as const satisfies ReadonlyArray<ToolName>;
-const DEFAULT_SUBAGENT_TOOLS = [
-  TOOL_NAME_SPAWN_AGENT,
-  TOOL_NAME_SEND_INPUT_TO_AGENT,
-  TOOL_NAME_WAIT_FOR_AGENTS,
-  TOOL_NAME_LIST_AGENTS,
-  TOOL_NAME_INTERRUPT_AGENT,
-] as const satisfies ReadonlyArray<ToolName>;
+const DEFAULT_SUBAGENT_TOOLS = [TOOL_NAME_AGENTS] as const satisfies ReadonlyArray<ToolName>;
 
 function parsePersona(
   file: string,

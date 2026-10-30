@@ -7,7 +7,7 @@ import {
 } from "../protocol/session_protocol.js";
 
 export const STORED_SESSION_DOCUMENT_FORMAT = "tau-session" as const;
-export const STORED_SESSION_DOCUMENT_VERSION = 12 as const;
+export const STORED_SESSION_DOCUMENT_VERSION = 13 as const;
 export const LEGACY_SESSION_MODEL_CONTEXT_KEY = "legacy-v3";
 
 export type StoredSessionDocument = {
@@ -31,6 +31,7 @@ const storedSessionMigrations = new Map<number, StoredSessionMigration>([
   [9, migrateStoredSessionV9ToV10],
   [10, migrateStoredSessionV10ToV11],
   [11, migrateStoredSessionV11ToV12],
+  [12, migrateStoredSessionV12ToV13],
 ]);
 
 export class UnsupportedStoredSessionVersionError extends Error {
@@ -97,6 +98,32 @@ function decodeStoredSessionDocument(value: unknown): {
     version: value.version as number,
     snapshot: value.snapshot,
   };
+}
+
+function migrateStoredSessionV12ToV13(value: unknown): unknown {
+  if (!isRecord(value)) throw new Error("stored session snapshot must be an object");
+  const snapshot = structuredClone(value);
+  if (isRecord(snapshot.catalog) && Array.isArray(snapshot.catalog.personas)) {
+    for (const persona of snapshot.catalog.personas) {
+      if (!isRecord(persona) || !Array.isArray(persona.tools)) continue;
+      const retired = new Set([
+        "spawn_agent",
+        "send_input_to_agent",
+        "list_agents",
+        "interrupt_agent",
+        "wait_for_agents",
+      ]);
+      const enabled = persona.tools.includes("spawn_agent");
+      persona.tools = [
+        ...new Set(
+          persona.tools
+            .filter((name) => !retired.has(name as string))
+            .concat(enabled ? ["agents"] : []),
+        ),
+      ];
+    }
+  }
+  return snapshot;
 }
 
 function migrateStoredSessionV11ToV12(value: unknown): unknown {

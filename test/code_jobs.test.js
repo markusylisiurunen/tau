@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
 import { expect, it, vi } from "vitest";
+import { AgentJobRegistry } from "../dist/core/tools/agent_jobs.js";
 import { createJobToolDefinitions } from "../dist/core/tools/background_jobs.js";
 import { BashJobRegistry } from "../dist/core/tools/bash_jobs.js";
 import { createCodeToolDefinition } from "../dist/core/tools/code.js";
@@ -507,3 +508,52 @@ it.each([false, true])(
     }
   },
 );
+
+it("releases discarded agents only after their code and subsequently launched Bash jobs finish", async () => {
+  const registry = new AgentJobRegistry();
+  const jobs = registry.create();
+  const ready = Promise.withResolvers();
+  const resume = Promise.withResolvers();
+  const finished = Promise.withResolvers();
+  const backend = {
+    runBash: vi.fn(async (_command, options) => {
+      options.onStarted();
+      await finished.promise;
+      return { exitCode: 0, aborted: false, closeSignal: null, truncated: false };
+    }),
+  };
+  jobs.codeJobs.start({
+    backend,
+    cwd: "/workspace",
+    source: "inline code",
+    signal: signal(),
+    program: {
+      name: "tau",
+      documentation: "test",
+      code: "await tau.start();",
+      api: {
+        start: async () => {
+          ready.resolve();
+          await resume.promise;
+          return jobs.bashJobs.start(backend, "work", "/workspace", signal());
+        },
+      },
+    },
+  });
+  try {
+    await ready.promise;
+    jobs.release();
+    expect(registry.hasRunning).toBe(true);
+    resume.resolve();
+    await jobs.codeJobs.waitForIdle();
+    expect(registry.agents.size).toBe(1);
+    expect(registry.hasRunning).toBe(true);
+    finished.resolve();
+    await registry.waitForIdle();
+    await vi.waitFor(() => expect(registry.agents.size).toBe(0));
+  } finally {
+    resume.resolve();
+    finished.resolve();
+    await registry.dispose();
+  }
+});

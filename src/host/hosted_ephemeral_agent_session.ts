@@ -14,7 +14,7 @@ import { createDefaultCoreDeps } from "../core/runtime/deps.js";
 import { composeSessionPrompts } from "../core/runtime/session_prompt_composer.js";
 import { createAutoCompactionArchiver } from "../core/session/auto_compaction_archive.js";
 import type { SubagentToolName } from "../core/subagents/types.js";
-import type { AgentJobRegistry } from "../core/tools/agent_jobs.js";
+import type { AgentJobRegistry, AgentJobs } from "../core/tools/agent_jobs.js";
 import { ToolCatalog } from "../core/tools/catalog.js";
 import { ToolRegistry } from "../core/tools/registry.js";
 import type { Persona, ReasoningEffort } from "../core/types.js";
@@ -200,6 +200,7 @@ export class HostedEphemeralAgentSession {
     const spec = forkFrom?.spec ?? this.spec;
     return new EphemeralAgentThread({
       threadId,
+      jobs,
       spec: {
         ...spec,
         tools: ToolCatalog.createSubagentRegistry(
@@ -226,6 +227,7 @@ export class HostedEphemeralAgentSession {
 
 type EphemeralAgentThreadOptions = {
   threadId: string;
+  jobs: AgentJobs;
   spec: AgentSpec;
   deps: ReturnType<typeof createDefaultCoreDeps>;
   backend: ReturnType<ExecutionEnvironment["getToolExecutionBackend"]>;
@@ -235,6 +237,7 @@ type EphemeralAgentThreadOptions = {
 };
 
 class EphemeralAgentThread {
+  private readonly jobs: AgentJobs;
   private readonly runtime: AgentRuntime;
   private readonly onUpdate?: (update: EphemeralAgentThreadUpdate) => void;
   private readonly recordUsage: UsageRecorder;
@@ -244,6 +247,7 @@ class EphemeralAgentThread {
 
   constructor(options: EphemeralAgentThreadOptions) {
     const spec = options.spec;
+    this.jobs = options.jobs;
     this.onUpdate = options.onUpdate;
     this.recordUsage = options.recordUsage ?? appendUsageLogEntry;
     this.usage = options.forkFrom?.usageBaseline ?? {
@@ -304,6 +308,7 @@ class EphemeralAgentThread {
 
   dispose(): void {
     this.runtime.dispose();
+    this.jobs.release();
   }
 
   createForkSource(): EphemeralAgentThreadForkSource {

@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import type { Tool } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { z } from "zod";
 import {
@@ -21,7 +22,6 @@ import type { BashJobRegistry } from "./bash_jobs.js";
 import type { CodeJobRegistry } from "./code_jobs.js";
 import {
   type CodeModeToolImplementation,
-  createCodeModeToolDefinition,
   executeCodeModeTool,
   executeInternalCodeMode,
 } from "./code_mode.js";
@@ -33,22 +33,24 @@ import { TOOL_NAME_CODE } from "./tool_names.js";
 const CODE_DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
 const CODE_MAX_TIMEOUT_MS = 60 * 60 * 1000;
 const CODE_MAX_INPUT_BYTES = 16 * 1024;
+const commonArgs = {
+  input: z.json().optional(),
+  background: z.boolean().optional(),
+  timeout: z.number().int().positive().max(CODE_MAX_TIMEOUT_MS).optional(),
+  maxOutputTokens: z.number().int().min(1).max(TAU_CODE_MODE_MAX_OUTPUT_TOKENS).optional(),
+};
 const argsSchema = z
-  .strictObject({
-    code: z.string().trim().min(1).optional(),
-    file: z
-      .string()
-      .min(1)
-      .regex(/^[^\r\n]+\.js$/)
-      .optional(),
-    input: z.json().optional(),
-    background: z.boolean().optional(),
-    timeout: z.number().int().positive().max(CODE_MAX_TIMEOUT_MS).optional(),
-    maxOutputTokens: z.number().int().min(1).max(TAU_CODE_MODE_MAX_OUTPUT_TOKENS).optional(),
-  })
+  .union([
+    z.strictObject({ ...commonArgs, code: z.string().trim().min(1) }),
+    z.strictObject({
+      ...commonArgs,
+      file: z
+        .string()
+        .min(1)
+        .regex(/^[^\r\n]+\.js$/),
+    }),
+  ])
   .superRefine((args, context) => {
-    if ((args.code !== undefined) === (args.file !== undefined))
-      context.addIssue({ code: "custom", message: "Provide exactly one of code or file." });
     if (args.background && ("timeout" in args || "maxOutputTokens" in args))
       context.addIssue({
         code: "custom",
@@ -61,6 +63,14 @@ const argsSchema = z
     )
       context.addIssue({ code: "custom", message: "input exceeds the 16 KiB limit." });
   });
+
+function getCodeSubject(raw: unknown): string {
+  if (typeof raw === "object" && raw !== null) {
+    if ("file" in raw && typeof raw.file === "string") return raw.file;
+    if ("code" in raw && typeof raw.code === "string" && raw.code) return raw.code;
+  }
+  return "(invalid code)";
+}
 
 export function createCodeToolDefinition(options: {
   backend: ToolExecutionBackend;
@@ -87,83 +97,63 @@ export function createCodeToolDefinition(options: {
     capabilities.push(createModelsCapability(options.backend, options.config));
   if (!capabilities.length) return undefined;
   const sdk = bindCodeModeSdk(capabilities);
+  const schema: Tool = {
+    name: TOOL_NAME_CODE,
+    description: [
+      "Run a JavaScript program using enabled Tau capabilities, either inline or from a saved .js file. Use it to chain dependent calls, combine independent work, or process results before printing a concise answer.",
+      `Available capabilities: ${capabilities.map((capability) => capability.name).join(", ")}.`,
+      ...capabilities.map((capability) => `tau.${capability.name}: ${capability.description}`),
+      "When this tool is useful and its runtime guide is not visible, first run only printText(docs). Read it before writing a later program. Before using each capability, printText(await tau.docs(name)) in a documentation-only call unless that reference is already visible. Do not guess API signatures.",
+      "Use printText(string) and await printImage({ data, mimeType }) for output. printText rejects objects and arrays: select relevant fields and format concise plain text to save tokens. Only use JSON.stringify on selected data when JSON structure is needed; do not dump whole responses. Return values are ignored. Programs have request and output limits, and foreground programs also have a deadline. Side effects are not rolled back and programs are not automatically retried.",
+      "Use background: true only when you can make useful independent progress while the program runs. If you would only wait for it to finish, run it in the foreground with an appropriate timeout. A background launch returns a job ID; use the code job tools to read, wait for, or stop it. Jobs keep running across turns and interruptions, but are not recovered after a session restart.",
+    ].join("\n\n"),
+    parameters: Type.Object(
+      {
+        timeout: Type.Optional(
+          Type.Integer({
+            description:
+              "Program timeout in milliseconds for foreground programs. Defaults to 300000 (5 minutes). Extend only when the work needs it, up to 3600000 (60 minutes). The deadline covers the whole program, including API calls. Cannot be combined with background: true.",
+            minimum: 1,
+            maximum: CODE_MAX_TIMEOUT_MS,
+          }),
+        ),
+        maxOutputTokens: Type.Optional(
+          Type.Integer({
+            description: CODE_MODE_MAX_OUTPUT_TOKENS_DESCRIPTION,
+            minimum: 1,
+            maximum: TAU_CODE_MODE_MAX_OUTPUT_TOKENS,
+          }),
+        ),
+        file: Type.Optional(
+          Type.String({
+            description:
+              "Path to a saved .js program, absolute or relative to the current working directory. The file is read once when the call starts, can be at most 1 MiB, and runs with the same capabilities and limits as inline code. Supply exactly one of code or file.",
+          }),
+        ),
+        input: Type.Optional(
+          Type.Unknown({
+            description:
+              "JSON value available to the program as the global input. Defaults to null. At most 16 KiB when serialized as JSON.",
+          }),
+        ),
+        background: Type.Optional(
+          Type.Boolean({
+            description:
+              "Run as a background job and return its ID immediately. The job has no overall deadline. Cannot be combined with timeout or maxOutputTokens. Set the output budget when reading or waiting for the job.",
+          }),
+        ),
+        code: Type.Optional(
+          Type.String({
+            description:
+              "JavaScript source. Supply exactly one of code or file. Print relevant text with printText and forward images with awaited printImage.",
+          }),
+        ),
+      },
+      { additionalProperties: false },
+    ),
+  };
   const implementation: CodeModeToolImplementation = {
-    schema: {
-      name: TOOL_NAME_CODE,
-      description: [
-        "Run a JavaScript program using enabled Tau capabilities, either inline or from a saved .js file. Use it to chain dependent calls, combine independent work, or process results before printing a concise answer.",
-        `Available capabilities: ${capabilities.map((capability) => capability.name).join(", ")}.`,
-        ...capabilities.map((capability) => `tau.${capability.name}: ${capability.description}`),
-        "When this tool is useful and its runtime guide is not visible, first run only printText(docs). Read it before writing a later program. Before using each capability, printText(await tau.docs(name)) in a documentation-only call unless that reference is already visible. Do not guess API signatures.",
-        "Use printText(string) and await printImage({ data, mimeType }) for output. printText rejects objects and arrays: select relevant fields and format concise plain text to save tokens. Only use JSON.stringify on selected data when JSON structure is needed; do not dump whole responses. Return values are ignored. Programs have request and output limits, and foreground programs also have a deadline. Side effects are not rolled back and programs are not automatically retried.",
-        "Use background: true only when you can make useful independent progress while the program runs. If you would only wait for it to finish, run it in the foreground with an appropriate timeout. A background launch returns a job ID; use the code job tools to read, wait for, or stop it. Jobs keep running across turns and interruptions, but are not recovered after a session restart.",
-      ].join("\n\n"),
-      parameters: Type.Object(
-        {
-          timeout: Type.Optional(
-            Type.Integer({
-              description:
-                "Program timeout in milliseconds for foreground programs. Defaults to 300000 (5 minutes). Extend only when the work needs it, up to 3600000 (60 minutes). The deadline covers the whole program, including API calls. Cannot be combined with background: true.",
-              minimum: 1,
-              maximum: CODE_MAX_TIMEOUT_MS,
-            }),
-          ),
-          maxOutputTokens: Type.Optional(
-            Type.Integer({
-              description: CODE_MODE_MAX_OUTPUT_TOKENS_DESCRIPTION,
-              minimum: 1,
-              maximum: TAU_CODE_MODE_MAX_OUTPUT_TOKENS,
-            }),
-          ),
-          file: Type.Optional(
-            Type.String({
-              description:
-                "Path to a saved .js program, absolute or relative to the current working directory. The file is read once when the call starts, can be at most 1 MiB, and runs with the same capabilities and limits as inline code. Supply exactly one of code or file.",
-            }),
-          ),
-          input: Type.Optional(
-            Type.Unknown({
-              description:
-                "JSON value available to the program as the global input. Defaults to null. At most 16 KiB when serialized as JSON.",
-            }),
-          ),
-          background: Type.Optional(
-            Type.Boolean({
-              description:
-                "Run as a background job and return its ID immediately. The job has no overall deadline. Cannot be combined with timeout or maxOutputTokens. Set the output budget when reading or waiting for the job.",
-            }),
-          ),
-          code: Type.Optional(
-            Type.String({
-              description:
-                "JavaScript source. Supply exactly one of code or file. Print relevant text with printText and forward images with awaited printImage.",
-            }),
-          ),
-        },
-        { additionalProperties: false },
-      ),
-    },
-    parseArguments(raw) {
-      const code =
-        typeof raw === "object" && raw !== null && "code" in raw && typeof raw.code === "string"
-          ? raw.code
-          : "";
-      const subject =
-        typeof raw === "object" && raw !== null && "file" in raw && typeof raw.file === "string"
-          ? raw.file
-          : code || "(invalid code)";
-      const parsed = argsSchema.safeParse(raw);
-      return parsed.success
-        ? {
-            ok: true,
-            code: parsed.data.code ?? "",
-            input: parsed.data.input,
-            timeoutMs: parsed.data.timeout ?? CODE_DEFAULT_TIMEOUT_MS,
-            maxOutputTokens: parsed.data.maxOutputTokens ?? TAU_CODE_MODE_DEFAULT_MAX_OUTPUT_TOKENS,
-            subject,
-          }
-        : { ok: false, error: formatZodError(parsed.error), code, subject };
-    },
+    schema,
     execute: async ({ code, input, maxOutputTokens, timeoutMs, context }) => {
       return await executeInternalCodeMode({
         name: "tau",
@@ -177,18 +167,31 @@ export function createCodeToolDefinition(options: {
       });
     },
   };
-  const foreground = createCodeModeToolDefinition(implementation);
   return {
-    ...foreground,
+    schema,
+    describe: (call) => ({
+      presentation: buildToolRunPresentation({
+        toolName: TOOL_NAME_CODE,
+        operation: "code",
+        subject: getCodeSubject(call.arguments),
+      }),
+    }),
     execute: async (call, context) => {
       const parsed = argsSchema.safeParse(call.arguments);
-      if (!parsed.success) return foreground.execute(call, context);
+      if (!parsed.success)
+        return executeCodeModeTool(implementation, call, context, {
+          ok: false,
+          error: formatZodError(parsed.error),
+          subject: getCodeSubject(call.arguments),
+        });
       const args = parsed.data;
+      const subject = "file" in args ? args.file : args.code;
+      const source = "file" in args ? args.file : "inline code";
       try {
         context.signal.throwIfAborted();
         const code =
-          args.file === undefined
-            ? args.code!
+          "code" in args
+            ? args.code
             : (
                 await options.backend.readFileBinary(resolve(options.cwd, args.file), {
                   maxBytes: 1024 * 1024,
@@ -198,13 +201,13 @@ export function createCodeToolDefinition(options: {
         context.signal.throwIfAborted();
         if (args.background) {
           const id = options.codeJobs.start({
-            source: args.file ?? "inline code",
+            source,
             cwd: options.cwd,
             backend: options.backend,
             signal: context.signal,
             program: { name: "tau", ...sdk, code, input: args.input },
           });
-          const text = `Started background code job ${id} from ${JSON.stringify(args.file ?? "inline code")} in ${JSON.stringify(options.cwd)}. Use read_code_job to check progress or wait_for_code_jobs to wait for completion.`;
+          const text = `Started background code job ${id} from ${JSON.stringify(source)} in ${JSON.stringify(options.cwd)}. Use read_code_job to check progress or wait_for_code_jobs to wait for completion.`;
           return executeTool(context, () => ({
             ...createTextToolOutcome(text, "succeeded"),
             uiEvent: {
@@ -215,7 +218,7 @@ export function createCodeToolDefinition(options: {
               presentation: buildToolRunPresentation({
                 toolName: TOOL_NAME_CODE,
                 operation: "background",
-                subject: args.file ?? args.code!,
+                subject,
                 details: [{ text }],
                 actionOverrides: { succeeded: "started" },
               }),
@@ -226,7 +229,7 @@ export function createCodeToolDefinition(options: {
           ok: true,
           code,
           input: args.input,
-          subject: args.file ?? code,
+          subject,
           timeoutMs: args.timeout ?? CODE_DEFAULT_TIMEOUT_MS,
           maxOutputTokens: args.maxOutputTokens ?? TAU_CODE_MODE_DEFAULT_MAX_OUTPUT_TOKENS,
         });
@@ -242,7 +245,7 @@ export function createCodeToolDefinition(options: {
             presentation: buildToolRunPresentation({
               toolName: TOOL_NAME_CODE,
               operation: "code",
-              subject: args.file ?? args.code!,
+              subject,
               details: [{ text: reason }],
             }),
           },

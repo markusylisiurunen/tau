@@ -782,8 +782,11 @@ it("isolates main and sibling jobs while retaining child jobs across follow-ups"
         }
       }
     }
+    supervisor.reset();
     expect(jobs.hasRunning).toBe(true);
+    expect(jobs.agents.size).toBe(3);
     await jobs.dispose();
+    await vi.waitFor(() => expect(jobs.agents.size).toBe(1));
     expect(jobs.hasRunning).toBe(false);
     expect(() => jobs.create()).toThrow();
   } finally {

@@ -37,7 +37,8 @@ for (const kind of ["local", "Sprite"]) {
           process.cwd(),
           signal,
         );
-        const result = await jobs.wait([id], 5000, signal, true);
+        expect(await jobs.waitJobs([id], 5000, signal)).toBe(false);
+        const result = await jobs.inspect([id]);
         expect(result.text).toContain("TAIL");
         expect(result.text).toContain("truncated");
         expect(result.text.length).toBeLessThan(51000);
@@ -50,7 +51,7 @@ for (const kind of ["local", "Sprite"]) {
         expect(jobs.read([id])).toEqual([
           expect.objectContaining({ status: "succeeded", exitCode: 0, truncated: false }),
         ]);
-        expect((await jobs.wait([id], 1, signal, true)).text).toContain("succeeded");
+        expect(await jobs.waitJobs([id], 1, signal)).toBe(false);
       } finally {
         try {
           await jobs.dispose();

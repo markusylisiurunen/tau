@@ -11,7 +11,6 @@ import type { ToolExecutionBackend } from "./execution_backend.js";
 import { writeOutputFile } from "./output_file.js";
 import { buildToolRunPresentation } from "./presentation.js";
 import {
-  type AgentTool,
   createTextToolOutcome,
   executeTool,
   type ToolExecutionContext,
@@ -28,11 +27,10 @@ export type ParsedCodeModeArguments =
       subject: string;
       input?: TauCodeModeJsonValue;
     }
-  | { ok: false; error: string; code: string; subject: string };
+  | { ok: false; error: string; subject: string };
 
 export type CodeModeToolImplementation = {
   schema: Tool;
-  parseArguments(raw: unknown): ParsedCodeModeArguments;
   execute(input: {
     context: ToolExecutionContext;
     code: string;
@@ -82,31 +80,6 @@ function getCodeModeTerminationNote(
     return `Program was terminated by signal ${runtime.execution.closeSignal}.`;
   }
   return undefined;
-}
-
-export function createCodeModeToolDefinition(
-  implementation: CodeModeToolImplementation,
-): AgentTool {
-  return {
-    schema: implementation.schema,
-    describe: (toolCall) => {
-      const parsed = implementation.parseArguments(toolCall.arguments);
-      return {
-        presentation: buildToolRunPresentation({
-          toolName: implementation.schema.name,
-          operation: implementation.schema.name,
-          subject: parsed.subject,
-        }),
-      };
-    },
-    execute: (toolCall, context) =>
-      executeCodeModeTool(
-        implementation,
-        toolCall,
-        context,
-        implementation.parseArguments(toolCall.arguments),
-      ),
-  };
 }
 
 export async function executeCodeModeTool(

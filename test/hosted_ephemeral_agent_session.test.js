@@ -291,8 +291,11 @@ it("gives each ephemeral thread and fork its own jobs", async () => {
       expect(await session.getOrCreateThread("source")).toBe(source);
       expect((await execute(source, `read_${kind}_job`, { id })).outcome).toBe("succeeded");
     }
+    session.dispose();
     expect(jobs.hasRunning).toBe(true);
+    expect(jobs.agents.size).toBe(1);
     await jobs.dispose();
+    await vi.waitFor(() => expect(jobs.agents.size).toBe(0));
     expect(jobs.hasRunning).toBe(false);
   } finally {
     await jobs.dispose();

@@ -135,6 +135,7 @@ export class BashJobRegistry {
   }
 
   format(ids: string[] = [...this.jobs.keys()], includeOutput = true, maxOutputTokens = 8192) {
+    ids = [...new Set(ids)];
     let truncated = false;
     const text =
       ids
@@ -172,27 +173,12 @@ export class BashJobRegistry {
     if (job.state.status === "failed") throw new Error(job.state.error);
   }
 
-  async stop(id: string, includeOutput: boolean) {
-    await this.stopJob(id);
-    return this.format([id], includeOutput);
-  }
-
   async waitJobs(ids: string[], timeout: number, signal: AbortSignal): Promise<boolean> {
     return waitForJobs(
       [...new Set(ids)].map((id) => this.get(id)),
       timeout,
       signal,
     );
-  }
-
-  async wait(ids: string[], timeout: number, signal: AbortSignal, includeOutput: boolean) {
-    const timedOut = await this.waitJobs(ids, timeout, signal);
-    const result = this.format(ids, includeOutput);
-    return {
-      ...result,
-      text: `${result.text}${timedOut ? `\n\nWait timed out after ${timeout}ms; jobs are still running.` : ""}`,
-      timedOut,
-    };
   }
 
   get hasRunning(): boolean {

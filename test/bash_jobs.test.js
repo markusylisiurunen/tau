@@ -220,12 +220,12 @@ it("survives turn cancellation, waits without killing, and stops independently",
     expect(jobs.read([id])).toEqual([
       expect.objectContaining({ status: "running", output: "ready" }),
     ]);
-    const expiry = jobs.wait([id], 10, context().signal, true);
+    const expiry = jobs.waitJobs([id], 10, context().signal);
     await vi.advanceTimersByTimeAsync(10);
-    expect((await expiry).text).toContain("Wait timed out after 10ms");
+    expect(await expiry).toBe(true);
     expect(jobs.hasRunning).toBe(true);
     const wait = new AbortController();
-    const waiting = jobs.wait([id], 60_000, wait.signal, true);
+    const waiting = jobs.waitJobs([id], 60_000, wait.signal);
     wait.abort();
     await expect(waiting).rejects.toBeDefined();
     expect(backend.runBash.mock.calls[0][1].signal.aborted).toBe(false);
@@ -507,6 +507,7 @@ it.each([false, true])(
       emit("next");
       await jobs.stopJob(id);
       const completed = await jobs.inspect([id]);
+      expect(await jobs.inspect([id, id])).toEqual(completed);
       expect(completed.text.includes("/remote/output.txt")).toBe(!fail);
       expect(backend.writeFile).toHaveBeenCalledExactlyOnceWith(
         "/remote/output.txt",

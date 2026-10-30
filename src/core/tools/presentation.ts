@@ -162,12 +162,8 @@ const GENERIC_TOOL_RUN_ACTION_LABELS: ToolRunActionLabels = {
   cancelled: "cancelled",
 };
 
-const TOOL_RUN_ACTION_LABELS: Record<string, ToolRunActionLabels> = {
-  [TOOL_NAME_BASH]: {
-    ...GENERIC_TOOL_RUN_ACTION_LABELS,
-    succeeded: "ran",
-  },
-  list_bash_jobs: {
+const JOB_ACTION_LABELS = {
+  list: {
     ...GENERIC_TOOL_RUN_ACTION_LABELS,
     queued: "queued list",
     running: "listing",
@@ -176,7 +172,7 @@ const TOOL_RUN_ACTION_LABELS: Record<string, ToolRunActionLabels> = {
     blocked: "list blocked",
     cancelled: "list cancelled",
   },
-  read_bash_job: {
+  read: {
     ...GENERIC_TOOL_RUN_ACTION_LABELS,
     queued: "queued read",
     running: "reading",
@@ -185,7 +181,7 @@ const TOOL_RUN_ACTION_LABELS: Record<string, ToolRunActionLabels> = {
     blocked: "read blocked",
     cancelled: "read cancelled",
   },
-  stop_bash_job: {
+  stop: {
     ...GENERIC_TOOL_RUN_ACTION_LABELS,
     queued: "queued stop",
     running: "stopping",
@@ -194,7 +190,7 @@ const TOOL_RUN_ACTION_LABELS: Record<string, ToolRunActionLabels> = {
     blocked: "stop blocked",
     cancelled: "stop cancelled",
   },
-  wait_for_bash_jobs: {
+  wait: {
     ...GENERIC_TOOL_RUN_ACTION_LABELS,
     queued: "queued wait",
     running: "waiting for",
@@ -203,6 +199,21 @@ const TOOL_RUN_ACTION_LABELS: Record<string, ToolRunActionLabels> = {
     blocked: "wait blocked",
     cancelled: "wait cancelled",
   },
+};
+
+const TOOL_RUN_ACTION_LABELS: Record<string, ToolRunActionLabels> = {
+  [TOOL_NAME_BASH]: {
+    ...GENERIC_TOOL_RUN_ACTION_LABELS,
+    succeeded: "ran",
+  },
+  list_bash_jobs: JOB_ACTION_LABELS.list,
+  list_code_jobs: JOB_ACTION_LABELS.list,
+  read_bash_job: JOB_ACTION_LABELS.read,
+  read_code_job: JOB_ACTION_LABELS.read,
+  stop_bash_job: JOB_ACTION_LABELS.stop,
+  stop_code_job: JOB_ACTION_LABELS.stop,
+  wait_for_bash_jobs: JOB_ACTION_LABELS.wait,
+  wait_for_code_jobs: JOB_ACTION_LABELS.wait,
   [TOOL_NAME_WRITE]: {
     ...GENERIC_TOOL_RUN_ACTION_LABELS,
     queued: "queued write",
@@ -392,9 +403,8 @@ export function parseToolRunPresentation(value: unknown): ToolRunPresentation {
 }
 
 function getToolRunActionLabels(toolName: string): ToolRunActionLabels {
-  const key = toolName.replace(/^(list|read|stop|wait_for)_code_(job|jobs)$/, "$1_bash_$2");
-  return Object.hasOwn(TOOL_RUN_ACTION_LABELS, key)
-    ? (TOOL_RUN_ACTION_LABELS[key] ?? GENERIC_TOOL_RUN_ACTION_LABELS)
+  return Object.hasOwn(TOOL_RUN_ACTION_LABELS, toolName)
+    ? (TOOL_RUN_ACTION_LABELS[toolName] ?? GENERIC_TOOL_RUN_ACTION_LABELS)
     : GENERIC_TOOL_RUN_ACTION_LABELS;
 }
 

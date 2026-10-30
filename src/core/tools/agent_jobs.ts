@@ -1,9 +1,10 @@
 import { BashJobRegistry } from "./bash_jobs.js";
 import { CodeJobRegistry } from "./code_jobs.js";
 
-type AgentJobs = {
+export type AgentJobs = {
   bashJobs: BashJobRegistry;
   codeJobs: CodeJobRegistry;
+  release(): void;
 };
 
 export class AgentJobRegistry {
@@ -12,9 +13,27 @@ export class AgentJobRegistry {
 
   create(): AgentJobs {
     if (this.closed) throw new Error("Background jobs are closed.");
-    const jobs = { bashJobs: new BashJobRegistry(), codeJobs: new CodeJobRegistry() };
+    const jobs: AgentJobs = {
+      bashJobs: new BashJobRegistry(),
+      codeJobs: new CodeJobRegistry(),
+      release: () => {
+        void this.release(jobs);
+      },
+    };
     this.agents.add(jobs);
     return jobs;
+  }
+
+  private async release(jobs: AgentJobs): Promise<void> {
+    while (jobs.bashJobs.hasRunning || jobs.codeJobs.hasRunning) {
+      const results = await Promise.allSettled([
+        jobs.codeJobs.waitForIdle(),
+        jobs.bashJobs.waitForIdle(),
+      ]);
+      // Keep failed cleanup tracked so session disposal can report it.
+      if (results.some((result) => result.status === "rejected")) return;
+    }
+    this.agents.delete(jobs);
   }
 
   get hasRunning(): boolean {

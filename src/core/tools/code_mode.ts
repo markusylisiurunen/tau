@@ -6,8 +6,9 @@ import {
   type TauCodeModeRuntimeResult,
 } from "../../code_mode/runtime.js";
 import type { ToolActivity } from "./activity.js";
-import { buildBashPresentation, writeBashTempFile } from "./bash.js";
+import { buildBashPresentation } from "./bash.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
+import { writeOutputFile } from "./output_file.js";
 import { buildToolRunPresentation } from "./presentation.js";
 import {
   type AgentTool,
@@ -63,7 +64,7 @@ export function executeInternalCodeMode(options: {
     timeoutMs: options.timeoutMs,
     persistOutput: async (output) => {
       if (!output.contextTruncated) return undefined;
-      const path = await writeBashTempFile(options.backend, output.content);
+      const path = await writeOutputFile(options.backend, output.content);
       return path ? { path } : undefined;
     },
   });

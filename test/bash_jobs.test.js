@@ -1,6 +1,7 @@
 import { expect, it, vi } from "vitest";
+import { createJobToolDefinitions } from "../dist/core/tools/background_jobs.js";
 import { createBashToolDefinition } from "../dist/core/tools/bash.js";
-import { BashJobRegistry, createBashJobToolDefinitions } from "../dist/core/tools/bash_jobs.js";
+import { BashJobRegistry } from "../dist/core/tools/bash_jobs.js";
 
 const context = (signal = new AbortController().signal) => ({
   signal,
@@ -101,7 +102,7 @@ it.each([
     try {
       const id = await jobs.start(backend, "ServerCommand", "/Workspace", context().signal);
       await jobs.waitForIdle();
-      for (const tool of createBashJobToolDefinitions(jobs)) {
+      for (const tool of createJobToolDefinitions(jobs, "bash")) {
         const name = tool.schema.name;
         const args =
           name === "list_bash_jobs" ? {} : name === "wait_for_bash_jobs" ? { ids: [id] } : { id };
@@ -176,7 +177,7 @@ it.each([
     const id = await jobs.start(backend, "command", "/Workspace", context().signal);
     await jobs.waitForIdle();
     const expectedText = `id: ${id}\nstatus: succeeded\ncommand: "command"\ncwd: "/Workspace"\nexit_code: 0${output ? "\ntext_log: unavailable" : ""}\n\n--- output ---\n${output}`;
-    for (const tool of createBashJobToolDefinitions(jobs)) {
+    for (const tool of createJobToolDefinitions(jobs, "bash")) {
       const name = tool.schema.name;
       if (name === "list_bash_jobs") continue;
       const events = [];
@@ -229,7 +230,7 @@ it("survives turn cancellation, waits without killing, and stops independently",
     await expect(waiting).rejects.toBeDefined();
     expect(backend.runBash.mock.calls[0][1].signal.aborted).toBe(false);
     const second = await other.start(backend, "other server", process.cwd(), context().signal);
-    const stopTool = createBashJobToolDefinitions(jobs).find(
+    const stopTool = createJobToolDefinitions(jobs, "bash").find(
       (tool) => tool.schema.name === "stop_bash_job",
     );
     const stopped = await stopTool.execute(
@@ -259,7 +260,7 @@ it("defaults waits to 60 seconds, validates the cap, and retains a running job o
   const backend = createPendingBackend();
   const id = await jobs.start(backend, "server", process.cwd(), context().signal);
   try {
-    const tool = createBashJobToolDefinitions(jobs).find(
+    const tool = createJobToolDefinitions(jobs, "bash").find(
       (tool) => tool.schema.name === "wait_for_bash_jobs",
     );
     for (const timeout of [0, -1, 0.5, 300001]) {
@@ -298,7 +299,7 @@ it("defaults waits to 60 seconds, validates the cap, and retains a running job o
 it.each(["read_bash_job", "stop_bash_job", "wait_for_bash_jobs"])(
   "%s presents unknown IDs and validation failures, but keeps cancellation quiet",
   async (name) => {
-    const tool = createBashJobToolDefinitions(new BashJobRegistry()).find(
+    const tool = createJobToolDefinitions(new BashJobRegistry(), "bash").find(
       (tool) => tool.schema.name === name,
     );
     const args = name === "wait_for_bash_jobs" ? { ids: ["stale-job"] } : { id: "stale-job" };
@@ -350,7 +351,7 @@ it("presents bounded cleanup diagnostics without changing backend text casing", 
   };
   try {
     const id = await jobs.start(backend, "ServerCommand", "/Workspace", context().signal);
-    const tool = createBashJobToolDefinitions(jobs).find(
+    const tool = createJobToolDefinitions(jobs, "bash").find(
       (tool) => tool.schema.name === "stop_bash_job",
     );
     const events = [];
@@ -445,7 +446,7 @@ it("marks model-tail truncation across multiple jobs without counting hidden out
       ["one", "two"].map((command) => jobs.start(backend, command, "/Workspace", context().signal)),
     );
     await jobs.waitForIdle();
-    const tool = createBashJobToolDefinitions(jobs).find(
+    const tool = createJobToolDefinitions(jobs, "bash").find(
       (tool) => tool.schema.name === "wait_for_bash_jobs",
     );
     for (const includeOutput of [true, false]) {
@@ -464,6 +465,48 @@ it("marks model-tail truncation across multiple jobs without counting hidden out
         ...outputMetadata(result.content[0].text),
       ]);
     }
+  } finally {
+    await jobs.dispose();
+  }
+});
+
+it("uses one bounded capture for inspection and logs, and reports failed log refreshes", async () => {
+  const jobs = new BashJobRegistry();
+  let emit;
+  const backend = {
+    runBash: vi.fn((_command, options) => {
+      emit = (text) => options.onOutput(Buffer.from(text));
+      options.onStarted();
+      return new Promise((resolve) => {
+        options.signal.addEventListener("abort", () => {
+          resolve({ exitCode: null, aborted: true, closeSignal: "SIGTERM", truncated: false });
+        });
+      });
+    }),
+    runNodeScript: vi.fn(async () => ({ exitCode: 0, stdout: "/remote/output.txt" })),
+    writeFile: vi.fn(async (path) => ({ path })),
+  };
+  try {
+    const id = await jobs.start(backend, "server", "/workspace", context().signal);
+    emit(`oldest${"é".repeat(600000)}\u001b[31mlatest\u001b[0m`);
+    const first = await jobs.inspect([id], true, 100);
+    const retained = jobs.read([id])[0].output;
+    expect(Buffer.byteLength(retained)).toBeLessThanOrEqual(1024 * 1024);
+    expect(retained).not.toContain("oldest");
+    expect(retained).not.toContain("\u001b");
+    expect(first.truncated).toBe(true);
+    expect(first.text).toContain("latest");
+    expect(backend.writeFile).toHaveBeenLastCalledWith("/remote/output.txt", retained);
+    emit("next");
+    backend.writeFile.mockRejectedValueOnce(new Error("offline"));
+    const unavailable = await jobs.inspect([id]);
+    expect(unavailable.text).not.toContain("/remote/output.txt");
+    expect(unavailable.text).toContain("next");
+    await jobs.inspect([id]);
+    expect(backend.writeFile).toHaveBeenLastCalledWith(
+      "/remote/output.txt",
+      jobs.read([id])[0].output,
+    );
   } finally {
     await jobs.dispose();
   }

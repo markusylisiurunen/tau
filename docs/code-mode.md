@@ -6,7 +6,7 @@
 
 A call passes exactly one of `code`, with inline source, or `file`, with the path of a saved `.js` program. A relative path resolves from the agent's working directory. Tau reads the file once from the execution environment when the call starts, so later edits do not affect a running program. The file can be at most 1 MiB. A saved program runs in the same sandbox, with the same capabilities and limits, as inline code. It cannot import modules or other files.
 
-The optional `input` is any JSON value of at most 1 MiB when serialized. The program reads it from the global `input`, which is `null` when no input is supplied. This lets a skill or project keep a reviewed program in a file and run it with different inputs:
+The optional `input` is any JSON value of at most 16 KiB when serialized as UTF-8 JSON. The program reads it from the global `input`, which is `null` when no input is supplied. This lets a skill or project keep a reviewed program in a file and run it with different inputs:
 
 ```js
 code({
@@ -26,7 +26,7 @@ If the agent has not yet seen the runtime guide, it first runs a program that on
 printText(docs);
 ```
 
-The guide covers runtime rules, capabilities, and examples. The agent reads each capability's reference it has not seen yet in a separate call that only prints documentation:
+The guide covers runtime rules, capabilities, and examples. It does not depend on how a call is run: it describes deadlines and output for both foreground and background programs. The agent reads each capability's reference it has not seen yet in a separate call that only prints documentation:
 
 ```js
 printText(await tau.docs("web"));
@@ -51,7 +51,7 @@ printText(truncate(result.stdout, { maxChars: 4000 }));
 
 Programs have no direct access to files, processes, environment variables, credentials, imports, timers, or the network. They can act only through the capabilities. Keep data in variables, and use `tau.bash` for files. There is no scratch-file API.
 
-A foreground `code` program times out after 5 minutes by default. `timeout` accepts 1–900,000 ms (15 minutes). `tau.bash.run` times out after 60 seconds by default, and at most after 5 minutes or the program's own deadline, whichever comes first. A program can make 128 API requests, eight at a time. Each serialized request and response can be at most 64 MiB. Object properties set to `undefined` are dropped, while `undefined` arguments and array entries are rejected. Programs are never retried, and failure or cancellation does not undo actions already taken.
+A foreground `code` program times out after 5 minutes by default. `timeout` accepts 1–900,000 ms (15 minutes). The deadline covers the whole program, including capability calls. When it passes, the program stops, unresolved capability calls are cancelled, and the text printed so far is returned with a timeout notice. `tau.bash.run` times out after 60 seconds by default, and at most after 5 minutes or the program's own deadline, whichever comes first. A program can make 128 API requests, eight at a time. Each serialized request and response can be at most 64 MiB. Object properties set to `undefined` are dropped, while `undefined` arguments and array entries are rejected. Programs are never retried, and failure or cancellation does not undo actions already taken.
 
 ## Background code jobs
 

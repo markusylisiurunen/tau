@@ -389,6 +389,20 @@ describe("public code-mode runtime", () => {
     ).rejects.toThrow("Code-mode API arguments must be JSON-serializable values");
   });
 
+  it("keeps runtime documentation identical across execution modes and deadlines", async () => {
+    const guides = [];
+    for (const timeoutMs of [undefined, 10000, 900000, null]) {
+      const result = await runTauCodeMode({
+        ...createDefinition(),
+        code: "printText(docs)",
+        timeoutMs,
+      });
+      expect(result.status).toBe("succeeded");
+      guides.push(getTextContent(result.result));
+    }
+    expect(new Set(guides).size).toBe(1);
+  });
+
   it.concurrent("provides canonical documentation and executable output examples without dumping response metadata", async () => {
     const docs = await executeTauCodeMode({
       ...createDefinition(),

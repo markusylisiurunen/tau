@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
 import { expect, it, vi } from "vitest";
-import { BashJobRegistry, createJobToolDefinitions } from "../dist/core/tools/bash_jobs.js";
+import { createJobToolDefinitions } from "../dist/core/tools/background_jobs.js";
+import { BashJobRegistry } from "../dist/core/tools/bash_jobs.js";
 import { createCodeToolDefinition } from "../dist/core/tools/code.js";
 import { CodeJobRegistry } from "../dist/core/tools/code_jobs.js";
 import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
@@ -61,7 +62,7 @@ it("loads saved JavaScript once through the backend and exposes JSON input witho
       { file: "script.ts" },
       { code: "1", background: true, timeout: 5 },
       { code: "1", background: true, maxOutputTokens: 5 },
-      { code: "1", input: "x".repeat(1024 * 1024) },
+      { code: "1", input: "x".repeat(16 * 1024) },
     ]) {
       expect((await call(tool, args)).outcome).toBe("blocked");
     }
@@ -336,4 +337,70 @@ it("bounds images in combined inspections without discarding retained job images
   } finally {
     await jobs.dispose();
   }
+});
+
+it("bounds serialized UTF-8 input before reading a source file or starting a job", async () => {
+  const backend = createLocalToolExecutionBackend();
+  const read = vi.spyOn(backend, "readFileBinary");
+  const jobs = new CodeJobRegistry();
+  const start = vi.spyOn(jobs, "start");
+  const tool = createCodeToolDefinition({
+    backend,
+    cwd: "/workspace",
+    config: {},
+    allowedTools: ["bash"],
+    bashJobs: new BashJobRegistry(),
+    codeJobs: jobs,
+  });
+  const input = "é".repeat(8191);
+  expect(Buffer.byteLength(JSON.stringify(input))).toBe(16 * 1024);
+  try {
+    const result = await call(tool, { code: "printText(input.length.toString())", input });
+    expect(result.outcome).toBe("succeeded");
+    expect(text(result)).toBe("8191");
+    for (const source of [{ code: "printText(input)" }, { file: "workflow.js" }]) {
+      for (const background of [false, true]) {
+        expect((await call(tool, { ...source, input: `${input}a`, background })).outcome).toBe(
+          "blocked",
+        );
+      }
+    }
+    expect(read).not.toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
+  } finally {
+    await jobs.dispose();
+  }
+});
+
+it.each(["bash", "code"])("routes %s job operations through the shared tools", async (kind) => {
+  const jobs = {
+    inspect: vi.fn(async () => ({ text: "snapshot", truncated: false })),
+    stopJob: vi.fn(async () => {}),
+    waitJobs: vi.fn(async () => false),
+  };
+  const tools = createJobToolDefinitions(jobs, kind);
+  const execute = (name, args) =>
+    call(
+      tools.find((tool) => tool.schema.name === name),
+      args,
+    );
+  expect((await execute(`list_${kind}_jobs`, {})).outcome).toBe("succeeded");
+  expect(jobs.inspect).toHaveBeenLastCalledWith(undefined, false, undefined);
+  await execute(`read_${kind}_job`, { id: "one", maxOutputTokens: 64 });
+  expect(jobs.inspect).toHaveBeenLastCalledWith(["one"], true, 64);
+  await execute(`stop_${kind}_job`, { id: "one", includeOutput: false });
+  expect(jobs.stopJob).toHaveBeenCalledExactlyOnceWith("one");
+  expect(jobs.inspect).toHaveBeenLastCalledWith(["one"], false, undefined);
+  await execute(`wait_for_${kind}_jobs`, { ids: ["one", "two"], timeout: 20 });
+  expect(jobs.waitJobs).toHaveBeenCalledExactlyOnceWith(
+    ["one", "two"],
+    20,
+    expect.any(AbortSignal),
+  );
+  expect(jobs.inspect).toHaveBeenLastCalledWith(["one", "two"], true, undefined);
+  jobs.inspect.mockClear();
+  expect((await execute(`read_${kind}_job`, { id: "one", maxOutputTokens: 65537 })).outcome).toBe(
+    "blocked",
+  );
+  expect(jobs.inspect).not.toHaveBeenCalled();
 });

@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-  BashJobRegistry,
-  createBashJobToolDefinitions,
-  createJobToolDefinitions,
-} from "../dist/core/tools/bash_jobs.js";
+import { createJobToolDefinitions } from "../dist/core/tools/background_jobs.js";
+import { BashJobRegistry } from "../dist/core/tools/bash_jobs.js";
 import {
   buildToolRunPresentation,
   parseToolRunPresentation,
@@ -188,7 +185,7 @@ describe("tool cards", () => {
   });
 
   it("renders the footer from a completed Bash job tool", async () => {
-    const tool = createBashJobToolDefinitions(new BashJobRegistry()).find(
+    const tool = createJobToolDefinitions(new BashJobRegistry(), "bash").find(
       (tool) => tool.schema.name === "list_bash_jobs",
     );
     const events = [];

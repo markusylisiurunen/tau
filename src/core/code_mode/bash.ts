@@ -1,12 +1,9 @@
 import { resolve } from "node:path";
 import { z } from "zod";
 import { SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES } from "../../protocol/session_protocol.js";
+import { JOB_WAIT_DEFAULT_MS, JOB_WAIT_MAX_MS } from "../tools/background_jobs.js";
 import { BASH_DEFAULT_TIMEOUT_MS } from "../tools/bash.js";
-import {
-  BASH_JOB_WAIT_DEFAULT_MS,
-  BASH_JOB_WAIT_MAX_MS,
-  type BashJobRegistry,
-} from "../tools/bash_jobs.js";
+import type { BashJobRegistry } from "../tools/bash_jobs.js";
 import {
   MAX_COMMAND_CAPTURE_BYTES,
   type ToolExecutionBackend,
@@ -41,7 +38,7 @@ const startOptions = z.strictObject(commandOptions);
 const idOptions = z.strictObject({ id: z.string().min(1) });
 const waitOptions = z.strictObject({
   ids: z.array(z.string().min(1)).min(1).max(64),
-  timeout: z.number().int().positive().max(BASH_JOB_WAIT_MAX_MS).optional(),
+  timeout: z.number().int().positive().max(JOB_WAIT_MAX_MS).optional(),
 });
 
 export function createBashCapability(
@@ -220,7 +217,7 @@ type WaitOptions = {
 \`\`\`
 
 - \`ids\`: required, 1 to 64 nonempty job IDs.
-- \`timeout\`: optional positive integer in milliseconds, default ${BASH_JOB_WAIT_DEFAULT_MS}, maximum ${BASH_JOB_WAIT_MAX_MS}.
+- \`timeout\`: optional positive integer in milliseconds, default ${JOB_WAIT_DEFAULT_MS}, maximum ${JOB_WAIT_MAX_MS}.
 
 ### Result
 
@@ -281,7 +278,7 @@ Invalid arguments, unknown job IDs, and launch failures throw. Errors after a ba
         const [options] = z.tuple([waitOptions]).parse(args);
         const timedOut = await jobs.waitJobs(
           options.ids,
-          options.timeout ?? BASH_JOB_WAIT_DEFAULT_MS,
+          options.timeout ?? JOB_WAIT_DEFAULT_MS,
           context.signal,
         );
         return { jobs: jobs.read(options.ids), timedOut };

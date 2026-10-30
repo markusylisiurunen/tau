@@ -27,6 +27,7 @@ import { TOOL_NAME_CODE } from "./tool_names.js";
 
 const CODE_DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
 const CODE_MAX_TIMEOUT_MS = 15 * 60 * 1000;
+const CODE_MAX_INPUT_BYTES = 16 * 1024;
 const argsSchema = z
   .strictObject({
     code: z.string().trim().min(1).optional(),
@@ -49,8 +50,11 @@ const argsSchema = z
         message:
           "Background programs do not accept timeout or maxOutputTokens. Set output budgets when inspecting jobs.",
       });
-    if (args.input !== undefined && Buffer.byteLength(JSON.stringify(args.input)) > 1024 * 1024)
-      context.addIssue({ code: "custom", message: "input exceeds the 1 MiB limit." });
+    if (
+      args.input !== undefined &&
+      Buffer.byteLength(JSON.stringify(args.input)) > CODE_MAX_INPUT_BYTES
+    )
+      context.addIssue({ code: "custom", message: "input exceeds the 16 KiB limit." });
   });
 
 export function createCodeToolDefinition(options: {
@@ -115,13 +119,13 @@ export function createCodeToolDefinition(options: {
           input: Type.Optional(
             Type.Unknown({
               description:
-                "JSON value available to the program as the global input. Defaults to null. At most 1 MiB when serialized.",
+                "JSON value available to the program as the global input. Defaults to null. At most 16 KiB when serialized as JSON.",
             }),
           ),
           background: Type.Optional(
             Type.Boolean({
               description:
-                "Run as a session-owned background job and return its ID immediately. The job has no overall deadline. Cannot be combined with timeout or maxOutputTokens; set an output budget when reading or waiting for the job instead.",
+                "Run as a session-owned background job and return its ID immediately. The job has no overall deadline. Cannot be combined with timeout or maxOutputTokens. Set the output budget when reading or waiting for the job.",
             }),
           ),
           code: Type.Optional(

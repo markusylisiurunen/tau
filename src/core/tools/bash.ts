@@ -13,8 +13,10 @@ import {
 } from "../utils/truncate.js";
 import { formatZodError } from "../utils/zod.js";
 import type { ToolActivity } from "./activity.js";
-import { type BashJobRegistry, buildBashJobMetadata } from "./bash_jobs.js";
+import { buildJobMetadata } from "./background_jobs.js";
+import type { BashJobRegistry } from "./bash_jobs.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
+import { writeOutputFile } from "./output_file.js";
 import {
   buildToolRunPresentation,
   formatToolDurationMs,
@@ -147,44 +149,6 @@ export interface BashTruncationInfo {
   fullOutputPath?: string;
 }
 
-const BASH_TEMP_FILE_TIMEOUT_MS = 2_000;
-const BASH_TEMP_FILE_SCRIPT = `
-const fs = require("node:fs");
-const os = require("node:os");
-const path = require("node:path");
-const { randomUUID } = require("node:crypto");
-const file = path.join(os.tmpdir(), "tau-bash-output." + randomUUID());
-fs.closeSync(fs.openSync(file, "wx"));
-process.stdout.write(file);
-`.trim();
-
-async function createBashTempFilePath(backend: ToolExecutionBackend): Promise<string | undefined> {
-  try {
-    const result = await backend.runNodeScript(BASH_TEMP_FILE_SCRIPT, [], {
-      timeoutMs: BASH_TEMP_FILE_TIMEOUT_MS,
-    });
-    if (result.exitCode !== 0) return undefined;
-    return result.stdout.trim() || undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-export async function writeBashTempFile(
-  backend: ToolExecutionBackend,
-  content: string,
-): Promise<string | undefined> {
-  if (!content) return undefined;
-  const tempPath = await createBashTempFilePath(backend);
-  if (!tempPath) return undefined;
-  try {
-    const result = await backend.writeFile(tempPath, content);
-    return result.path;
-  } catch {
-    return undefined;
-  }
-}
-
 function formatBashOutputFileHint(args: { path?: string }): string {
   if (!args.path) return "";
   return ` Full output saved to ${args.path}. To see more output, either read the file or re-run with a higher maxOutputTokens. If reading the file, be mindful of its size.`;
@@ -202,7 +166,7 @@ export async function prepareBashOutput(
     strategy: "middle",
   });
   const fullOutputPath = maxTruncation.truncated
-    ? await writeBashTempFile(backend, cleanOutput)
+    ? await writeOutputFile(backend, cleanOutput)
     : undefined;
 
   if (policy.gateOnExcess && maxTruncation.truncated) {
@@ -575,7 +539,7 @@ export function createBashToolDefinition(
                   toolName: TOOL_NAME_BASH,
                   subject: command,
                   operation: "background",
-                  metadata: buildBashJobMetadata({
+                  metadata: buildJobMetadata({
                     text,
                     durationMs: Math.max(0, Date.now() - callStartedAt),
                     workingDirectory: effectiveWorkingDirectory,

@@ -232,7 +232,7 @@ export async function runTauCodeMode(
   const invocation = options.invocation ?? null;
   const executionEnvironment = options.executionEnvironment ?? null;
   const signal = options.signal ?? new AbortController().signal;
-  const docs = buildRuntimeDocumentation(options.name, options.documentation, timeoutMs);
+  const docs = buildRuntimeDocumentation(options.name, options.documentation);
   const startedAt = Date.now();
   let execution: TauCodeModeExecutionCapture;
   try {
@@ -474,11 +474,7 @@ function serializeBridgeResult(value: unknown, name: string, path: string[]): st
   return json;
 }
 
-function buildRuntimeDocumentation(
-  name: string,
-  documentation: string,
-  timeoutMs: number | null,
-): string {
+function buildRuntimeDocumentation(name: string, documentation: string): string {
   return [
     "# Code-mode runtime",
     "",
@@ -503,15 +499,11 @@ function buildRuntimeDocumentation(
     `Each API request and response must be JSON-serializable and fit within ${formatBytes(CODE_MODE_MAX_BRIDGE_PAYLOAD_BYTES)}. Request smaller results using service filters or pagination when available; filtering after receiving a response cannot avoid this limit.`,
     "Undefined object properties are omitted from API arguments. Undefined arguments and array entries remain invalid.",
     `A program may make at most ${CODE_MODE_MAX_BRIDGE_REQUESTS} API calls, with at most ${CODE_MODE_MAX_CONCURRENT_BRIDGE_REQUESTS} unresolved calls concurrently. Exceeding these limits fails the program.`,
-    timeoutMs === null
-      ? "This background program has no overall deadline."
-      : `The program must finish within ${formatDuration(timeoutMs)}.`,
+    "The tool that runs a program can give it an overall deadline. The deadline covers the whole program, including time spent waiting for API calls. When it passes, the program stops, unresolved API calls are cancelled, and text printed so far is returned with a timeout notice. Actions already taken are not undone.",
     "",
     "## Output",
     "",
-    timeoutMs === null
-      ? "Printed text and images become the background job's output. Read it with the code job tools, which return the latest output within their own output budget."
-      : CODE_MODE_MAX_OUTPUT_TOKENS_DESCRIPTION,
+    CODE_MODE_MAX_OUTPUT_TOKENS_DESCRIPTION,
     "",
     "`printText` accepts only strings; objects and arrays throw a TypeError. Select relevant fields and explicitly format them as concise, readable plain text: labels and lines usually use fewer tokens than JSON envelopes and metadata. Filter or summarize large collections before printing. Keep identifiers and other fields needed for follow-up actions. Printed output consumes conversation context.",
     "",
@@ -547,14 +539,6 @@ function buildRuntimeDocumentation(
     "",
     documentation.trim(),
   ].join("\n");
-}
-
-function formatDuration(timeoutMs: number): string {
-  if (timeoutMs % 1_000 === 0) {
-    const seconds = timeoutMs / 1_000;
-    return `${seconds} second${seconds === 1 ? "" : "s"}`;
-  }
-  return `${timeoutMs}ms`;
 }
 
 function getExecutionStatus(execution: TauCodeModeExecutionCapture): TauCodeModeExecutionStatus {

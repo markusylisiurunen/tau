@@ -5,12 +5,9 @@ import type { ModelResolver } from "../models/catalog.js";
 import { AgentSupervisor } from "../subagents/agent_supervisor.js";
 import type { SubagentToolName } from "../subagents/types.js";
 import type { Persona } from "../types.js";
+import { createJobToolDefinitions } from "./background_jobs.js";
 import { createBashToolDefinition } from "./bash.js";
-import {
-  BashJobRegistry,
-  createBashJobToolDefinitions,
-  createJobToolDefinitions,
-} from "./bash_jobs.js";
+import { BashJobRegistry } from "./bash_jobs.js";
 import { createCodeToolDefinition } from "./code.js";
 import { CodeJobRegistry } from "./code_jobs.js";
 import { createEditToolDefinition } from "./edit.js";
@@ -48,7 +45,7 @@ function createCommonTools(options: {
   return [
     ...tools.filter((tool) => enabled.has(tool.schema.name)),
     ...(code ? [code, ...createJobToolDefinitions(options.codeJobs, "code")] : []),
-    ...(enabled.has(TOOL_NAME_BASH) ? createBashJobToolDefinitions(options.bashJobs) : []),
+    ...(enabled.has(TOOL_NAME_BASH) ? createJobToolDefinitions(options.bashJobs, "bash") : []),
     createTauDocsToolDefinition(),
   ];
 }

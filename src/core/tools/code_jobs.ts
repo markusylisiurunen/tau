@@ -7,7 +7,7 @@ import {
 } from "../../code_mode/runtime.js";
 import { SESSION_PROTOCOL_MAX_CLIENT_TOOL_IMAGES } from "../../protocol/session_protocol.js";
 import { truncateForTokens } from "../utils/truncate.js";
-import { BASH_JOB_WAIT_MAX_MS } from "./bash_jobs.js";
+import { MAX_JOBS, waitForJobs } from "./background_jobs.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import { JobOutput } from "./job_output.js";
 
@@ -37,10 +37,12 @@ export class CodeJobRegistry {
   }): string {
     options.signal.throwIfAborted();
     if (this.closed) throw new Error("Code jobs are closed.");
-    if (this.jobs.size >= 64) {
+    if (this.jobs.size >= MAX_JOBS) {
       const oldest = [...this.jobs.values()].find((job) => !job.active);
       if (!oldest)
-        throw new Error("Code job limit reached (64). Stop a job before starting another.");
+        throw new Error(
+          `Code job limit reached (${MAX_JOBS}). Stop a job before starting another.`,
+        );
       this.jobs.delete(oldest.id);
     }
     const job: CodeJob = {
@@ -138,28 +140,11 @@ export class CodeJobRegistry {
   }
 
   async waitJobs(ids: string[], timeout: number, signal: AbortSignal): Promise<boolean> {
-    if (!Number.isInteger(timeout) || timeout <= 0 || timeout > BASH_JOB_WAIT_MAX_MS)
-      throw new Error(`timeout must be a positive integer up to ${BASH_JOB_WAIT_MAX_MS}.`);
-    const jobs = [...new Set(ids)].map((id) => this.get(id));
-    if (!jobs.length) throw new Error("ids must not be empty.");
-    signal.throwIfAborted();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let abort!: () => void;
-    try {
-      return await Promise.race([
-        ...jobs.map((job) => job.done.then(() => false)),
-        new Promise<boolean>((resolve) => {
-          timer = setTimeout(() => resolve(true), timeout);
-        }),
-        new Promise<never>((_, reject) => {
-          abort = () => reject(signal.reason);
-          signal.addEventListener("abort", abort, { once: true });
-        }),
-      ]);
-    } finally {
-      clearTimeout(timer);
-      signal.removeEventListener("abort", abort);
-    }
+    return waitForJobs(
+      [...new Set(ids)].map((id) => this.get(id)),
+      timeout,
+      signal,
+    );
   }
 
   get hasRunning(): boolean {

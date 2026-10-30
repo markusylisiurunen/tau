@@ -6,7 +6,7 @@ Subagents are background agents that the main agent starts and the host supervis
 
 Subagents are general-purpose workers. There are no named types. Several can run at once, each with its own task and conversation.
 
-A native Tau subagent works like a main agent of the active persona in the subagent's working directory. Its system prompt is the one a main agent would get there, with the same persona prompt, skills, project instructions, and environment context. Tau adds a short section in front that explains the subagent's role: complete the assignment without a user present, never start other agents, leave contact with the user to the main agent, and return a self-contained result. The section also gives the parent session's ID. This section cannot be configured. Put task-specific instructions in the launch prompt.
+A native Tau subagent works like a main agent of the active persona in the subagent's working directory. Its system prompt is the one a main agent would get there, with the same persona prompt, skills, project instructions, and environment context. Tau adds a short section in front that explains the subagent's role: work headless on the part of the main agent's task given in the assignment, never start other agents, leave contact with the user to the main agent, and return a self-contained result. The section also gives the parent session's ID. This section cannot be configured. Put task-specific instructions in the launch prompt.
 
 Whether the agent can start subagents depends on the main persona's tool list. Built-in personas, and custom personas that omit `tools`, enable all five subagent tools. A custom persona with a `tools` list that lacks `spawn_agent` cannot start subagents. Leave out all five subagent tools when no subagent interaction is wanted. There is no other setting to turn subagents on or off. See [personas](personas.md).
 
@@ -134,7 +134,7 @@ Each subagent has an ID that the host generates.
 
 `spawn_agent` takes a title, a prompt, an optional model, and an optional working directory. The prompt is the subagent's first message, and the subagent does not see the parent conversation, so the prompt should be self-contained. The call returns right away with the new ID, and the subagent keeps working in the background.
 
-When the main persona has `history`, a native Tau subagent may read the parent session's transcript if the prompt leaves out context it needs. It reads with `tau.history.read` and `source: "local"`, so the read uses the host's local history even when a remote collection is configured. The subagent's instructions say this is rarely necessary, and the prompt remains its main source of context. Local recording is best-effort, so the newest parent entries can occasionally be missing.
+When the main persona has `history`, a native Tau subagent may read the parent session's transcript as a last resort, when missing context would stop the work or force an important assumption. It reads with `tau.history.read` and `source: "local"`, so the read uses the host's local history even when a remote collection is configured. Local recording is best-effort, so the newest parent entries can occasionally be missing.
 
 At most eight subagents can be running at once in one main session. Subagents that have finished or been interrupted do not count toward this limit.
 

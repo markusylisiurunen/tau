@@ -22,6 +22,8 @@ describe("static prompts", () => {
         expect(prompt.includes('source: "local"')).toBe(Boolean(parentSessionId && historyEnabled));
         expect(prompt.includes("parent-session")).toBe(Boolean(parentSessionId));
         expect(prompt).not.toContain("{{parent_context}}");
+        expect(prompt.startsWith("<subagent-role>\n")).toBe(true);
+        expect(prompt.endsWith("\n</subagent-role>")).toBe(true);
       }
     }
   });

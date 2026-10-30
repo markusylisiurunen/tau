@@ -19,7 +19,7 @@ export function bindCodeModeSdk(capabilities: CodeModeCapability[]): {
       `
 ## Foreground and background programs
 
-A foreground program has a 5-minute deadline by default. Set \`timeout\` in milliseconds, up to 15 minutes, when the work needs longer. Its printed output is returned when the program ends, within the \`maxOutputTokens\` budget.
+A foreground program has a 5-minute deadline by default. Set \`timeout\` in milliseconds, up to 60 minutes, when the work needs longer. Its printed output is returned when the program ends, within the \`maxOutputTokens\` budget.
 
 A program launched with \`background: true\` runs as a code job and has no overall deadline, but each capability call keeps its own time limit. The launch accepts neither \`timeout\` nor \`maxOutputTokens\`. The job keeps its printed text and images. Read them with \`read_code_job\` or \`wait_for_code_jobs\`, which take their own \`maxOutputTokens\`. Stop a job with \`stop_code_job\`.
 

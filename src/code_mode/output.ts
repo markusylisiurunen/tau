@@ -11,6 +11,8 @@ export class CodeModeOutput {
   private textBytes = 0;
   truncated = false;
 
+  constructor(private readonly maxCaptureBytes = DEFAULT_COMMAND_CAPTURE_BYTES) {}
+
   appendText(text: string): void {
     if (!text) return;
     const last = this.parts.at(-1);
@@ -18,13 +20,13 @@ export class CodeModeOutput {
     else this.parts.push({ type: "text", text });
     this.textBytes += Buffer.byteLength(text);
     for (const part of this.parts) {
-      if (this.textBytes <= DEFAULT_COMMAND_CAPTURE_BYTES) break;
+      if (this.textBytes <= this.maxCaptureBytes) break;
       if (part.type !== "text") continue;
       this.truncated = true;
       const bytes = Buffer.byteLength(part.text);
       part.text = truncateToBytesFromEnd(
         part.text,
-        Math.max(0, bytes - (this.textBytes - DEFAULT_COMMAND_CAPTURE_BYTES)),
+        Math.max(0, bytes - (this.textBytes - this.maxCaptureBytes)),
       );
       this.textBytes -= bytes - Buffer.byteLength(part.text);
     }
@@ -47,7 +49,6 @@ export class CodeModeOutput {
     terminationNote: string;
     projection: { content: string; truncated: boolean; maxTokens: number };
     footer: string;
-    strategy?: "tail";
   }): Array<TextContent | ImageContent> {
     const parts: Array<TextContent | ImageContent> = [];
     const append = (part: TextContent | ImageContent): void => {
@@ -70,13 +71,10 @@ export class CodeModeOutput {
     const totalBytes = Buffer.byteLength(text);
     const budget = tokensToBytes(options.projection.maxTokens);
     const head = options.projection.truncated
-      ? truncateToBytesFromStart(text, options.strategy === "tail" ? 0 : Math.floor(budget / 2))
+      ? truncateToBytesFromStart(text, Math.floor(budget / 2))
       : text;
     const tail = options.projection.truncated
-      ? truncateToBytesFromEnd(
-          text,
-          budget - (options.strategy === "tail" ? 0 : Math.floor(budget / 2)),
-        )
+      ? truncateToBytesFromEnd(text, budget - Math.floor(budget / 2))
       : "";
     const headEnd = Buffer.byteLength(head);
     const tailStart = totalBytes - Buffer.byteLength(tail);

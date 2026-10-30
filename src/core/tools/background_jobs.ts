@@ -102,7 +102,7 @@ export function createJobToolDefinitions(
   const includeOutput = Type.Optional(
     Type.Boolean({
       description:
-        "Include the latest captured output; defaults to true. Set false to return only job metadata. Error details are part of the output, so they are omitted too.",
+        "Include captured output; defaults to true. Set false to return only job metadata. Error details are part of the output, so they are omitted too.",
     }),
   );
   const maxOutputTokens = Type.Optional(
@@ -117,13 +117,13 @@ export function createJobToolDefinitions(
   return [
     {
       name: `list_${kind}_jobs`,
-      description: `List session-owned ${label} jobs and their status, without output. Up to 64 records are retained; older completed jobs are evicted when needed.`,
+      description: `List your ${label} jobs and their status, without output. Up to 64 records are retained; older completed jobs are evicted when needed.`,
       parameters: Type.Object({}, { additionalProperties: false }),
       parser: z.object({}).strict(),
     },
     {
       name: `read_${kind}_job`,
-      description: `Read a ${label} job's current status and the latest part of its captured output without waiting. When output is shortened, the result reports a text log with all retained text; read that file instead of rerunning the job.`,
+      description: `Read a ${label} job's current status and captured output without waiting. Long output is shortened to its beginning and end. After the job finishes, the result reports a text log with all retained text; read that file instead of rerunning the job.`,
       parameters: Type.Object(
         { id, includeOutput, maxOutputTokens },
         { additionalProperties: false },
@@ -156,7 +156,7 @@ export function createJobToolDefinitions(
     },
     {
       name: `wait_for_${kind}_jobs`,
-      description: `Wait until any requested ${label} job finishes. Waiting does not detect readiness or progress; read the job's output or probe the service it started instead. Returns after 60 seconds by default, at most 5 minutes. Timeout and interruption cancel only the wait, not jobs. Completed results remain readable.`,
+      description: `Wait until any requested ${label} job finishes. Returns after 60 seconds by default, at most 5 minutes. Timeout and interruption cancel only the wait, not jobs. Completed results remain readable.`,
       parameters: Type.Object(
         {
           includeOutput,

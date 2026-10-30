@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AgentRuntime } from "../dist/core/index.js";
 import { personas } from "../dist/core/personas.js";
 import { AgentSupervisor } from "../dist/core/subagents/agent_supervisor.js";
+import { AgentJobRegistry } from "../dist/core/tools/agent_jobs.js";
 import { BashJobRegistry } from "../dist/core/tools/bash_jobs.js";
 import { ToolCatalog } from "../dist/core/tools/catalog.js";
 import { CodeJobRegistry } from "../dist/core/tools/code_jobs.js";
@@ -71,6 +72,7 @@ function createSpawnOptions(overrides = {}) {
     originHistoryEntryId: "parent-origin",
     config: {},
     backend: createLocalToolExecutionBackend(),
+    jobs: new AgentJobRegistry(),
     personaId: "parent-persona",
     ...overrides,
   };
@@ -182,6 +184,7 @@ describe("AgentSupervisor", () => {
     try {
       const main = ToolCatalog.createSessionRegistry({
         backend: createLocalToolExecutionBackend(),
+        jobs: new AgentJobRegistry(),
         cwd: "/repo",
         config: {},
         persona: { ...personas[0], tools: ["spawn_agent"] },
@@ -680,4 +683,112 @@ describe("AgentSupervisor", () => {
     releaseProgress();
     await supervisor.interrupt(ids[0]);
   });
+});
+
+it("isolates main and sibling jobs while retaining child jobs across follow-ups", async () => {
+  const jobs = new AgentJobRegistry();
+  const supervisor = new AgentSupervisor({ onEvent: () => {} });
+  const submit = vi.spyOn(AgentRuntime.prototype, "submit").mockResolvedValue({
+    finalMessage: createAssistant("done"),
+    aborted: false,
+  });
+  const backend = createLocalToolExecutionBackend();
+  backend.runBash = vi.fn(
+    (_command, options) =>
+      new Promise((resolve) => {
+        options.onStarted?.();
+        options.signal.addEventListener(
+          "abort",
+          () =>
+            resolve({
+              exitCode: null,
+              aborted: true,
+              closeSignal: "SIGTERM",
+              truncated: false,
+            }),
+          { once: true },
+        );
+      }),
+  );
+  const mainJobs = jobs.create();
+  const main = ToolCatalog.createSubagentRegistry(
+    ["bash"],
+    backend,
+    "/repo",
+    {},
+    mainJobs.bashJobs,
+    mainJobs.codeJobs,
+  );
+  const execute = (registry, name, args) =>
+    registry.get(name).execute(
+      { id: "call", name, arguments: args },
+      {
+        agentId: "test",
+        turnId: "turn",
+        assistantMessageId: "message",
+        signal: new AbortController().signal,
+        emitActivity: async () => {},
+      },
+    );
+  try {
+    const children = [0, 1].map(() => {
+      const options = createSpawnOptions({ backend, jobs });
+      options.runtimeConfig.tools = ["bash"];
+      const result = supervisor.spawn(options);
+      expect(result.ok).toBe(true);
+      return result.state.id;
+    });
+    await supervisor.waitForAgents(children);
+    const registries = [
+      main,
+      ...children.map((id) => getRecord(supervisor, id).runtime.spec.tools),
+    ];
+    for (const [owner, registry] of registries.entries()) {
+      for (const kind of ["bash", "code"]) {
+        const started = await execute(
+          registry,
+          kind,
+          kind === "bash"
+            ? { command: "server", background: true }
+            : { code: 'printText("owned");', background: true },
+        );
+        expect(started.outcome).toBe("succeeded");
+        const id = started.content[0].text.match(/job ([^ ]+)/)[1];
+        for (const [index, other] of registries.entries()) {
+          const listed = await execute(other, `list_${kind}_jobs`, {});
+          expect(listed.content[0].text.includes(id)).toBe(index === owner);
+          for (const operation of ["read", "stop", "wait"]) {
+            if (index === owner && operation !== "read") continue;
+            const name =
+              operation === "wait" ? `wait_for_${kind}_jobs` : `${operation}_${kind}_job`;
+            const args = operation === "wait" ? { ids: [id], timeout: 1 } : { id };
+            expect((await execute(other, name, args)).outcome).toBe(
+              index === owner ? "succeeded" : "failed",
+            );
+          }
+        }
+        if (owner === 1) {
+          expect(supervisor.sendInput({ id: children[0], prompt: "follow up" }).ok).toBe(true);
+          await supervisor.waitForAgents([children[0]]);
+          expect(
+            (
+              await execute(
+                getRecord(supervisor, children[0]).runtime.spec.tools,
+                `read_${kind}_job`,
+                { id },
+              )
+            ).outcome,
+          ).toBe("succeeded");
+        }
+      }
+    }
+    expect(jobs.hasRunning).toBe(true);
+    await jobs.dispose();
+    expect(jobs.hasRunning).toBe(false);
+    expect(() => jobs.create()).toThrow();
+  } finally {
+    await jobs.dispose();
+    supervisor.reset();
+    submit.mockRestore();
+  }
 });

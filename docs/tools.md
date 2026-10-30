@@ -89,7 +89,7 @@ Agents are told to choose the mode that avoids needless waiting. Background mode
 
 Background mode also fits a service that must keep running, or work that must survive turns and interruptions. Starting several independent jobs and then waiting for them is a valid way to run work in parallel. This is guidance for the agent; Tau does not enforce it.
 
-The default foreground timeout is 60 seconds. Tau captures at most 1 MiB of combined stdout and stderr, and keeps the end when there is more. By default the result the model sees is limited to about 8,192 estimated tokens. Longer output is replaced by a preview of about 2,048 tokens from the middle, with a notice. The command has still run in full, with all its side effects.
+The default foreground timeout is 60 seconds. Tau captures at most 24 MiB of combined stdout and stderr, and keeps the end when there is more. By default the result the model sees is limited to about 8,192 estimated tokens. Longer output is replaced by a preview of about 2,048 tokens that keeps the beginning and end, with a notice. The command has still run in full, with all its side effects.
 
 A narrower command is better than a higher limit. When more output is really needed, the agent can set `maxOutputTokens` between 8,192 and 16,384 on its own. Values above 16,384, up to 65,536, require an explicit user request. When output is truncated, Tau may save it to a temporary file in the execution environment and report the path.
 
@@ -97,7 +97,9 @@ In a local execution environment, Tau removes inherited environment variables wh
 
 The TUI commands `!<command>` and `!!<command>` run the same way, in a fresh login shell. `!` adds the result to the model's context and `!!` does not. They allow more output into context than an agent's tool call, but capture is still limited.
 
-With `background: true`, `bash` starts the command and returns a job ID for the session right away, without waiting for it to exit. A started job is not necessarily ready to use. Background jobs have no time limit, and combining `background: true` with `timeout` or `maxOutputTokens` is invalid. Jobs keep running across turns and interruptions. Main agents, subagents, and ephemeral threads share the session's jobs.
+With `background: true`, `bash` starts the command and returns a job ID right away, without waiting for it to exit. Background jobs have no time limit, and combining `background: true` with `timeout` or `maxOutputTokens` is invalid. Jobs keep running across turns and interruptions.
+
+Each job belongs to the agent that started it, and only that agent can list, read, wait for, or stop it. The main agent, each subagent, and each ephemeral thread have separate jobs. A subagent keeps its jobs across follow-up messages. An ephemeral thread, including a fork, starts with no jobs.
 
 Enabling `bash` also enables `list_bash_jobs`, `read_bash_job`, `stop_bash_job`, and `wait_for_bash_jobs`. These cannot be listed separately in a persona. Each job appears as a block of labeled lines: `id`, `status`, `command`, `cwd`, and, once the command has exited, `exit_code` and any terminating `signal`. Read, stop, and wait add the job's output after an `--- output ---` line. List never includes output. For example:
 
@@ -106,28 +108,29 @@ id: <job id>
 status: running
 command: "npm test"
 cwd: "/work/app"
-output: truncated; showing latest output
-text_log: <temporary file path>
+output: truncated; showing beginning and end
 
 --- output ---
-<latest output>
+<beginning and end of output>
 ```
 
-Stop terminates the job's process group, kills it if it has not exited after a grace period, and waits until it has stopped. Tau keeps up to 64 job records and drops the oldest finished one when needed. Starting a job fails if all 64 are still running.
+Stop terminates the job's process group, kills it if it has not exited after a grace period, and waits until it has stopped. Tau keeps up to 64 job records for each agent and drops the oldest finished one when needed. Starting a job fails if all 64 are still running.
 
-Each job keeps the last 1 MiB of combined output. Read, stop, and wait return the latest output, up to 8,192 estimated tokens for the whole response by default, divided evenly among the requested jobs. `maxOutputTokens` sets this budget, from 1 to 65,536. When a job has output, the result also gives `text_log`, a temporary file in the execution environment with all of the job's retained text. Tau writes the file when the job finishes and updates it on every call that includes output, so the agent can read or search it instead of raising the budget or running the command again. If the file cannot be written, the result shows `text_log: unavailable`. The `output: truncated` line means only that this response shows part of the output. A separate `capture: truncated` line means the job produced more than 1 MiB, and the earliest output is lost from the log as well.
+Each job keeps the last 24 MiB of combined output. Read, stop, and wait return that output within a budget of 8,192 estimated tokens for the whole response by default, divided evenly among the requested jobs. `maxOutputTokens` sets this budget, from 1 to 65,536. When a job's output exceeds its share, the result shows the beginning and the end. The `output: truncated` line means only that this response shows part of the output. A separate `capture: truncated` line means the job produced more than 24 MiB, so its earliest output is lost.
+
+When a job with output finishes, Tau writes all of its retained text to a temporary file in the execution environment. Later results that include output give the file's path as `text_log`, so the agent can read or search it instead of raising the budget or running the command again. A running job has no text log. If the file cannot be written, the result shows `text_log: unavailable`.
 
 `read_bash_job`, `stop_bash_job`, and `wait_for_bash_jobs` accept `includeOutput`, which defaults to `true`. With `false`, the result has only the labeled job lines. It leaves out output, truncation lines, the text log, and execution error messages.
 
-In the TUI, job tool cards have headings such as `reading bash <id>` and `listed bash jobs`, and show a seven-line preview from the middle of the result. A background start shows `started background <command>`, which means only that the command started.
+In the TUI, job tool cards have headings such as `reading bash <id>` and `listed bash jobs`, and show a seven-line preview from the middle of the result. A background start shows `started background <command>`.
 
 Background launch and job-tool footers show the tool call's duration, estimated tokens, and line count. Counts cover the exact text returned to the model after output limits, before the card preview is shortened. With `includeOutput: false`, only returned job information counts. The launch footer also includes the working directory. A `◆` marker means included command output was truncated; shortening the card preview alone does not add it. A wait that reaches its timeout appends `timed out` without making the card an error. Durations measure the tool call, not the job's lifetime, and cards remain snapshots of that call.
 
 When a job tool call is invalid or fails, the TUI card shows a short diagnostic as well as the model's result. A normal cancellation shows no details.
 
-`wait_for_bash_jobs({ids, timeout?, includeOutput?, maxOutputTokens?})` returns when any of the jobs exits or the wait times out. Jobs that already finished return immediately. The timeout is a positive integer in milliseconds, defaults to 60,000, and can be at most 300,000. A timeout counts as a successful result. It starts with a note that the jobs are still running, followed by their current blocks, and does not stop the jobs. Interrupting the wait leaves them running too. The tool waits for a job to exit, not to become ready, so check a server's logs or readiness instead. A job finishing never starts an agent turn by itself.
+`wait_for_bash_jobs({ids, timeout?, includeOutput?, maxOutputTokens?})` returns when any of the jobs exits or the wait times out. Jobs that already finished return immediately. The timeout is a positive integer in milliseconds, defaults to 60,000, and can be at most 300,000. A timeout counts as a successful result. It starts with a note that the jobs are still running, followed by their current blocks, and does not stop the jobs. Interrupting the wait leaves them running too. A job finishing never starts an agent turn by itself.
 
-Jobs survive client disconnects while the host is running, and keep an idle session from being unloaded until they finish. Closing the session normally or shutting down the host stops them. Job records are not saved or recovered, and an old ID fails with a clear error. An unknown ID does not mean the command never ran, that its side effects were undone, or that it has stopped. Agents are told to check running processes and output before starting such a command again. Cleanup does not cover processes that daemonize themselves, tmux sessions, or processes left behind by a host crash or forced kill.
+Jobs survive client disconnects while the host is running, and keep an idle session from being unloaded until they finish. Closing the session normally or shutting down the host stops the jobs of every agent in the session. Job records are not saved or recovered, and an old ID fails with a clear error. An unknown ID does not mean the command never ran, that its side effects were undone, or that it has stopped. Agents are told to check running processes and output before starting such a command again. Cleanup does not cover processes that daemonize themselves, tmux sessions, or processes left behind by a host crash or forced kill.
 
 ### Write and edit
 

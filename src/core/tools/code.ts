@@ -31,7 +31,7 @@ import { type AgentTool, createTextToolOutcome, executeTool } from "./registry.j
 import { TOOL_NAME_CODE } from "./tool_names.js";
 
 const CODE_DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
-const CODE_MAX_TIMEOUT_MS = 15 * 60 * 1000;
+const CODE_MAX_TIMEOUT_MS = 60 * 60 * 1000;
 const CODE_MAX_INPUT_BYTES = 16 * 1024;
 const argsSchema = z
   .strictObject({
@@ -103,7 +103,7 @@ export function createCodeToolDefinition(options: {
           timeout: Type.Optional(
             Type.Integer({
               description:
-                "Program timeout in milliseconds for foreground programs. Defaults to 300000 (5 minutes). Extend only when the work needs it, up to 900000 (15 minutes). The deadline covers the whole program, including API calls. Cannot be combined with background: true.",
+                "Program timeout in milliseconds for foreground programs. Defaults to 300000 (5 minutes). Extend only when the work needs it, up to 3600000 (60 minutes). The deadline covers the whole program, including API calls. Cannot be combined with background: true.",
               minimum: 1,
               maximum: CODE_MAX_TIMEOUT_MS,
             }),
@@ -130,7 +130,7 @@ export function createCodeToolDefinition(options: {
           background: Type.Optional(
             Type.Boolean({
               description:
-                "Run as a session-owned background job and return its ID immediately. The job has no overall deadline. Cannot be combined with timeout or maxOutputTokens. Set the output budget when reading or waiting for the job.",
+                "Run as a background job and return its ID immediately. The job has no overall deadline. Cannot be combined with timeout or maxOutputTokens. Set the output budget when reading or waiting for the job.",
             }),
           ),
           code: Type.Optional(

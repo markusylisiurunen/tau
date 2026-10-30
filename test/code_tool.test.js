@@ -49,7 +49,7 @@ function chatReply() {
 describe("code composition", () => {
   it.each([
     { timeout: undefined, expected: 300_000 },
-    { timeout: 900_000, expected: 900_000 },
+    { timeout: 3_600_000, expected: 3_600_000 },
   ])("uses the selected program timeout $expected", async ({ timeout, expected }) => {
     const run = vi.spyOn(codeMode, "executeInternalCodeMode");
     try {
@@ -64,7 +64,7 @@ describe("code composition", () => {
       expect(tool.schema.parameters.properties.timeout).toMatchObject({
         type: "integer",
         minimum: 1,
-        maximum: 900_000,
+        maximum: 3_600_000,
       });
       const result = await tool.execute(
         { id: "timeout", name: "code", arguments: { code: 'printText("done")', timeout } },
@@ -77,7 +77,7 @@ describe("code composition", () => {
     }
   });
 
-  it.each([0, -1, 1.5, 900_001, "300000", null])(
+  it.each([0, -1, 1.5, 3_600_001, "300000", null])(
     "rejects an invalid program timeout %s before execution",
     async (timeout) => {
       const history = { search: vi.fn() };
@@ -136,13 +136,13 @@ describe("code composition", () => {
       "true",
       expect.objectContaining({ timeoutMs: 60_000 }),
     );
-    await capability.api.run([{ command: "true", timeout: 300_000 }], context());
+    await capability.api.run([{ command: "true", timeout: 3_600_000 }], context());
     expect(runBash).toHaveBeenLastCalledWith(
       "true",
-      expect.objectContaining({ timeoutMs: 300_000 }),
+      expect.objectContaining({ timeoutMs: 3_600_000 }),
     );
     runBash.mockClear();
-    for (const timeout of [0, -1, 1.5, 300_001, "60000", null]) {
+    for (const timeout of [0, -1, "60000", null, Infinity]) {
       await expect(capability.api.run([{ command: "true", timeout }], context())).rejects.toThrow();
     }
     expect(runBash).not.toHaveBeenCalled();

@@ -914,3 +914,31 @@ function runCommandWithOpenStdin(script, request) {
     child.stdin.write(`${JSON.stringify(request)}\n`);
   });
 }
+
+it.each([1024, 1025])("enforces the total bridge budget at %s requests", async (count) => {
+  const ping = vi.fn(() => null);
+  const result = await runTauCodeMode({
+    ...createDefinition({ api: { ping } }),
+    code: `for (let i = 0; i < ${count}; i++) await linear.ping(); printText("done");`,
+  });
+  expect(result.status).toBe(count === 1024 ? "succeeded" : "failed");
+  expect(ping).toHaveBeenCalledTimes(1024);
+});
+
+it.each([32, 33])("enforces the concurrent bridge budget at %s requests", async (count) => {
+  const gate = Promise.withResolvers();
+  let active = 0;
+  const ping = vi.fn(async () => {
+    if (++active === 32) gate.resolve();
+    await gate.promise;
+    active--;
+    return null;
+  });
+  const result = await runTauCodeMode({
+    ...createDefinition({ api: { ping } }),
+    code: `await Promise.all(Array.from({ length: ${count} }, () => linear.ping())); printText("done");`,
+  });
+  expect(result.status).toBe(count === 32 ? "succeeded" : "failed");
+  expect(ping.mock.calls.length).toBeLessThanOrEqual(32);
+  if (count === 32) expect(ping).toHaveBeenCalledTimes(32);
+});

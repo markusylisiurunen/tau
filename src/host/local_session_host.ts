@@ -568,20 +568,16 @@ export class LocalSessionHost implements TauSessionHost {
   private async evictReleasedSession(session: LocalHostedSessionHandle): Promise<void> {
     do {
       await session.waitForActiveWork().catch(() => undefined);
-      await Promise.all([
-        session.runtime.bashJobs.waitForIdle(),
-        session.runtime.codeJobs.waitForIdle(),
-      ]);
+      await session.runtime.jobs.waitForIdle();
       await session.waitForActiveWork().catch(() => undefined);
-    } while (session.runtime.bashJobs.hasRunning || session.runtime.codeJobs.hasRunning);
+    } while (session.runtime.jobs.hasRunning);
     if (this.shuttingDown || session.isDisposed || (this.sessionReferences.get(session) ?? 0) > 0) {
       return;
     }
 
     await session.snapshot();
     if (this.shuttingDown || (this.sessionReferences.get(session) ?? 0) > 0) return;
-    if (session.runtime.bashJobs.hasRunning || session.runtime.codeJobs.hasRunning)
-      return await this.evictReleasedSession(session);
+    if (session.runtime.jobs.hasRunning) return await this.evictReleasedSession(session);
 
     this.sessions.delete(session);
     this.sessionReferences.delete(session);
@@ -1449,8 +1445,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       const contextId = `ephemeral-${randomUUID()}`;
       const session = await HostedEphemeralAgentSession.create({
         cwd: resolve(this.executionEnvironment.snapshot().cwd, options.workingDirectory ?? "."),
-        bashJobs: this.runtime.bashJobs,
-        codeJobs: this.runtime.codeJobs,
+        jobs: this.runtime.jobs,
         contextId,
         sessionId: this.sessionId,
         sessionStartedAt: this.createdAt,
@@ -1559,8 +1554,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     const errors: unknown[] = [];
     this.interruptActiveWork();
     try {
-      await this.runtime.codeJobs.dispose();
-      await this.runtime.bashJobs.dispose();
+      await this.runtime.jobs.dispose();
     } catch (error) {
       errors.push(error);
     }

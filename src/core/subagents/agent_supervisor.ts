@@ -7,9 +7,8 @@ import type { McpManager } from "../mcp/manager.js";
 import { resolveAgentModel } from "../runtime/agent_model.js";
 import { type CoreDeps, createDefaultCoreDeps } from "../runtime/deps.js";
 import { createAutoCompactionArchiver } from "../session/auto_compaction_archive.js";
-import type { BashJobRegistry } from "../tools/bash_jobs.js";
+import type { AgentJobRegistry } from "../tools/agent_jobs.js";
 import { ToolCatalog } from "../tools/catalog.js";
-import type { CodeJobRegistry } from "../tools/code_jobs.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
 import type { ToolRunPresentation } from "../tools/presentation.js";
 import type { ReasoningEffort } from "../types.js";
@@ -132,8 +131,7 @@ export class AgentSupervisor {
     originHistoryEntryId: string;
     config: Config;
     backend: ToolExecutionBackend;
-    bashJobs: BashJobRegistry;
-    codeJobs: CodeJobRegistry;
+    jobs: AgentJobRegistry;
     history?: HistoryQuery;
     mcp?: McpManager;
     personaId?: string;
@@ -162,6 +160,7 @@ export class AgentSupervisor {
       });
       reasoning = runtimeConfig.effort;
     } else {
+      const jobs = options.jobs.create();
       runtime = new AgentRuntime({
         agentId: id,
         spec: createAgentSpec({
@@ -190,8 +189,8 @@ export class AgentSupervisor {
             options.backend,
             workingDirectory,
             options.config,
-            options.bashJobs,
-            options.codeJobs,
+            jobs.bashJobs,
+            jobs.codeJobs,
             options.history,
             options.mcp,
           ),

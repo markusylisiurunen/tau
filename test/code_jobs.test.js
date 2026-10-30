@@ -114,8 +114,7 @@ it("keeps live output and capability ownership after launch, and cancels waits i
     expect(requestSignal.aborted).toBe(false);
     const snapshot = await jobs.inspect([id]);
     expect(snapshot.text).toContain("progress");
-    const path = snapshot.text.match(/^text_log: (.+)$/m)[1];
-    expect(await readFile(path, "utf8")).toContain("progress");
+    expect(snapshot.text).not.toContain("text_log:");
     expect(await jobs.waitJobs([id], 1, signal())).toBe(true);
     const waiter = new AbortController();
     const wait = jobs.waitJobs([id], 300000, waiter.signal);
@@ -128,6 +127,8 @@ it("keeps live output and capability ownership after launch, and cancels waits i
     expect(await jobs.waitJobs([id], 1, signal())).toBe(false);
     const stopped = await jobs.inspect([id]);
     expect(stopped.text).toContain("status: stopped");
+    const path = stopped.text.match(/^text_log: (.+)$/m)[1];
+    expect(await readFile(path, "utf8")).toContain("progress");
     expect(stopped.text).not.toContain("unexpected");
     const metadata = await jobs.inspect([id], false);
     expect(metadata.text).not.toContain("progress");
@@ -174,6 +175,10 @@ it("retains ordered images, failure output and a log independent of the shared r
     expect(text(result).length).toBeLessThan(10000);
     expect(result.content.filter((part) => part.type === "image")).toHaveLength(2);
     expect(text(result)).toContain("diagnostic");
+    expect(text(result)).toContain("start ");
+    expect(
+      result.content.find((part) => part.type === "text" && part.text.includes("start ")),
+    ).toBeDefined();
     expect(text(result)).toContain("output: truncated");
     for (const match of text(result).matchAll(/^text_log: (.+)$/gm)) {
       const log = await readFile(match[1], "utf8");
@@ -441,7 +446,7 @@ it.each([
 });
 
 it.each([false, true])(
-  "includes final output when a job finishes during log writing (failure: %s)",
+  "inspects final output without waiting for completion logging (failure: %s)",
   async (fail) => {
     const jobs = new CodeJobRegistry();
     const paused = Promise.withResolvers();
@@ -476,16 +481,23 @@ it.each([false, true])(
     });
     try {
       await paused.promise;
-      const inspection = jobs.inspect([id]);
-      await writing.promise;
+      const running = await jobs.inspect([id]);
+      expect(running.text).toContain("START");
+      expect(running.text).not.toContain("text_log:");
+      expect(backend.writeFile).not.toHaveBeenCalled();
       resume.resolve();
+      await writing.promise;
       await vi.waitFor(async () => {
         expect((await jobs.inspect([id], false)).text).toContain(
           `status: ${fail ? "failed" : "succeeded"}`,
         );
       });
+      const result = await jobs.inspect([id]);
+      expect(result.text).not.toContain("text_log:");
       finishWrite.resolve();
-      const result = await inspection;
+      await jobs.waitForIdle();
+      expect((await jobs.inspect([id])).text).toContain("/remote/output.txt");
+      expect(backend.writeFile).toHaveBeenCalledTimes(1);
       expect(result.text).toContain(`status: ${fail ? "failed" : "succeeded"}`);
       expect(result.text).toContain(fail ? "FINAL DIAGNOSTIC" : "FINAL RESULT");
     } finally {

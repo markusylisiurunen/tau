@@ -157,8 +157,9 @@ describe("ToolCatalog", () => {
     ]);
   });
 
-  it("shares Bash jobs across child registries without losing their working directory", async () => {
+  it("isolates Bash jobs across child registries without losing their working directory", async () => {
     const jobs = new BashJobRegistry();
+    const otherJobs = new BashJobRegistry();
     const backend = createBackend();
     backend.runBash = vi.fn(
       (_command, options) =>
@@ -193,21 +194,22 @@ describe("ToolCatalog", () => {
       backend,
       "/workspace/second",
       {},
-      jobs,
+      otherJobs,
       new CodeJobRegistry(),
     );
     try {
       const started = await execute(first, "bash", { command: "server", background: true });
       const id = started.content[0].text.match(/job ([^ ]+)/)[1];
       const listed = await execute(second, "list_bash_jobs", {});
-      expect(listed.content[0].text).toContain(id);
-      expect(listed.content[0].text).toContain("/workspace/first");
+      expect(listed.content[0].text).not.toContain(id);
+      expect((await execute(second, "read_bash_job", { id })).outcome).toBe("failed");
+      expect((await execute(second, "stop_bash_job", { id })).outcome).toBe("failed");
       expect(backend.runBash).toHaveBeenCalledWith(
         "server",
         expect.objectContaining({ cwd: "/workspace/first" }),
       );
       expect(backend.runBash.mock.calls[0][1].timeoutMs).toBeUndefined();
-      expect((await execute(second, "stop_bash_job", { id })).content[0].text).toContain("stopped");
+      expect((await execute(first, "stop_bash_job", { id })).content[0].text).toContain("stopped");
     } finally {
       await jobs.dispose();
     }

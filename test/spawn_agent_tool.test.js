@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { loadModelResolver, resolveModel } from "../dist/core/models/catalog.js";
+import { AgentJobRegistry } from "../dist/core/tools/agent_jobs.js";
 import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
 import { createInterruptAgentToolDefinition } from "../dist/core/tools/interrupt_agent.js";
 import { createListAgentsToolDefinition } from "../dist/core/tools/list_agents.js";
@@ -80,6 +81,7 @@ function createFixture(overrides = {}) {
   const modelResolver = loadModelResolver().resolveModel;
   const options = {
     backend: createLocalToolExecutionBackend(),
+    jobs: new AgentJobRegistry(),
     supervisor,
     persona,
     config: {},

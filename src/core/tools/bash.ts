@@ -15,7 +15,7 @@ import { formatZodError } from "../utils/zod.js";
 import type { ToolActivity } from "./activity.js";
 import { buildJobMetadata } from "./background_jobs.js";
 import type { BashJobRegistry } from "./bash_jobs.js";
-import type { ToolExecutionBackend } from "./execution_backend.js";
+import { MAX_COMMAND_CAPTURE_BYTES, type ToolExecutionBackend } from "./execution_backend.js";
 import { writeOutputFile } from "./output_file.js";
 import {
   buildToolRunPresentation,
@@ -83,7 +83,7 @@ export const BASH_DEFAULT_TIMEOUT_MS = 60_000;
 const BASH_DESCRIPTION = [
   "Execute a command in a fresh non-interactive login Bash in the current working directory and return its output.",
   "Choose the mode that avoids unnecessary waiting. Use background: true when it lets you make useful independent progress, for example inspecting code while a test suite runs. If you would only wait for the command to finish, use foreground mode with an appropriate timeout. Runtime alone does not determine the mode.",
-  "Also use background: true to keep a service running or preserve execution across turns or interruptions. Launching several independent jobs and then waiting for them is valid concurrency. Use background mode instead of tmux or shell &. Returns a job ID after launch, not a readiness guarantee; use the Bash job tools to read, wait, or stop it. Jobs survive turns and interruptions, but job IDs and logs are not recovered after a session restart. If a previously returned job ID is unknown, do not assume the command never ran or is no longer running; check current process and output state before restarting it.",
+  "Also use background: true to keep a service running or preserve execution across turns or interruptions. Launching several independent jobs and then waiting for them is valid concurrency. Use background mode instead of tmux or shell &. Returns a job ID right away. Use the Bash job tools to read, wait for, or stop it. Jobs survive turns and interruptions, but job IDs and logs are not recovered after a session restart. If a previously returned job ID is unknown, do not assume the command never ran or is no longer running; check current process and output state before restarting it.",
   "Interactive commands are not supported (no TTY/stdin); commands that prompt or open editors will hang or fail.",
 ].join(" ");
 
@@ -112,7 +112,7 @@ export const BASH_TOOL: Tool = {
       background: Type.Optional(
         Type.Boolean({
           description:
-            "Run as a session-owned background job when useful independent work can proceed while it runs, for a persistent service, or for execution across turns or interruptions. If you would only wait for completion, omit or use false. Cannot be combined with timeout or maxOutputTokens.",
+            "Run as a background job when useful independent work can proceed while it runs, for a persistent service, or for execution across turns or interruptions. If you would only wait for completion, omit or use false. Cannot be combined with timeout or maxOutputTokens.",
         }),
       ),
       command: Type.String({
@@ -528,7 +528,7 @@ export function createBashToolDefinition(
           try {
             if (parsedArgs.data.background) {
               const id = await jobs.start(backend, command, effectiveWorkingDirectory, signal);
-              const text = `Started background Bash job ${id} in ${JSON.stringify(effectiveWorkingDirectory)}. Use read_bash_job to check progress or wait_for_bash_jobs to wait for completion. Application readiness has not been checked.`;
+              const text = `Started background Bash job ${id} in ${JSON.stringify(effectiveWorkingDirectory)}. Use read_bash_job to check progress or wait_for_bash_jobs to wait for completion.`;
               const outcome = createTextToolOutcome(text, "succeeded");
               const uiEvent: ToolActivity = {
                 type: "bash_execution",
@@ -562,6 +562,7 @@ export function createBashToolDefinition(
             } = await backend.runBash(command, {
               signal,
               timeoutMs: effectiveTimeoutMs,
+              maxCaptureBytes: MAX_COMMAND_CAPTURE_BYTES,
               cwd: effectiveWorkingDirectory,
             });
             const durationMs = Math.max(0, Date.now() - startedAt);

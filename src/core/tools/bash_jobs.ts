@@ -2,10 +2,12 @@ import { randomUUID } from "node:crypto";
 import { StringDecoder } from "node:string_decoder";
 import { truncateForTokens } from "../utils/truncate.js";
 import { MAX_JOBS, waitForJobs } from "./background_jobs.js";
-import type { BashExecutionResult, ToolExecutionBackend } from "./execution_backend.js";
+import {
+  type BashExecutionResult,
+  MAX_COMMAND_CAPTURE_BYTES,
+  type ToolExecutionBackend,
+} from "./execution_backend.js";
 import { JobOutput } from "./job_output.js";
-
-const MAX_OUTPUT_BYTES = 1024 * 1024;
 
 interface BashJob {
   id: string;
@@ -52,7 +54,7 @@ export class BashJobRegistry {
       id: randomUUID(),
       command: truncateForTokens(command, { maxTokens: 128, strategy: "middle" }).content,
       cwd: truncateForTokens(cwd, { maxTokens: 128, strategy: "middle" }).content,
-      log: new JobOutput(backend),
+      log: new JobOutput(backend, MAX_COMMAND_CAPTURE_BYTES),
       controller: new AbortController(),
       done: Promise.resolve(),
       active: true,
@@ -67,7 +69,7 @@ export class BashJobRegistry {
         const result = await backend.runBash(command, {
           cwd,
           signal: job.controller.signal,
-          maxCaptureBytes: MAX_OUTPUT_BYTES,
+          maxCaptureBytes: MAX_COMMAND_CAPTURE_BYTES,
           onStarted: started,
           onOutput: (chunk) => {
             const text = decoder.write(chunk);
@@ -86,7 +88,7 @@ export class BashJobRegistry {
           error: error instanceof Error ? error.message : String(error),
         };
       }
-      await job.log.save();
+      await job.log.finish();
       job.active = false;
     })();
     try {
@@ -160,14 +162,6 @@ export class BashJobRegistry {
   }
 
   async inspect(ids?: string[], includeOutput = true, maxOutputTokens = 8192) {
-    if (includeOutput) {
-      await Promise.all(
-        (ids ?? [...this.jobs.keys()]).map(async (id) => {
-          const job = this.get(id);
-          await job.log.save();
-        }),
-      );
-    }
     return this.format(ids, includeOutput, maxOutputTokens);
   }
 

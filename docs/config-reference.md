@@ -233,7 +233,7 @@ Server names use letters, digits, `_`, and `-`. Every entry requires an explicit
 
 - `stdio`: requires a non-empty `command`; accepts optional literal `args`, `cwd`, and string-valued `env`.
 - `http`: requires an HTTP(S) `url` without embedded username/password; accepts optional string-valued `headers`. This is streamable HTTP, not the legacy SSE transport.
-- Both accept `enabled` (default `true`), `timeoutMs` for tool calls and resource reads (integer from 1 to 900,000, default 300,000), and `discoveryTimeoutMs` for connection startup and discovery requests (integer from 1 to 60,000, default 30,000). The outer MCP code-mode program has a 15-minute deadline. All calls remain interruptible.
+- Both accept `enabled` (default `true`), `timeoutMs` for tool calls and resource reads (integer from 1 to 900,000, default 300,000), and `discoveryTimeoutMs` for connection startup and discovery requests (integer from 1 to 60,000, default 30,000). MCP calls run inside a `code` program, so a foreground program's deadline also limits them: 5 minutes by default, at most 60 minutes. All calls remain interruptible.
 
 Both types accept an optional `description`: a nonblank capability summary of at most 512 UTF-16 code units after trimming surrounding whitespace. Enabled server names and configured descriptions appear in the model's initial `code` tool description when its persona allows `mcp`. Servers without descriptions appear by name; disabled servers are omitted. This catalog contains no connection settings and requires no server connections. Descriptions are capability summaries, not instructions or permission grants. Do not put secrets in them. Full server instructions and tool schemas remain available through discovery.
 

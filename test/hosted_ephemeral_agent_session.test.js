@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { AgentRuntime } from "../dist/core/index.js";
 import { personas } from "../dist/core/personas.js";
+import { AgentJobRegistry } from "../dist/core/tools/agent_jobs.js";
 import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
 import { HostedEphemeralAgentSession } from "../dist/host/hosted_ephemeral_agent_session.js";
 
@@ -47,7 +48,7 @@ function createFailingStream(partialText, error) {
   };
 }
 
-async function createSession(recordUsage = vi.fn(), config = {}, reasoning = "medium") {
+async function createSession(recordUsage = vi.fn(), config = {}, reasoning = "medium", tools = []) {
   const backend = createLocalToolExecutionBackend();
   backend.runNodeScript = vi.fn(async () => ({
     exitCode: 0,
@@ -72,11 +73,15 @@ async function createSession(recordUsage = vi.fn(), config = {}, reasoning = "me
     }),
   };
   const emitUpdate = vi.fn();
+  const jobs = new AgentJobRegistry();
   return {
+    jobs,
+    backend,
     emitUpdate,
     recordUsage,
     session: await HostedEphemeralAgentSession.create({
       cwd: "/repo",
+      jobs,
       contextId: "ephemeral-1",
       sessionId: "session-1",
       sessionStartedAt: 0,
@@ -85,7 +90,7 @@ async function createSession(recordUsage = vi.fn(), config = {}, reasoning = "me
       includeAgentContext: false,
       executionEnvironment,
       instructions: "review the diff",
-      tools: [],
+      tools,
       reasoning,
       emitUpdate,
       recordUsage,
@@ -233,4 +238,64 @@ describe("HostedEphemeralAgentSession", () => {
     expect(JSON.stringify(stream.mock.calls[0][0])).not.toContain(notice);
     expect(JSON.stringify(thread.runtime.rawHistory)).not.toContain(notice);
   });
+});
+
+it("gives each ephemeral thread and fork its own jobs", async () => {
+  const { session, jobs, backend } = await createSession(undefined, {}, "medium", ["bash"]);
+  backend.runBash = vi.fn(
+    (_command, options) =>
+      new Promise((resolve) => {
+        options.onStarted?.();
+        options.signal.addEventListener(
+          "abort",
+          () =>
+            resolve({
+              exitCode: null,
+              aborted: true,
+              closeSignal: "SIGTERM",
+              truncated: false,
+            }),
+          { once: true },
+        );
+      }),
+  );
+  const execute = (thread, name, args) =>
+    thread.runtime.spec.tools.get(name).execute(
+      { id: "call", name, arguments: args },
+      {
+        agentId: thread.runtime.agentIdValue,
+        turnId: "turn",
+        assistantMessageId: "message",
+        signal: new AbortController().signal,
+        emitActivity: async () => {},
+      },
+    );
+  try {
+    const source = await session.getOrCreateThread("source");
+    const sibling = await session.getOrCreateThread("sibling");
+    for (const kind of ["bash", "code"]) {
+      const started = await execute(
+        source,
+        kind,
+        kind === "bash"
+          ? { command: "server", background: true }
+          : { code: 'printText("owned");', background: true },
+      );
+      const id = started.content[0].text.match(/job ([^ ]+)/)[1];
+      const fork = await session.getOrCreateThread(`fork-${kind}`, "source");
+      for (const other of [sibling, fork]) {
+        expect((await execute(other, `list_${kind}_jobs`, {})).content[0].text).not.toContain(id);
+        expect((await execute(other, `read_${kind}_job`, { id })).outcome).toBe("failed");
+        expect((await execute(other, `stop_${kind}_job`, { id })).outcome).toBe("failed");
+      }
+      expect(await session.getOrCreateThread("source")).toBe(source);
+      expect((await execute(source, `read_${kind}_job`, { id })).outcome).toBe("succeeded");
+    }
+    expect(jobs.hasRunning).toBe(true);
+    await jobs.dispose();
+    expect(jobs.hasRunning).toBe(false);
+  } finally {
+    await jobs.dispose();
+    session.dispose();
+  }
 });

@@ -1,60 +1,53 @@
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import { CodeModeOutput } from "../../code_mode/output.js";
-import { truncateForTokens } from "../utils/truncate.js";
+import { formatBytes, truncateForTokens } from "../utils/truncate.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import { writeOutputFile } from "./output_file.js";
 
 export class JobOutput {
-  readonly capture = new CodeModeOutput();
+  readonly capture: CodeModeOutput;
   private path?: string;
-  private savedText?: string;
-  private available = false;
-  private saving = Promise.resolve();
+  private finished = false;
 
-  constructor(private readonly backend: ToolExecutionBackend) {}
+  constructor(
+    private readonly backend: ToolExecutionBackend,
+    private readonly maxCaptureBytes: number,
+  ) {
+    this.capture = new CodeModeOutput(maxCaptureBytes);
+  }
 
-  async save(): Promise<string | undefined> {
-    const text = this.capture.text;
-    this.saving = this.saving
-      .catch(() => {})
-      .then(async () => {
-        if (text === this.savedText) return;
-        if (this.path) await this.backend.writeFile(this.path, text);
-        else this.path = await writeOutputFile(this.backend, text);
-        if (this.path) this.savedText = text;
-      });
-    try {
-      await this.saving;
-      this.available = this.path !== undefined;
-      return this.path;
-    } catch {
-      this.available = false;
-      return undefined;
-    }
+  async finish(): Promise<void> {
+    this.path = await writeOutputFile(this.backend, this.capture.text);
+    this.finished = true;
   }
 
   format(maxTokens: number) {
     const text = this.capture.text;
-    const projection = truncateForTokens(text, { maxTokens, strategy: "tail" });
+    const projection = truncateForTokens(text, { maxTokens, strategy: "middle" });
     return {
       projection,
       metadata: [
-        ...(projection.truncated ? ["output: truncated; showing latest output"] : []),
+        ...(projection.truncated ? ["output: truncated; showing beginning and end"] : []),
         ...(this.capture.truncated
-          ? ["capture: truncated; earlier text was discarded (1 MiB limit)"]
+          ? [
+              `capture: truncated; earlier text was discarded (${formatBytes(this.maxCaptureBytes)} limit)`,
+            ]
           : []),
-        ...(this.available ? [`text_log: ${this.path}`] : text ? ["text_log: unavailable"] : []),
+        ...(this.path
+          ? [`text_log: ${this.path}`]
+          : this.finished && text
+            ? ["text_log: unavailable"]
+            : []),
       ],
       truncated: projection.truncated || this.capture.truncated,
     };
   }
 
-  async project(maxTokens: number): Promise<{
+  project(maxTokens: number): {
     metadata: string[];
     content: Array<TextContent | ImageContent>;
     truncated: boolean;
-  }> {
-    await this.save();
+  } {
     const { projection, metadata, truncated } = this.format(maxTokens);
     return {
       metadata,
@@ -62,7 +55,6 @@ export class JobOutput {
         terminationNote: "",
         projection,
         footer: "",
-        strategy: "tail",
       }),
       truncated,
     };

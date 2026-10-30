@@ -10,8 +10,6 @@ import {
 } from "../tools/execution_backend.js";
 import type { CodeModeCapability } from "./capability.js";
 
-const BASH_RUN_MAX_TIMEOUT_MS = 5 * 60 * 1000;
-
 const commandOptions = {
   command: z
     .string()
@@ -32,7 +30,7 @@ const runOptions = z.strictObject({
       "stdin exceeds its UTF-8 byte limit",
     )
     .optional(),
-  timeout: z.number().int().positive().max(BASH_RUN_MAX_TIMEOUT_MS).optional(),
+  timeout: z.number().positive().optional(),
 });
 const startOptions = z.strictObject(commandOptions);
 const idOptions = z.strictObject({ id: z.string().min(1) });
@@ -91,7 +89,7 @@ type RunOptions = {
 - \`command\`: required, nonblank Bash source.
 - \`stdin\`: optional UTF-8 text, at most ${SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES / 1024 / 1024} MiB. Written once, then closed so the command receives EOF. Omit for no stdin; an empty string supplies an empty stream. No interactive input or TTY is available. Pass data through stdin rather than interpolating it into command source.
 - \`workingDirectory\`: optional, nonempty path without line breaks.
-- \`timeout\`: optional positive integer in milliseconds, default ${BASH_DEFAULT_TIMEOUT_MS}, maximum ${BASH_RUN_MAX_TIMEOUT_MS}. The enclosing program's time limit still applies.
+- \`timeout\`: optional positive number of milliseconds, default ${BASH_DEFAULT_TIMEOUT_MS}, with no upper limit. The enclosing program's deadline still cancels the command.
 
 ### Result
 
@@ -150,9 +148,7 @@ type StartOptions = {
 type StartResult = { id: string };
 \`\`\`
 
-The returned ID identifies the job, not application readiness. Inspect output or perform a task-specific readiness check before depending on a launched service.
-
-Jobs survive program completion, turn interruption, and client disconnect while Tau remains running. Already launched jobs are not stopped when a program is interrupted. Jobs are not recovered after restart.
+Started jobs also appear in your Bash job tools. Jobs survive program completion, turn interruption, and client disconnect while Tau remains running. Already launched jobs are not stopped when a program is interrupted. Jobs are not recovered after restart.
 
 ## Job types
 
@@ -178,7 +174,7 @@ type Job = JobMetadata & { output: string; error?: string };
 
 An exited command has \`exitCode\`, \`aborted\`, and \`closeSignal\`. An execution error has none of these fields. \`read\`, \`wait\`, and \`stop\` report its message in \`error\`, and \`list\` omits it. A \`failed\` status can represent either a nonzero command exit or an execution error; inspect the corresponding fields. A \`stopped\` status indicates the job was aborted.
 
-\`command\` and \`workingDirectory\` are bounded display strings and may be truncated. Each job retains the last 1 MiB of combined output. \`truncated\` indicates that capture is incomplete.
+\`command\` and \`workingDirectory\` are bounded display strings and may be truncated. Each job retains the last ${MAX_COMMAND_CAPTURE_BYTES / 1024 / 1024} MiB of combined output. \`truncated\` indicates that capture is incomplete.
 
 Up to 64 job records are retained. Starting another job may evict an older completed record; if all records are running, launch fails. Unknown IDs throw and do not prove a command never ran. Check current process and output state before restarting it.
 
@@ -194,7 +190,7 @@ Takes no arguments. Use \`read\` for a selected job's output.
 
 ## \`tau.bash.read(options)\`
 
-Read one job's current state and bounded output tail without waiting for completion.
+Read one job's current state and retained output without waiting for completion.
 
 \`\`\`ts
 type ReadOptions = { id: string };
@@ -239,7 +235,7 @@ type StopOptions = { id: string };
 type StopResult = Job;
 \`\`\`
 
-\`id\` is required. Returns the completed job record with its output tail. Stopping an already completed job returns its existing record. Execution errors throw.
+\`id\` is required. Returns the completed job record with its retained output. Stopping an already completed job returns its existing record. Execution errors throw.
 
 ## Limits and failures
 

@@ -4,8 +4,8 @@ import { Worker } from "node:worker_threads";
 import { truncateToBytesFromEnd } from "../utils/truncate.js";
 import { type BashExecutionResult, DEFAULT_COMMAND_CAPTURE_BYTES } from "./execution_backend.js";
 
-export const CODE_MODE_MAX_BRIDGE_REQUESTS = 128;
-export const CODE_MODE_MAX_CONCURRENT_BRIDGE_REQUESTS = 8;
+export const CODE_MODE_MAX_BRIDGE_REQUESTS = 1024;
+export const CODE_MODE_MAX_CONCURRENT_BRIDGE_REQUESTS = 32;
 export const CODE_MODE_MAX_BRIDGE_PAYLOAD_BYTES = 64 * 1024 * 1024;
 
 const CODE_MODE_HANDLER_DRAIN_TIMEOUT_MS = 1_000;

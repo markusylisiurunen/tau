@@ -5569,7 +5569,7 @@ describe("LocalSessionHost", () => {
     const session = await host.createSession(localCreateInput);
     const backend = createLocalToolExecutionBackend();
     try {
-      const started = await session.runtime.bashJobs.start(
+      const started = await session.runtime.backgroundJobs.bashJobs.start(
         backend,
         "sleep 100",
         process.cwd(),
@@ -5592,10 +5592,10 @@ describe("LocalSessionHost", () => {
       expect(reattached).toBe(session);
       await session.record({ text: "second turn" });
       await session.runTurn();
-      expect(session.runtime.bashJobs.format([id]).text).toContain("running");
+      expect(session.runtime.backgroundJobs.bashJobs.format([id]).text).toContain("running");
       host.releaseSession(reattached);
       await host.shutdown();
-      expect(session.runtime.bashJobs.format([id]).text).toContain("stopped");
+      expect(session.runtime.backgroundJobs.bashJobs.format([id]).text).toContain("stopped");
     } finally {
       await host.shutdown();
       await backend.dispose();
@@ -5606,10 +5606,11 @@ describe("LocalSessionHost", () => {
     const host = createHost(new MemorySessionStore());
     const session = await host.createSession(localCreateInput);
     const backend = createLocalToolExecutionBackend();
+    const childJobs = session.runtime.jobs.create();
     const entered = deferred();
     let requestSignal;
     try {
-      const id = session.runtime.codeJobs.start({
+      const id = childJobs.codeJobs.start({
         backend,
         cwd: process.cwd(),
         source: "inline code",
@@ -5643,9 +5644,7 @@ describe("LocalSessionHost", () => {
       host.releaseSession(reattached);
       await host.shutdown();
       expect(requestSignal.aborted).toBe(true);
-      expect((await session.runtime.codeJobs.inspect([id], false)).text).toContain(
-        "status: stopped",
-      );
+      expect((await childJobs.codeJobs.inspect([id], false)).text).toContain("status: stopped");
     } finally {
       await host.shutdown();
       await backend.dispose();
@@ -5656,8 +5655,9 @@ describe("LocalSessionHost", () => {
     const host = createHost(new MemorySessionStore());
     const session = await host.createSession(localCreateInput);
     const backend = createLocalToolExecutionBackend();
+    const childJobs = session.runtime.jobs.create();
     try {
-      await session.runtime.bashJobs.start(
+      await childJobs.bashJobs.start(
         backend,
         "sleep 0.1",
         process.cwd(),

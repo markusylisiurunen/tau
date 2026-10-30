@@ -470,44 +470,52 @@ it("marks model-tail truncation across multiple jobs without counting hidden out
   }
 });
 
-it("uses one bounded capture for inspection and logs, and reports failed log refreshes", async () => {
-  const jobs = new BashJobRegistry();
-  let emit;
-  const backend = {
-    runBash: vi.fn((_command, options) => {
-      emit = (text) => options.onOutput(Buffer.from(text));
-      options.onStarted();
-      return new Promise((resolve) => {
-        options.signal.addEventListener("abort", () => {
-          resolve({ exitCode: null, aborted: true, closeSignal: "SIGTERM", truncated: false });
+it.each([false, true])(
+  "writes the bounded capture only on completion (write failure: %s)",
+  async (fail) => {
+    const jobs = new BashJobRegistry();
+    let emit;
+    const backend = {
+      runBash: vi.fn((_command, options) => {
+        emit = (text) => options.onOutput(Buffer.from(text));
+        options.onStarted();
+        return new Promise((resolve) => {
+          options.signal.addEventListener("abort", () => {
+            resolve({ exitCode: null, aborted: true, closeSignal: "SIGTERM", truncated: false });
+          });
         });
-      });
-    }),
-    runNodeScript: vi.fn(async () => ({ exitCode: 0, stdout: "/remote/output.txt" })),
-    writeFile: vi.fn(async (path) => ({ path })),
-  };
-  try {
-    const id = await jobs.start(backend, "server", "/workspace", context().signal);
-    emit(`oldest${"é".repeat(600000)}\u001b[31mlatest\u001b[0m`);
-    const first = await jobs.inspect([id], true, 100);
-    const retained = jobs.read([id])[0].output;
-    expect(Buffer.byteLength(retained)).toBeLessThanOrEqual(1024 * 1024);
-    expect(retained).not.toContain("oldest");
-    expect(retained).not.toContain("\u001b");
-    expect(first.truncated).toBe(true);
-    expect(first.text).toContain("latest");
-    expect(backend.writeFile).toHaveBeenLastCalledWith("/remote/output.txt", retained);
-    emit("next");
-    backend.writeFile.mockRejectedValueOnce(new Error("offline"));
-    const unavailable = await jobs.inspect([id]);
-    expect(unavailable.text).not.toContain("/remote/output.txt");
-    expect(unavailable.text).toContain("next");
-    await jobs.inspect([id]);
-    expect(backend.writeFile).toHaveBeenLastCalledWith(
-      "/remote/output.txt",
-      jobs.read([id])[0].output,
-    );
-  } finally {
-    await jobs.dispose();
-  }
-});
+      }),
+      runNodeScript: vi.fn(async () => ({ exitCode: 0, stdout: "/remote/output.txt" })),
+      writeFile: vi.fn(async (path) => {
+        if (fail) throw new Error("offline");
+        return { path };
+      }),
+    };
+    try {
+      const id = await jobs.start(backend, "server", "/workspace", context().signal);
+      emit(`oldest${"é".repeat(13 * 1024 * 1024)}\u001b[31mlatest\u001b[0m`);
+      const first = await jobs.inspect([id], true, 100);
+      const retained = jobs.read([id])[0].output;
+      expect(Buffer.byteLength(retained)).toBeLessThanOrEqual(24 * 1024 * 1024);
+      expect(Buffer.byteLength(retained)).toBeGreaterThan(23 * 1024 * 1024);
+      expect(retained).not.toContain("oldest");
+      expect(retained).not.toContain("\u001b");
+      expect(first.truncated).toBe(true);
+      expect(first.text).toContain("latest");
+      expect(first.text).not.toContain("text_log:");
+      expect(backend.runNodeScript).not.toHaveBeenCalled();
+      emit("next");
+      await jobs.stopJob(id);
+      const completed = await jobs.inspect([id]);
+      expect(completed.text.includes("/remote/output.txt")).toBe(!fail);
+      expect(backend.writeFile).toHaveBeenCalledExactlyOnceWith(
+        "/remote/output.txt",
+        jobs.read([id])[0].output,
+      );
+      await jobs.inspect([id]);
+      expect(backend.writeFile).toHaveBeenCalledTimes(1);
+    } finally {
+      await jobs.dispose();
+    }
+  },
+);

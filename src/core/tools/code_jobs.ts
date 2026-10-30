@@ -8,7 +8,7 @@ import {
 import { SESSION_PROTOCOL_MAX_CLIENT_TOOL_IMAGES } from "../../protocol/session_protocol.js";
 import { truncateForTokens } from "../utils/truncate.js";
 import { MAX_JOBS, waitForJobs } from "./background_jobs.js";
-import type { ToolExecutionBackend } from "./execution_backend.js";
+import { DEFAULT_COMMAND_CAPTURE_BYTES, type ToolExecutionBackend } from "./execution_backend.js";
 import { JobOutput } from "./job_output.js";
 
 type CodeJob = {
@@ -51,7 +51,7 @@ export class CodeJobRegistry {
       cwd: truncateForTokens(options.cwd, { maxTokens: 128, strategy: "middle" }).content,
       status: "running",
       controller: new AbortController(),
-      output: new JobOutput(options.backend),
+      output: new JobOutput(options.backend, DEFAULT_COMMAND_CAPTURE_BYTES),
       done: Promise.resolve(),
       active: true,
     };
@@ -77,7 +77,7 @@ export class CodeJobRegistry {
         );
         job.status = job.controller.signal.aborted ? "stopped" : "failed";
       }
-      await job.output.save();
+      await job.output.finish();
       job.active = false;
     })();
     return job.id;
@@ -99,7 +99,7 @@ export class CodeJobRegistry {
     const jobs = [...new Set(ids)].map((id) => this.get(id));
     for (const job of jobs) {
       const output = includeOutput
-        ? await job.output.project(Math.floor(maxOutputTokens / jobs.length))
+        ? job.output.project(Math.floor(maxOutputTokens / jobs.length))
         : undefined;
       const header = [
         `id: ${job.id}`,

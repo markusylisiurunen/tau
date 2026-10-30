@@ -14,9 +14,9 @@ import { createDefaultCoreDeps } from "../core/runtime/deps.js";
 import { composeSessionPrompts } from "../core/runtime/session_prompt_composer.js";
 import { createAutoCompactionArchiver } from "../core/session/auto_compaction_archive.js";
 import type { SubagentToolName } from "../core/subagents/types.js";
-import type { BashJobRegistry } from "../core/tools/bash_jobs.js";
+import type { AgentJobRegistry } from "../core/tools/agent_jobs.js";
 import { ToolCatalog } from "../core/tools/catalog.js";
-import type { CodeJobRegistry } from "../core/tools/code_jobs.js";
+import { ToolRegistry } from "../core/tools/registry.js";
 import type { Persona, ReasoningEffort } from "../core/types.js";
 import {
   appendUsageLogEntry,
@@ -61,8 +61,7 @@ type EphemeralAgentThreadForkSource = {
 
 export type HostedEphemeralAgentSessionOptions = {
   cwd: string;
-  bashJobs: BashJobRegistry;
-  codeJobs: CodeJobRegistry;
+  jobs: AgentJobRegistry;
   contextId: string;
   sessionId: string;
   sessionStartedAt: number;
@@ -125,16 +124,9 @@ export class HostedEphemeralAgentSession {
         { includeModelNotice: false, deps: createDefaultCoreDeps() },
       ),
       systemPrompt,
-      tools: ToolCatalog.createSubagentRegistry(
-        options.tools,
-        environment.getToolExecutionBackend(),
-        promptContext.cwd,
-        options.config,
-        options.bashJobs,
-        options.codeJobs,
-      ),
+      tools: new ToolRegistry([]),
     });
-    return new HostedEphemeralAgentSession(options, spec);
+    return new HostedEphemeralAgentSession({ ...options, cwd: promptContext.cwd }, spec);
   }
 
   async submitThreadMessage(
@@ -204,9 +196,21 @@ export class HostedEphemeralAgentSession {
     threadId: string,
     forkFrom?: EphemeralAgentThreadForkSource,
   ): Promise<EphemeralAgentThread> {
+    const jobs = this.options.jobs.create();
+    const spec = forkFrom?.spec ?? this.spec;
     return new EphemeralAgentThread({
       threadId,
-      spec: forkFrom?.spec ?? this.spec,
+      spec: {
+        ...spec,
+        tools: ToolCatalog.createSubagentRegistry(
+          this.options.tools,
+          this.options.executionEnvironment.getToolExecutionBackend(),
+          this.options.cwd,
+          this.options.config,
+          jobs.bashJobs,
+          jobs.codeJobs,
+        ),
+      },
       deps: createDefaultCoreDeps(),
       backend: this.options.executionEnvironment.getToolExecutionBackend(),
       ...(forkFrom ? { forkFrom } : {}),

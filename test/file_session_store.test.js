@@ -216,6 +216,26 @@ describe("FileSessionStore", () => {
     });
   });
 
+  it("migrates retired worker selections without changing conversation messages", async () => {
+    await withTempStore(async (store, directory) => {
+      const snapshot = createSnapshot("session-1", "retained conversation");
+      snapshot.catalog.personas[0].tools = [
+        "bash",
+        "spawn_agent",
+        "list_agents",
+        "wait_for_agents",
+      ];
+      await mkdir(directory, { recursive: true });
+      await writeFile(
+        join(directory, "c2Vzc2lvbi0x.json"),
+        JSON.stringify({ format: STORED_SESSION_DOCUMENT_FORMAT, version: 12, snapshot }),
+      );
+      const loaded = await store.loadSession("session-1");
+      expect(loaded.catalog.personas[0].tools).toEqual(["bash", "agents"]);
+      expect(loaded.messages).toEqual(snapshot.messages);
+    });
+  });
+
   it("writes the current versioned storage document", async () => {
     await withTempStore(async (store, directory) => {
       const snapshot = createSnapshot("session-1", "hello");

@@ -40,16 +40,12 @@ web
 history
 mcp
 models
-spawn_agent
-send_input_to_agent
-wait_for_agents
-list_agents
-interrupt_agent
+agents
 ```
 
-A custom persona that omits `tools` gets `bash`, `write`, `edit`, `view_image`, `web`, `history`, `mcp`, and `models`, plus the five subagent tools. Built-in personas get the same set.
+A custom persona that omits `tools` gets all of these names. Built-in personas get the same set.
 
-`web`, `history`, `mcp`, and `models` are not separate tools. Each enables a namespace inside the single `code` tool. `bash` enables both the Bash tools and `tau.bash` inside `code`. Tau adds `code` and its [job tools](code-mode.md#background-code-jobs) whenever at least one usable capability is selected; `code` itself cannot be listed. A namespace the persona does not select is missing from the `code` API and its documentation.
+`web`, `history`, `mcp`, and `models` are not separate tools. Each enables a namespace inside the single `code` tool. `bash` enables both the Bash tools and `tau.bash` inside `code`. `agents` enables `tau.agents` inside `code` and the `wait_for_agents` tool, which together start and manage [subagents](subagents.md). Tau adds `code` and its [job tools](code-mode.md#background-code-jobs) whenever at least one usable capability is selected; `code` itself cannot be listed. A namespace the persona does not select is missing from the `code` API and its documentation.
 
 An empty list turns off every selectable tool:
 
@@ -165,7 +161,7 @@ Each guide covers setup, input, examples, outputs, and failures. Run `tau tool -
 
 ## Subagent tools
 
-A subagent gets each of `bash`, `write`, `edit`, `view_image`, `web`, `history`, `mcp`, and `models` that the main persona also has, plus `tau_docs`. It never gets the subagent tools or client tools. Its Bash and file tools start in the subagent's working directory. [Subagents](subagents.md#tools) has the details.
+A subagent gets each of `bash`, `write`, `edit`, `view_image`, `web`, `history`, `mcp`, and `models` that the main persona also has, plus `tau_docs`. It never gets `agents` or client tools. Its Bash and file tools start in the subagent's working directory. [Subagents](subagents.md#tools) has the details.
 
 ## Client-owned tools
 
@@ -197,7 +193,7 @@ The runner holds the upload credentials, and the recipient is always the session
 First work out where the tool should come from:
 
 - For a host tool, check the active persona's `tools`, the host configuration, and service credentials.
-- For a subagent tool, check the main persona's `tools` against the list of tools subagents can receive.
+- For a tool inside a subagent, check the main persona's `tools` against the list of tools subagents can receive.
 - For a client tool, confirm that an attached, observing client offers it and that client tools are not disabled.
 - If `tau_docs` is missing, something is wrong with the Tau installation or version; no persona setting removes it.
 

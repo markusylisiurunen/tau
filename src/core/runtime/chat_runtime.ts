@@ -19,12 +19,11 @@ import type { McpManager } from "../mcp/manager.js";
 import type { ModelResolver } from "../models/catalog.js";
 import { createAutoCompactionArchiver } from "../session/auto_compaction_archive.js";
 import { AgentSupervisor } from "../subagents/agent_supervisor.js";
-import type { SubagentEvent } from "../subagents/types.js";
+import type { ResolveSubagentPrompt, SubagentEvent } from "../subagents/types.js";
 import { AgentJobRegistry } from "../tools/agent_jobs.js";
 import { ToolCatalog } from "../tools/catalog.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
 import type { ToolRegistry } from "../tools/registry.js";
-import type { ResolveSubagentPrompt } from "../tools/spawn_agent.js";
 import type { Persona, ReasoningEffort } from "../types.js";
 import type { UsageRecorder } from "../usage/logs.js";
 import { type ResolvedAgentModel, resolveAgentModel } from "./agent_model.js";
@@ -242,7 +241,9 @@ export class ChatRuntime {
   }
 
   async interruptSubagent(id: string): Promise<boolean> {
-    return Boolean(await this.supervisor.interrupt(id));
+    if (!this.hasSubagent(id)) return false;
+    await this.supervisor.interrupt(id);
+    return true;
   }
 
   listRewindCandidates(): RewindCandidate[] {

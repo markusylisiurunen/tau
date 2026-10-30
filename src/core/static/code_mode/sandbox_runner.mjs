@@ -73,6 +73,7 @@ parentPort.on("message", (message) => {
 
   const error = new Error(message.error?.message || "Code-mode API request failed");
   if (message.error?.name) error.name = message.error.name;
+  if (typeof message.error?.code === "string") error.code = message.error.code;
   request.reject(error);
 });
 

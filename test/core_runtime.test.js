@@ -316,7 +316,7 @@ describe("session prompt composer", () => {
     const result = composeSessionPrompts(context);
     const withoutDelegation = composeSessionPrompts({
       ...context,
-      persona: { ...persona, tools: persona.tools.filter((tool) => tool !== "spawn_agent") },
+      persona: { ...persona, tools: persona.tools.filter((tool) => tool !== "agents") },
     });
     expect(result.subagentSystemPrompt.endsWith(withoutDelegation.baseSystemPrompt)).toBe(true);
     expect(withoutDelegation.subagentSystemPrompt).toBeUndefined();

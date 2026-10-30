@@ -13,6 +13,7 @@ export const TOOL_NAME_WEB = "web";
 export const TOOL_NAME_HISTORY = "history";
 export const TOOL_NAME_MCP = "mcp";
 export const TOOL_NAME_MODELS = "models";
+export const TOOL_NAME_AGENTS = "agents";
 export const TOOL_NAME_CODE = "code";
 export const TOOL_NAME_TAU_DOCS = "tau_docs";
 
@@ -21,11 +22,7 @@ export const TOOL_NAMES = [
   TOOL_NAME_WRITE,
   TOOL_NAME_EDIT,
   TOOL_NAME_VIEW_IMAGE,
-  TOOL_NAME_SPAWN_AGENT,
-  TOOL_NAME_SEND_INPUT_TO_AGENT,
-  TOOL_NAME_WAIT_FOR_AGENTS,
-  TOOL_NAME_LIST_AGENTS,
-  TOOL_NAME_INTERRUPT_AGENT,
+  TOOL_NAME_AGENTS,
   TOOL_NAME_WEB,
   TOOL_NAME_HISTORY,
   TOOL_NAME_MCP,
@@ -36,6 +33,7 @@ export type ToolName = (typeof TOOL_NAMES)[number];
 
 export const HOST_TOOL_NAMES = [
   TOOL_NAME_CODE,
+  TOOL_NAME_WAIT_FOR_AGENTS,
   "list_code_jobs",
   "read_code_job",
   "stop_code_job",
@@ -44,6 +42,6 @@ export const HOST_TOOL_NAMES = [
   "read_bash_job",
   "stop_bash_job",
   "wait_for_bash_jobs",
-  ...TOOL_NAMES.filter((name) => !["web", "history", "mcp", "models"].includes(name)),
+  ...TOOL_NAMES.filter((name) => !["web", "history", "mcp", "models", "agents"].includes(name)),
   TOOL_NAME_TAU_DOCS,
 ] as const;

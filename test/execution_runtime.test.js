@@ -10,7 +10,7 @@ function createPersona(overrides = {}) {
     systemPrompt: "source main instructions",
     settings: { reasoning: "high" },
     source: "project",
-    tools: ["bash", "spawn_agent"],
+    tools: ["bash", "agents"],
     subagentLaunchModels: [],
     ...overrides,
   };

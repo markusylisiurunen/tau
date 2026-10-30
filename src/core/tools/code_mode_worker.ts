@@ -31,9 +31,13 @@ function appendCapture(current: string, chunk: string): string {
   return truncateToBytesFromEnd(current + chunk, DEFAULT_COMMAND_CAPTURE_BYTES);
 }
 
-function serializeError(error: unknown): { name?: string; message: string } {
+function serializeError(error: unknown): { name?: string; message: string; code?: string } {
   if (error instanceof Error) {
-    return { name: error.name, message: error.message };
+    return {
+      name: error.name,
+      message: error.message,
+      ...("code" in error && typeof error.code === "string" ? { code: error.code } : {}),
+    };
   }
   return { message: String(error) };
 }

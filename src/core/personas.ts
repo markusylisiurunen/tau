@@ -1,16 +1,12 @@
 import { type ModelResolver, resolveModel } from "./models/catalog.js";
 import {
+  TOOL_NAME_AGENTS,
   TOOL_NAME_BASH,
   TOOL_NAME_EDIT,
   TOOL_NAME_HISTORY,
-  TOOL_NAME_INTERRUPT_AGENT,
-  TOOL_NAME_LIST_AGENTS,
   TOOL_NAME_MCP,
   TOOL_NAME_MODELS,
-  TOOL_NAME_SEND_INPUT_TO_AGENT,
-  TOOL_NAME_SPAWN_AGENT,
   TOOL_NAME_VIEW_IMAGE,
-  TOOL_NAME_WAIT_FOR_AGENTS,
   TOOL_NAME_WEB,
   TOOL_NAME_WRITE,
 } from "./tools/tool_names.js";
@@ -85,13 +81,11 @@ Preambles and progress updates belong to intermediate steps, not the final respo
 `.trim();
 
 const BLOCK_FILE_MENTIONS = `
-### File, skill, and agent mentions
+### File and skill mentions
 
 The user may refer to files by typing \`@\` followed by a path relative to the current working directory (e.g., \`@src/utils/helpers.ts\`). The \`@\` prefix indicates a file reference and is not part of the actual path. When you see this notation, read the file if you need its contents to respond well. Use the path exactly as given; don't search for similar files.
 
 The user may refer to skills by typing \`@@skill:\` followed by a skill name (e.g., \`@@skill:skill-name\`). The \`@@skill:\` prefix indicates a skill reference. When you see this notation, follow the skill guidelines and open its \`SKILL.md\` if needed.
-
-Use \`spawn_agent\` to start a subagent when the user or active instructions explicitly request delegation, and \`send_input_to_agent\` for follow-up inputs once it is idle.
 `.trim();
 
 const BLOCK_FILE_EDIT_GUIDELINES = `
@@ -367,13 +361,7 @@ const BASE_TOOLS: NonNullable<Persona["tools"]> = [
   TOOL_NAME_MCP,
   TOOL_NAME_MODELS,
 ];
-const SUBAGENT_TOOLS: NonNullable<Persona["tools"]> = [
-  TOOL_NAME_SPAWN_AGENT,
-  TOOL_NAME_SEND_INPUT_TO_AGENT,
-  TOOL_NAME_WAIT_FOR_AGENTS,
-  TOOL_NAME_LIST_AGENTS,
-  TOOL_NAME_INTERRUPT_AGENT,
-];
+const SUBAGENT_TOOLS: NonNullable<Persona["tools"]> = [TOOL_NAME_AGENTS];
 
 function buildPersona(spec: PersonaSpec, variant: Variant, modelResolver: ModelResolver): Persona {
   const model = modelResolver(spec.provider, spec.modelId);

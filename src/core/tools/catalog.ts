@@ -1,9 +1,10 @@
+import type { AgentsCapabilityOptions } from "../code_mode/agents.js";
 import type { Config } from "../config/index.js";
 import type { HistoryQuery } from "../history/types.js";
 import { McpManager } from "../mcp/manager.js";
 import type { ModelResolver } from "../models/catalog.js";
 import { AgentSupervisor } from "../subagents/agent_supervisor.js";
-import type { SubagentToolName } from "../subagents/types.js";
+import type { ResolveSubagentPrompt, SubagentToolName } from "../subagents/types.js";
 import type { Persona } from "../types.js";
 import { AgentJobRegistry } from "./agent_jobs.js";
 import { createJobToolDefinitions } from "./background_jobs.js";
@@ -13,11 +14,7 @@ import { createCodeToolDefinition } from "./code.js";
 import type { CodeJobRegistry } from "./code_jobs.js";
 import { createEditToolDefinition } from "./edit.js";
 import { scopeToolExecutionBackend, type ToolExecutionBackend } from "./execution_backend.js";
-import { createInterruptAgentToolDefinition } from "./interrupt_agent.js";
-import { createListAgentsToolDefinition } from "./list_agents.js";
 import { type AgentTool, ToolRegistry } from "./registry.js";
-import { createSendInputToAgentToolDefinition } from "./send_input_to_agent.js";
-import { createSpawnAgentToolDefinition, type ResolveSubagentPrompt } from "./spawn_agent.js";
 import { createTauDocsToolDefinition } from "./tau_docs.js";
 import { TOOL_NAME_BASH } from "./tool_names.js";
 import { createViewImageToolDefinition } from "./view_image.js";
@@ -33,6 +30,7 @@ function createCommonTools(options: {
   codeJobs: CodeJobRegistry;
   history?: HistoryQuery;
   mcp?: McpManager;
+  agents?: AgentsCapabilityOptions;
 }): AgentTool[] {
   const backend = scopeToolExecutionBackend(options.backend, options.cwd);
   const enabled = new Set(options.allowedTools);
@@ -87,31 +85,15 @@ export const ToolCatalog = {
     resolveSubagentPrompt?: ResolveSubagentPrompt;
     clientTools?: () => AgentTool[];
   }): ToolRegistry {
-    const tools = [
-      createSpawnAgentToolDefinition({
-        backend: options.backend,
-        supervisor: options.supervisor,
-        jobs: options.jobs,
-        persona: options.persona,
-        config: options.config,
-        modelResolver: options.modelResolver,
-        subagentSystemPrompt: options.subagentSystemPrompt,
-        history: options.history,
-        mcp: options.mcp,
-        cwd: options.cwd,
-        ...(options.resolveSubagentPrompt
-          ? { resolveSubagentPrompt: options.resolveSubagentPrompt }
-          : {}),
-      }),
-      createSendInputToAgentToolDefinition(options.supervisor),
-      createWaitForAgentsToolDefinition(options.supervisor),
-      createListAgentsToolDefinition(options.supervisor),
-      createInterruptAgentToolDefinition(options.supervisor),
-    ];
+    const tools = [createWaitForAgentsToolDefinition(options.supervisor)];
     const enabledToolNames = new Set<string>(options.persona.tools);
     return new ToolRegistry([
-      ...createCommonTools({ ...options, allowedTools: options.persona.tools }),
-      ...tools.filter((tool) => enabledToolNames.has(tool.schema.name)),
+      ...createCommonTools({
+        ...options,
+        allowedTools: options.persona.tools,
+        ...(enabledToolNames.has("agents") ? { agents: options } : {}),
+      }),
+      ...(enabledToolNames.has("agents") ? tools : []),
       ...(options.clientTools?.() ?? []),
     ]);
   },

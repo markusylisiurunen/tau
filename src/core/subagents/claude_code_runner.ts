@@ -1,4 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { accessSync, constants } from "node:fs";
+import { createServer } from "node:net";
 import { delimiter, join } from "node:path";
 import {
   type Options,
@@ -11,6 +13,26 @@ import {
   type ClaudeCodeInput,
   claudeCodeInputSchema,
 } from "./claude_code_protocol.js";
+import type { ContentBlock } from "./events.js";
+import { boundedTraceBlocks } from "./trace.js";
+
+type ClaudeMessageContent = SDKUserMessage["message"]["content"];
+type ClaudeToolResult = Extract<
+  Exclude<ClaudeMessageContent, string>[number],
+  { type: "tool_result" }
+>;
+function claudeContent(
+  content: ClaudeMessageContent | ClaudeToolResult["content"],
+): ContentBlock[] {
+  if (content === undefined) return [{ type: "unavailable", reason: "Unsupported content" }];
+  if (typeof content === "string") return [{ type: "text", text: content }];
+  return content.map((block): ContentBlock => {
+    if (block.type === "text") return { type: "text", text: block.text };
+    if (block.type === "image" && block.source.type === "base64")
+      return { type: "image", data: block.source.data, mimeType: block.source.media_type };
+    return { type: "unavailable", reason: `Unsupported content block: ${block.type}` };
+  });
+}
 
 export function claudeCodeTools(tools: string[]): string[] {
   const selected = new Set<string>();
@@ -65,7 +87,7 @@ export function claudeCodeOptions(input: ClaudeCodeInput, executable: string): O
       type: "preset",
       preset: "claude_code",
       append: [
-        "You are a headless subagent supporting a parent agent. Complete the assigned task autonomously, including any verification it requires. No user or parent agent is available to answer questions or approve intermediate steps. Resolve minor ambiguities with reasonable assumptions and continue. If missing information or authority prevents safe progress, report the blocker clearly instead of attempting brittle or risky workarounds.",
+        "You are a headless subagent supporting a parent agent. Complete the assigned task autonomously, including any verification it requires. No user or parent agent is available to answer questions or approve intermediate steps. Resolve minor ambiguities with reasonable assumptions and continue. If missing information or authority prevents safe progress, report the blocker clearly instead of attempting brittle or risky workarounds. Later user messages also come from the parent agent: they may change the task you are working on or give you a new one.",
         "Read and follow applicable project instructions wherever you work. Use the skills available in this session when relevant.",
         "Other agents may be modifying the same worktree. Never revert, discard, or overwrite changes you did not make. Avoid mutating Git operations unless explicitly instructed by the task. Do not launch other agents.",
         "Your final response is what the parent agent receives from your work. Make it self-contained and include everything important for the parent to understand and use the result. Do not rely on intermediate messages or tool output being visible.",
@@ -91,8 +113,16 @@ function findClaudeExecutable(): string {
 
 export async function runClaudeCode(
   raw: unknown,
-  emit: (event: ClaudeCodeEvent) => void,
+  send: (event: ClaudeCodeEvent) => void,
+  directory: string,
 ): Promise<void> {
+  const emit = (event: ClaudeCodeEvent) => {
+    if (event.type === "trace") {
+      if ("content" in event.event) event.event.content = boundedTraceBlocks(event.event.content);
+      else event.event.arguments = boundedTraceBlocks(event.event.arguments);
+    }
+    send(event);
+  };
   const input = claudeCodeInputSchema.parse(raw);
   let authorized = false;
   let allowPrompt!: () => void;
@@ -103,22 +133,73 @@ export async function runClaudeCode(
   const finished = new Promise<void>((resolve) => {
     finishPrompt = resolve;
   });
+  const pending: { message: string; uuid: ReturnType<typeof randomUUID> }[] = [];
+  const outstanding = new Map<string, string>();
+  let wake: (() => void) | undefined;
+  let closing = false;
+  const socketPath = join(directory, "input.sock");
+  const server = createServer((socket) => {
+    let buffer = "";
+    socket.setEncoding("utf8");
+    socket.on("error", () => {});
+    socket.on("data", (chunk) => {
+      buffer += chunk;
+      if (Buffer.byteLength(buffer) > 1024 * 1024) {
+        socket.destroy();
+        return;
+      }
+      if (!buffer.endsWith("\n")) return;
+      try {
+        const value = JSON.parse(buffer);
+        if (closing || typeof value.message !== "string" || outstanding.size >= 64) {
+          socket.end("closed\n");
+          return;
+        }
+        const uuid = randomUUID();
+        pending.push({ message: value.message, uuid });
+        outstanding.set(uuid, value.message);
+        wake?.();
+        socket.end("accepted\n");
+      } catch {
+        socket.destroy();
+      }
+    });
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(socketPath, resolve);
+  });
   async function* prompts(): AsyncGenerator<SDKUserMessage> {
     await ready;
     if (!authorized) return;
     yield {
       type: "user",
+      uuid: randomUUID(),
       session_id: input.sessionId ?? "",
       parent_tool_use_id: null,
       message: { role: "user", content: input.prompt },
     };
-    // Keep the control channel open until the context summary has been read.
-    await finished;
+    while (!closing) {
+      if (!pending.length)
+        await Promise.race([
+          new Promise<void>((resolve) => {
+            wake = resolve;
+          }),
+          finished,
+        ]);
+      wake = undefined;
+      const next = pending.shift();
+      if (next)
+        yield {
+          type: "user",
+          uuid: next.uuid,
+          session_id: input.sessionId ?? "",
+          parent_tool_use_id: null,
+          message: { role: "user", content: next.message },
+        };
+    }
   }
-  const conversation = query({
-    prompt: prompts(),
-    options: claudeCodeOptions(input, findClaudeExecutable()),
-  });
+  let conversation: ReturnType<typeof query> | undefined;
   const calls = new Map<string, { name: string; subject: string }>();
   let streamedMessage: Pick<SDKAssistantMessage["message"], "id" | "usage"> | undefined;
   const emitUsage = (message: Pick<SDKAssistantMessage["message"], "id" | "usage">) => {
@@ -134,6 +215,10 @@ export async function runClaudeCode(
     });
   };
   try {
+    conversation = query({
+      prompt: prompts(),
+      options: claudeCodeOptions(input, findClaudeExecutable()),
+    });
     const initialization = await conversation.initializationResult();
     const account = initialization.account;
     if (!account.subscriptionType || (account.apiKeySource && account.apiKeySource !== "none")) {
@@ -141,11 +226,17 @@ export async function runClaudeCode(
         "Claude Code requires a subscription login on the execution environment; API-key billing is not used by this launch model.",
       );
     }
+    emit({ type: "control", path: socketPath });
     authorized = true;
     allowPrompt();
     for await (const message of conversation) {
       if (message.type === "system" && message.subtype === "init") {
         emit({ type: "session", id: message.session_id });
+      } else if (message.type === "system" && message.subtype === "compact_boundary") {
+        emit({
+          type: "trace",
+          event: { kind: "notice", code: "compaction.compacted", content: [] },
+        });
       } else if (message.type === "stream_event" && message.parent_tool_use_id === null) {
         const event = message.event;
         if (event.type === "message_start") {
@@ -167,6 +258,9 @@ export async function runClaudeCode(
         }
       } else if (message.type === "assistant" && message.parent_tool_use_id === null) {
         emitUsage(message.message);
+        const content = message.message.content.filter((block) => block.type === "text");
+        if (content.length)
+          emit({ type: "trace", event: { kind: "assistant", content: claudeContent(content) } });
         for (const block of message.message.content) {
           if (block.type === "text" && block.text) {
             emit({ type: "assistant", text: block.text.slice(0, 8192) });
@@ -179,6 +273,15 @@ export async function runClaudeCode(
               [args.file_path, args.command, args.pattern, args.url].find(
                 (value): value is string => typeof value === "string",
               ) ?? block.name;
+            emit({
+              type: "trace",
+              event: {
+                kind: "tool_call",
+                callId: block.id,
+                toolName: block.name,
+                arguments: [{ type: "json", value: JSON.parse(JSON.stringify(block.input)) }],
+              },
+            });
             calls.set(block.id, {
               name: block.name.slice(0, 256),
               subject: subject.slice(0, 1024),
@@ -187,7 +290,7 @@ export async function runClaudeCode(
         }
       } else if (
         message.type === "user" &&
-        !("isReplay" in message) &&
+        !("isReplay" in message && message.isReplay) &&
         message.parent_tool_use_id === null &&
         Array.isArray(message.message.content)
       ) {
@@ -197,8 +300,26 @@ export async function runClaudeCode(
           if (!call) continue;
           calls.delete(block.tool_use_id);
           emit({ type: "tool", ...call, failed: block.is_error === true });
+          emit({
+            type: "trace",
+            event: {
+              kind: "tool_result",
+              callId: block.tool_use_id,
+              toolName: call.name,
+              outcome: block.is_error ? "failed" : "succeeded",
+              content: claudeContent(block.content),
+            },
+          });
         }
       } else if (message.type === "result") {
+        for (const uuid of message.user_message_uuids ??
+          (message.user_message_uuid ? [message.user_message_uuid] : []))
+          outstanding.delete(uuid);
+        if (outstanding.size && !message.user_message_uuid && !message.user_message_uuids)
+          throw new Error(
+            "Claude Code did not report streamed input consumption; update the Claude CLI before steering workers.",
+          );
+        closing = message.is_error || message.subtype !== "success" || outstanding.size === 0;
         const totals = Object.values(message.modelUsage);
         const failed = message.is_error || message.subtype !== "success";
         const context = failed
@@ -228,12 +349,17 @@ export async function runClaudeCode(
           cost: message.total_cost_usd,
           usage,
         });
-        return;
+        if (closing) {
+          for (const message of outstanding.values()) emit({ type: "unconsumed_input", message });
+          return;
+        }
       }
     }
   } finally {
+    closing = true;
     finishPrompt();
-    conversation.close();
+    server.close();
+    conversation?.close();
     allowPrompt();
   }
 }

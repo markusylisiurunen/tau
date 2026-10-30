@@ -1,6 +1,6 @@
 import { buildSubagentSystemPrompt } from "../subagents/prompt.js";
 import { formatSubagentsForPrompt } from "../subagents/registry.js";
-import { TOOL_NAME_HISTORY, TOOL_NAME_SPAWN_AGENT } from "../tools/tool_names.js";
+import { TOOL_NAME_AGENTS, TOOL_NAME_HISTORY } from "../tools/tool_names.js";
 import type { Persona } from "../types.js";
 import { buildBaseSystemPrompt, buildEnvironmentTag } from "../utils/context.js";
 export type ComposeSessionPromptsArgs = {
@@ -42,7 +42,7 @@ export function composeSessionPrompts(args: ComposeSessionPromptsArgs): SessionP
     subagentsBlock: formatSubagentsForPrompt(args.persona),
   });
 
-  const subagentSystemPrompt = args.persona.tools.includes(TOOL_NAME_SPAWN_AGENT)
+  const subagentSystemPrompt = args.persona.tools.includes(TOOL_NAME_AGENTS)
     ? buildSubagentSystemPrompt(buildBaseSystemPrompt(promptContext), {
         parentSessionId: args.sessionId,
         historyEnabled: args.persona.tools.includes(TOOL_NAME_HISTORY),

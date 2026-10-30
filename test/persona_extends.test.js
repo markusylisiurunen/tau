@@ -477,7 +477,7 @@ describe("custom personas", () => {
       expect(errors).toEqual([]);
       const persona = personas.find((entry) => entry.id === "no-subagents");
       expect(persona.tools).toEqual(["bash", "edit"]);
-      expect(persona.tools).not.toContain("spawn_agent");
+      expect(persona.tools).not.toContain("agents");
     } finally {
       fx.cleanup();
     }

@@ -6,7 +6,7 @@ Tau ships built-in personas and loads custom persona files from the execution en
 
 ## Built-in and effective personas
 
-Built-in personas are generated from Tau's current model catalog. Most model families have separate chat and coder variants, and some have only the variants Tau supports. Built-ins come with Tau's own prompts, defaults, tool selections, and subagent tools.
+Built-in personas are generated from Tau's current model catalog. Most model families have separate chat and coder variants, and some have only the variants Tau supports. Built-ins come with Tau's own prompts, defaults, tool selections, and subagent access.
 
 The Opus 5.5 chat and coder personas are available only when `anthropic/claude-opus-5-5` is present in the effective model catalog. The Sonnet 5.5 variants (`sonnet-5.5-chat` and `sonnet-5.5-coder`) likewise require `anthropic/claude-sonnet-5-5`.
 
@@ -93,14 +93,13 @@ Each custom persona is complete on its own. It does not inherit a provider, mode
 | `allowedReasoningLevels` | Array of reasoning efforts offered by the TUI selector. |
 | `tools` | List of persona-selectable tools. |
 
-Every persona can use all discovered skills. If a custom persona omits `tools`, Tau enables the standard tools and the subagent tools. A `tools` list without `spawn_agent` prevents the agent from starting subagents. See [skills](skills.md) and [subagents](subagents.md) for those contracts.
+Every persona can use all discovered skills. If a custom persona omits `tools`, Tau enables the standard tools and `agents`. A `tools` list without `agents` prevents the agent from starting or managing subagents. See [skills](skills.md) and [subagents](subagents.md) for those contracts.
 
 The selectable tool names are:
 
-- `bash`, `write`, `edit`, `view_image`, `web`, `history`, `mcp`, and `models`;
-- `spawn_agent`, `send_input_to_agent`, `wait_for_agents`, `list_agents`, and `interrupt_agent`.
+`bash`, `write`, `edit`, `view_image`, `web`, `history`, `mcp`, `models`, and `agents`.
 
-Names such as `web`, `history`, `mcp`, and `models` enable capabilities inside the `code` tool, and `bash` also enables `tau.bash`. Tau builds the `code` tool from whichever of these capabilities are selected and usable.
+Names such as `web`, `history`, `mcp`, and `models` enable capabilities inside the `code` tool, and `bash` also enables `tau.bash`. `agents` enables `tau.agents` inside `code` and the `wait_for_agents` tool. Tau builds the `code` tool from whichever of these capabilities are selected and usable.
 
 A `tools` list replaces the defaults. Names are lowercased and duplicates removed. An unknown name makes the persona invalid. `tools: []` gives the persona none of these tools. The built-in `tau_docs` tool is always available, independent of this list. `mcp` works only when the host has enabled MCP servers. [Tools](tools.md) explains eligibility and ownership.
 

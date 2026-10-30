@@ -10,7 +10,7 @@ import {
   TOOL_NAME_WEB,
   TOOL_NAME_WRITE,
 } from "../tools/tool_names.js";
-import type { PersonaSettings, ReasoningEffort } from "../types.js";
+import type { Persona, PersonaSettings, ReasoningEffort } from "../types.js";
 import type { ClaudeCodeEffort, ClaudeCodeModel } from "./claude_code_models.js";
 
 export const SUBAGENT_TOOL_NAMES = [
@@ -155,3 +155,29 @@ export type ClaudeCodeSubagentConfig = {
 };
 
 export type SubagentRuntimeConfig = NativeSubagentConfig | ClaudeCodeSubagentConfig;
+
+export type ResolveSubagentPrompt = (options: {
+  cwd: string;
+  persona: Persona;
+}) => Promise<string | undefined>;
+
+export type SubagentConversationState = {
+  id: string;
+  title: string;
+  model: string;
+  workingDirectory: string;
+  pending: { queue: number; steer: number };
+  usage: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    contextTokens: number;
+    contextWindow: number;
+    cost: number;
+  };
+} & (
+  | { status: "working" | "stopping" }
+  | { status: "idle"; reason: "completed" | "interrupted" }
+  | { status: "idle"; reason: "failed"; error: { code: string; message: string } }
+);

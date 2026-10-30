@@ -89,20 +89,7 @@ describe("ToolCatalog", () => {
   });
 
   it("shares enabled capabilities while excluding agent management from child runtimes", () => {
-    const tools = [
-      "bash",
-      "write",
-      "edit",
-      "view_image",
-      "web",
-      "history",
-      "models",
-      "spawn_agent",
-      "list_agents",
-      "wait_for_agents",
-      "send_input_to_agent",
-      "interrupt_agent",
-    ];
+    const tools = ["bash", "write", "edit", "view_image", "web", "history", "models", "agents"];
     const options = {
       backend: createBackend(),
       cwd: "/workspace",
@@ -128,7 +115,11 @@ describe("ToolCatalog", () => {
       "send_input_to_agent",
       "interrupt_agent",
     ];
-    expect(child.schemas).toEqual(main.schemas.filter((tool) => !management.includes(tool.name)));
+    expect(child.schemas.map((tool) => tool.name)).toEqual(
+      main.schemas.filter((tool) => !management.includes(tool.name)).map((tool) => tool.name),
+    );
+    expect(main.get("code").schema.description).toContain("tau.agents");
+    expect(child.get("code").schema.description).not.toContain("tau.agents");
     for (const name of management) expect(child.get(name)).toBeUndefined();
   });
 

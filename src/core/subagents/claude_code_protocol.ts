@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { CLAUDE_CODE_MODEL_IDS } from "./claude_code_models.js";
+import { observableEventSchema } from "./events.js";
 
 const tokenCount = z.number().finite().nonnegative();
 const tokenUsageSchema = z.object({
@@ -23,6 +24,9 @@ export const claudeCodeInputSchema = z.object({
 export type ClaudeCodeInput = z.infer<typeof claudeCodeInputSchema>;
 
 export const claudeCodeEventSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("control"), path: z.string().min(1) }),
+  z.object({ type: z.literal("unconsumed_input"), message: z.string() }),
+  z.object({ type: z.literal("trace"), event: observableEventSchema }),
   z.object({ type: z.literal("session"), id: z.string().uuid() }),
   z.object({ type: z.literal("assistant"), text: z.string().max(8192) }),
   z.object({

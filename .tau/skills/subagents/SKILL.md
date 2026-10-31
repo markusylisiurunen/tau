@@ -63,15 +63,21 @@ A self-contained handoff for the same work:
 
 > Investigate how repository sync detects local edits to files it manages. The answer will inform a proposed change to ownership tracking, and that change must keep preserving local edits. Start at `scripts/sync-repository.mjs` and follow the relevant imports. Work read-only: do not modify files, publish anything, or delegate further. Return the current behavior with file and function references, any gaps you can support with evidence, and open questions that would affect the proposal. Do not design the replacement.
 
-You see only the agent's final report and none of its working conversation, so ask for a report you can act on. For research, ask for evidence and uncertainty next to each conclusion, so a short summary cannot hide the detail that changes your decision. For edits, ask for the files changed, the checks run and their results, and anything left unresolved.
+You work mainly from the agent's final answer, so ask for a report you can act on. Waiting for an idle agent returns its latest-turn message if there is one. Read more retained text when the preview is marked incomplete; treat a failed or interrupted turn's answer as partial. Tau also keeps a trace of each agent's inputs, messages, tool calls, and tool results, but not its reasoning. Read selected parts of it when you need to check what the agent actually ran or saw, such as the output of a check it reports as passing. For research, ask for evidence and uncertainty next to each conclusion, so a short summary cannot hide the detail that changes your decision. For edits, ask for the files changed, the checks run and their results, and anything left unresolved.
 
 Sometimes a file is a better place for the result. Ask the agent to write its findings or notes to a named path, such as a directory from `mktemp -d`, and to point to that path in its final report. Do this when the output is expected to be long, when you or later agents will use it again, or when you want detail that a final report would compress. Parallel agents can also share information through files, for example by writing findings that others read, as long as each file has one owner and the handoffs say who writes and who reads it.
 
 ## Supervise running agents
 
-Track each assignment's owner, scope, dependencies, and status. Use Tau's agent tools to check status, wait for results, and send follow-ups. While agents run, do the independent work you planned. Waiting is reasonable when the delegated result is your next dependency.
+Track each assignment's owner, scope, dependencies, and status. Use Tau's agent tools to check status, wait for results, read traces, and send follow-ups. While agents run, do the independent work you planned. Waiting is reasonable when the delegated result is your next dependency.
 
-When requirements or a contract change, update or stop the affected agents before they continue on stale assumptions. Spell out the new context in the follow-up, and send new input only when the agent is idle. Stopping an agent does not undo its file edits or external actions, so inspect the current state before giving its scope to someone else.
+When requirements or a contract change, tell the affected agents before they continue on stale assumptions, and spell out the new context. You can also send follow-ups that add work. Choose how each message arrives by what should happen to the current work:
+
+- **Steer** to change the work in progress: to correct it, narrow it, or add to it. New work that fits alongside the current work is often finished sooner when you steer it in, because the agent can include it in the session it is already working on. Delivery timing depends on the worker's runtime, and steering does not stop a running tool.
+- **Queue** work that should start only after the current work is done, for example because it depends on that result.
+- **Interrupt** when the agent must stop its current work, for example before it makes edits that are no longer wanted. An interrupt also discards pending input, so send the new instructions after it has stopped.
+
+Stopping an agent does not undo its file edits or external actions, so inspect the current state before giving its scope to someone else.
 
 When an agent reports a case outside its agreed scope, make the decision yourself before widening the assignment. Agents share the workspace. Do not overwrite another agent's edits to make integration easier.
 

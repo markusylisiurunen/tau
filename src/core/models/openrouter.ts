@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { Config } from "../config/index.js";
 import { getApiKeyForProvider } from "../config/schema.js";
 import { parseMediaJson, readMediaResponse } from "../utils/media_validation.js";
+import { withOpenRouterBudget } from "./openrouter_budget.js";
 import {
   decisionResponse,
   parseDecisionInput,
@@ -10,6 +11,7 @@ import {
 import {
   decodeOpenRouterText,
   OPENROUTER_REQUEST_BYTES,
+  OPENROUTER_RESPONSE_BYTES,
   OPENROUTER_TEXT_BYTES,
   type OpenRouterAttachment,
   type OpenRouterMediaAdapter,
@@ -164,7 +166,7 @@ async function requestOpenRouter(
 ): Promise<unknown> {
   const payload = JSON.stringify(body);
   if (Buffer.byteLength(payload) > OPENROUTER_REQUEST_BYTES)
-    throw new Error("encoded request exceeds 20 MB; reduce text or attachments");
+    throw new Error("encoded request exceeds 512 MiB; reduce text or attachments");
   const key =
     (options.env ?? process.env).OPENROUTER_API_KEY?.trim() ||
     getApiKeyForProvider(options.config, "openrouter");
@@ -187,7 +189,7 @@ async function requestOpenRouter(
     throw requestFailure(response.status);
   }
   const value = parseMediaJson(
-    decodeOpenRouterText(await readMediaResponse(response, 8_000_000)),
+    decodeOpenRouterText(await readMediaResponse(response, OPENROUTER_RESPONSE_BYTES)),
     "OpenRouter response",
   );
   if (value && typeof value === "object" && "error" in value) {
@@ -207,22 +209,24 @@ export async function requestOpenRouterDecisions(
   if (attachments.some((item) => item.kind !== "image" || !spec.inputs.includes(item.kind)))
     throw new Error("unsupported attachment modality for the selected decision model");
   const input = parseDecisionInput(model, value);
-  if (Buffer.byteLength(JSON.stringify(input)) > OPENROUTER_TEXT_BYTES)
-    throw new Error("decisions input exceeds its byte limit");
-  const media = await prepareOpenRouterAttachments(
-    attachments,
-    options.mediaAdapter,
-    options.signal,
-    model === "typesafe/jev-1.14" ? "jev" : "standard",
-  );
-  const text = typeof input.state === "string" ? input.state : JSON.stringify(input.state);
-  const state = media.length ? [text, ...media] : text;
-  const result = decisionResponse.safeParse(
-    await requestOpenRouter("decisions", { model, state, questions: input.questions }, options),
-  );
-  if (!result.success) throw new Error("OpenRouter returned an invalid decisions response");
-  validateDecisionAnswers(input, result.data);
-  return { requested_model: model, ...result.data };
+  const textBytes = Buffer.byteLength(JSON.stringify(input));
+  if (textBytes > OPENROUTER_TEXT_BYTES) throw new Error("decisions input exceeds its byte limit");
+  return await withOpenRouterBudget(attachments, textBytes, options.signal, async () => {
+    const media = await prepareOpenRouterAttachments(
+      attachments,
+      options.mediaAdapter,
+      options.signal,
+      model === "typesafe/jev-1.14" ? "jev" : "standard",
+    );
+    const text = typeof input.state === "string" ? input.state : JSON.stringify(input.state);
+    const state = media.length ? [text, ...media] : text;
+    const result = decisionResponse.safeParse(
+      await requestOpenRouter("decisions", { model, state, questions: input.questions }, options),
+    );
+    if (!result.success) throw new Error("OpenRouter returned an invalid decisions response");
+    validateDecisionAnswers(input, result.data);
+    return { requested_model: model, ...result.data };
+  });
 }
 
 export async function requestOpenRouterChat(
@@ -236,58 +240,64 @@ export async function requestOpenRouterChat(
   if (input.attachments.some((attachment) => !spec.inputs.includes(attachment.kind)))
     throw new Error("unsupported attachment modality for the selected model");
   for (const value of [input.prompt, ...(input.system === undefined ? [] : [input.system])]) {
-    if (!value.trim() || Buffer.byteLength(value) > OPENROUTER_TEXT_BYTES)
-      throw new Error("prompt and system must be nonblank and within their byte limit");
+    if (!value.trim()) throw new Error("prompt and system must be nonblank");
   }
-  const media = await prepareOpenRouterAttachments(
-    input.attachments,
-    options.mediaAdapter,
-    options.signal,
-  );
-  const messages: Array<
-    | { role: "system"; content: string }
-    | { role: "user"; content: Array<{ type: "text"; text: string } | OpenRouterMediaPart> }
-  > = [];
-  if (input.system !== undefined) messages.push({ role: "system", content: input.system });
-  messages.push({ role: "user", content: [{ type: "text", text: input.prompt }, ...media] });
-  const result = chatResponse.safeParse(
-    await requestOpenRouter(
-      "chat",
-      {
-        model: input.model,
-        messages,
-        stream: false,
-        ...(input.schema === undefined
-          ? {}
-          : {
-              response_format: {
-                type: "json_schema",
-                json_schema: { name: "result", strict: true, schema: input.schema },
-              },
-            }),
-        ...(input.reasoning === undefined ? {} : { reasoning: { effort: input.reasoning } }),
-        provider: { require_parameters: true },
-      },
-      options,
-    ),
-  );
-  if (!result.success)
-    throw new Error("OpenRouter returned an invalid or unsupported chat response");
-  const { choices, ...metadata } = result.data;
-  const { message, finish_reason, native_finish_reason } = choices[0];
-  if (finish_reason === "stop" && !message.content?.trim() && !message.refusal)
-    throw new Error("OpenRouter returned no answer or refusal");
-  return {
-    requested_model: input.model,
-    ...metadata,
-    answer:
-      input.schema === undefined
-        ? message.content
-        : finish_reason === "stop" && !message.refusal
-          ? parseMediaJson(message.content!, "OpenRouter structured answer")
-          : null,
-    finish_reason,
-    ...(native_finish_reason === undefined ? {} : { native_finish_reason }),
-    ...(message.refusal === undefined ? {} : { refusal: message.refusal }),
-  };
+  const textBytes =
+    Buffer.byteLength(input.prompt) +
+    Buffer.byteLength(input.system ?? "") +
+    (input.schema === undefined ? 0 : Buffer.byteLength(JSON.stringify(input.schema)));
+  if (textBytes > OPENROUTER_TEXT_BYTES) throw new Error("combined model text exceeds 20 MiB");
+  return await withOpenRouterBudget(input.attachments, textBytes, options.signal, async () => {
+    const media = await prepareOpenRouterAttachments(
+      input.attachments,
+      options.mediaAdapter,
+      options.signal,
+    );
+    const messages: Array<
+      | { role: "system"; content: string }
+      | { role: "user"; content: Array<{ type: "text"; text: string } | OpenRouterMediaPart> }
+    > = [];
+    if (input.system !== undefined) messages.push({ role: "system", content: input.system });
+    messages.push({ role: "user", content: [{ type: "text", text: input.prompt }, ...media] });
+    const result = chatResponse.safeParse(
+      await requestOpenRouter(
+        "chat",
+        {
+          model: input.model,
+          messages,
+          stream: false,
+          ...(input.schema === undefined
+            ? {}
+            : {
+                response_format: {
+                  type: "json_schema",
+                  json_schema: { name: "result", strict: true, schema: input.schema },
+                },
+              }),
+          ...(input.reasoning === undefined ? {} : { reasoning: { effort: input.reasoning } }),
+          provider: { require_parameters: true },
+        },
+        options,
+      ),
+    );
+    if (!result.success)
+      throw new Error("OpenRouter returned an invalid or unsupported chat response");
+    const { choices, ...metadata } = result.data;
+    const { message, finish_reason, native_finish_reason } = choices[0];
+    if (finish_reason === "stop" && !message.content?.trim() && !message.refusal)
+      throw new Error("OpenRouter returned no answer or refusal");
+    return {
+      requested_model: input.model,
+      ...metadata,
+      answer:
+        input.schema === undefined
+          ? message.content
+          : finish_reason === "stop" && !message.refusal
+            ? parseMediaJson(message.content!, "OpenRouter structured answer")
+            : null,
+      finish_reason,
+      ...(native_finish_reason === undefined ? {} : { native_finish_reason }),
+      ...(message.refusal === undefined ? {} : { refusal: message.refusal }),
+    };
+  });
 }

@@ -4,7 +4,7 @@ import { Worker } from "node:worker_threads";
 import { truncateToBytesFromEnd } from "../utils/truncate.js";
 import { type BashExecutionResult, DEFAULT_COMMAND_CAPTURE_BYTES } from "./execution_backend.js";
 
-export const CODE_MODE_MAX_BRIDGE_REQUESTS = 1024;
+export const CODE_MODE_MAX_BRIDGE_REQUESTS = 4096;
 export const CODE_MODE_MAX_CONCURRENT_BRIDGE_REQUESTS = 32;
 export const CODE_MODE_MAX_BRIDGE_PAYLOAD_BYTES = 64 * 1024 * 1024;
 
@@ -206,7 +206,7 @@ export function executeCodeModeWorker(
       if (Buffer.byteLength(message.argsJson, "utf8") > CODE_MODE_MAX_BRIDGE_PAYLOAD_BYTES) {
         failWorker(
           new Error(
-            `code-mode sandbox exceeded ${CODE_MODE_MAX_BRIDGE_PAYLOAD_BYTES} bridge payload bytes`,
+            `code-mode sandbox exceeded ${CODE_MODE_MAX_BRIDGE_PAYLOAD_BYTES} bridge payload bytes; use attachment paths instead of inline media`,
           ),
         );
         return;

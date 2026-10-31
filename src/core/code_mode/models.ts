@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { Config } from "../config/index.js";
 import {
@@ -20,7 +21,7 @@ const chatOptions = z.strictObject({
   system: z.string().min(1).optional(),
   reasoning: z.string().optional(),
   schema: z.record(z.string(), z.json()).optional(),
-  attachments: z.array(attachment).max(16).default([]),
+  attachments: z.array(attachment).max(64).default([]),
 });
 const decisionOptions = z.strictObject({
   model: z.string().min(1),
@@ -32,7 +33,7 @@ const decisionOptions = z.strictObject({
         message: "decisions only support image attachments",
       }),
     )
-    .max(16)
+    .max(64)
     .default([]),
 });
 
@@ -49,18 +50,44 @@ export function createModelsCapability(
         signal.throwIfAborted();
         return file.content;
       },
-      probe: async (bytes, format) => {
-        const result = await backend.runNodeScript(probeScript, [], {
-          signal,
-          timeoutMs: 20_000,
-          maxCaptureBytes: 1_000_000,
-          stdin: Buffer.from(JSON.stringify({ data: bytes.toString("base64"), format })),
-        });
-        if (result.exitCode !== 0 || result.truncated || result.timedOut || result.aborted)
-          throw new Error(
-            "failed to validate media; ensure ffprobe is installed and the media is valid",
-          );
-        return JSON.parse(result.stdout);
+      probe: async (bytes, format, path) => {
+        let stagedPath: string | undefined;
+        try {
+          if (path === undefined) {
+            const staged = await backend.runNodeScript(stageScript, [], { signal });
+            if (staged.exitCode !== 0 || staged.truncated || staged.timedOut || staged.aborted)
+              throw new Error("failed to stage inline media; use an attachment path");
+            stagedPath = z.string().min(1).parse(JSON.parse(staged.stdout));
+            await backend.writeFileBinary(stagedPath, bytes);
+            path = stagedPath;
+          }
+          const result = await backend.runNodeScript(probeScript, [], {
+            signal,
+            timeoutMs: 20_000,
+            maxCaptureBytes: 1_000_000,
+            stdin: Buffer.from(
+              JSON.stringify({
+                path,
+                format,
+                size: bytes.length,
+                sha256: createHash("sha256").update(bytes).digest("hex"),
+              }),
+            ),
+          });
+          if (result.exitCode !== 0 || result.truncated || result.timedOut || result.aborted)
+            throw new Error(
+              "failed to validate media; ensure ffprobe is installed and the media is valid and unchanged",
+            );
+          return JSON.parse(result.stdout);
+        } finally {
+          if (stagedPath !== undefined) {
+            await backend.runNodeScript(
+              'require("node:fs").rmSync(require("node:path").dirname(process.argv[1]), { recursive: true, force: true });',
+              [stagedPath],
+              { timeoutMs: 20_000 },
+            );
+          }
+        }
       },
     };
   }
@@ -141,7 +168,7 @@ type ChatResult = {
 
 \`prompt\` and optional \`system\` must be nonblank. Omitted attachments default to an empty array. Omitted system instructions send no system message. Omitted reasoning leaves that setting to the provider; it does not necessarily disable reasoning. Reasoning traces are not returned as answer text.
 
-Attachments follow the prompt in array order. Paths resolve from the current working directory. Inline data must be canonical padded base64 with a MIME type matching the actual bytes. Supply exactly one source form per attachment, not a URL. Audio/video require ffprobe on PATH. Unsupported media fail rather than being resized, converted, transcribed, or split automatically.
+Attachments follow the prompt in array order. Paths resolve from the current working directory. Inline data must be canonical padded base64 with a MIME type matching the actual bytes. All arguments of one call must fit in 64 MiB of JSON, so pass large media as paths. Supply exactly one source form per attachment, not a URL. Audio/video require ffprobe on PATH. Unsupported media fail rather than being resized, converted, transcribed, or split automatically.
 
 \`requested_model\` records the selected ID; \`model\` records the provider's returned ID. Inspect completion status before using the answer:
 
@@ -239,7 +266,7 @@ Prefer \`openai/gpt-6-luna-decisions\` for decisions, including text, JSON, and 
 
 Luna supports at most 200 questions, 255 categories per choice question, and 2–10 rubric levels per score question. These limits are checked before sending the request. Jev also accepts a single-level score rubric.
 
-Luna accepts up to 16 PNG/JPEG/WebP images. Supply them through \`attachments\`, using the same path or inline forms as chat images. Describe what to check in \`questions\`. Images follow \`state\` in attachment order and retain their original bytes. Objects and arrays in \`state\` are sent as JSON text, so image URLs inside \`state\` are treated as text.
+Luna accepts up to 64 PNG/JPEG/WebP images. Supply them through \`attachments\`, using the same path or inline forms as chat images. Describe what to check in \`questions\`. Images follow \`state\` in attachment order and retain their original bytes. Objects and arrays in \`state\` are sent as JSON text, so image URLs inside \`state\` are treated as text.
 
 Jev accepts up to 16 PNG/JPEG images through the same attachment forms. Each side must be 256–1,568 pixels, with at least 78,400 pixels in total (inclusive limits). A 256×256 image is too small; 280×280 meets the minimum area. WebP is unsupported. These constraints are checked before sending, without resizing or conversion. Jev does not apply EXIF orientation, so rotate photos before attaching them. Provider-side processed-image and expanded-request limits may still reject locally valid requests. Bounding-box questions are unsupported.
 
@@ -282,13 +309,15 @@ printText(JSON.stringify(result.answers));
 
 ## Limits and failures
 
-Byte limits below use decimal bytes:
+These limits reject abnormal input. A request within them can still exceed the model's context window or a provider limit.
 
-- Each prompt/system input and the decisions input: 1,000,000 UTF-8 bytes.
-- Attachments: 16 total, including at most 4 audio and 1 video.
-- Each image: 5,000,000 bytes; PNG/JPEG/WebP, one frame, at most 8,000 pixels per edge and 32 megapixels.
-- Each audio/video: 12,000,000 bytes; single-stream PCM16 WAV or MP3, or H.264 MP4 up to 3840×2160 with optional AAC. Positive known duration, at most 600 seconds combined.
-- Encoded request: 20,000,000 bytes including base64 and text; response: 8,000,000 bytes.
+- Text: 20 MiB of UTF-8 for the decisions input, and 20 MiB combined for a chat's prompt, system, and schema.
+- Attachments: 64 per request in any mix of types; 16 for Jev.
+- Each image: 32 MiB; PNG/JPEG/WebP, one frame, at most 32,768 pixels per edge and 100 megapixels.
+- Each audio/video: 256 MiB; single-stream PCM16 WAV or MP3, or H.264 MP4 up to 3840×2160 with optional AAC. Positive known duration, at most 7,200 seconds (2 hours) combined.
+- Encoded request: 512 MiB including base64 and text; response: 32 MiB.
+
+Large requests share a memory budget, so a call may wait until earlier calls finish. Waiting counts toward the program's deadline.
 
 Validation, authentication, service failures, and malformed responses throw. There are no automatic retries. A failed or interrupted request may already be billable: inspect the outcome before retrying. Returned usage contains provider-reported metadata, not estimates; external charges are not included in session cost or usage logs.`,
     api: {
@@ -332,6 +361,13 @@ Validation, authentication, service failures, and malformed responses throw. The
   };
 }
 
+const stageScript = `
+const fs = require("node:fs");
+const path = require("node:path");
+const directory = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "tau-model-inline-"));
+process.stdout.write(JSON.stringify(path.join(directory, "input")));
+`;
+
 const probeScript = `
 const fs = require("node:fs");
 const os = require("node:os");
@@ -341,7 +377,25 @@ const input = JSON.parse(fs.readFileSync(0, "utf8"));
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), "tau-model-media-"));
 try {
   const file = path.join(directory, "input");
-  fs.writeFileSync(file, Buffer.from(input.data, "base64"), { mode: 0o600 });
+  const fd = fs.openSync(input.path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+  let bytes;
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size !== input.size) throw new Error("media changed before validation");
+    bytes = Buffer.alloc(input.size);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const count = fs.readSync(fd, bytes, offset, bytes.length - offset, null);
+      if (!count) throw new Error("media changed before validation");
+      offset += count;
+    }
+    if (fs.readSync(fd, Buffer.alloc(1), 0, 1, null)) throw new Error("media changed before validation");
+  } finally {
+    fs.closeSync(fd);
+  }
+  if (require("node:crypto").createHash("sha256").update(bytes).digest("hex") !== input.sha256)
+    throw new Error("media changed before validation");
+  fs.writeFileSync(file, bytes, { mode: 0o600 });
   process.stdout.write(execFileSync("ffprobe", ["-v", "error", "-protocol_whitelist", "file", "-f", input.format, "-show_entries", "format=duration:stream=codec_type,codec_name,width,height", "-of", "json", file], { timeout: 15000, maxBuffer: 1000000 }));
 } finally {
   fs.rmSync(directory, { recursive: true, force: true });

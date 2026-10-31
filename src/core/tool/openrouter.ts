@@ -54,7 +54,7 @@ async function printHelp(
               "  --system <text> | --system-file <path>   optional explicit system instructions.",
               "  --image <path>          repeatable PNG/JPEG/WebP attachment.",
               "  --audio <path>          repeatable WAV/MP3 attachment (Gemini only).",
-              "  --video <path>          MP4 attachment (Gemini only).",
+              "  --video <path>          repeatable MP4 attachment (Gemini only).",
               "  --reasoning <effort>    model-supported effort; omitted uses provider default.",
             ]
           : [

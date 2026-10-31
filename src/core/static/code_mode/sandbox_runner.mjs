@@ -84,7 +84,7 @@ function requestApi(methodId, argsJson) {
   if (Buffer.byteLength(argsJson, "utf8") > workerData.maxBridgePayloadBytes) {
     return Promise.reject(
       new Error(
-        `code-mode API arguments exceeded ${workerData.maxBridgePayloadBytes} bridge payload bytes`,
+        `code-mode API arguments exceeded ${workerData.maxBridgePayloadBytes} bridge payload bytes; use attachment paths instead of inline media`,
       ),
     );
   }

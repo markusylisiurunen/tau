@@ -433,7 +433,7 @@ function parseBridgeArguments(argsJson: string, name: string, path: string[]): u
   const method = `${name}.${formatPath(path)}`;
   if (Buffer.byteLength(argsJson, "utf8") > CODE_MODE_MAX_BRIDGE_PAYLOAD_BYTES) {
     throw new Error(
-      `${method} arguments exceeded the ${formatBytes(CODE_MODE_MAX_BRIDGE_PAYLOAD_BYTES)} bridge payload limit`,
+      `${method} arguments exceeded the ${formatBytes(CODE_MODE_MAX_BRIDGE_PAYLOAD_BYTES)} bridge payload limit; use attachment paths instead of inline media`,
     );
   }
   let args: unknown;

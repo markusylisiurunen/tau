@@ -87,7 +87,7 @@ Instructions and criterion guidance accept strings, JSON objects, or arrays; cho
 
 Luna Decisions supports at most 200 questions, 255 categories per choice question, and 2–10 rubric levels per score question. Tau checks these limits before sending the request. Jev also accepts a single-level score rubric. Both models use the same JSON input format.
 
-Luna also accepts up to 16 ordered local PNG/JPEG/WebP images using repeatable `--image <path>` flags:
+Luna also accepts up to 64 ordered local PNG/JPEG/WebP images using repeatable `--image <path>` flags:
 
 ```sh
 tau tool openrouter decisions \
@@ -136,7 +136,7 @@ Flags belong after `chat`. No positional arguments are accepted.
 | `--system <text>` or `--system-file <path>` | Optional, mutually exclusive, nonblank explicit system instructions |
 | `--image <path>` | Repeatable local PNG, JPEG, or WebP image |
 | `--audio <path>` | Repeatable local WAV or MP3 audio; Gemini only |
-| `--video <path>` | Local MP4 video; Gemini only |
+| `--video <path>` | Repeatable local MP4 video; Gemini only |
 | `--reasoning <effort>` | Optional model-supported effort from the table |
 
 All file paths resolve relative to the invoking working directory. Prompt/system files name regular files; `-` has special stdin meaning only for decisions. Omitting system instructions sends no system message. Omitting reasoning leaves that parameter to the provider, not necessarily disabled. Effort does not request a written reasoning trace.
@@ -164,19 +164,20 @@ These are successful exchanges with distinguishable outcomes; scripts must inspe
 
 ## Outputs and recovery
 
-These are cautious safety limits set by Tau, not the providers' maximum capacities. Byte limits use decimal units.
+Tau sets these limits to reject abnormal input. They are not the providers' maximum capacities, and a request within them can still exceed the selected model's context window or a provider limit. 1 MiB is 1,048,576 bytes.
 
 | Resource | Limit |
 | --- | --- |
-| Decisions JSON, each prompt or system input | 1,000,000 UTF-8 bytes |
-| Attachments per request | 16 total, including at most 4 audio files and 1 video |
-| Each image | 5,000,000 bytes, 8,000 pixels per edge, 32 megapixels; one frame |
-| Each audio or video | 12,000,000 bytes |
+| Decisions JSON | 20 MiB of UTF-8 |
+| Chat prompt, system instructions, and schema | 20 MiB of UTF-8 combined |
+| Attachments per request | 64 of any mix of types; 16 for Jev |
+| Each image | 32 MiB, 32,768 pixels per edge, 100 megapixels; one frame |
+| Each audio or video | 256 MiB |
 | Audio formats | Single-stream PCM 16-bit little-endian WAV or MP3 |
 | Video format | H.264 MP4 up to 3840×2160 with optional AAC audio |
-| Audio/video duration | Known positive duration; 600 seconds combined |
-| Complete encoded JSON request | 20,000,000 bytes, including base64 expansion and text |
-| Response | 8,000,000 bytes |
+| Audio/video duration | Known positive duration; 7,200 seconds (2 hours) combined |
+| Complete encoded JSON request | 512 MiB, including base64 expansion and text |
+| Response | 32 MiB |
 | Local media probe | 15 seconds per file |
 | HTTP request and response | 10 minutes |
 

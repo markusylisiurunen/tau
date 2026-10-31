@@ -652,7 +652,7 @@ describe("OpenRouter standalone commands", () => {
       Buffer.from(""),
       Buffer.from("{}{}"),
       Buffer.from([0xff]),
-      Buffer.alloc(1_000_001),
+      Buffer.alloc(20 * 1024 * 1024 + 1),
     ]) {
       const options = { ...harness(), stdin: Readable.from([bytes]) };
       await expect(runOpenRouterCommand(decisions, options)).rejects.toThrow();
@@ -825,7 +825,7 @@ describe("OpenRouter standalone commands", () => {
   });
 
   it.each(["chat", "decisions"])(
-    "bounds the complete encoded %s request including media overhead before sending",
+    "accepts an encoded %s request larger than the former 20 MB ceiling",
     async (operation) => {
       const cwd = await fixture();
       const image = await sharp({ create: { width: 1, height: 1, channels: 3, background: "red" } })
@@ -834,7 +834,11 @@ describe("OpenRouter standalone commands", () => {
       const padded = Buffer.alloc(4_999_998);
       image.copy(padded);
       await writeFile(join(cwd, "image"), padded);
-      const options = { ...harness(), cwd, stdin: stdin() };
+      const options = {
+        ...harness(operation === "chat" ? chatReply() : decisionReply()),
+        cwd,
+        stdin: stdin(),
+      };
       const args =
         operation === "chat"
           ? chat
@@ -844,15 +848,15 @@ describe("OpenRouter standalone commands", () => {
           [...args, "--image", "image", "--image", "image", "--image", "image"],
           options,
         ),
-      ).rejects.toThrow();
-      expect(options.fetchImpl).not.toHaveBeenCalled();
+      ).resolves.toBeUndefined();
+      expect(options.fetchImpl).toHaveBeenCalledOnce();
     },
   );
 
   it("rejects corrupt, oversized, over-count, and over-duration media before sending and cleans failed probes", async () => {
     const cwd = await fixture();
     await writeFile(join(cwd, "bad"), "not an image");
-    await writeFile(join(cwd, "large"), Buffer.alloc(5_000_001));
+    await writeFile(join(cwd, "large"), Buffer.alloc(32 * 1024 * 1024 + 1));
     await writeFile(join(cwd, "audio"), wav());
     let snapshot;
     const spawnImpl = vi.fn(async (_command, args) => {
@@ -860,7 +864,7 @@ describe("OpenRouter standalone commands", () => {
       return {
         exitCode: 0,
         stdout: JSON.stringify({
-          format: { duration: "601" },
+          format: { duration: "7201" },
           streams: [{ codec_type: "audio", codec_name: "pcm_s16le" }],
         }),
       };
@@ -868,7 +872,7 @@ describe("OpenRouter standalone commands", () => {
     for (const flags of [
       ["--image", "bad"],
       ["--image", "large"],
-      Array.from({ length: 17 }, () => ["--image", "missing"]).flat(),
+      Array.from({ length: 65 }, () => ["--image", "missing"]).flat(),
       ["--audio", "audio"],
     ]) {
       const options = { ...harness(), cwd, spawnImpl };

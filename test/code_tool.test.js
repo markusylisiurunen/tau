@@ -750,7 +750,7 @@ describe("code composition", () => {
       expect(result.status).toBe("succeeded");
       expect(JSON.parse(text(result.result))).toEqual(reply.answers);
       expect(backend.readFileBinary).toHaveBeenCalledWith("screenshot.png", {
-        maxBytes: 5_000_000,
+        maxBytes: 32 * 1024 * 1024,
       });
       expect(backend.runNodeScript).not.toHaveBeenCalled();
       expect(JSON.parse(fetchImpl.mock.calls[0][1].body).state).toEqual([
@@ -780,8 +780,8 @@ describe("code composition", () => {
       [{ ...inline, path: "image.png" }],
       [{ ...inline, data: "invalid" }],
       [{ ...inline, mimeType: "image/jpeg" }],
-      [{ ...inline, data: "A".repeat(6_666_669) }],
-      Array.from({ length: 17 }, () => ({ type: "image", path: "missing.png" })),
+      [{ ...inline, data: "A".repeat(4 * Math.ceil((32 * 1024 * 1024) / 3) + 1) }],
+      Array.from({ length: 65 }, () => ({ type: "image", path: "missing.png" })),
       [{ type: "audio", path: "missing.wav" }],
       [{ type: "video", path: "missing.mp4" }],
     ]) {
@@ -927,7 +927,7 @@ describe("code composition", () => {
         code: 'await tau.models.chat({ model: "openai/gpt-6-luna", prompt: "Describe", attachments: [{ type: "image", path: "image.png" }] })',
       });
       expect(image.status).toBe("succeeded");
-      expect(readFileBinary).toHaveBeenCalledWith("image.png", { maxBytes: 5_000_000 });
+      expect(readFileBinary).toHaveBeenCalledWith("image.png", { maxBytes: 32 * 1024 * 1024 });
       const wav = Buffer.alloc(46);
       wav.write("RIFF", 0);
       wav.writeUInt32LE(38, 4);

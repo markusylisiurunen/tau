@@ -929,14 +929,14 @@ function runCommandWithOpenStdin(script, request) {
   });
 }
 
-it.each([1024, 1025])("enforces the total bridge budget at %s requests", async (count) => {
+it.each([4096, 4097])("enforces the total bridge budget at %s requests", async (count) => {
   const ping = vi.fn(() => null);
   const result = await runTauCodeMode({
     ...createDefinition({ api: { ping } }),
     code: `for (let i = 0; i < ${count}; i++) await linear.ping(); printText("done");`,
   });
-  expect(result.status).toBe(count === 1024 ? "succeeded" : "failed");
-  expect(ping).toHaveBeenCalledTimes(1024);
+  expect(result.status).toBe(count === 4096 ? "succeeded" : "failed");
+  expect(ping).toHaveBeenCalledTimes(4096);
 });
 
 it.each([32, 33])("enforces the concurrent bridge budget at %s requests", async (count) => {

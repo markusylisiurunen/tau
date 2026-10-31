@@ -150,7 +150,7 @@ The agent reads the complete reference, with types and examples, by printing `aw
 
 `spawn` takes a single-line title of at most 512 characters, a prompt of at most 262,144 characters, an optional model, and an optional working directory. The prompt is the subagent's first message, and the subagent does not see the parent conversation, so the prompt should be self-contained. The call returns right away with the subagent's state, and the subagent keeps working in the background.
 
-When the main persona has `history`, a native Tau subagent may read the parent session's transcript as a last resort, when missing context would stop the work or force an important assumption. It reads with `tau.history.read` and `source: "local"`, so the read uses the host's local history even when a remote collection is configured. Local recording is best-effort, so the newest parent entries can occasionally be missing.
+When the main persona has `history`, a native Tau subagent follows the same history rules as the main agent, and an assignment that asks about past conversations counts as an explicit request. The subagent also has one extra permission: as a last resort, it may read the parent session's transcript when missing context would stop the work or force an important assumption. Every read of the parent session uses `tau.history.read` with `source: "local"`, so it reads the host's local history even when a remote collection is configured. Other reads use the configured collection unless the subagent is told to read locally. Local recording is best-effort, so the newest parent entries can occasionally be missing.
 
 At most eight subagents can be working at once in one main session. Idle subagents do not count toward this limit.
 

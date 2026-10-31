@@ -2,6 +2,7 @@ import {
   OPENROUTER_IMAGE_BYTES,
   OPENROUTER_MEDIA_BYTES,
   OPENROUTER_REQUEST_BYTES,
+  OPENROUTER_RESPONSE_BYTES,
   type OpenRouterAttachment,
 } from "./openrouter_media.js";
 
@@ -23,9 +24,13 @@ export async function withOpenRouterBudget<T>(
         return total + (attachment.data?.length ?? 4 * Math.ceil(bytes / 3));
       }, 0),
   );
-  // Reserve for raw bytes, base64, UTF-16 serialization and transport copies, plus
-  // image decoding and response parsing. Path inputs reserve their maximum size.
-  const reservation = encodedBytes * 6 + 768 * 1024 * 1024;
+  // Reserve for raw bytes, base64, UTF-16 serialization and transport copies.
+  // Path inputs reserve their maximum size; images are decoded one at a time.
+  const imageBytes = attachments.some((attachment) => attachment.kind === "image")
+    ? 768 * 1024 * 1024
+    : 0;
+  const responseBytes = OPENROUTER_RESPONSE_BYTES * 3;
+  const reservation = encodedBytes * 6 + imageBytes + responseBytes;
   await new Promise<void>((resolve, reject) => {
     const cleanup = () => {
       signal.removeEventListener("abort", abort);

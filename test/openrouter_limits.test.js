@@ -132,6 +132,45 @@ it("allows multiple audio/video inputs up to two hours combined and rejects inva
   await expect(prepareOpenRouterAttachments([attachments[0]], adapter, signal())).rejects.toThrow();
 });
 
+it("admits 32 small text-only chats while provider responses are pending", async () => {
+  const opts = options();
+  const release = Promise.withResolvers();
+  opts.fetchImpl.mockImplementation(async () => {
+    await release.promise;
+    return reply();
+  });
+  const requests = Array.from({ length: 32 }, () => requestOpenRouterChat(chat, opts));
+  try {
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(opts.fetchImpl).toHaveBeenCalledTimes(32);
+    expect(opts.mediaAdapter.readFile).not.toHaveBeenCalled();
+  } finally {
+    release.resolve();
+    await Promise.all(requests);
+  }
+});
+
+it("reserves image decoding memory even for small encoded images", async () => {
+  const release = Promise.withResolvers();
+  const run = vi.fn(async () => await release.promise);
+  const requests = Array.from({ length: 6 }, () =>
+    withOpenRouterBudget(
+      [{ kind: "image", data: "AAAA", mimeType: "image/png" }],
+      1,
+      signal(),
+      run,
+    ),
+  );
+  try {
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(run).toHaveBeenCalledTimes(4);
+  } finally {
+    release.resolve();
+    await Promise.all(requests);
+  }
+  expect(run).toHaveBeenCalledTimes(6);
+});
+
 it("queues large requests before reads, cancels waiters, and releases reservations on failure", async () => {
   const first = options();
   const started = Promise.withResolvers();

@@ -150,26 +150,32 @@ it("admits 32 small text-only chats while provider responses are pending", async
   }
 });
 
-it("reserves image decoding memory even for small encoded images", async () => {
-  const release = Promise.withResolvers();
-  const run = vi.fn(async () => await release.promise);
-  const requests = Array.from({ length: 6 }, () =>
-    withOpenRouterBudget(
-      [{ kind: "image", data: "AAAA", mimeType: "image/png" }],
-      1,
-      signal(),
-      run,
-    ),
-  );
-  try {
-    await new Promise((resolve) => setImmediate(resolve));
-    expect(run).toHaveBeenCalledTimes(4);
-  } finally {
-    release.resolve();
-    await Promise.all(requests);
-  }
-  expect(run).toHaveBeenCalledTimes(6);
-});
+it.each([
+  { kind: "text", attachments: [], admitted: 127 },
+  {
+    kind: "inline image",
+    attachments: [{ kind: "image", data: "AAAA", mimeType: "image/png" }],
+    admitted: 42,
+  },
+  { kind: "image path", attachments: [{ kind: "image", path: "image" }], admitted: 11 },
+])(
+  "admits small $kind requests until the shared budget fills",
+  async ({ attachments, admitted }) => {
+    const release = Promise.withResolvers();
+    const run = vi.fn(async () => await release.promise);
+    const requests = Array.from({ length: admitted + 1 }, () =>
+      withOpenRouterBudget(attachments, 1, signal(), run),
+    );
+    try {
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(run).toHaveBeenCalledTimes(admitted);
+    } finally {
+      release.resolve();
+      await Promise.all(requests);
+    }
+    expect(run).toHaveBeenCalledTimes(admitted + 1);
+  },
+);
 
 it("queues large requests before reads, cancels waiters, and releases reservations on failure", async () => {
   const first = options();

@@ -45,7 +45,7 @@ Path of a request: client → SDK session facade → protocol transport → host
 
 | Owner | Owns |
 | --- | --- |
-| Client | TUI, editor and drafts, terminal appearance and theme, local speech, diff tool process, command client tools |
+| Client | TUI, editor and drafts, terminal appearance and theme, local speech, diff tool process, TUI client tools |
 | Host | Orchestration, persistence and recovery, model calls, credentials, model catalogs, history, tool binding, execution-environment lifecycle |
 | Execution environment | Everything agent-visible: paths, `cwd`, home, repository, project config and content, `AGENTS.md`, skills, platform, Node, `PATH`, files, commands |
 | Telegram runner | Polling, routing, attachments, prepared workspaces, outbound messages, runner state. It is a client of in-process sessions. |
@@ -121,7 +121,7 @@ Rules that follow:
 Read `docs/tools.md`, `docs/client-tools.md`, and `docs/security.md` before changing a tool contract. The tool inventory lives in `src/core/tools/catalog.ts`, `registry.ts`, and `tool_names.ts`.
 
 - **MCP** (`src/core/mcp/manager.ts`): bound once per host and shared with main and child registries. Server config comes from the host's launch-directory config layers, never from execution-environment config. Stdio servers deliberately run on the host with host authority. Keep calls bounded and cancellable, never retry mutations, and await cleanup at shutdown. The `mcp` tool reuses code mode.
-- **Client tools** are capabilities of attached clients, not host registry entries. Commands run on the client machine. Tool names must be unique among observers. Validate arguments against the configured schema, honor cancellation, and kill active process groups on detach or transport failure.
+- **Client tools** are capabilities of attached clients, not host registry entries. Handlers run on the client machine. Tool names must be unique among observers. Validate arguments against the advertised schema, honor cancellation, and abort active handlers on detach or transport failure.
 - **Code mode** (`src/code_mode/` sandbox and output, `src/core/code_mode/` capability APIs, `src/core/tools/code.ts` binding):
   - Generated code receives only the declared API. Credentials and service clients stay in the trusted parent. Target file and process access goes through the execution backend.
   - Only `printText` text and `await printImage(block)` images reach the result. Image validation and preparation run outside the sandbox. An image keeps the position where it was emitted, not where preparation finished, all the way to clients.
@@ -157,7 +157,7 @@ Start with the smallest owning area, its callers, and its tests.
 | Config, models, personas, prompts | `src/core/config/`, `src/core/models/`, `src/core/personas.ts`, `src/core/runtime/runtime_bootstrap.ts` | `test/config_layers.test.js`, `test/model_catalog.test.js`, `test/skills_discovery.test.js`, `docs/config-reference.md` |
 | Credentials | `src/core/auth/` | `test/auth_storage.test.js`, `test/auth_cli.test.js`, `docs/credentials.md` |
 | Host tools, code mode | `src/core/tools/`, `src/code_mode/`, `src/core/code_mode/`, `src/core/static/code_mode/` | `test/tool_catalog.test.js`, `test/code_mode.test.js`, `docs/tools.md` |
-| Client tools | `src/core/config/client_tools.ts`, `src/core/client_tools/`, `src/host/client_tool_broker.ts`, `src/sdk/client_tool_command.ts` | `test/client_tool_broker.test.js`, `test/command_client_tools.test.js` |
+| Client tools | `src/host/client_tool_broker.ts`, `src/sdk/session.ts`, `src/sdk/code_mode.ts` | `test/client_tool_broker.test.js`, `test/sdk_client.test.js` |
 | Subagents | `src/core/subagents/`, `src/core/code_mode/agents.ts`, `src/core/tools/wait_for_agents.ts` | `test/agent_supervisor.test.js`, `test/spawn_agent_tool.test.js` |
 | TUI | `src/tui/` | `test/session_chat_controller.test.js`, `test/tool_card.test.js`, `docs/tui.md` |
 | Diff review | `src/core/diff_review/`, `src/diff_tool/` | `test/diff_review_protocol.test.js`, `test/diff_tool_builtin.test.js` |

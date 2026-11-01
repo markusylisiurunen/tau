@@ -1139,7 +1139,6 @@ describe("SessionChatController", () => {
     const { controller } = await createControllerHarness({
       view,
       session,
-      configuredClientToolNames: ["notify"],
       themeIds: ["gold"],
     });
 
@@ -1149,13 +1148,10 @@ describe("SessionChatController", () => {
     expect(intro.title).toContain("tau v");
     expect(intro.title).toContain("2 context files");
     expect(intro.title).toContain("1 skills");
-    expect(intro.title).toContain("1 client tool");
     expect(intro.title).toContain("1 MCP server");
     expect(intro.title).not.toContain("session");
     expect(intro.body).toContain("skills:\n  alpha (~/.tau/skills)");
-    expect(intro.body).toContain(
-      "context:\n  ~/repo/AGENTS.md\n  ~/repo/docs/AI_GUIDE.md\n\nclient tools:\n  notify",
-    );
+    expect(intro.body).toContain("context:\n  ~/repo/AGENTS.md\n  ~/repo/docs/AI_GUIDE.md");
     expect(intro.body).toContain("mcp servers:\n  github");
     expect(intro.body).not.toContain("diff_review");
     expect(intro.body).not.toContain("prefill_input");
@@ -5758,42 +5754,12 @@ describe("SessionChatController", () => {
     expect(view.editorText).toBe("Name: \nDecision: ");
   });
 
-  it("adds configured command tools to the built-in TUI tools", () => {
+  it("offers only the built-in TUI tools", () => {
     const tools = createTuiClientTools({
       enabled: true,
       getController: () => undefined,
-      commandTools: [
-        {
-          name: "notify",
-          description: "Show a local notification.",
-          parameters: { type: "object", properties: {}, additionalProperties: false },
-          command: "notify",
-        },
-      ],
     });
-
-    expect(tools.map((tool) => tool.schema.name)).toEqual([
-      "diff_review",
-      "prefill_input",
-      "notify",
-    ]);
-  });
-
-  it("rejects configured tools that duplicate a built-in TUI tool", () => {
-    expect(() =>
-      createTuiClientTools({
-        enabled: true,
-        getController: () => undefined,
-        commandTools: [
-          {
-            name: "prefill_input",
-            description: "Replace a built-in tool.",
-            parameters: { type: "object", properties: {}, additionalProperties: false },
-            command: "replacement",
-          },
-        ],
-      }),
-    ).toThrow("duplicate TUI client tool 'prefill_input'");
+    expect(tools.map((tool) => tool.schema.name)).toEqual(["diff_review", "prefill_input"]);
   });
 
   it("waits for terminal color detection before closing after session creation fails", async () => {
@@ -5813,7 +5779,6 @@ describe("SessionChatController", () => {
 
     const opening = SessionChatApp.open({
       client,
-      configuredClientToolNames: [],
       targetLabel: "in-process",
       sessionSelection: { mode: "create", input: {} },
       terminalColors,
@@ -5832,43 +5797,8 @@ describe("SessionChatController", () => {
     expect(client.close).toHaveBeenCalledOnce();
   });
 
-  it("rejects configured tool collisions before connecting the transport", async () => {
-    await expect(
-      SessionChatApp.connect({
-        transport: "websocket",
-        url: "ws://127.0.0.1:1",
-        sessionSelection: { mode: "select" },
-        clientToolsEnabled: true,
-        config: {
-          clientTools: [
-            {
-              name: "prefill_input",
-              defaultEnabled: true,
-              description: "Replace a built-in tool.",
-              parameters: { type: "object", properties: {}, additionalProperties: false },
-              command: "replacement",
-            },
-          ],
-        },
-      }),
-    ).rejects.toThrow("duplicate TUI client tool 'prefill_input'");
-  });
-
-  it("disables built-in and configured TUI client tools together", () => {
-    expect(
-      createTuiClientTools({
-        enabled: false,
-        getController: () => undefined,
-        commandTools: [
-          {
-            name: "notify",
-            description: "Show a local notification.",
-            parameters: { type: "object", properties: {}, additionalProperties: false },
-            command: "notify",
-          },
-        ],
-      }),
-    ).toEqual([]);
+  it("disables the built-in TUI client tools", () => {
+    expect(createTuiClientTools({ enabled: false, getController: () => undefined })).toEqual([]);
   });
 
   it("keeps an active model-launched diff review visible and steerable", async () => {

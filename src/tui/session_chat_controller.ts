@@ -126,7 +126,6 @@ export type SessionChatControllerOptions = {
   snapshot: SessionProtocolSnapshot;
   createSession?: (input: SessionProtocolCreateParams) => Promise<TauSdkSession>;
   targetLabel: string;
-  configuredClientToolNames?: string[];
   config?: Config;
   diffToolLauncher?: DiffReviewToolLauncher;
   deps?: CoreDeps;
@@ -145,7 +144,6 @@ export class SessionChatController {
   private session: TauSdkSession;
   private readonly createSession?: (input: SessionProtocolCreateParams) => Promise<TauSdkSession>;
   private readonly targetLabel: string;
-  private readonly configuredClientToolNames: string[];
   private readonly config: Config;
   private markdownExportAbortController?: AbortController;
   private readonly diffToolLauncher?: DiffReviewToolLauncher;
@@ -213,7 +211,6 @@ export class SessionChatController {
     this.snapshot = options.snapshot;
     this.subagentActivities = options.session.subagentActivities();
     this.targetLabel = options.targetLabel;
-    this.configuredClientToolNames = options.configuredClientToolNames ?? [];
     this.config = options.config ?? {};
     this.diffToolLauncher = options.diffToolLauncher;
     this.deps = options.deps ?? createDefaultCoreDeps();
@@ -572,10 +569,6 @@ export class SessionChatController {
       const count = this.snapshot.catalog.mcpServers.length;
       parts.push(`${count} MCP server${count === 1 ? "" : "s"}`);
     }
-    if (this.configuredClientToolNames.length > 0) {
-      const count = this.configuredClientToolNames.length;
-      parts.push(`${count} client tool${count === 1 ? "" : "s"}`);
-    }
     return parts.join(" · ");
   }
 
@@ -604,13 +597,6 @@ export class SessionChatController {
       lines.push("", "context:");
       for (const contextFile of contextFiles) {
         lines.push(`  ${contextFile}`);
-      }
-    }
-
-    if (this.configuredClientToolNames.length > 0) {
-      lines.push("", "client tools:");
-      for (const clientToolName of this.configuredClientToolNames) {
-        lines.push(`  ${clientToolName}`);
       }
     }
 

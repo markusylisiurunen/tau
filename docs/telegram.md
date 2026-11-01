@@ -187,13 +187,9 @@ Voice transcription uses Gemini with `GEMINI_API_KEY`, or else `apiKeys.google`.
 
 `/tts_on` rewrites text with `gpt-6-luna` (reasoning disabled) and generates speech with Eleven v4 Turbo. It requires both OpenAI and ElevenLabs credentials and runner `ffmpeg` with Opus. Voice notes use brisk delivery and 1.15× speed. See [`speech` configuration](config-reference.md#speech) for default and custom voice selection. Source and rewritten text are limited to 10,000 Unicode characters each, and audio to 32 MiB. Rewriting times out after one minute and the whole job after five. Jobs are not saved. On failure, the bot sends `voice response failed. please try again.`; the text reply is unaffected and details go to the logs.
 
-## Command client tools
+## Client tools
 
-Telegram offers [photo, video, audio, and document delivery tools](tools.md#sending-files-to-telegram), plus the command tools selected by the workspace. Global `clientTools` define the commands, and the workspace's nearest `enabledClientTools` selects which ones are offered. An empty list turns off configured tools, but not the delivery tools.
-
-Command processes run on the runner machine with the runner's environment. Even though the workspace is on the same machine, they reach it only through the execution-environment API. Telegram does not offer the TUI's `diff_review` or `prefill_input`.
-
-Tools are selected when the runner creates or reconnects a session's client. `/reload` does not change them. Restart the runner, or start a new session, after changing which command tools are selected. See [client tools](client-tools.md).
+Telegram offers [photo, video, audio, and document delivery tools](tools.md#sending-files-to-telegram) as client tools. They run in the runner and send files to the session's chat. Telegram does not offer the TUI's `diff_review` or `prefill_input`. See [client tools](client-tools.md).
 
 ## Persistence and restart behavior
 
@@ -235,7 +231,5 @@ Do not verify bot tokens, provider keys, Access secrets, transcript contents, or
 **Voice replies fail.** `/tts_on` needs OpenAI and ElevenLabs credentials and `ffmpeg` with Opus on the runner. Check [`speech.voiceId`](config-reference.md#speech) if a configured voice is unavailable. The bot replies `voice response failed. please try again.` and logs the details; the text reply is still delivered.
 
 **Replies or notifications arrive late or not at all.** Each outgoing message part has a deadline and is retried twice on retryable errors. Tau honors Telegram's `retry_after`, and later notifications in a chat wait for earlier ones. Long replies are split, so only a later part may have failed. The runner log shows the method, status, retry class, attempt, chat, session, and message. Fix network, rate-limit, token, or chat permission problems on the runner. Before resending by hand, check which parts arrived. A delivery failure is not a failed turn, and notifications about failed or blocked turns are sent again after a restart. Never fix delivery by editing runner state.
-
-**A command client tool is missing.** Check global `clientTools`, the workspace's `enabledClientTools`, and whether the session's client was created after the change. Telegram never offers the TUI's tools.
 
 For workspace preparation, provisioning, and recovery problems, see [Telegram projects and workspaces](telegram-projects.md#troubleshooting).

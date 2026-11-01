@@ -38,12 +38,31 @@ export class ScrollbackTui extends TuiMainScreen {
     this.viewport = viewport;
   }
 
-  get screenRows(): number {
-    return this.sourceTerminal.rows;
-  }
+  detachRows(transcriptRows: number): void {
+    if (this.stopped) return;
+    this.renderNow();
+    const state = this.captureRenderState();
+    const { columns } = this.terminal;
+    const rows = this.sourceTerminal.rows;
+    const lineDiff = Math.max(transcriptRows, state.previousViewportTop) - state.hardwareCursorRow;
 
-  resetViewport(rows: number): void {
+    // Relative movement also works before the first screenful, below the shell's output.
+    // Moving above the viewport clamps to its top when the transcript is already offscreen.
+    let output = "\x1b[?2026h\r";
+    if (lineDiff > 0) output += `\x1b[${lineDiff}B`;
+    else if (lineDiff < 0) output += `\x1b[${-lineDiff}A`;
+    output += `\x1b[J${"\r\n".repeat(rows - 1)}\x1b[H\x1b[?2026l`;
+    this.terminal.write(output);
     this.viewport.rows = rows;
+    this.restoreRenderState({
+      previousLines: [],
+      previousWidth: columns,
+      previousHeight: rows,
+      cursorRow: 0,
+      hardwareCursorRow: 0,
+      maxLinesRendered: 0,
+      previousViewportTop: 0,
+    });
   }
 
   protected override resetRenderState(): void {
@@ -55,7 +74,7 @@ export class ScrollbackTui extends TuiMainScreen {
     const state = this.captureRenderState();
     const width = this.terminal.columns;
     const height = this.terminal.rows;
-    let lines = this.render(width);
+    let lines = this.resolveFakeCursors(this.render(width));
     if (this.hasOverlayEntries) lines = this.compositeOverlays(lines, width, height);
     const cursor = this.extractCursorPosition(lines, height);
     lines = this.applyLineResets(lines);

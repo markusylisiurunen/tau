@@ -286,30 +286,7 @@ export class TuiChatView implements ChatView {
   }
 
   detachTranscript(): void {
-    this.ui.renderNow();
-    const state = this.ui.captureRenderState();
-    const { columns } = this.ui.terminal;
-    const rows = this.ui.screenRows;
-    const transcriptRows = this.chatContainer.render(columns).length;
-    const lineDiff = Math.max(transcriptRows, state.previousViewportTop) - state.hardwareCursorRow;
-
-    // Relative movement also works before the first screenful, below the shell's output.
-    // Moving above the viewport clamps to its top when the transcript is already offscreen.
-    let output = "\x1b[?2026h\r";
-    if (lineDiff > 0) output += `\x1b[${lineDiff}B`;
-    else if (lineDiff < 0) output += `\x1b[${-lineDiff}A`;
-    output += `\x1b[J${"\r\n".repeat(rows - 1)}\x1b[H\x1b[?2026l`;
-    this.ui.terminal.write(output);
-    this.ui.resetViewport(rows);
-    this.ui.restoreRenderState({
-      previousLines: [],
-      previousWidth: columns,
-      previousHeight: rows,
-      cursorRow: 0,
-      hardwareCursorRow: 0,
-      maxLinesRendered: 0,
-      previousViewportTop: 0,
-    });
+    this.ui.detachRows(this.chatContainer.render(this.ui.terminal.columns).length);
     this.chatContainer.clear();
     this.toolUiRouter.resetSession();
     this.ui.requestRender();

@@ -2252,6 +2252,7 @@ export class SessionChatController {
     this.view.detachTranscript();
     this.renderSegment += 1;
     this.viewMessageIds.clear();
+    this.usedViewMessageIds.clear();
     this.ephemeralTimelineItems.clear();
     this.hiddenHistoryEntryIds.clear();
     this.renderedMessageIds.splice(0);

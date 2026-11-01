@@ -1826,6 +1826,7 @@ describe("SessionChatController", () => {
         message.model.type === "session_divider" && message.model.label === "compacted context",
     );
     expect(view.messages.indexOf(notices[0])).toBeGreaterThan(dividerIndex);
+    expect(notices[0].id).toBe(notice.id);
   });
 
   it("shows auto-compaction operation status in the footer", async () => {

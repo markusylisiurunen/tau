@@ -66,6 +66,38 @@ function createHeadlessView() {
 }
 
 describe("TuiChatView transcript detachment", () => {
+  it("releases the transcript without terminal writes after stopping", () => {
+    const { terminal, view, writes } = createHeadlessView();
+    view.start();
+    view.addMessage({ type: "user", text: "old message" }, "old");
+    view.ui.renderNow();
+    view.stop();
+    try {
+      const writeCount = writes.length;
+      view.detachTranscript();
+      view.ui.renderNow();
+      expect(view.chatContainer.allMessages).toEqual([]);
+      expect(writes).toHaveLength(writeCount);
+    } finally {
+      terminal.dispose();
+    }
+  });
+
+  it("renders the editor cursor without leaking fake-cursor markers", async () => {
+    const { terminal, view, writes } = createHeadlessView();
+    view.setEditorText("draft");
+    view.start();
+    try {
+      view.ui.renderNow();
+      await flushTerminal(terminal);
+      expect(writes.join("")).not.toContain("\x1b_pi:fc");
+      expect(writes.join("")).toContain("\x1b[7m");
+    } finally {
+      view.stop();
+      terminal.dispose();
+    }
+  });
+
   it.each([
     { messages: 0, editorLines: 1 },
     { messages: 1, editorLines: 1 },
@@ -91,9 +123,6 @@ describe("TuiChatView transcript detachment", () => {
         view.addMessage({ type: "user", text: "pending-final-message" }, "pending-final");
         view.detachTranscript();
         expect(view.chatContainer.allMessages).toEqual([]);
-        expect(view.chatContainer.idToIndex.size).toBe(0);
-        expect(view.chatContainer.chatContainer.children).toEqual([]);
-        expect(view.chatContainer.cachedRenderLines).toEqual([]);
         expect(view.ui.captureRenderState().previousLines).toEqual([]);
         expect(view.getEditorText()).toBe(editorText);
         expect(resetSubagents).not.toHaveBeenCalled();

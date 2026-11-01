@@ -66,7 +66,8 @@ export type HistoryConfig = {
 export type TelegramBotConfig = {
   botToken?: string;
   allowedProjectIds?: string[];
-  personaMenu?: { id: string; label?: string }[];
+  autoCompactThresholdTokens?: number;
+  personaMenu?: { id: string; label?: string; autoCompactThresholdTokens?: number }[];
   allowedUserIds?: number[];
   allowedChatIds?: number[];
   defaultProjectId?: string;

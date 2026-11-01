@@ -101,6 +101,32 @@ describe("ChatRuntime", () => {
     }
   });
 
+  it("resolves host defaults and resets overrides only on a different persona", () => {
+    const runtime = createRuntime({
+      persona: createPersona({ id: "first", autoCompactThresholdTokens: 200000 }),
+      autoCompactDefaults: { thresholdTokens: 128000, personaThresholdTokens: { second: 80000 } },
+    });
+    try {
+      expect(runtime.agent.spec.autoCompactThresholdTokens).toBe(128000);
+      runtime.setAutoCompactThreshold(100000);
+      runtime.setPersona(createPersona({ id: "first", autoCompactThresholdTokens: 90000 }));
+      runtime.setReasoning("high");
+      expect(runtime.autoCompactThresholdTokens).toBe(100000);
+      runtime.setPersona(createPersona({ id: "second", autoCompactThresholdTokens: 70000 }));
+      expect(runtime.autoCompactThresholdTokens).toBeNull();
+      expect(runtime.agent.spec.autoCompactThresholdTokens).toBe(80000);
+      runtime.setAutoCompactThreshold(60000);
+      runtime.setAutoCompactThreshold(null);
+      expect(runtime.agent.spec.autoCompactThresholdTokens).toBe(80000);
+      runtime.setPersona(createPersona({ id: "first" }));
+      expect(runtime.agent.spec.autoCompactThresholdTokens).toBe(128000);
+      runtime.setPersona(createPersona({ id: "constructor" }));
+      expect(runtime.agent.spec.autoCompactThresholdTokens).toBe(128000);
+    } finally {
+      runtime.dispose();
+    }
+  });
+
   it("keeps startup credentials independent of reloaded config", () => {
     const apiKeys = { openai: "host-key", exa: "host-tool-key" };
     const runtime = createRuntime({ config: { apiKeys } });

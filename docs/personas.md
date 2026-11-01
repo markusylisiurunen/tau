@@ -105,7 +105,7 @@ subagentAutoCompactThresholdTokens:
 
 In `subagentAutoCompactThresholdTokens` keys, the provider is lowercased and the model ID is kept exactly as written, so `OpenAI/gpt-6.1-sol` and `openai/gpt-6.1-sol` name the same model. The provider must be known. A model ID missing from the catalog is allowed, as for `model`. Claude Code models are not allowed because Claude Code manages its own compaction.
 
-Thresholds are capped at the selected model's context window minus 16,384 tokens. A session's `/auto-compact` override takes precedence over the persona default. See [sessions](sessions.md) and [subagents](subagents.md) for inheritance and reset behavior.
+Thresholds are capped at the selected model's context window minus 16,384 tokens. A session's `/auto-compact` override takes precedence over the persona default, and so do a Telegram bot's thresholds. See [sessions](sessions.md) and [subagents](subagents.md) for inheritance and reset behavior.
 
 Every persona can use all discovered skills. If a custom persona omits `tools`, Tau enables the standard tools and `agents`. A `tools` list without `agents` prevents the agent from starting or managing subagents. See [skills](skills.md) and [subagents](subagents.md) for those contracts.
 

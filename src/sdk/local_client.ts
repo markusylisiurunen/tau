@@ -9,6 +9,7 @@ import {
   RemoteModelCatalog,
 } from "../core/models/remote_catalog.js";
 import { createDefaultCoreDeps } from "../core/runtime/deps.js";
+import type { AutoCompactDefaults } from "../core/session/auto_compaction_threshold.js";
 import { createLocalToolExecutionBackend } from "../core/tools/execution_backend.js";
 import type { Persona } from "../core/types.js";
 import { CompositeExecutionEnvironmentResolver } from "../execution/execution_environment.js";
@@ -23,7 +24,10 @@ import type { TauSdkClient, TauSdkClientOptions } from "./types.js";
 export async function createTauSdkClientWithHostConfig(
   options: TauSdkClientOptions,
   config: Config,
-  runtimeOptions: { remoteModelCatalog?: RemoteModelCatalog } = {},
+  runtimeOptions: {
+    remoteModelCatalog?: RemoteModelCatalog;
+    autoCompactDefaults?: AutoCompactDefaults;
+  } = {},
 ): Promise<TauSdkClient> {
   resolveTauSdkInitializeParams(options.initialize, options.clientTools);
   const host = await createInProcessSdkHost(options, config, runtimeOptions);
@@ -37,7 +41,10 @@ export async function createTauSdkClientWithHostConfig(
 async function createInProcessSdkHost(
   options: TauSdkClientOptions,
   config: Config,
-  runtimeOptions: { remoteModelCatalog?: RemoteModelCatalog },
+  runtimeOptions: {
+    remoteModelCatalog?: RemoteModelCatalog;
+    autoCompactDefaults?: AutoCompactDefaults;
+  },
 ): Promise<LocalSessionHost> {
   const deps = createDefaultCoreDeps();
   const home = deps.env.home() || process.env.HOME || homedir();
@@ -80,6 +87,7 @@ async function createInProcessSdkHost(
   }
 
   const host = new LocalSessionHost({
+    autoCompactDefaults: runtimeOptions.autoCompactDefaults,
     store: new FileSessionStore({ directory: getDefaultSessionStoreDirectory(home) }),
     history: HistoryManager.open(getDefaultHistoryDatabasePath(home), {
       reportReplicationFailure: options.onDiagnostic,

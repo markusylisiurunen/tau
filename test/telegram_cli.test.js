@@ -109,6 +109,32 @@ describe("telegram cli", () => {
     expect(() => loadTelegramConfig(path)).toThrow();
   });
 
+  it.each([49999, 1.5, "128k", null, Number.MAX_SAFE_INTEGER + 1])(
+    "rejects invalid bot and menu thresholds %j",
+    (threshold) => {
+      for (const fields of [
+        { autoCompactThresholdTokens: threshold },
+        { personaMenu: [{ id: "chat", autoCompactThresholdTokens: threshold }] },
+      ]) {
+        const { path } = writeConfig({
+          bots: { bot: { botToken: "token", ...fields } },
+          projects: { tau: { repo: "owner/repo" } },
+        });
+        expect(() => loadTelegramConfig(path)).toThrow();
+      }
+    },
+  );
+
+  it("loads bot and per-persona compaction defaults", () => {
+    const bot = {
+      botToken: "token",
+      autoCompactThresholdTokens: 128000,
+      personaMenu: [{ id: "chat", autoCompactThresholdTokens: 80000 }],
+    };
+    const { path } = writeConfig({ bots: { bot }, projects: { tau: { repo: "owner/repo" } } });
+    expect(loadTelegramConfig(path).bots.bot).toEqual(bot);
+  });
+
   it("loads persistent directory projects", () => {
     const { dir, path } = writeConfig({
       bots: {

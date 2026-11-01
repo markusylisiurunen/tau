@@ -18,6 +18,7 @@ import type { HistoryQuery } from "../history/types.js";
 import type { McpManager } from "../mcp/manager.js";
 import type { ModelResolver } from "../models/catalog.js";
 import { createAutoCompactionArchiver } from "../session/auto_compaction_archive.js";
+import type { AutoCompactDefaults } from "../session/auto_compaction_threshold.js";
 import { AgentSupervisor } from "../subagents/agent_supervisor.js";
 import type { ResolveSubagentPrompt, SubagentEvent } from "../subagents/types.js";
 import { AgentJobRegistry } from "../tools/agent_jobs.js";
@@ -48,6 +49,7 @@ export type CreateChatRuntimeOptions = {
   sessionId: string;
   createdAt: number;
   persona: Persona;
+  autoCompactDefaults?: AutoCompactDefaults;
   backend: ToolExecutionBackend;
   clientTools?: () => ReturnType<ToolRegistry["getEnabledTools"]>;
   modelResolver: ModelResolver;
@@ -69,6 +71,7 @@ export class ChatRuntime {
   readonly backgroundJobs = this.jobs.create();
   readonly supervisor: AgentSupervisor;
   private currentPersona: Persona;
+  private readonly autoCompactDefaults: AutoCompactDefaults | undefined;
   private autoCompactOverride: number | null = null;
   private currentConfig: Config;
   private readonly hostApiKeys: Config["apiKeys"];
@@ -104,6 +107,7 @@ export class ChatRuntime {
 
   private constructor(options: CreateChatRuntimeOptions, composition: SessionPromptComposition) {
     this.currentPersona = structuredClone(options.persona);
+    this.autoCompactDefaults = structuredClone(options.autoCompactDefaults);
     this.currentConfig = options.config;
     this.hostApiKeys = structuredClone(options.config.apiKeys);
     this.currentModelResolver = options.modelResolver;
@@ -131,7 +135,7 @@ export class ChatRuntime {
       agentId: options.sessionId,
       spec: createAgentSpec({
         ...this.resolvedModel,
-        autoCompactThresholdTokens: this.currentPersona.autoCompactThresholdTokens ?? null,
+        autoCompactThresholdTokens: this.resolvedAutoCompactThresholdTokens,
         systemPrompt: composition.baseSystemPrompt,
         tools,
       }),
@@ -291,7 +295,18 @@ export class ChatRuntime {
   }
 
   private get resolvedAutoCompactThresholdTokens(): number | null {
-    return this.autoCompactOverride ?? this.currentPersona.autoCompactThresholdTokens ?? null;
+    const thresholds = this.autoCompactDefaults?.personaThresholdTokens;
+    const personaThreshold =
+      thresholds && Object.hasOwn(thresholds, this.currentPersona.id)
+        ? thresholds[this.currentPersona.id]
+        : undefined;
+    return (
+      this.autoCompactOverride ??
+      personaThreshold ??
+      this.autoCompactDefaults?.thresholdTokens ??
+      this.currentPersona.autoCompactThresholdTokens ??
+      null
+    );
   }
 
   setAutoCompactThreshold(thresholdTokens: number | null): void {
@@ -312,6 +327,9 @@ export class ChatRuntime {
   }
 
   setPersona(persona: Persona): void {
+    if (persona.id.toLowerCase() !== this.currentPersona.id.toLowerCase()) {
+      this.autoCompactOverride = null;
+    }
     this.currentPersona = structuredClone(persona);
     this.resolvedModel = resolveAgentModel(this.currentPersona, this.config, {
       includeModelNotice: true,

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { z } from "zod";
+import { MIN_AUTO_COMPACT_THRESHOLD_TOKENS } from "../../protocol/session_protocol.js";
 import type {
   TelegramBotConfig as SchemaTelegramBotConfig,
   TelegramProjectConfig as SchemaTelegramProjectConfig,
@@ -56,13 +57,26 @@ const telegramTopLevelSchema = z
   })
   .strip();
 
+const autoCompactThresholdSchema = z
+  .number()
+  .int()
+  .min(MIN_AUTO_COMPACT_THRESHOLD_TOKENS)
+  .max(Number.MAX_SAFE_INTEGER);
+
 const telegramBotSchema = z
   .object({
     botToken: nonEmptyStringSchema,
+    autoCompactThresholdTokens: autoCompactThresholdSchema.optional(),
     allowedProjectIds: stringListSchema.min(1, "must not be empty.").optional(),
     personaMenu: z
       .array(
-        z.object({ id: nonEmptyStringSchema, label: nonEmptyStringSchema.optional() }).strict(),
+        z
+          .object({
+            id: nonEmptyStringSchema,
+            label: nonEmptyStringSchema.optional(),
+            autoCompactThresholdTokens: autoCompactThresholdSchema.optional(),
+          })
+          .strict(),
       )
       .refine((entries) => new Set(entries.map((entry) => entry.id)).size === entries.length, {
         message: "must contain unique persona ids.",

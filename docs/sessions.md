@@ -90,16 +90,23 @@ The summary aims both to let work continue right away and to keep earlier work r
 
 ### Automatic compaction
 
-Automatic compaction runs before a model call when the provider's latest token count, plus an estimate for content added since, exceeds the threshold. The threshold uses the session override, then the persona's `autoCompactThresholdTokens`, then the model's context window minus a fixed reserve of 16,384 tokens. Every threshold is capped at that model-based limit. Writing the checkpoint uses the normal model settings, with no special output limit.
+Automatic compaction runs before a model call when the provider's latest token count, plus an estimate for content added since, exceeds the threshold. The threshold comes from the first of these that is set:
+
+1. the session override;
+2. in Telegram sessions, the bot's `personaMenu` entry for the current persona, then the bot's `autoCompactThresholdTokens` (see [Telegram](telegram.md#compaction-thresholds));
+3. the persona's `autoCompactThresholdTokens`;
+4. the model's context window minus a fixed reserve of 16,384 tokens.
+
+Every threshold is capped at that model-based limit. Writing the checkpoint uses the normal model settings, with no special output limit.
 
 To compact earlier, set a token threshold for the session. The effective threshold is the smaller of this setting and the model's context window minus 16,384 tokens.
 
 - In the TUI, use `/auto-compact 50000` or `/auto-compact 50k`.
 - In Telegram, use `/auto_compact 50000` or `/auto_compact 50k`.
-- With either command, use `default` to restore the persona default (or the model-based threshold if none is configured). Omit the argument to show the configured and effective thresholds.
+- With either command, use `default` to remove the session override and use the configured default again. Omit the argument to show the configured and effective thresholds.
 - SDK and protocol inputs accept a safe integer of at least 50,000, or `null` for the default. They do not accept strings such as `50k`.
 
-The minimum configured threshold is 50,000 tokens. The setting applies to the main conversation and survives recovery, reloads, and persona changes. Native Tau subagents launched without a model override inherit the parent launching turn's effective threshold, including its session override. Native launches with an explicit model use the persona's model-keyed subagent threshold or that model's default (see [subagents](subagents.md)). Claude Code subagents manage their own compaction. Ephemeral threads use the persona default, without the main session override; forks retain their source thread's threshold.
+The minimum configured threshold is 50,000 tokens. The setting applies to the main conversation. It survives recovery, reloads, reasoning changes, and switching to the persona already in use. Switching to a different persona removes it, so the new persona starts with its default threshold, and so does a later switch back. Native Tau subagents launched without a model override inherit the parent launching turn's effective threshold, including its session override. Native launches with an explicit model use the persona's model-keyed subagent threshold or that model's default (see [subagents](subagents.md)). Claude Code subagents manage their own compaction. Ephemeral threads use the persona default, without the main session override; forks retain their source thread's threshold.
 
 Changing the setting does not start compaction. The new threshold applies from the next logical turn. A running turn and its steering continuations keep their original threshold.
 

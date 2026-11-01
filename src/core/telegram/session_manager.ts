@@ -26,6 +26,7 @@ import type {
 import type { TauSdkClientTool, TauSdkSessionExecOptions } from "../../sdk/types.js";
 import { TauSessionProtocolResponseError } from "../../transport/errors.js";
 import type { TelegramDirectoryProjectConfig, TelegramProjectConfig } from "../config/schema.js";
+import type { AutoCompactDefaults } from "../session/auto_compaction_threshold.js";
 import { extractAssistantText } from "../utils/messages.js";
 import { buildRepositoryAttribute, normalizeRepositoryReference } from "../utils/repository.js";
 import { formatTauUserText } from "../utils/user_metadata.js";
@@ -453,6 +454,7 @@ export type TelegramSessionSubmitOptions = {
 };
 
 export type TelegramSessionClientOptions = {
+  autoCompactDefaults?: AutoCompactDefaults;
   cwd: string;
   ownerId?: string;
   clientTools?: TauSdkClientTool[];

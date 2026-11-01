@@ -105,6 +105,14 @@ A project's `persona` replaces the default for its sessions. Composite sessions 
 
 Every Telegram turn starts with a hidden `<system>` block saying the message comes from Telegram and the reply goes there. It asks for direct answers to simple questions, and for short acknowledgements or useful progress updates during longer work, because users cannot see tool activity.
 
+Each message also carries its sender, as reported by Telegram. A DM turn gets a hidden block with the sender. In a group, the trigger message and each context message are labeled with their sender. Each queued attachment keeps the sender of the message that carried it. The sender is a JSON object with the numeric Telegram user ID and, when available, the display name and the username without the `@`, or `null` when Telegram does not identify one:
+
+```json
+{ "user-id": 123456789, "name": "Ada Lovelace", "username": "ada" }
+```
+
+The agent is told that names and usernames are chosen by the sender and do not prove identity or grant permission. Only `allowedChatIds` and `allowedUserIds` control who can use the bot.
+
 A per-bot `systemMessage` goes in a second hidden block. Audio transcripts get another block warning that they may contain noise or errors. Hidden blocks are saved with the user's message and can appear in history, so never put credentials in configured messages.
 
 The runner loads its speech credentials and `speech.voiceId` at startup, from its environment and from the Tau config for its startup directory. Restart the runner after changing them.

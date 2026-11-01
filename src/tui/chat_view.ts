@@ -1,5 +1,5 @@
 import type { AutocompleteProvider, Component } from "@earendil-works/pi-tui";
-import { Spacer, TuiMainScreen } from "@earendil-works/pi-tui";
+import { Spacer } from "@earendil-works/pi-tui";
 import { resolveThemeTokensForAppearance, type ThemeDefinition } from "../core/config/index.js";
 import type { RecordingShortcut } from "../core/config/schema.js";
 import type { SubagentEvent } from "../core/subagents/types.js";
@@ -8,6 +8,7 @@ import type {
   SessionProtocolFeedbackTone,
   SessionProtocolPendingUserMessage,
 } from "../protocol/session_protocol.js";
+import { ScrollbackTui } from "./scrollback_tui.js";
 import { createAppTerminal } from "./terminal.js";
 import { FALLBACK_TERMINAL_COLORS, type TerminalColors } from "./terminal_appearance.js";
 import { ToolUiRouter } from "./tool_ui_router.js";
@@ -90,7 +91,7 @@ export interface ChatView {
   resetToolUiSession(): void;
   reconcileToolUiSession(models: readonly ToolUiModel[]): void;
   reconcileSubagentUiSession(snapshots: readonly SubagentPanelSnapshot[]): void;
-  resetToolUiSessionPreservingSubagents(): void;
+  detachTranscript(): void;
   cycleSubagentSelection(direction: 1 | -1): string | undefined;
   getSelectedSubagentId(): string | undefined;
   sendTerminalNotification(title: string): void;
@@ -112,7 +113,7 @@ export interface ChatView {
 }
 
 export class TuiChatView implements ChatView {
-  private ui: TuiMainScreen;
+  private ui: ScrollbackTui;
   private chatContainer: ChatContainerComponent;
   private footer: FooterComponent;
   private pendingMessages: PendingMessagesComponent;
@@ -139,7 +140,7 @@ export class TuiChatView implements ChatView {
     this.terminalColors = options.terminalColors ?? FALLBACK_TERMINAL_COLORS;
     this.themes = options.themes;
     this.uiTheme = createUiTheme("ansi", this.resolvePaletteOverrides(options.themeId));
-    this.ui = new TuiMainScreen(createAppTerminal());
+    this.ui = new ScrollbackTui(createAppTerminal());
     this.chatContainer = new ChatContainerComponent(this.uiTheme, options.showThinking);
     this.footer = new FooterComponent(this.uiTheme, this.ui);
     this.pendingMessages = new PendingMessagesComponent(this.uiTheme);
@@ -284,8 +285,11 @@ export class TuiChatView implements ChatView {
     this.ui.requestRender();
   }
 
-  resetToolUiSessionPreservingSubagents(): void {
+  detachTranscript(): void {
+    this.ui.detachRows(this.chatContainer.render(this.ui.terminal.columns).length);
+    this.chatContainer.clear();
     this.toolUiRouter.resetSession();
+    this.ui.requestRender();
   }
 
   cycleSubagentSelection(direction: 1 | -1): string | undefined {

@@ -110,6 +110,8 @@ The footer shows context usage as a percentage of the full model window, such as
 
 While subagents are running, a panel above the editor shows the selected subagent's title, recent activity, and a usage line such as `openai-codex/gpt-6-astra:medium · ↑12k ↓2k (r8k w0) · 14%/200k · $0.04`. The line starts with the subagent's provider, model, and reasoning effort, including settings inherited from the persona. Text that does not fit the terminal width is cut off on the right.
 
+After successful compaction, the TUI releases the earlier transcript from its live view and starts a new segment. Earlier output remains in terminal scrollback, subject to your terminal's scrollback limit. Theme redraws update the visible live output without replaying rows already in scrollback. Growing the terminal leaves newly exposed history untouched; the live rendering area does not grow until the next compaction. Width changes can still duplicate live output when the terminal reflows earlier rows. Failed, skipped, or interrupted compaction leaves the live transcript in place.
+
 [Sessions](sessions.md) describes compaction, rewind, recovery, and retry. [Prompts and project context](prompts-and-project-context.md) covers prompt files.
 
 ## Exporting a response

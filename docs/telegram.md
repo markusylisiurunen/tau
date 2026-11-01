@@ -128,7 +128,7 @@ The runner loads its speech credentials and `speech.voiceId` at startup, from it
 | `/tts_on` | Sends a voice note after each final assistant response. |
 | `/tts_off` | Disables voice responses. |
 
-Changes to the auto-compaction threshold apply from the next turn and survive session recovery. `/status` shows context usage as a percentage of the full model window. When an override is set, it also shows the effective threshold in parentheses. See [automatic compaction](sessions.md#automatic-compaction) for limits and costs.
+Changes to the auto-compaction threshold apply from the next turn and survive session recovery. `/status` shows context usage as a percentage of the full model window. When a session override is set, or the persona default is below the model-based threshold, it also shows the effective threshold in parentheses. See [automatic compaction](sessions.md#automatic-compaction) for limits and costs.
 
 A [persona](personas.md) choice applies to the current session only; `/new` uses the project's default.
 

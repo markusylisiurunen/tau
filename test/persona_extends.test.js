@@ -62,7 +62,7 @@ describe("custom personas", () => {
 
   it.each([
     [
-      "autoCompactThresholdTokens: 80000\nsubagentAutoCompactThresholdTokens: {openai/gpt-5.4: 60000, amazon-bedrock/amazon.nova-2-lite-v1:0: 80000}",
+      "autoCompactThresholdTokens: 80000\nsubagentAutoCompactThresholdTokens: {OpenAI/gpt-5.4: 60000, amazon-bedrock/amazon.nova-2-lite-v1:0: 80000, ant-ling/Ling-2.6-1T: 90000}",
       true,
     ],
     ["autoCompactThresholdTokens: 49999", false],
@@ -70,6 +70,8 @@ describe("custom personas", () => {
     ["autoCompactThresholdTokens: '80k'", false],
     ["autoCompactThresholdTokens: null", false],
     ["subagentAutoCompactThresholdTokens: {openai/: 60000}", false],
+    ["subagentAutoCompactThresholdTokens: {unknown/model: 60000}", false],
+    ["subagentAutoCompactThresholdTokens: {claude-code/claude-opus-5-5: 60000}", false],
     ["subagentAutoCompactThresholdTokens: {openai/gpt-5.4: 49999}", false],
   ])("validates persona compaction policy %s", async (fields, valid) => {
     const fx = setupFixture();
@@ -93,6 +95,7 @@ describe("custom personas", () => {
           subagentAutoCompactThresholdTokens: {
             "openai/gpt-5.4": 60000,
             "amazon-bedrock/amazon.nova-2-lite-v1:0": 80000,
+            "ant-ling/Ling-2.6-1T": 90000,
           },
         });
     } finally {

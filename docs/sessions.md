@@ -99,7 +99,7 @@ To compact earlier, set a token threshold for the session. The effective thresho
 - With either command, use `default` to restore the persona default (or the model-based threshold if none is configured). Omit the argument to show the configured and effective thresholds.
 - SDK and protocol inputs accept a safe integer of at least 50,000, or `null` for the default. They do not accept strings such as `50k`.
 
-The minimum configured threshold is 50,000 tokens. The setting applies to the main conversation and survives recovery, reloads, and persona changes. Subagents launched without a model override inherit the parent launching turn's effective threshold, including its session override. Explicit model launches use the persona's model-keyed subagent threshold or that model's default (see [subagents](subagents.md)). Ephemeral threads use the persona default, without the main session override; forks retain their source thread's threshold.
+The minimum configured threshold is 50,000 tokens. The setting applies to the main conversation and survives recovery, reloads, and persona changes. Native Tau subagents launched without a model override inherit the parent launching turn's effective threshold, including its session override. Native launches with an explicit model use the persona's model-keyed subagent threshold or that model's default (see [subagents](subagents.md)). Claude Code subagents manage their own compaction. Ephemeral threads use the persona default, without the main session override; forks retain their source thread's threshold.
 
 Changing the setting does not start compaction. The new threshold applies from the next logical turn. A running turn and its steering continuations keep their original threshold.
 

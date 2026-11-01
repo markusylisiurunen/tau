@@ -1173,6 +1173,17 @@ describe("SessionChatController", () => {
     expect(help.text).toContain("skills:\n  alpha (~/.tau/skills)");
   });
 
+  it("shows a persona compaction budget without a session override", async () => {
+    const snapshot = createSnapshot();
+    snapshot.settings.effectiveAutoCompactThresholdTokens = 80000;
+    const { controller, view } = await createControllerHarness({
+      session: new FakeSession(snapshot),
+    });
+    await controller.start();
+    expect(snapshot.settings.autoCompactThresholdTokens).toBeNull();
+    expect(view.status.footer.contextUsage).toContain("/128k (80k)");
+  });
+
   it("sets and resets auto-compaction without changing the footer context window", async () => {
     const { session, controller, view } = await createControllerHarness();
     session.setAutoCompactThreshold = vi.fn(async (thresholdTokens) => ({

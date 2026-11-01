@@ -338,7 +338,7 @@ The effective threshold uses the session override, then the persona default, the
 
 The host saves the setting and publishes a `settings.set` delta to observers. Changing it does not start compaction. A running turn and its steering continuations keep their original threshold.
 
-Reloads, persona changes, and recovery preserve the configured value. The effective threshold is recalculated for the selected persona and model. Subagents launched without a model override inherit the parent's launching-turn threshold; explicit model launches use their configured subagent threshold or the selected model's default. Ephemeral threads use the persona default without the main session override. See [automatic compaction](sessions.md#automatic-compaction) for request-size limits and costs.
+Reloads, persona changes, and recovery preserve the configured value. The effective threshold is recalculated for the selected persona and model. Native Tau subagents launched without a model override inherit the parent's launching-turn threshold. Native launches with an explicit model use the persona's subagent threshold for that model, or the model's default. Claude Code subagents manage their own compaction. Ephemeral threads use the persona default without the main session override. See [automatic compaction](sessions.md#automatic-compaction) for request-size limits and costs.
 
 ### `session.setReasoning`
 

@@ -18,6 +18,7 @@ import {
 } from "../tools/tool_names.js";
 import type { Persona, Skill } from "../types.js";
 import { ReasoningEffortSchema, ServiceTierSchema } from "../types.js";
+import { formatZodError } from "../utils/zod.js";
 import type { ConfigDeps } from "./deps.js";
 import { parseMarkdownFrontMatter } from "./markdown_frontmatter.js";
 import type { ConfigLevel } from "./paths.js";
@@ -215,7 +216,7 @@ function parsePersona(
   const parsedFrontMatter = personaFrontMatterSchema.safeParse(markdownResult.frontMatter);
   if (!parsedFrontMatter.success) {
     return {
-      error: `${file}: invalid persona frontmatter: ${parsedFrontMatter.error.message}. skipped.`,
+      error: `${file}: invalid persona frontmatter: ${formatZodError(parsedFrontMatter.error)}. skipped.`,
     };
   }
 
@@ -238,6 +239,17 @@ function parsePersona(
   const modelObj = modelResolver(provider, model);
   if (!modelObj) {
     return { error: `${file}: failed to load model "${provider}:${model}". skipped.` };
+  }
+
+  const configuredThresholds = parsedFrontMatter.data.subagentAutoCompactThresholdTokens;
+  const subagentAutoCompactThresholdTokens: Record<string, number> = {};
+  for (const [key, threshold] of Object.entries(configuredThresholds ?? {})) {
+    const target = parseModelId(key)!;
+    const targetModel = modelResolver(target.provider, target.modelId);
+    if (!targetModel) {
+      return { error: `${file}: failed to load subagent threshold model "${key}". skipped.` };
+    }
+    subagentAutoCompactThresholdTokens[`${targetModel.provider}/${targetModel.id}`] = threshold;
   }
 
   const settings: Persona["settings"] = {};
@@ -276,12 +288,7 @@ function parsePersona(
     ...(parsedFrontMatter.data.autoCompactThresholdTokens !== undefined
       ? { autoCompactThresholdTokens: parsedFrontMatter.data.autoCompactThresholdTokens }
       : {}),
-    ...(parsedFrontMatter.data.subagentAutoCompactThresholdTokens !== undefined
-      ? {
-          subagentAutoCompactThresholdTokens:
-            parsedFrontMatter.data.subagentAutoCompactThresholdTokens,
-        }
-      : {}),
+    ...(configuredThresholds !== undefined ? { subagentAutoCompactThresholdTokens } : {}),
     source,
   };
 

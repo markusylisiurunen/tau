@@ -22,6 +22,7 @@ import {
 import { buildDiffReviewInstructions } from "../core/diff_review/review_instructions.js";
 import type { HistoryDiagnostic } from "../core/history/history_manager.js";
 import { type CoreDeps, createDefaultCoreDeps } from "../core/runtime/deps.js";
+import { getEffectiveAutoCompactThresholdTokens } from "../core/session/auto_compaction_threshold.js";
 import { runDirectBashCommand } from "../core/session/direct_bash.js";
 import type { SubagentEvent } from "../core/subagents/types.js";
 import {
@@ -2694,7 +2695,9 @@ export class SessionChatController {
     const percent = windowTokens > 0 ? (contextWindowUsageTokens / windowTokens) * 100 : 0;
     const percentStr = `${formatAdaptiveNumber(percent, 1, 3)}%`;
     const threshold =
-      this.snapshot.settings.autoCompactThresholdTokens === null
+      this.snapshot.settings.autoCompactThresholdTokens === null &&
+      this.snapshot.settings.effectiveAutoCompactThresholdTokens >=
+        getEffectiveAutoCompactThresholdTokens(this.snapshot.bootstrap.model.contextWindow, null)
         ? ""
         : ` (${formatTokenWindow(this.snapshot.settings.effectiveAutoCompactThresholdTokens)})`;
     return `${stats} · ${percentStr}/${formatTokenWindow(windowTokens)}${threshold}`;

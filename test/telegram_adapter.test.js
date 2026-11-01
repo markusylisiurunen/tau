@@ -1038,72 +1038,79 @@ describe("telegram adapter", () => {
     }
   });
 
-  it("reports composite project status and provision failures", async () => {
-    const apiHarness = createApiHarness([
-      [
-        {
-          update_id: 1,
-          message: {
-            chat: { id: 12, type: "private" },
-            from: { id: 7 },
-            text: "/new",
+  it.each([183616, 80000])(
+    "reports composite project status and provision failures with budget %s",
+    async (threshold) => {
+      const apiHarness = createApiHarness([
+        [
+          {
+            update_id: 1,
+            message: {
+              chat: { id: 12, type: "private" },
+              from: { id: 7 },
+              text: "/new",
+            },
           },
-        },
-        {
-          update_id: 2,
-          message: {
-            chat: { id: 12, type: "private" },
-            from: { id: 7 },
-            text: "/status",
+          {
+            update_id: 2,
+            message: {
+              chat: { id: 12, type: "private" },
+              from: { id: 7 },
+              text: "/status",
+            },
           },
+        ],
+      ]);
+
+      const managerHarness = createSessionManagerHarness([], {
+        createSnapshot: () => {
+          const snapshot = createStatusSnapshot();
+          snapshot.settings.effectiveAutoCompactThresholdTokens = threshold;
+          return snapshot;
         },
-      ],
-    ]);
-
-    const managerHarness = createSessionManagerHarness([], {
-      createSnapshot: () => createStatusSnapshot(),
-    });
-
-    const adapter = await startAdapter({
-      projects: {
-        alpha: { repo: "owner/alpha" },
-        beta: { repo: "owner/beta" },
-        platform: {
-          projectIds: ["alpha", "beta"],
-          persona: "gpt-5.6-sol-coder:high",
-        },
-      },
-      defaultProjectId: "platform",
-      sessionManager: managerHarness.manager,
-      api: apiHarness.api,
-    });
-
-    try {
-      await waitFor(() =>
-        apiHarness.sendMessages.some((entry) => String(entry.text).includes("context usage")),
-      );
-      expect(apiHarness.sendMessages.map((entry) => entry.text)).toContain(
-        "your platform (alpha, beta) session s1 is waiting for input. it is using Claude Opus 4.6 with medium reasoning. context usage is 6.0% of 200k tokens. cumulative cost is $0.12.",
-      );
-
-      managerHarness.manager.emit({
-        type: "session-provision-failed",
-        sessionId: "s1",
-        projectId: "platform",
-        targetProjectId: "alpha",
-        diagnostic: "provision exited with code 17\ndependencies failed",
       });
-      await waitFor(() =>
-        apiHarness.sendMessages.some(
-          (entry) =>
-            entry.text ===
-            "provisioning alpha failed in your platform session s1.\nprovision exited with code 17\ndependencies failed\nthe session remains available.",
-        ),
-      );
-    } finally {
-      await adapter.close();
-    }
-  });
+
+      const adapter = await startAdapter({
+        projects: {
+          alpha: { repo: "owner/alpha" },
+          beta: { repo: "owner/beta" },
+          platform: {
+            projectIds: ["alpha", "beta"],
+            persona: "gpt-5.6-sol-coder:high",
+          },
+        },
+        defaultProjectId: "platform",
+        sessionManager: managerHarness.manager,
+        api: apiHarness.api,
+      });
+
+      try {
+        await waitFor(() =>
+          apiHarness.sendMessages.some((entry) => String(entry.text).includes("context usage")),
+        );
+        expect(apiHarness.sendMessages.map((entry) => entry.text)).toContain(
+          `your platform (alpha, beta) session s1 is waiting for input. it is using Claude Opus 4.6 with medium reasoning. context usage is 6.0% of 200k tokens${threshold === 80000 ? " (80k)" : ""}. cumulative cost is $0.12.`,
+        );
+
+        managerHarness.manager.emit({
+          type: "session-provision-failed",
+          sessionId: "s1",
+          projectId: "platform",
+          targetProjectId: "alpha",
+          diagnostic: "provision exited with code 17\ndependencies failed",
+        });
+        await waitFor(() =>
+          apiHarness.sendMessages.some(
+            (entry) =>
+              entry.text ===
+              "provisioning alpha failed in your platform session s1.\nprovision exited with code 17\ndependencies failed\nthe session remains available.",
+          ),
+        );
+      } finally {
+        await adapter.close();
+      }
+    },
+  );
 
   it("reports detailed session status", async () => {
     const chatId = 13;

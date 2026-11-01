@@ -1749,7 +1749,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       lifecycle: this.activeTurnPromise || this.runtime.isTurnRunning ? "running" : "idle",
       costTotal: this.costTotal,
       settings: {
-        autoCompactThresholdTokens: this.runtime.autoCompactThresholdTokens,
+        autoCompactThresholdTokens: this.runtime.autoCompactOverrideTokens,
         effectiveAutoCompactThresholdTokens: getEffectiveAutoCompactThresholdTokens(
           this.runtime.agent.spec.model.model.contextWindow,
           this.runtime.agent.spec.autoCompactThresholdTokens,

@@ -67,7 +67,7 @@ describe("ChatRuntime", () => {
       .spyOn(runtime.supervisor, "spawn")
       .mockReturnValue({ ok: false, reason: "test" });
     try {
-      expect(runtime.autoCompactThresholdTokens).toBeNull();
+      expect(runtime.autoCompactOverrideTokens).toBeNull();
       expect(runtime.agent.spec.autoCompactThresholdTokens).toBe(200000);
       runtime.setAutoCompactThreshold(120000);
       const launchingTools = runtime.agent.spec.tools;
@@ -92,7 +92,7 @@ describe("ChatRuntime", () => {
       runtime.setPersona(createPersona({ autoCompactThresholdTokens: 80000 }));
       expect(runtime.agent.spec.autoCompactThresholdTokens).toBe(60000);
       runtime.setAutoCompactThreshold(null);
-      expect(runtime.autoCompactThresholdTokens).toBeNull();
+      expect(runtime.autoCompactOverrideTokens).toBeNull();
       expect(runtime.agent.spec.autoCompactThresholdTokens).toBe(80000);
       runtime.setPersona(createPersona());
       expect(runtime.agent.spec.autoCompactThresholdTokens).toBeNull();
@@ -111,9 +111,9 @@ describe("ChatRuntime", () => {
       runtime.setAutoCompactThreshold(100000);
       runtime.setPersona(createPersona({ id: "first", autoCompactThresholdTokens: 90000 }));
       runtime.setReasoning("high");
-      expect(runtime.autoCompactThresholdTokens).toBe(100000);
+      expect(runtime.autoCompactOverrideTokens).toBe(100000);
       runtime.setPersona(createPersona({ id: "second", autoCompactThresholdTokens: 70000 }));
-      expect(runtime.autoCompactThresholdTokens).toBeNull();
+      expect(runtime.autoCompactOverrideTokens).toBeNull();
       expect(runtime.agent.spec.autoCompactThresholdTokens).toBe(80000);
       runtime.setAutoCompactThreshold(60000);
       runtime.setAutoCompactThreshold(null);

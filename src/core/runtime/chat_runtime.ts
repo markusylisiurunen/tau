@@ -290,7 +290,7 @@ export class ChatRuntime {
     this.refreshSpec();
   }
 
-  get autoCompactThresholdTokens(): number | null {
+  get autoCompactOverrideTokens(): number | null {
     return this.autoCompactOverride;
   }
 

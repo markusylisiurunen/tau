@@ -1,6 +1,5 @@
 import { basename, join } from "node:path";
 import { z } from "zod";
-import { MIN_AUTO_COMPACT_THRESHOLD_TOKENS } from "../../protocol/session_protocol.js";
 import type { ModelResolver } from "../models/catalog.js";
 import { parseModelId } from "../models/model_id.js";
 import type { PromptTemplate } from "../prompts.js";
@@ -22,7 +21,7 @@ import { formatZodError } from "../utils/zod.js";
 import type { ConfigDeps } from "./deps.js";
 import { parseMarkdownFrontMatter } from "./markdown_frontmatter.js";
 import type { ConfigLevel } from "./paths.js";
-import type { Config } from "./schema.js";
+import { autoCompactThresholdTokensSchema, type Config } from "./schema.js";
 import { loadSkillsContent } from "./skills_loader.js";
 import type { ThemeDefinition } from "./theme_variants.js";
 import type { VirtualBundle } from "./virtual_bundle.js";
@@ -160,17 +159,9 @@ const personaFrontMatterSchema = z
     serviceTier: ServiceTierSchema.optional(),
     allowedReasoningLevels: z.array(ReasoningEffortSchema).optional(),
     tools: z.unknown().optional(),
-    autoCompactThresholdTokens: z
-      .number()
-      .int()
-      .min(MIN_AUTO_COMPACT_THRESHOLD_TOKENS)
-      .max(Number.MAX_SAFE_INTEGER)
-      .optional(),
+    autoCompactThresholdTokens: autoCompactThresholdTokensSchema.optional(),
     subagentAutoCompactThresholdTokens: z
-      .record(
-        z.string().refine((key) => parseModelId(key) !== undefined),
-        z.number().int().min(MIN_AUTO_COMPACT_THRESHOLD_TOKENS).max(Number.MAX_SAFE_INTEGER),
-      )
+      .record(z.string(), autoCompactThresholdTokensSchema)
       .optional(),
   })
   .strip();
@@ -244,7 +235,10 @@ function parsePersona(
   const configuredThresholds = parsedFrontMatter.data.subagentAutoCompactThresholdTokens;
   const subagentAutoCompactThresholdTokens: Record<string, number> = {};
   for (const [key, threshold] of Object.entries(configuredThresholds ?? {})) {
-    const target = parseModelId(key)!;
+    const target = parseModelId(key);
+    if (!target) {
+      return { error: `${file}: invalid subagent threshold model "${key}". skipped.` };
+    }
     const targetModel = modelResolver(target.provider, target.modelId);
     if (!targetModel) {
       return { error: `${file}: failed to load subagent threshold model "${key}". skipped.` };

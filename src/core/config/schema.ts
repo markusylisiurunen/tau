@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MIN_AUTO_COMPACT_THRESHOLD_TOKENS } from "../../protocol/session_protocol.js";
 import {
   type LoadedModelResolver,
   listProviders,
@@ -27,6 +28,11 @@ import { type McpServersConfig, parseMcpServersConfig, resolveMcpServersConfig }
 import type { ConfigLevel } from "./paths.js";
 import { resolveConfigLevels } from "./paths.js";
 import { getVirtualConfigDefaults } from "./virtual_defaults.js";
+
+export const autoCompactThresholdTokensSchema = z
+  .number()
+  .int()
+  .min(MIN_AUTO_COMPACT_THRESHOLD_TOKENS);
 
 export interface Config {
   apiKeys?: Record<string, string>;

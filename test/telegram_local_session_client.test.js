@@ -94,6 +94,10 @@ describe("local Telegram session client", () => {
               123,
             ),
             persona: "gpt-5.6-sol-coder",
+            autoCompactDefaults: {
+              thresholdTokens: 128000,
+              personaThresholdTokens: { chat: 80000 },
+            },
           },
           hostConfig,
           configDeps,
@@ -137,9 +141,18 @@ describe("local Telegram session client", () => {
       expect(createSdkClient.mock.calls[1][0]).not.toHaveProperty("ownerId");
       expect(createSdkClient.mock.calls[1][1]).toBe(hostConfig);
       expect(createSdkClient.mock.calls.map((call) => call[2])).toEqual([
-        { remoteModelCatalog },
-        { remoteModelCatalog },
-        { remoteModelCatalog },
+        {
+          remoteModelCatalog,
+          autoCompactDefaults: { thresholdTokens: 128000, personaThresholdTokens: { chat: 80000 } },
+        },
+        {
+          remoteModelCatalog,
+          autoCompactDefaults: { thresholdTokens: 128000, personaThresholdTokens: { chat: 80000 } },
+        },
+        {
+          remoteModelCatalog,
+          autoCompactDefaults: { thresholdTokens: 128000, personaThresholdTokens: { chat: 80000 } },
+        },
       ]);
     } finally {
       rmSync(home, { recursive: true, force: true });

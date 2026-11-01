@@ -151,7 +151,7 @@ try {
 
 Creating a session requires the full execution environment and the creation attributes, which never change afterward. The `cwd` must be absolute and is a path in the chosen environment, which may not be where the SDK runs. A Fly Sprite session refers to an existing Sprite that the host is configured to reach. See [sessions](sessions.md) for creation attributes and [ownership and scope](ownership-and-scope.md) for which machine owns which paths.
 
-To set the main conversation's automatic-compaction threshold at creation, pass `autoCompactThresholdTokens` as a safe integer of at least 50,000. Omit it or pass `null` to use the model's context window minus 16,384 tokens. The effective threshold cannot exceed this model-based default.
+To set the main conversation's automatic-compaction threshold at creation, pass `autoCompactThresholdTokens` as a safe integer of at least 50,000. Omit it or pass `null` to use the persona default, falling back to the model's context window minus 16,384 tokens. Changing to a different persona resets the threshold to `null`. The effective threshold cannot exceed this model-based limit.
 
 Use `session.setAutoCompactThreshold(50000)` to change the threshold from the next logical turn, or `session.setAutoCompactThreshold(null)` to restore the default. Snapshot `settings` contain both `autoCompactThresholdTokens` (the configured value) and `effectiveAutoCompactThresholdTokens` (the trigger for the selected model). See [automatic compaction](sessions.md#automatic-compaction) for timing, limits, and costs.
 

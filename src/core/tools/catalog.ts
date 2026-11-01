@@ -65,6 +65,7 @@ export const ToolCatalog = {
       ...jobs.create(),
       mcp: new McpManager(options.config.mcpServers),
       subagentSystemPrompt: undefined,
+      autoCompactThresholdTokens: options.persona.autoCompactThresholdTokens ?? null,
       supervisor: new AgentSupervisor({ onEvent: () => {} }),
     });
   },
@@ -75,6 +76,7 @@ export const ToolCatalog = {
     config: Config;
     persona: Persona;
     subagentSystemPrompt: string | undefined;
+    autoCompactThresholdTokens: number | null;
     modelResolver: ModelResolver;
     supervisor: AgentSupervisor;
     jobs: AgentJobRegistry;

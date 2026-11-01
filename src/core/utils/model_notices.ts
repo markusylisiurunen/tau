@@ -6,34 +6,6 @@ export function normalizeModelNoticeKey(provider: string, modelId: string): stri
   return `${provider.trim().toLowerCase()}/${modelId.trim().toLowerCase()}`;
 }
 
-export function parseModelNoticeKey(raw: string):
-  | {
-      provider: string;
-      modelId: string;
-    }
-  | undefined {
-  const value = raw.trim();
-  if (!value) {
-    return undefined;
-  }
-
-  const separator = value.indexOf("/");
-  if (separator <= 0 || separator !== value.lastIndexOf("/") || separator >= value.length - 1) {
-    return undefined;
-  }
-
-  const provider = value.slice(0, separator).trim().toLowerCase();
-  const modelId = value.slice(separator + 1).trim();
-  if (!provider || !modelId) {
-    return undefined;
-  }
-
-  return {
-    provider,
-    modelId,
-  };
-}
-
 export function resolveModelNotice(
   config: Config | undefined,
   model: Model<Api>,

@@ -42,6 +42,9 @@ export async function createLocalTelegramSessionClient(options: {
       ...(options.reportDiagnostic ? { onDiagnostic: options.reportDiagnostic } : {}),
     },
     options.hostConfig,
-    { remoteModelCatalog: options.remoteModelCatalog },
+    {
+      remoteModelCatalog: options.remoteModelCatalog,
+      autoCompactDefaults: options.client.autoCompactDefaults,
+    },
   );
 }

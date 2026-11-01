@@ -9,6 +9,7 @@ import type {
 import { TauSessionProtocolResponseError } from "../../transport/errors.js";
 import { formatAutoCompactThreshold, parseAutoCompactThreshold } from "../commands/auto_compact.js";
 import type { TelegramBotConfig, TelegramProjectConfig } from "../config/schema.js";
+import { getEffectiveAutoCompactThresholdTokens } from "../session/auto_compaction_threshold.js";
 import { formatAdaptiveNumber, formatTokenWindow } from "../utils/format.js";
 import {
   createSpeechToTextTranscription,
@@ -679,7 +680,9 @@ function formatTelegramContextUsage(snapshot: SessionProtocolSnapshot): string {
     getAssistantContextWindow(lastAssistantMessage) || snapshot.bootstrap.model.contextWindow;
   const percent = windowTokens > 0 ? (usageTokens / windowTokens) * 100 : 0;
   const threshold =
-    snapshot.settings.autoCompactThresholdTokens === null
+    snapshot.settings.autoCompactThresholdTokens === null &&
+    snapshot.settings.effectiveAutoCompactThresholdTokens >=
+      getEffectiveAutoCompactThresholdTokens(snapshot.bootstrap.model.contextWindow, null)
       ? ""
       : ` (${formatTokenWindow(snapshot.settings.effectiveAutoCompactThresholdTokens)})`;
   return `${formatAdaptiveNumber(percent, 1, 3)}% of ${formatTokenWindow(windowTokens)} tokens${threshold}`;

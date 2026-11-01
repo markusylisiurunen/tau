@@ -69,6 +69,7 @@ Each `bots.<id>` object supports:
 | --- | --- | --- |
 | `botToken` | Yes | Telegram Bot API token. |
 | `allowedProjectIds` | No | Non-empty unique subset of configured project IDs; omission exposes all projects. |
+| `autoCompactThresholdTokens` | No | Default automatic-compaction threshold for this bot's sessions. See [compaction thresholds](#compaction-thresholds). |
 | `personaMenu` | No | Ordered list of personas offered by `/persona`; omission offers every persona. See [persona menu](#persona-menu). |
 | `allowedUserIds` | No | Integer user IDs allowed to trigger turns, commands, and callbacks. |
 | `allowedChatIds` | No | Integer chat IDs allowed to interact with the bot; also opts groups in. |
@@ -130,13 +131,13 @@ The runner loads its speech credentials and `speech.voiceId` at startup, from it
 | `/effort_high` | Selects high reasoning for future turns. |
 | `/effort_xhigh` | Selects xhigh reasoning for future turns. |
 | `/prompt` | [Records a saved prompt](prompts-and-project-context.md#telegram-prompt-picker) while idle, without starting a turn. |
-| `/auto_compact [tokens\|default]` | Shows the automatic-compaction threshold. Pass `50k` or `50000` to set it (minimum 50,000 tokens), or `default` to restore the model-based threshold. |
+| `/auto_compact [tokens\|default]` | Shows the automatic-compaction threshold. Pass `50k` or `50000` to set it (minimum 50,000 tokens), or `default` to remove the session override and use the default. |
 | `/compact` | Runs summary-only compaction while idle. |
 | `/interrupt` | Interrupts the active Tau turn. |
 | `/tts_on` | Sends a voice note after each final assistant response. |
 | `/tts_off` | Disables voice responses. |
 
-Changes to the auto-compaction threshold apply from the next turn and survive session recovery. `/status` shows context usage as a percentage of the full model window. When an override is set, it also shows the effective threshold in parentheses. See [automatic compaction](sessions.md#automatic-compaction) for limits and costs.
+Changes to the auto-compaction threshold apply from the next turn and survive session recovery. Switching to a different persona removes the override. `/status` shows context usage as a percentage of the full model window. When a session override is set, or the default threshold is below the model-based threshold, it also shows the effective threshold in parentheses. See [compaction thresholds](#compaction-thresholds) for bot defaults and [automatic compaction](sessions.md#automatic-compaction) for limits and costs.
 
 A [persona](personas.md) choice applies to the current session only; `/new` uses the project's default.
 
@@ -159,15 +160,36 @@ By default, `/persona` offers every persona in the session. A bot's `personaMenu
 ```json
 "personaMenu": [
   { "id": "gpt-6.1-sol-coder", "label": "sol" },
-  { "id": "sonnet-5.5-coder" }
+  { "id": "sonnet-5.5-coder", "autoCompactThresholdTokens": 150000 }
 ]
 ```
 
-Each entry has a required `id`, the exact persona ID, and an optional `label`. Both must be non-empty after surrounding whitespace is trimmed, IDs must be unique, and no other fields are allowed. Without a label, the picker shows the persona's own label, or its ID if it has none. The label appears in the picker and in the switch confirmation. It changes nothing else, so the persona keeps its ID, prompt, model, tools, and reasoning settings, and the TUI still shows its normal name.
+Each entry has a required `id`, the exact persona ID, an optional `label`, and an optional `autoCompactThresholdTokens` (see [compaction thresholds](#compaction-thresholds)). The ID and label must be non-empty after surrounding whitespace is trimmed, IDs must be unique, and no other fields are allowed. Without a label, the picker shows the persona's own label, or its ID if it has none. The label appears in the picker and in the switch confirmation. It changes nothing else, so the persona keeps its ID, prompt, model, tools, and reasoning settings, and the TUI still shows its normal name.
 
 The menu is matched against each session's personas when `/persona` runs, because different projects can define different personas. Listed personas that the session lacks are named in the picker message, and the rest of the menu still works. An empty list, `[]`, offers no personas.
 
-The menu only changes what the picker offers. It does not restrict which personas a session may use, and it does not change defaults. A project's `persona` still applies to new sessions even if the menu omits it. When the session's current persona is not in the menu, the picker message names it, but it is not added as a choice.
+Apart from compaction thresholds, the menu only changes what the picker offers. It does not restrict which personas a session may use, and it does not change default personas. A project's `persona` still applies to new sessions even if the menu omits it. When the session's current persona is not in the menu, the picker message names it, but it is not added as a choice.
+
+### Compaction thresholds
+
+A bot can set default [automatic-compaction](sessions.md#automatic-compaction) thresholds for its sessions. Both fields take a safe integer of at least 50,000 tokens:
+
+```json
+"engineering": {
+  "botToken": "<telegram-bot-token>",
+  "autoCompactThresholdTokens": 200000,
+  "personaMenu": [
+    { "id": "gpt-6.1-sol-coder", "autoCompactThresholdTokens": 120000 },
+    { "id": "sonnet-5.5-coder" }
+  ]
+}
+```
+
+A session uses the first threshold that is set: its `/auto_compact` override, the `personaMenu` entry whose `id` exactly matches the current persona, the bot's `autoCompactThresholdTokens`, the persona's own `autoCompactThresholdTokens`, and finally the model's context window minus 16,384 tokens. Every threshold is capped at that model-based limit. In this example, a session using `gpt-6.1-sol-coder` compacts at 120,000 tokens, and a session using any other persona compacts at 200,000 tokens. A menu entry's threshold applies whenever the session uses that persona, including through the project's default `persona`.
+
+These defaults are not saved with the session. The runner reads them at startup, so restart the runner after changing them. Recovered sessions then use the new defaults, and keep any `/auto_compact` override they had.
+
+Native subagents launched without a model use the session's effective threshold, as described in [subagents](subagents.md#automatic-compaction). Ephemeral threads use the persona's own default and ignore the bot's thresholds.
 
 ## DMs, groups, and active work
 

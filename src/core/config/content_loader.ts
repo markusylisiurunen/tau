@@ -1,6 +1,7 @@
 import { basename, join } from "node:path";
 import { z } from "zod";
 import type { ModelResolver } from "../models/catalog.js";
+import { parseModelId } from "../models/model_id.js";
 import type { PromptTemplate } from "../prompts.js";
 import {
   TOOL_NAME_AGENTS,
@@ -16,10 +17,11 @@ import {
 } from "../tools/tool_names.js";
 import type { Persona, Skill } from "../types.js";
 import { ReasoningEffortSchema, ServiceTierSchema } from "../types.js";
+import { formatZodError } from "../utils/zod.js";
 import type { ConfigDeps } from "./deps.js";
 import { parseMarkdownFrontMatter } from "./markdown_frontmatter.js";
 import type { ConfigLevel } from "./paths.js";
-import type { Config } from "./schema.js";
+import { autoCompactThresholdTokensSchema, type Config } from "./schema.js";
 import { loadSkillsContent } from "./skills_loader.js";
 import type { ThemeDefinition } from "./theme_variants.js";
 import type { VirtualBundle } from "./virtual_bundle.js";
@@ -157,6 +159,10 @@ const personaFrontMatterSchema = z
     serviceTier: ServiceTierSchema.optional(),
     allowedReasoningLevels: z.array(ReasoningEffortSchema).optional(),
     tools: z.unknown().optional(),
+    autoCompactThresholdTokens: autoCompactThresholdTokensSchema.optional(),
+    subagentAutoCompactThresholdTokens: z
+      .record(z.string(), autoCompactThresholdTokensSchema)
+      .optional(),
   })
   .strip();
 
@@ -200,7 +206,9 @@ function parsePersona(
 
   const parsedFrontMatter = personaFrontMatterSchema.safeParse(markdownResult.frontMatter);
   if (!parsedFrontMatter.success) {
-    return { error: `${file}: missing required fields (id, provider, model). skipped.` };
+    return {
+      error: `${file}: invalid persona frontmatter: ${formatZodError(parsedFrontMatter.error)}. skipped.`,
+    };
   }
 
   const { id, label, provider, model, description } = parsedFrontMatter.data;
@@ -222,6 +230,20 @@ function parsePersona(
   const modelObj = modelResolver(provider, model);
   if (!modelObj) {
     return { error: `${file}: failed to load model "${provider}:${model}". skipped.` };
+  }
+
+  const configuredThresholds = parsedFrontMatter.data.subagentAutoCompactThresholdTokens;
+  const subagentAutoCompactThresholdTokens: Record<string, number> = {};
+  for (const [key, threshold] of Object.entries(configuredThresholds ?? {})) {
+    const target = parseModelId(key);
+    if (!target) {
+      return { error: `${file}: invalid subagent threshold model "${key}". skipped.` };
+    }
+    const targetModel = modelResolver(target.provider, target.modelId);
+    if (!targetModel) {
+      return { error: `${file}: failed to load subagent threshold model "${key}". skipped.` };
+    }
+    subagentAutoCompactThresholdTokens[`${targetModel.provider}/${targetModel.id}`] = threshold;
   }
 
   const settings: Persona["settings"] = {};
@@ -257,6 +279,10 @@ function parsePersona(
     ...(finalDescription && { description: finalDescription }),
     ...(finalAllowedReasoningLevels ? { allowedReasoningLevels: finalAllowedReasoningLevels } : {}),
     subagentLaunchModels: [],
+    ...(parsedFrontMatter.data.autoCompactThresholdTokens !== undefined
+      ? { autoCompactThresholdTokens: parsedFrontMatter.data.autoCompactThresholdTokens }
+      : {}),
+    ...(configuredThresholds !== undefined ? { subagentAutoCompactThresholdTokens } : {}),
     source,
   };
 

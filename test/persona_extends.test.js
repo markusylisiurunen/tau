@@ -60,6 +60,52 @@ describe("custom personas", () => {
     };
   }
 
+  it.each([
+    [
+      "autoCompactThresholdTokens: 80000\nsubagentAutoCompactThresholdTokens: {OpenAI/gpt-5.4: 60000, amazon-bedrock/amazon.nova-2-lite-v1:0: 80000, ant-ling/Ling-2.6-1T: 90000}",
+      true,
+    ],
+    ["autoCompactThresholdTokens: 49999", false],
+    ["autoCompactThresholdTokens: 50000.5", false],
+    ["autoCompactThresholdTokens: '80k'", false],
+    ["autoCompactThresholdTokens: null", false],
+    [`autoCompactThresholdTokens: ${Number.MAX_SAFE_INTEGER + 1}`, false],
+    ["subagentAutoCompactThresholdTokens: {openai/: 60000}", false],
+    ["subagentAutoCompactThresholdTokens: {openai/gpt-5.4: null}", false],
+    [`subagentAutoCompactThresholdTokens: {openai/gpt-5.4: ${Number.MAX_SAFE_INTEGER + 1}}`, false],
+    ["subagentAutoCompactThresholdTokens: {unknown/model: 60000}", false],
+    ["subagentAutoCompactThresholdTokens: {claude-code/claude-opus-5-5: 60000}", false],
+    ["subagentAutoCompactThresholdTokens: {openai/gpt-5.4: 49999}", false],
+  ])("validates persona compaction policy %s", async (fields, valid) => {
+    const fx = setupFixture();
+    try {
+      const dir = join(fx.home, ".config", "tau", "personas");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        join(dir, "custom.md"),
+        `---\nid: custom\nprovider: anthropic\nmodel: claude-haiku-4-5\n${fields}\n---\nprompt`,
+      );
+      const { personas, errors } = await loadAllContentWithModelResolver(
+        {},
+        { deps: createConfigDeps(fx), cwd: fx.cwd },
+      );
+      const persona = personas.find((entry) => entry.id === "custom");
+      expect(Boolean(persona)).toBe(valid);
+      expect(errors).toHaveLength(valid ? 0 : 1);
+      if (valid)
+        expect(persona).toMatchObject({
+          autoCompactThresholdTokens: 80000,
+          subagentAutoCompactThresholdTokens: {
+            "openai/gpt-5.4": 60000,
+            "amazon-bedrock/amazon.nova-2-lite-v1:0": 80000,
+            "ant-ling/Ling-2.6-1T": 90000,
+          },
+        });
+    } finally {
+      fx.cleanup();
+    }
+  });
+
   it("requires a self-contained prompt and does not inherit settings", async () => {
     const fx = setupFixture();
     try {

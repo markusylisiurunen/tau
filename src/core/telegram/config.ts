@@ -1,9 +1,10 @@
 import { readFileSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { z } from "zod";
-import type {
-  TelegramBotConfig as SchemaTelegramBotConfig,
-  TelegramProjectConfig as SchemaTelegramProjectConfig,
+import {
+  autoCompactThresholdTokensSchema,
+  type TelegramBotConfig as SchemaTelegramBotConfig,
+  type TelegramProjectConfig as SchemaTelegramProjectConfig,
 } from "../config/schema.js";
 import { formatPersonaReference, parsePersonaReference } from "../persona_reference.js";
 import { REASONING_LEVELS } from "../types.js";
@@ -59,10 +60,17 @@ const telegramTopLevelSchema = z
 const telegramBotSchema = z
   .object({
     botToken: nonEmptyStringSchema,
+    autoCompactThresholdTokens: autoCompactThresholdTokensSchema.optional(),
     allowedProjectIds: stringListSchema.min(1, "must not be empty.").optional(),
     personaMenu: z
       .array(
-        z.object({ id: nonEmptyStringSchema, label: nonEmptyStringSchema.optional() }).strict(),
+        z
+          .object({
+            id: nonEmptyStringSchema,
+            label: nonEmptyStringSchema.optional(),
+            autoCompactThresholdTokens: autoCompactThresholdTokensSchema.optional(),
+          })
+          .strict(),
       )
       .refine((entries) => new Set(entries.map((entry) => entry.id)).size === entries.length, {
         message: "must contain unique persona ids.",

@@ -21,7 +21,10 @@ import { ChatRuntime, type ChatRuntimeEnvironment } from "../core/runtime/chat_r
 import type { CoreDeps } from "../core/runtime/deps.js";
 import type { RuntimePromptBootstrap } from "../core/runtime/runtime_bootstrap.js";
 import type { SessionPromptComposition } from "../core/runtime/session_prompt_composer.js";
-import { getEffectiveAutoCompactThresholdTokens } from "../core/session/auto_compaction_threshold.js";
+import {
+  type AutoCompactDefaults,
+  getEffectiveAutoCompactThresholdTokens,
+} from "../core/session/auto_compaction_threshold.js";
 import type { SubagentEvent } from "../core/subagents/types.js";
 import type { ToolActivity } from "../core/tools/activity.js";
 import { buildToolRunPresentation, TOOL_UI_FACET_VERSION } from "../core/tools/presentation.js";
@@ -133,6 +136,7 @@ export type LocalSessionBootstrapResolver = (args: {
 }) => Promise<LocalSessionResolvedBootstrap>;
 
 export type LocalSessionHostSessionOptions = {
+  autoCompactDefaults?: AutoCompactDefaults;
   executionEnvironmentResolver: ExecutionEnvironmentResolver;
   includeAgentContext: boolean;
   environment: ChatRuntimeEnvironment;
@@ -334,6 +338,7 @@ export class LocalSessionHost implements TauSessionHost {
       sessionId,
       createdAt,
       persona: bootstrap.persona,
+      autoCompactDefaults: this.sessionOptions.autoCompactDefaults,
       backend: executionEnvironment.getToolExecutionBackend(),
       clientTools: () => this.clientToolBroker.getToolDefinitions(sessionId),
       modelResolver: bootstrap.modelResolver,
@@ -1744,7 +1749,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       lifecycle: this.activeTurnPromise || this.runtime.isTurnRunning ? "running" : "idle",
       costTotal: this.costTotal,
       settings: {
-        autoCompactThresholdTokens: this.runtime.agent.spec.autoCompactThresholdTokens,
+        autoCompactThresholdTokens: this.runtime.autoCompactOverrideTokens,
         effectiveAutoCompactThresholdTokens: getEffectiveAutoCompactThresholdTokens(
           this.runtime.agent.spec.model.model.contextWindow,
           this.runtime.agent.spec.autoCompactThresholdTokens,

@@ -20,6 +20,7 @@ function fixture(overrides = {}) {
     backend: {},
     jobs: {},
     config: {},
+    autoCompactThresholdTokens: 120000,
     history: {},
     cwd: "/repo",
     subagentSystemPrompt: "child instructions",
@@ -302,5 +303,32 @@ describe("worker traces", () => {
     for (let i = 0; i < 4096; i++) trace.append({ kind: "status", status: "working" });
     expect(trace.trace({}).historyEvicted).toBe(true);
     expect(() => trace.readContent({ ref: entry.content.ref })).toThrow();
+  });
+});
+
+describe("subagent compaction thresholds", () => {
+  it.each([
+    [undefined, undefined, 120000],
+    [undefined, 80000, 120000],
+    ["anthropic/claude-opus-5-5:high", 80000, 80000],
+    ["anthropic/claude-opus-5-5:medium", undefined, null],
+    ["openai/gpt-6.1-sol:high", 70000, 70000],
+    ["amazon-bedrock/amazon.nova-2-lite-v1:0:high", 80000, 80000],
+    ["openai/gpt-6.1-sol:high", undefined, null],
+    ["openai/gpt-6.1-sol:high", 9000000, null],
+  ])("resolves launch %s with configured budget %s", async (model, budget, expected) => {
+    const { options, api, supervisor } = fixture();
+    options.persona.subagentLaunchModels = model ? [model] : [];
+    options.persona.autoCompactThresholdTokens = 200000;
+    const key =
+      model?.slice(0, model.lastIndexOf(":")) ??
+      `${options.persona.model.provider}/${options.persona.model.id}`;
+    options.persona.subagentAutoCompactThresholdTokens =
+      budget === undefined ? {} : { [key]: budget };
+    await api.spawn([{ title: "child", prompt: "work", ...(model ? { model } : {}) }], context());
+    const config = supervisor.spawn.mock.calls[0][0].runtimeConfig;
+    expect(config.autoCompactThresholdTokens).toBe(
+      Math.min(expected ?? Infinity, config.model.contextWindow - 16384),
+    );
   });
 });

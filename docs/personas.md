@@ -92,6 +92,20 @@ Each custom persona is complete on its own. It does not inherit a provider, mode
 | `serviceTier` | `priority` or `flex`. Used only by `openai` and `openai-codex`. |
 | `allowedReasoningLevels` | Array of reasoning efforts offered by the TUI selector. |
 | `tools` | List of persona-selectable tools. |
+| `autoCompactThresholdTokens` | Default automatic-compaction threshold: a safe integer of at least 50,000 tokens. |
+| `subagentAutoCompactThresholdTokens` | Map from `<provider>/<model>` IDs (without reasoning effort) to safe integer thresholds of at least 50,000 tokens for native Tau subagents launched with that model. |
+
+For example, these optional frontmatter fields give the main conversation a 200,000-token default and explicit launches of one subagent model an 80,000-token default:
+
+```yaml
+autoCompactThresholdTokens: 200000
+subagentAutoCompactThresholdTokens:
+  openai/gpt-6.1-sol: 80000
+```
+
+In `subagentAutoCompactThresholdTokens` keys, the provider is lowercased and the model ID is kept exactly as written, so `OpenAI/gpt-6.1-sol` and `openai/gpt-6.1-sol` name the same model. The provider must be known. A model ID missing from the catalog is allowed, as for `model`. Claude Code models are not allowed because Claude Code manages its own compaction.
+
+Thresholds are capped at the selected model's context window minus 16,384 tokens. A session's `/auto-compact` override takes precedence over the persona default, and so do a Telegram bot's thresholds. See [sessions](sessions.md) and [subagents](subagents.md) for inheritance and reset behavior.
 
 Every persona can use all discovered skills. If a custom persona omits `tools`, Tau enables the standard tools and `agents`. A `tools` list without `agents` prevents the agent from starting or managing subagents. See [skills](skills.md) and [subagents](subagents.md) for those contracts.
 
@@ -158,6 +172,7 @@ An invalid persona is skipped and reported as a configuration warning. Other val
 - an `id` that does not exactly match the filename;
 - an unknown provider or an unresolved model;
 - an invalid reasoning effort or service tier;
+- an automatic-compaction threshold below 50,000, or a `subagentAutoCompactThresholdTokens` key with an unknown provider or the `claude-code` provider;
 - an unknown persona tool.
 
 `/reload` shows warnings, with file paths, in the transcript. For a new local session, `tau --debug --persona <id>` shows the selected model, settings, skills, subagents, tools, and the complete prompt. If an edit seems to have no effect in a remote session, confirm the session's execution environment and `cwd` before editing another copy of the file. [Troubleshooting](troubleshooting.md) covers that check in more detail.

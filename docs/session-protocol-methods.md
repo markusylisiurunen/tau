@@ -332,13 +332,13 @@ result: {
 }
 ```
 
-`thresholdTokens` must be a safe integer of at least 50,000, or `null` to restore the model-based default. Numeric strings are rejected. Session creation accepts the same values in the optional `autoCompactThresholdTokens` field, which defaults to `null`.
+`thresholdTokens` must be a safe integer of at least 50,000, or `null` to remove the session override and use the default threshold. Numeric strings are rejected. Session creation accepts the same values in the optional `autoCompactThresholdTokens` field, which defaults to `null`.
 
-The default threshold is the model's context window minus 16,384 tokens. With an override, the effective threshold is the smaller of the configured value and that default. A model with a small context window can therefore have an effective threshold below 50,000.
+The effective threshold uses the session override, then any host default (such as [Telegram bot thresholds](telegram.md#compaction-thresholds)), then the persona default, then the model's context window minus 16,384 tokens. It cannot exceed that model-based limit. A model with a small context window can therefore have an effective threshold below 50,000.
 
 The host saves the setting and publishes a `settings.set` delta to observers. Changing it does not start compaction. A running turn and its steering continuations keep their original threshold.
 
-Reloads, persona changes, and recovery preserve the configured value. The effective threshold is recalculated for the selected model. Subagents and ephemeral threads use their model-based defaults. See [automatic compaction](sessions.md#automatic-compaction) for request-size limits and costs.
+Reloads, reasoning changes, recovery, and `session.setPersona` with the current persona ID preserve the configured value. `session.setPersona` with a different persona ID resets it to `null`. The effective threshold is recalculated for the selected persona and model. Native Tau subagents launched without a model override inherit the parent's launching-turn threshold. Native launches with an explicit model use the persona's subagent threshold for that model, or the model's default. Claude Code subagents manage their own compaction. Ephemeral threads use the persona default without the main session override. See [automatic compaction](sessions.md#automatic-compaction) for request-size limits and costs.
 
 ### `session.setReasoning`
 

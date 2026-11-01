@@ -157,6 +157,18 @@ export async function startTelegramRuntime(
       }
       return await options.createSessionClient({
         ...client,
+        autoCompactDefaults: {
+          ...(bot.autoCompactThresholdTokens !== undefined
+            ? { thresholdTokens: bot.autoCompactThresholdTokens }
+            : {}),
+          personaThresholdTokens: Object.fromEntries(
+            (bot.personaMenu ?? []).flatMap((entry) =>
+              entry.autoCompactThresholdTokens === undefined
+                ? []
+                : [[entry.id, entry.autoCompactThresholdTokens]],
+            ),
+          ),
+        },
         clientTools: createTelegramFileTools(createTelegramApi(bot.botToken), chatId),
       });
     },

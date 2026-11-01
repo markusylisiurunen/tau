@@ -111,7 +111,14 @@ describe("telegram runtime", () => {
         config: createTelegramConfig({
           workspaceRoot: join(root, "managed"),
           projects: { alpha: { directory: root } },
-          bots: { first: { botToken: "first-token" }, second: { botToken: "second-token" } },
+          bots: {
+            first: {
+              botToken: "first-token",
+              autoCompactThresholdTokens: 128000,
+              personaMenu: [{ id: "chat", autoCompactThresholdTokens: 80000 }],
+            },
+            second: { botToken: "second-token" },
+          },
         }),
         createSessionClient: async (options) => {
           clients.push(options);
@@ -128,6 +135,13 @@ describe("telegram runtime", () => {
         await manager.createSession({ projectId: "alpha", ownerId });
       }
       await vi.waitFor(() => expect(clients).toHaveLength(2));
+      expect(
+        clients.find((client) => client.ownerId === "telegram:first:chat:123").autoCompactDefaults,
+      ).toEqual({ thresholdTokens: 128000, personaThresholdTokens: { chat: 80000 } });
+      expect(
+        clients.find((client) => client.ownerId === "telegram:second:chat:-456")
+          .autoCompactDefaults,
+      ).toEqual({ personaThresholdTokens: {} });
       const content = Buffer.from("ffd8ffe000104a464946000101", "hex");
       for (const client of clients) {
         expect(client.clientTools.map((tool) => tool.schema.name)).toEqual([

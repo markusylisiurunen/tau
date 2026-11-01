@@ -54,7 +54,10 @@ function getInheritedSubagentTools(persona: Persona): SubagentToolName[] {
   return normalizeTools(selected);
 }
 
-type NativeSubagentSettings = Omit<NativeSubagentConfig, "systemPrompt" | "workingDirectory" | "autoCompactThresholdTokens">;
+type NativeSubagentSettings = Omit<
+  NativeSubagentConfig,
+  "systemPrompt" | "workingDirectory" | "autoCompactThresholdTokens"
+>;
 export type SubagentEffectiveSettings =
   | NativeSubagentSettings
   | Omit<ClaudeCodeSubagentConfig, "workingDirectory">;

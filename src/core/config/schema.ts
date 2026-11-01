@@ -1,4 +1,3 @@
-import { parseModelId } from "../models/model_id.js";
 import { z } from "zod";
 import {
   type LoadedModelResolver,
@@ -6,6 +5,7 @@ import {
   loadModelResolver,
   type ModelResolver,
 } from "../models/catalog.js";
+import { parseModelId } from "../models/model_id.js";
 import { formatPersonaReference, parsePersonaReference } from "../persona_reference.js";
 import { parseSubagentLaunchModelList } from "../subagents/launch_model.js";
 import { REASONING_LEVELS } from "../types.js";

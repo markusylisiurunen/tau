@@ -72,9 +72,14 @@ describe("ChatRuntime", () => {
       runtime.setAutoCompactThreshold(120000);
       const launchingTools = runtime.agent.spec.tools;
       runtime.setAutoCompactThreshold(60000);
-      await launchingTools.get("spawn_agent").execute(
-        { id: "spawn", name: "spawn_agent", arguments: { title: "child", prompt: "work" } },
+      await launchingTools.get("code").execute(
         {
+          id: "spawn",
+          name: "code",
+          arguments: { code: 'await tau.agents.spawn({ title: "child", prompt: "work" });' },
+        },
+        {
+          signal: new AbortController().signal,
           agentId: "parent",
           turnId: "turn",
           assistantMessageId: "assistant",

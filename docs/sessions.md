@@ -10,8 +10,12 @@ A session also gets creation attributes, which never change. They are short stri
 
 - `source`: the client that created the session, such as `tui` or `sdk`.
 - `repository`: a normalized `host/owner/repository` value. Composite workspaces use a comma-separated list.
+- `machine`: the hostname of the execution environment, which may differ from the machine that runs the client or host.
+- `cwd`: the session's working directory in that execution environment.
 
-A local TUI can fill in `repository` before creating the session, because it manages the local execution environment directly. A remote host never inspects a path to work out attributes. The remote TUI sends `source: "tui"`. SDK and protocol clients should send complete attributes themselves.
+Tau sets `machine` and `cwd` on every new session and replaces any values the client sends for those two keys. Recovering a saved session keeps its attributes unchanged, so older saved sessions may lack these two attributes.
+
+Clients set all other attributes. A local TUI can fill in `repository` before creating the session, because it manages the local execution environment directly. A remote host never inspects a path to work out `repository`. The remote TUI sends `source: "tui"`. SDK and protocol clients should send the other attributes they need themselves.
 
 A session's execution environment and working directory are fixed when it is created. `/new` creates another session in the same environment, with the current persona and reasoning settings. The existing session is kept, unchanged.
 

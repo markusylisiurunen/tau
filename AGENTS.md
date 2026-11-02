@@ -54,7 +54,7 @@ Rules that follow:
 
 - Every agent-visible access goes through `ExecutionEnvironment` and `ToolExecutionBackend` (`src/execution/execution_environment.ts`, `src/core/tools/execution_backend.ts`), even for local sessions. Co-location must never create a second runtime path or a local-only filesystem shortcut.
 - Client and host code must not inspect execution-environment paths. The only exception is narrow pre-creation metadata a client reads from an environment it manages directly.
-- Session creation attributes are complete, authoritative client input. Host and stores never infer or normalize them.
+- Session creation attributes are authoritative client input, except `machine` and `cwd`. The host sets those two from the execution environment when it creates a session, and they replace any client values. Host and stores never infer or normalize other attributes, and recovery never changes saved attributes.
 - Process-local temp paths come from `node:os` `tmpdir()`, never a hard-coded `/tmp`. Target temp paths come from target capabilities, never from the caller's temp directory.
 - Model catalogs and their cache belong to the host. Model metadata comes only from the bundled and refreshed catalogs. Execution environments and backends never read the cache; host-side config resolution may receive an immutable catalog snapshot. A live session keeps one catalog generation until explicit reload. Startup refresh is async and never a recurring timer.
 - API-key config is global-only (credential precedence: `src/core/auth/`). Codex OAuth uses exactly one active stored account. Do not add session pinning, quota-based selection, or failover.

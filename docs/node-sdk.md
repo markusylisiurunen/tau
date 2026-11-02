@@ -149,7 +149,7 @@ try {
 
 `client.sessions.create(input)` sends `session.create`, then observes the new session before returning. `client.sessions.observe(sessionId)` observes an existing session. `client.sessions.list()` returns `{ sessionId, lifecycle }` for each session.
 
-Creating a session requires the full execution environment and the creation attributes, which never change afterward. The `cwd` must be absolute and is a path in the chosen environment, which may not be where the SDK runs. A Fly Sprite session refers to an existing Sprite that the host is configured to reach. See [sessions](sessions.md) for creation attributes and [ownership and scope](ownership-and-scope.md) for which machine owns which paths.
+Creating a session requires the full execution environment and the creation attributes, which never change afterward. Tau sets the `machine` and `cwd` attributes itself and replaces any values you send for them. The `cwd` of the execution environment must be absolute and is a path in the chosen environment, which may not be where the SDK runs. A Fly Sprite session refers to an existing Sprite that the host is configured to reach. See [sessions](sessions.md) for creation attributes and [ownership and scope](ownership-and-scope.md) for which machine owns which paths.
 
 To set the main conversation's automatic-compaction threshold at creation, pass `autoCompactThresholdTokens` as a safe integer of at least 50,000. Omit it or pass `null` to use the persona default, falling back to the model's context window minus 16,384 tokens. Applying a persona resets the threshold to `null`, even when reapplying the same persona, unless the call supplies a new threshold. The effective threshold cannot exceed this model-based limit.
 

@@ -357,7 +357,10 @@ describe("telegram session manager", () => {
       }),
     });
 
-    const created = await manager.createSession({ projectId: "demo" });
+    const created = await manager.createSession({
+      projectId: "demo",
+      ownerId: "telegram:ada:chat:123",
+    });
     expect(["queued", "preparing-workspace"]).toContain(created.state);
     await expect(manager.setPersona(created.id, "other")).rejects.toMatchObject({
       code: "not_ready",
@@ -380,6 +383,7 @@ describe("telegram session manager", () => {
         attributes: {
           source: "telegram",
           project: "demo",
+          telegram_bot: "ada",
           repository: "example.com/demo",
         },
       }),

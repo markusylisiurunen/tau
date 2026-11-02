@@ -4967,6 +4967,10 @@ function validateSampleParams(
   return { ok: true, value: parsed.data };
 }
 
+export function parseSessionAttributes(value: unknown): Record<string, string> {
+  return sessionAttributesSchema.parse(value);
+}
+
 export function parseAutoCompactThresholdTokens(value: unknown): number | null {
   const parsed = autoCompactThresholdTokensSchema.safeParse(value);
   if (!parsed.success) {

@@ -45,7 +45,7 @@ type SearchResult = { sessions: Session[]; nextCursor?: string };
 - `limit`: integer 1–75, default 10.
 - `cursor`: opaque `nextCursor` from the preceding page; keep the query and attributes unchanged.
 
-Without a query or attributes, search returns the most recently updated sessions. Conventional attributes include `source` (often `tui` or `telegram`) and `repository` (`host/owner/repository`; composite workspaces use comma-delimited repositories). Attributes may be absent. A repository substring filter can match both individual and composite workspaces.
+Without a query or attributes, search returns the most recently updated sessions. Conventional attributes include `source` (often `tui` or `telegram`) and `repository` (`host/owner/repository`; composite workspaces use comma-delimited repositories), `machine` (execution environment hostname), `cwd` (working directory in that environment), and `telegram_bot` (configured Telegram bot ID). Attributes may be absent. A repository substring filter can match both individual and composite workspaces.
 
 Timestamps are Unix milliseconds. A digest can be absent or stale; `updatedThroughEntryId` identifies the latest entry it covers. Snippets are bounded excerpts. A digest or snippet may already answer the question; read the transcript only when needed. When `webUrl` is present, return it directly if the user asks for a conversation link. Local-only sessions have no browser URL.
 

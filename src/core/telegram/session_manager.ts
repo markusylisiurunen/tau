@@ -1777,9 +1777,11 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
           configuredRepository,
       ),
     );
+    const botId = /^telegram:(.+):chat:-?\d+$/.exec(entry.record.ownerId ?? "")?.[1];
     return {
       source: "telegram",
       project: entry.record.projectId,
+      ...(botId ? { telegram_bot: botId } : {}),
       ...(repository ? { repository } : {}),
     };
   }

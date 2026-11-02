@@ -100,6 +100,7 @@ import {
   createSessionProtocolEphemeralMessage,
   createSessionProtocolSubagentActivitiesMessage,
   parseAutoCompactThresholdTokens,
+  parseSessionAttributes,
   projectSessionProtocolNoticePresentation,
   projectSessionProtocolSubagentActivity,
   SESSION_PROTOCOL_MAX_SUBAGENT_ACTIVITIES,
@@ -233,7 +234,30 @@ export class LocalSessionHost implements TauSessionHost {
 
     let hostedSession: LocalHostedSessionHandle;
     try {
-      hostedSession = await this.createLocalSessionHandle(executionEnvironment, undefined, input);
+      const result = await executionEnvironment
+        .getToolExecutionBackend()
+        .runNodeScript('process.stdout.write(require("node:os").hostname())', [], {
+          timeoutMs: 30_000,
+          maxCaptureBytes: 4_096,
+        });
+      if (
+        result.exitCode !== 0 ||
+        result.truncated ||
+        result.timedOut ||
+        result.aborted ||
+        !result.stdout.trim()
+      ) {
+        throw new Error("failed to determine execution machine hostname");
+      }
+      const attributes = parseSessionAttributes({
+        ...input.attributes,
+        machine: result.stdout.trim(),
+        cwd: executionEnvironment.snapshot().cwd,
+      });
+      hostedSession = await this.createLocalSessionHandle(executionEnvironment, undefined, {
+        ...input,
+        attributes,
+      });
     } catch (error) {
       if (!this.sessionsHasExecutionEnvironment(executionEnvironment)) {
         await executionEnvironment.dispose();

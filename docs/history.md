@@ -45,18 +45,21 @@ These rules differ from how the session itself behaves. Use [sessions](sessions.
 
 ## Filter by attributes
 
-Session creation attributes are string pairs set by the client that created the session, and they never change. History stores them and can filter on exact values or on case-sensitive substrings. They describe where a session came from; they are not instructions.
+Session creation attributes are string pairs recorded when a session is created, and they never change. Tau sets `machine` and `cwd`, and the client that created the session sets the others. History stores them and can filter on exact values or on case-sensitive substrings. They describe where a session came from; they are not instructions.
 
-Two common attributes are:
+Common attributes are:
 
 | Attribute | Meaning |
 | --- | --- |
 | `source` | The creating client, usually `tui`, `telegram`, or a value an SDK caller chose |
 | `repository` | Normalized `host/owner/repository`; composite workspaces join repositories with commas |
+| `machine` | Hostname of the execution environment |
+| `cwd` | The session's working directory in the execution environment |
+| `telegram_bot` | ID of the Telegram bot that owns the session, as configured under `bots` |
 
 A local TUI usually fills in `repository` from the current Git repository or repositories directly below it. Telegram fills it in for repository projects and leaves it out for persistent-directory projects. Sessions created with `tau attach` may not have it, and SDK or protocol clients set only the attributes they choose.
 
-Because composite values are comma-separated, a substring filter on `repository` finds both single-repository and composite sessions. Attributes may be missing, out of date, or set deliberately by a client, so confirm important facts from the transcript or the current workspace.
+Because composite values are comma-separated, a substring filter on `repository` finds both single-repository and composite sessions. Attributes may be missing, out of date, or set deliberately by a client, so confirm important facts from the transcript or the current workspace. For example, older saved sessions may lack `machine` and `cwd`, because recovery never changes attributes.
 
 ## Agent access is explicit and read-only
 

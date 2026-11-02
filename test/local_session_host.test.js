@@ -436,7 +436,7 @@ describe("LocalSessionHost", () => {
     const options = {
       persona: first,
       personas: [first, second],
-      autoCompactDefaults: { thresholdTokens: 128000, personaThresholdTokens: { second: 80000 } },
+      autoCompactDefaults: { thresholdTokens: 128000 },
     };
     let host = createHostForEnvironment(store, environment, options);
     try {
@@ -469,7 +469,7 @@ describe("LocalSessionHost", () => {
       await session.setAutoCompactThreshold(null);
       expect((await session.snapshot()).settings.effectiveAutoCompactThresholdTokens).toBe(73616);
       await host.shutdown();
-      options.autoCompactDefaults.personaThresholdTokens.second = 70000;
+      options.autoCompactDefaults.thresholdTokens = 70000;
       host = createHostForEnvironment(store, environment, options);
       session = await host.observeSession(id);
       expect((await session.snapshot()).settings).toMatchObject({
@@ -480,7 +480,7 @@ describe("LocalSessionHost", () => {
       await session.setPersona("first");
       expect((await session.snapshot()).settings).toMatchObject({
         autoCompactThresholdTokens: null,
-        effectiveAutoCompactThresholdTokens: 128000,
+        effectiveAutoCompactThresholdTokens: 70000,
       });
     } finally {
       await host.shutdown();

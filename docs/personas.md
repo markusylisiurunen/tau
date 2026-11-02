@@ -127,7 +127,7 @@ A `tools` list replaces the defaults. Names are lowercased and duplicates remove
 }
 ```
 
-The most specific `defaultPersona` wins. The ID must match exactly, including case. An unknown default produces a warning, and Tau uses the first available persona. Telegram [workspace startup and presets](telegram.md#startup-and-presets) report an error instead.
+The most specific `defaultPersona` wins. The ID must match exactly, including case. An unknown default produces a warning, and Tau uses the first available persona. Telegram [workspace startup and presets](telegram.md#startup-and-presets) select the default the same way.
 
 Override the default for one TUI launch:
 
@@ -149,7 +149,7 @@ This command matches the ID case-insensitively. `Ctrl+P` cycles through the avai
 
 `reasoning` is the persona's default effort. A startup suffix, the session reasoning command, or `Shift+Tab` can override it. You can change reasoning while a turn is running, but the running turn keeps the model and tool settings it started with. The new effort applies from the next submitted or queued turn.
 
-`allowedReasoningLevels` sets which values the TUI cycles through for the persona. It also limits the effort applied through `setPersona`, including a Telegram preset or the effort suffix of a workspace default applied that way. TUI startup suffixes and `session.setReasoning` can still set other levels. When it is omitted, the TUI offers all standard levels for a model that supports reasoning. For a model whose catalog entry says `reasoning: false`, the selector shows only `none`.
+`allowedReasoningLevels` sets which values the TUI cycles through for the persona. It also limits an effort passed to `setPersona`, including a Telegram preset's `reasoning`. TUI startup suffixes, `defaultPersona` suffixes, and `session.setReasoning` can still set other levels. When it is omitted, the TUI offers all standard levels for a model that supports reasoning. For a model whose catalog entry says `reasoning: false`, the selector shows only `none`.
 
 An empty `allowedReasoningLevels` does not create an empty selector. The TUI uses its normal model-aware choices.
 

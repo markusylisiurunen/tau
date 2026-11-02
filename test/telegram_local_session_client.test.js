@@ -96,7 +96,6 @@ describe("local Telegram session client", () => {
             personaSelection: { personaId: "gpt-6.1-sol-coder", reasoning: "high" },
             autoCompactDefaults: {
               thresholdTokens: 128000,
-              personaThresholdTokens: { chat: 80000 },
             },
           },
           hostConfig,
@@ -143,17 +142,17 @@ describe("local Telegram session client", () => {
         {
           remoteModelCatalog,
           initialPersonaSelection: { personaId: "gpt-6.1-sol-coder", reasoning: "high" },
-          autoCompactDefaults: { thresholdTokens: 128000, personaThresholdTokens: { chat: 80000 } },
+          autoCompactDefaults: { thresholdTokens: 128000 },
         },
         {
           remoteModelCatalog,
           initialPersonaSelection: { personaId: "gpt-6.1-sol-coder", reasoning: "high" },
-          autoCompactDefaults: { thresholdTokens: 128000, personaThresholdTokens: { chat: 80000 } },
+          autoCompactDefaults: { thresholdTokens: 128000 },
         },
         {
           remoteModelCatalog,
           initialPersonaSelection: { personaId: "gpt-6.1-sol-coder", reasoning: "high" },
-          autoCompactDefaults: { thresholdTokens: 128000, personaThresholdTokens: { chat: 80000 } },
+          autoCompactDefaults: { thresholdTokens: 128000 },
         },
       ]);
     } finally {

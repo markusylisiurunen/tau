@@ -171,7 +171,6 @@ export async function startTelegramRuntime(
           ...(bot.autoCompactThresholdTokens !== undefined
             ? { thresholdTokens: bot.autoCompactThresholdTokens }
             : {}),
-          personaThresholdTokens: {},
         },
         clientTools: createTelegramFileTools(createTelegramApi(bot.botToken), chatId),
       });

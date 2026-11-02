@@ -152,11 +152,11 @@ describe("telegram runtime", () => {
       await vi.waitFor(() => expect(clients).toHaveLength(2));
       expect(
         clients.find((client) => client.ownerId === "telegram:first:chat:123").autoCompactDefaults,
-      ).toEqual({ thresholdTokens: 128000, personaThresholdTokens: {} });
+      ).toEqual({ thresholdTokens: 128000 });
       expect(
         clients.find((client) => client.ownerId === "telegram:second:chat:-456")
           .autoCompactDefaults,
-      ).toEqual({ personaThresholdTokens: {} });
+      ).toEqual({});
       expect(
         clients.find((client) => client.ownerId === "telegram:first:chat:123").personaSelection,
       ).toEqual({ personaId: "chat", reasoning: "low", autoCompactThresholdTokens: 80000 });

@@ -25,6 +25,11 @@ describe("persona selection", () => {
     ).toBe("low");
     expect(personas[0].settings.reasoning).toBe("medium");
     expect(resolvePersonaSelection(personas, undefined, null).id).toBe("reasoning");
+    expect(resolvePersonaSelection(personas, "missing:high", null)).toEqual(personas[0]);
+    expect(resolvePersonaSelection(personas, "reasoning:xhigh", null).settings.reasoning).toBe(
+      "xhigh",
+    );
+    expect(resolvePersonaSelection(personas, "plain:high", null).settings.reasoning).toBe("high");
     expect(
       resolvePersonaSelection(personas, undefined, "plain").settings.reasoning,
     ).toBeUndefined();
@@ -41,7 +46,7 @@ describe("persona selection", () => {
     ]) {
       expect(() => resolvePersonaSelection(personas, "reasoning", id, overrides)).toThrow();
     }
-    expect(() => resolvePersonaSelection(personas, "missing", null)).toThrow();
+    expect(() => resolvePersonaSelection([], undefined, null)).toThrow();
     expect(personas).toEqual(before);
     expect(
       resolvePersonaSelection(personas, undefined, "plain", { reasoning: "none" }).settings

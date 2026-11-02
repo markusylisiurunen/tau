@@ -27,6 +27,58 @@ async function withTempHome(test) {
 }
 
 describe("sdk client integration", () => {
+  it.each(["workspace-test:high", "missing:high"])(
+    "resolves workspace default %s consistently at startup and on reapplication",
+    async (defaultPersona) => {
+      await withTempHome(async (home) => {
+        const directory = join(home, ".tau", "personas");
+        await mkdir(directory, { recursive: true });
+        await writeFile(
+          join(directory, "workspace-test.md"),
+          `---
+id: workspace-test
+provider: openai
+model: gpt-6.1-sol
+reasoning: low
+allowedReasoningLevels: [low]
+---
+Workspace persona.
+`,
+        );
+        await writeFile(join(home, ".tau", "config.json"), JSON.stringify({ defaultPersona }));
+        let expected;
+        for (const runtimeOptions of [{}, { initialPersonaSelection: { personaId: null } }]) {
+          const client = await createTauSdkClientWithHostConfig({ cwd: home }, {}, runtimeOptions);
+          try {
+            const session = await client.sessions.create({
+              executionEnvironment: { kind: "local", cwd: home },
+              attributes: { source: "test" },
+            });
+            const { settings, catalog } = await session.snapshot();
+            if (!expected) {
+              expected = { personaId: settings.personaId, reasoning: settings.reasoning };
+              if (defaultPersona === "workspace-test:high") {
+                expect(expected).toEqual({ personaId: "workspace-test", reasoning: "high" });
+              } else {
+                expect(settings.personaId).toBe(catalog.personas[0].id);
+              }
+            }
+            expect(settings).toMatchObject(expected);
+            await session.setPersona("workspace-test", { autoCompactThresholdTokens: 80000 });
+            await session.setPersona(null);
+            expect((await session.snapshot()).settings).toMatchObject({
+              ...expected,
+              autoCompactThresholdTokens: null,
+            });
+          } finally {
+            await client.close();
+          }
+        }
+      });
+    },
+    20000,
+  );
+
   it("applies startup presets atomically and recovers session-owned settings independently", async () => {
     await withTempHome(async (home) => {
       const directory = join(home, ".tau", "personas");
@@ -53,7 +105,7 @@ Test persona ${id}.
         JSON.stringify({ defaultPersona: "workspace-test:low" }),
       );
       const runtimeOptions = {
-        autoCompactDefaults: { thresholdTokens: 128000, personaThresholdTokens: {} },
+        autoCompactDefaults: { thresholdTokens: 128000 },
         initialPersonaSelection: {
           personaId: "preset-test",
           reasoning: "medium",
@@ -78,8 +130,14 @@ Test persona ${id}.
         const before = await session.snapshot();
         await expect(
           session.setPersona("workspace-test", { reasoning: "xhigh" }),
-        ).rejects.toThrow();
-        await expect(session.setPersona("missing", { reasoning: "high" })).rejects.toThrow();
+        ).rejects.toMatchObject({
+          code: "invalid_request",
+          message: expect.stringContaining("xhigh"),
+        });
+        await expect(session.setPersona("missing", { reasoning: "high" })).rejects.toMatchObject({
+          code: "invalid_request",
+          message: expect.stringContaining("missing"),
+        });
         expect(await session.snapshot()).toEqual(before);
         await session.setPersona("preset-test");
         expect((await session.snapshot()).settings).toMatchObject({
@@ -116,7 +174,10 @@ Test persona ${id}.
             executionEnvironment: { kind: "local", cwd: home },
             attributes: { source: "test" },
           }),
-        ).rejects.toThrow();
+        ).rejects.toMatchObject({
+          code: "invalid_request",
+          message: expect.stringContaining("removed-preset-persona"),
+        });
       } finally {
         await client.close();
       }

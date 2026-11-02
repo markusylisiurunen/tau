@@ -5021,7 +5021,7 @@ function validateSetPersonaParams(
       : hasIssue(parsed.error, ["sessionId"])
         ? "session.setPersona params.sessionId must be a non-empty string"
         : hasIssue(parsed.error, ["personaId"])
-          ? "session.setPersona params.personaId must be a non-empty string"
+          ? "session.setPersona params.personaId must be a non-empty string or null"
           : `session.setPersona params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }

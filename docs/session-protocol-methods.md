@@ -359,7 +359,7 @@ The change waits its turn behind other changes but does not interrupt a running 
 
 ### `session.setPersona`
 
-Applies a persona and optional settings atomically. A string `personaId` must exactly match an ID in the session catalog. `personaId: null` selects the current workspace default, including its effort suffix, and accepts no overrides.
+Applies a persona and optional settings atomically. A string `personaId` must exactly match an ID in the session catalog. `personaId: null` selects the current workspace default, including its effort suffix, and accepts no overrides. If that default names an unavailable persona, the first persona in the catalog is selected.
 
 ```ts
 params: {
@@ -374,7 +374,7 @@ result: SessionProtocolSnapshot;
 - `reasoning` overrides the persona's default effort. Without it, the persona's default applies.
 - `autoCompactThresholdTokens` sets the session's compaction override, as a safe integer of at least 50,000. Without it, the override is cleared.
 
-The selected effort, including a workspace default's suffix, must be in the persona's `allowedReasoningLevels` when that list is non-empty. A model without reasoning accepts only `none`. An invalid selection fails before any setting changes.
+The `reasoning` override must be in the persona's `allowedReasoningLevels` when that list is non-empty, and a model without reasoning accepts only `none`. These limits do not apply to a workspace default's effort suffix. An unavailable persona or unsupported override fails with `invalid_request` before any setting changes.
 
 This changes the context and waits its turn behind other changes. It interrupts a running turn and rejects pending input, then returns the new snapshot.
 

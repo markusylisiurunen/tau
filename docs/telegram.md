@@ -191,7 +191,9 @@ Buttons show only labels, because a session does not record which preset was app
 
 Applying a preset changes the prompt, model, tools, reasoning, and other persona settings together, and keeps the conversation. It applies them once, so effort commands then change only reasoning, and applying the preset again restores its settings.
 
-An unavailable persona stays in the menu. Applying it, or an unsupported effort, reports an error and changes no settings. The effort must be in the persona's `allowedReasoningLevels` when that list is non-empty, and a model without reasoning accepts only `none`. These checks also apply to a workspace `defaultPersona` and its effort suffix. A failed selection at startup fails the new session.
+An unavailable persona stays in the menu. Applying it, or a `reasoning` value the persona does not support, reports an error and changes no settings. The value must be in the persona's `allowedReasoningLevels` when that list is non-empty, and a model without reasoning accepts only `none`. A failing preset at `startup` fails the new session.
+
+A workspace selection works as in the TUI: an unavailable `defaultPersona` falls back to the first available persona, and its effort suffix skips these checks.
 
 Restart the runner after editing `startup` or `presets`. Recovery keeps a session's saved settings and does not reapply them. Reload keeps the session's settings if its persona still exists.
 
@@ -201,7 +203,7 @@ A bot's optional `autoCompactThresholdTokens` sets a default for its sessions. A
 
 A session uses its saved override first, then the bot default, the persona default, and finally the model's context window minus 16,384 tokens. The effective threshold is capped at that model-based limit. `/auto_compact` changes the saved override. Applying a persona or preset clears the previous override unless the preset sets a threshold, even when the persona stays the same.
 
-The runner reads the bot default at startup and does not save it with the session. Recovered sessions use the current bot default and keep their saved override. A session that reaches the same persona without applying the preset does not get the preset's threshold.
+The runner reads the bot default at startup and does not save it with the session. Recovered sessions use the current bot default and keep their saved override.
 
 Native subagents launched without a model use the session's effective threshold, as described in [subagents](subagents.md#automatic-compaction). Ephemeral threads use the persona's own default and ignore both the bot default and the session override.
 

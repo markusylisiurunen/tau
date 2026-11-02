@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { PersonaSelectionError } from "../core/persona_selection.js";
 import {
   createSessionProtocolErrorResponse,
   createSessionProtocolPendingUserMessagesMessage,
@@ -308,6 +309,16 @@ export class SessionProtocolHandler {
           return;
       }
     } catch (error) {
+      if (error instanceof PersonaSelectionError) {
+        this.sendMessage(
+          createSessionProtocolErrorResponse(
+            request.id,
+            SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+            error.message,
+          ),
+        );
+        return;
+      }
       this.sendMessage(
         createSessionProtocolErrorResponse(
           request.id,

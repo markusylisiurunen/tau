@@ -2998,77 +2998,95 @@ describe("telegram adapter", () => {
     },
   );
 
-  it("offers exactly the configured presets independently of each session's catalog", async () => {
-    const chat = { id: 329, type: "private" };
-    const from = { id: 7 };
-    const apiHarness = createApiHarness([]);
-    const managerHarness = createSessionManagerHarness([], {
-      createSnapshot: (sessionId) =>
-        sessionId === "s1"
-          ? {
-              settings: { personaId: "project-default" },
-              catalog: {
-                personas: [
-                  { id: "sonnet", label: "Sonnet Coder" },
-                  { id: "project-default", label: "Project Default" },
-                  { id: "sol", label: "Sol Coder" },
-                ],
+  it.each([false, true])(
+    "offers configured presets and reports selection failures (%s)",
+    async (fails) => {
+      const chat = { id: 329, type: "private" };
+      const from = { id: 7 };
+      const apiHarness = createApiHarness([]);
+      const managerHarness = createSessionManagerHarness([], {
+        createSnapshot: (sessionId) =>
+          sessionId === "s1"
+            ? {
+                settings: { personaId: "project-default" },
+                catalog: {
+                  personas: [
+                    { id: "sonnet", label: "Sonnet Coder" },
+                    { id: "project-default", label: "Project Default" },
+                    { id: "sol", label: "Sol Coder" },
+                  ],
+                },
+              }
+            : {
+                settings: { personaId: "sol" },
+                catalog: { personas: [{ id: "sol", label: "Sol Coder" }] },
               },
-            }
-          : {
-              settings: { personaId: "sol" },
-              catalog: { personas: [{ id: "sol", label: "Sol Coder" }] },
-            },
-    });
-    const pickers = () => apiHarness.sendMessages.filter((message) => message.options?.replyMarkup);
-    apiHarness.api.getUpdates
-      .mockImplementationOnce(async () => [
-        { update_id: 1, message: { chat, from, text: "/new" } },
-        { update_id: 2, message: { chat, from, text: "/persona" } },
-        { update_id: 3, message: { chat, from, text: "/new" } },
-        { update_id: 4, message: { chat, from, text: "/persona" } },
-      ])
-      .mockImplementationOnce(async () => {
-        await waitFor(() => pickers().length === 2);
-        return [
-          {
-            update_id: 5,
-            callback_query: {
-              id: "select",
-              from,
-              message: { chat, message_id: 42 },
-              data: pickers()[1].options.replyMarkup.inline_keyboard[0][0].callback_data,
-            },
-          },
-        ];
-      })
-      .mockImplementation(async () => await new Promise(() => {}));
-    const adapter = await startAdapter({
-      sessionManager: managerHarness.manager,
-      api: apiHarness.api,
-      presets: {
-        sol: { source: "persona", persona: "sol", label: "sol", reasoning: "high" },
-        workspace: { source: "workspace", label: "Workspace default" },
-      },
-    });
-    try {
-      await waitFor(() => managerHarness.manager.setPersona.mock.calls.length === 1);
-      await waitFor(() => apiHarness.api.editMessage.mock.calls.length === 1);
-      const buttonTexts = (message) =>
-        message.options.replyMarkup.inline_keyboard.flat().map((button) => button.text);
-      const [first, second] = pickers();
-      expect(buttonTexts(first)).toEqual(["sol", "Workspace default"]);
-      expect(buttonTexts(second)).toEqual(["sol", "Workspace default"]);
-      expect(managerHarness.manager.setPersona).toHaveBeenCalledExactlyOnceWith("s2", "sol", {
-        reasoning: "high",
-        autoCompactThresholdTokens: undefined,
       });
-      expect(apiHarness.api.editMessage.mock.calls[0][2]).toContain("sol");
-      expect(apiHarness.api.editMessage.mock.calls[0][2]).not.toContain("Sol Coder");
-    } finally {
-      await adapter.close();
-    }
-  });
+      const selectionError = new TauSessionProtocolResponseError({
+        requestId: "selection",
+        error: { code: "invalid_request", message: "selection failure sentinel" },
+      });
+      if (fails) managerHarness.manager.setPersona.mockRejectedValueOnce(selectionError);
+      const pickers = () =>
+        apiHarness.sendMessages.filter((message) => message.options?.replyMarkup);
+      apiHarness.api.getUpdates
+        .mockImplementationOnce(async () => [
+          { update_id: 1, message: { chat, from, text: "/new" } },
+          { update_id: 2, message: { chat, from, text: "/persona" } },
+          { update_id: 3, message: { chat, from, text: "/new" } },
+          { update_id: 4, message: { chat, from, text: "/persona" } },
+        ])
+        .mockImplementationOnce(async () => {
+          await waitFor(() => pickers().length === 2);
+          return [
+            {
+              update_id: 5,
+              callback_query: {
+                id: "select",
+                from,
+                message: { chat, message_id: 42 },
+                data: pickers()[1].options.replyMarkup.inline_keyboard[0][0].callback_data,
+              },
+            },
+          ];
+        })
+        .mockImplementation(async () => await new Promise(() => {}));
+      const adapter = await startAdapter({
+        sessionManager: managerHarness.manager,
+        api: apiHarness.api,
+        presets: {
+          sol: { source: "persona", persona: "sol", label: "sol", reasoning: "high" },
+          workspace: { source: "workspace", label: "Workspace default" },
+        },
+      });
+      try {
+        await waitFor(() => managerHarness.manager.setPersona.mock.calls.length === 1);
+        if (fails) {
+          await waitFor(() =>
+            apiHarness.sendMessages.some((message) =>
+              message.text.includes(selectionError.message),
+            ),
+          );
+          expect(apiHarness.api.editMessage).not.toHaveBeenCalled();
+          return;
+        }
+        await waitFor(() => apiHarness.api.editMessage.mock.calls.length === 1);
+        const buttonTexts = (message) =>
+          message.options.replyMarkup.inline_keyboard.flat().map((button) => button.text);
+        const [first, second] = pickers();
+        expect(buttonTexts(first)).toEqual(["sol", "Workspace default"]);
+        expect(buttonTexts(second)).toEqual(["sol", "Workspace default"]);
+        expect(managerHarness.manager.setPersona).toHaveBeenCalledExactlyOnceWith("s2", "sol", {
+          reasoning: "high",
+          autoCompactThresholdTokens: undefined,
+        });
+        expect(apiHarness.api.editMessage.mock.calls[0][2]).toContain("sol");
+        expect(apiHarness.api.editMessage.mock.calls[0][2]).not.toContain("Sol Coder");
+      } finally {
+        await adapter.close();
+      }
+    },
+  );
 
   it("offers no choices and hides the command for an empty presets map", async () => {
     const chat = { id: 329, type: "private" };

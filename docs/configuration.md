@@ -166,7 +166,7 @@ For `tau serve`, make the changes on the host machine and restart the server. Re
 
 Some settings apply only when something new is created. `defaultPersona` and startup persona flags choose the persona of a new session. The execution environment's kind, identity, `cwd`, and home are fixed when the session is created or recovered.
 
-The Telegram runner loads its speech provider and its runner config at startup. Restart it after changing speech, projects, routing, or workspace preparation.
+The Telegram runner loads its speech provider and its runner config at startup. Restart it after changing speech, bot startup settings, presets, projects, routing, or workspace preparation.
 
 - Workspace-preparation changes apply when a managed workspace is created or reconstructed. Restarting does not change a preserved workspace.
 - Command client tools are chosen when the runner creates the client for a session. Changes apply to new sessions, and also to existing sessions when a runner restart recovers them.

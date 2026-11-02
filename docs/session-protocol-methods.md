@@ -140,8 +140,6 @@ params: { sessionId: string; text: string; historyEntryId?: string }
 result: { snapshot: SessionProtocolSnapshot; userHistoryEntryId: string }
 ```
 
-Explicit persona selection accepts optional reasoning and compaction overrides. Omitted reasoning uses the persona default; omitted compaction clears the session override. Workspace selection accepts no overrides. Invalid selections fail before settings change. Effort overrides respect non-empty persona `allowedReasoningLevels`; a model without reasoning accepts only `none`. Compaction thresholds must be safe integers of at least 50,000.
-
 This changes the context and waits its turn behind other changes. It can interrupt a running turn, and rejects pending queued and steering requests before adding the message. Use it for text written by the user that the model should see, not for client diagnostics.
 
 ### `session.submit`
@@ -336,11 +334,11 @@ result: {
 
 `thresholdTokens` must be a safe integer of at least 50,000, or `null` to remove the session override and use the default threshold. Numeric strings are rejected. Session creation accepts the same values in the optional `autoCompactThresholdTokens` field, which defaults to `null`.
 
-The effective threshold uses the session override, then any host default (such as [Telegram bot thresholds](telegram.md#compaction-thresholds)), then the persona default, then the model's context window minus 16,384 tokens. It cannot exceed that model-based limit. A model with a small context window can therefore have an effective threshold below 50,000.
+The effective threshold uses the session override, then any host default (such as a [Telegram bot's threshold](telegram.md#compaction-thresholds)), then the persona default, then the model's context window minus 16,384 tokens. It cannot exceed that model-based limit. A model with a small context window can therefore have an effective threshold below 50,000.
 
 The host saves the setting and publishes a `settings.set` delta to observers. Changing it does not start compaction. A running turn and its steering continuations keep their original threshold.
 
-Reloads, reasoning changes, and recovery preserve the configured value. `session.setPersona` sets its supplied compaction override or resets it to `null`, including when reapplying the current persona. The effective threshold is recalculated for the selected persona and model. Native Tau subagents launched without a model override inherit the parent's launching-turn threshold. Native launches with an explicit model use the persona's subagent threshold for that model, or the model's default. Claude Code subagents manage their own compaction. Ephemeral threads use the persona default without the main session override. See [automatic compaction](sessions.md#automatic-compaction) for request-size limits and costs.
+Reloads, reasoning changes, and recovery preserve the configured value. `session.setPersona` sets it to the supplied threshold, or to `null` if none is supplied, even when reapplying the current persona. The effective threshold is recalculated for the selected persona and model. Native Tau subagents launched without a model override inherit the parent's launching-turn threshold. Native launches with an explicit model use the persona's subagent threshold for that model, or the model's default. Claude Code subagents manage their own compaction. Ephemeral threads use the persona default without the main session override. See [automatic compaction](sessions.md#automatic-compaction) for request-size limits and costs.
 
 ### `session.setReasoning`
 
@@ -361,7 +359,7 @@ The change waits its turn behind other changes but does not interrupt a running 
 
 ### `session.setPersona`
 
-Applies a persona and optional settings atomically. `personaId: null` resolves the current workspace default, including its effort suffix.
+Applies a persona and optional settings atomically. A string `personaId` must exactly match an ID in the session catalog. `personaId: null` selects the current workspace default, including its effort suffix, and accepts no overrides.
 
 ```ts
 params: {
@@ -373,7 +371,10 @@ params: {
 result: SessionProtocolSnapshot;
 ```
 
-Explicit persona selection accepts optional reasoning and compaction overrides. Omitted reasoning uses the persona default; omitted compaction clears the session override. Workspace selection accepts no overrides. Invalid selections fail before settings change. Effort overrides respect non-empty persona `allowedReasoningLevels`; a model without reasoning accepts only `none`. Compaction thresholds must be safe integers of at least 50,000.
+- `reasoning` overrides the persona's default effort. Without it, the persona's default applies.
+- `autoCompactThresholdTokens` sets the session's compaction override, as a safe integer of at least 50,000. Without it, the override is cleared.
+
+The selected effort, including a workspace default's suffix, must be in the persona's `allowedReasoningLevels` when that list is non-empty. A model without reasoning accepts only `none`. An invalid selection fails before any setting changes.
 
 This changes the context and waits its turn behind other changes. It interrupts a running turn and rejects pending input, then returns the new snapshot.
 

@@ -1453,7 +1453,7 @@ class TelegramAdapterImpl {
       },
       {
         command: "/persona",
-        description: "apply a persona preset",
+        description: "choose a persona or preset",
         hiddenFromMenu: this.presets !== undefined && Object.keys(this.presets).length === 0,
         handler: async (chatId, args) => this.handlePersona(chatId, args),
       },
@@ -2262,7 +2262,7 @@ class TelegramAdapterImpl {
       return;
     }
     if (this.presets !== undefined && Object.keys(this.presets).length === 0) {
-      await this.reply(chatId, "no presets configured.");
+      await this.reply(chatId, "this bot has no presets configured.");
       return;
     }
     const session = await this.requireActiveSession(chatId);
@@ -2290,14 +2290,14 @@ class TelegramAdapterImpl {
                   },
             );
       if (personas.length === 0) {
-        await this.reply(chatId, "no presets configured.");
+        await this.reply(chatId, "this bot has no presets configured.");
         return;
       }
       this.personaPickers.set(chatId, {
         token: randomUUID(),
         sessionId: session.id,
         personas,
-        text: "choose a preset to apply. switching is available only while Tau is idle.",
+        text: "choose a persona or preset for this session. this works only while Tau is idle.",
       });
       await this.showPersonaPage(chatId, 0);
     } catch (error) {

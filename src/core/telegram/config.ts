@@ -70,7 +70,9 @@ const telegramBotSchema = z
         z
           .string()
           .min(1)
-          .refine((key) => key.trim() === key, { message: "must not have surrounding whitespace" }),
+          .refine((key) => key.trim() === key, {
+            message: "must not have surrounding whitespace.",
+          }),
         z.discriminatedUnion("source", [
           z.object({ source: z.literal("workspace"), label: nonEmptyStringSchema }).strict(),
           z

@@ -477,7 +477,7 @@ describe("telegram adapter", () => {
       expect(apiHarness.setCommandsCalls[0]).toEqual([
         { command: "new", description: "start a new session" },
         { command: "status", description: "show active session status" },
-        { command: "persona", description: "apply a persona preset" },
+        { command: "persona", description: "choose a persona or preset" },
         { command: "prompt", description: "add a saved prompt without starting a turn" },
         { command: "compact", description: "compact session context" },
         { command: "interrupt", description: "interrupt active run" },
@@ -2885,7 +2885,7 @@ describe("telegram adapter", () => {
     {
       kind: "persona",
       action: "setPersona",
-      pickerText: "choose a preset to apply. switching is available only while Tau is idle.",
+      pickerText: "choose a persona or preset for this session. this works only while Tau is idle.",
       selectedText:
         "switched to persona-20. this session is using Selected Model with high reasoning.",
     },

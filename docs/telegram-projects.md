@@ -12,7 +12,7 @@ platform_api
 release2026
 ```
 
-Every project can have an optional non-empty `description`. The bot selects startup settings through [startup and presets](telegram.md#startup-and-presets). Projects describe workspaces, without a separate persona selection. Sessions load applicable `AGENTS.md` instructions.
+Every project can have an optional non-empty `description`. Projects do not select a persona. The bot does that through [startup and presets](telegram.md#startup-and-presets). Sessions load applicable `AGENTS.md` instructions.
 
 Each project must define exactly one workspace source: `repo`, `directory`, or `projectIds`.
 
@@ -104,7 +104,7 @@ Members are placed at `<composite-root>/<member-project-id>` and use each reposi
 
 `subagents.launchModels` sets which models subagents may be started with. See [subagents](subagents.md) for the syntax and inheritance.
 
-Configuration resolved at the composite root applies to the whole session, including workspace-default persona selection, subagents, model catalog, and tools. Members' `.tau/config.json` files are not merged. A subagent started in a member directory rebuilds only the context that depends on the directory: environment and repository details, the applicable `AGENTS.md`, and the skills found there.
+Configuration resolved at the composite root applies to the whole session, including the workspace's `defaultPersona`, subagents, model catalog, and tools. Members' `.tau/config.json` files are not merged. A subagent started in a member directory rebuilds only the context that depends on the directory: environment and repository details, the applicable `AGENTS.md`, and the skills found there.
 
 If any member cannot be prepared, Tau removes the whole composite workspace. Composite workspaces and member caches use the top-level `workspaceRoot`.
 

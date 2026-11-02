@@ -105,7 +105,7 @@ subagentAutoCompactThresholdTokens:
 
 In `subagentAutoCompactThresholdTokens` keys, the provider is lowercased and the model ID is kept exactly as written, so `OpenAI/gpt-6.1-sol` and `openai/gpt-6.1-sol` name the same model. The provider must be known. A model ID missing from the catalog is allowed, as for `model`. Claude Code models are not allowed because Claude Code manages its own compaction.
 
-Thresholds are capped at the selected model's context window minus 16,384 tokens. A session's `/auto-compact` override takes precedence over the persona default, and so do a Telegram bot's thresholds. See [sessions](sessions.md) and [subagents](subagents.md) for inheritance and reset behavior.
+Thresholds are capped at the selected model's context window minus 16,384 tokens. A session's `/auto-compact` override takes precedence over the persona default, and so does a Telegram bot's default threshold. See [sessions](sessions.md) and [subagents](subagents.md) for inheritance and reset behavior.
 
 Every persona can use all discovered skills. If a custom persona omits `tools`, Tau enables the standard tools and `agents`. A `tools` list without `agents` prevents the agent from starting or managing subagents. See [skills](skills.md) and [subagents](subagents.md) for those contracts.
 
@@ -127,7 +127,7 @@ A `tools` list replaces the defaults. Names are lowercased and duplicates remove
 }
 ```
 
-The most specific `defaultPersona` wins. The ID must match exactly, including case. An unknown default produces a warning, and Tau uses the first available persona.
+The most specific `defaultPersona` wins. The ID must match exactly, including case. An unknown default produces a warning, and Tau uses the first available persona. Telegram [workspace startup and presets](telegram.md#startup-and-presets) report an error instead.
 
 Override the default for one TUI launch:
 
@@ -149,7 +149,7 @@ This command matches the ID case-insensitively. `Ctrl+P` cycles through the avai
 
 `reasoning` is the persona's default effort. A startup suffix, the session reasoning command, or `Shift+Tab` can override it. You can change reasoning while a turn is running, but the running turn keeps the model and tool settings it started with. The new effort applies from the next submitted or queued turn.
 
-`allowedReasoningLevels` sets which values the TUI cycles through for the persona. It limits only the TUI selector; protocol clients can still set other levels. When it is omitted, the TUI offers all standard levels for a model that supports reasoning. For a model whose catalog entry says `reasoning: false`, the selector shows only `none`.
+`allowedReasoningLevels` sets which values the TUI cycles through for the persona. It also limits the effort applied through `setPersona`, including a Telegram preset or the effort suffix of a workspace default applied that way. TUI startup suffixes and `session.setReasoning` can still set other levels. When it is omitted, the TUI offers all standard levels for a model that supports reasoning. For a model whose catalog entry says `reasoning: false`, the selector shows only `none`.
 
 An empty `allowedReasoningLevels` does not create an empty selector. The TUI uses its normal model-aware choices.
 
@@ -159,7 +159,7 @@ An empty `allowedReasoningLevels` does not create an empty selector. The TUI use
 
 After editing personas, skills, or project context, run `/reload` while the session is idle. Reload finds personas again and rebuilds the session's prompt and tools.
 
-If the current persona ID still exists, Tau applies its newly loaded definition. Current session settings, including reasoning and service tier, are preserved. Selecting the persona again reapplies its declared defaults. If the ID is gone, Tau selects the first available persona. Existing messages stay as they are; a persona change never rewrites earlier history.
+If the current persona ID still exists, Tau applies its newly loaded definition and keeps the session's current settings, including reasoning and service tier. Selecting the persona again applies its declared defaults. If the ID is gone, Tau selects the first available persona. Existing messages stay as they are; a persona change never rewrites earlier history.
 
 The TUI refuses to reload while a turn is running. Subagents that are already running keep the setup they started with. Subagents started after the reload use the reloaded persona. See [subagents](subagents.md).
 

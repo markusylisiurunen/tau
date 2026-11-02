@@ -180,7 +180,7 @@ Tau keeps two separate records for different purposes:
 - The saved session is what Tau uses to continue one conversation. It contains the model's current context and the session state you see.
 - Searchable history is a flat list of user messages, intermediate system instructions, assistant text, and finished tool calls, used to search and read across sessions. It is stored in the host's history database and can also be copied to a configured history service.
 
-Compaction changes the saved session's model context but leaves searchable history as it was. Rewind cuts both back to the rewind point. History cannot rebuild a session and is never used to recover one. See [history](history.md) for storage, replication, and the history tool.
+Compaction changes the saved session's model context but leaves searchable history as it was. Rewind cuts both back to the rewind point, but subagent sessions in history stay. History cannot rebuild a session and is never used to recover one. See [history](history.md) for storage, replication, and the history tool.
 
 ## Inspect model usage
 

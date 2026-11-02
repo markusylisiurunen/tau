@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnWithCapture } from "../utils/spawn_capture.js";
-import { HISTORY_INITIAL_MIGRATION_NAME } from "./migrations.js";
+import { HISTORY_MIGRATION_NAMES } from "./migrations.js";
 
 const WORKER_NAME = "tau-history";
 const DATABASE_NAME = "tau-history";
@@ -199,16 +199,20 @@ async function applyHistoryMigrations(
   stdout(`applied D1 migrations for ${DATABASE_NAME}`);
 }
 
-function writeHistoryMigration(directory: string): void {
-  const source = fileURLToPath(
-    new URL(`../../history/worker/migrations/${HISTORY_INITIAL_MIGRATION_NAME}`, import.meta.url),
-  );
-  if (!existsSync(source)) {
-    throw new Error(`bundled history migration is missing at ${source}; rebuild or reinstall Tau`);
-  }
+function writeHistoryMigrations(directory: string): void {
   const migrationsDirectory = join(directory, "migrations");
   mkdirSync(migrationsDirectory, { recursive: true });
-  copyFileSync(source, join(migrationsDirectory, HISTORY_INITIAL_MIGRATION_NAME));
+  for (const name of HISTORY_MIGRATION_NAMES) {
+    const source = fileURLToPath(
+      new URL(`../../history/worker/migrations/${name}`, import.meta.url),
+    );
+    if (!existsSync(source)) {
+      throw new Error(
+        `bundled history migration is missing at ${source}; rebuild or reinstall Tau`,
+      );
+    }
+    copyFileSync(source, join(migrationsDirectory, name));
+  }
 }
 
 function writeWorkerProject(
@@ -225,7 +229,7 @@ function writeWorkerProject(
   for (const name of ["viewer.css", "viewer.js"]) {
     copyFileSync(join(dirname(workerPath), name), join(dirname(destination), name));
   }
-  writeHistoryMigration(directory);
+  writeHistoryMigrations(directory);
   writeFileSync(
     join(directory, "wrangler.json"),
     JSON.stringify(

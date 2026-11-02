@@ -1,6 +1,6 @@
 # Subagents
 
-Subagents are background agents that the main agent starts and the host supervises. They help when part of the work can run independently or benefits from a separate context. A subagent belongs to its parent session. It is not a session of its own and has no persona file.
+Subagents are background agents that the main agent starts and the host supervises. They help when part of the work can run independently or benefits from a separate context. A subagent belongs to its parent session. It has no saved session of its own and no persona file.
 
 ## Background workers
 
@@ -250,6 +250,8 @@ Subagents belong to the running session on the host, not to an attached TUI. Det
 Subagents do not survive the end of a session on the host or a host restart. Their status may be saved while the session is live, but recovery removes those records, because their runtimes no longer exist. A recovered session cannot send input to an old subagent ID.
 
 Rewind also removes subagents that were started by an assistant message the rewind removed. A subagent started from a `code` program belongs to the assistant message that ran the program, including a program running as a background job. Host shutdown or session disposal interrupts and removes all subagents.
+
+Tau records native subagents as child sessions in [history](history.md#native-subagent-sessions), even without the `history` tool. History cannot restore them. Claude Code is excluded.
 
 Plan long work with this in mind. Important results should reach the main agent and end up in the session history or in project files before the session on the host goes away. [Sessions](sessions.md) covers saving and recovery in general.
 

@@ -20,6 +20,13 @@ const searchInputSchema = z
   .object({
     query: z.string().trim().min(1).max(1_000).optional(),
     attributes: attributeFiltersSchema.optional(),
+    parent: z
+      .union([
+        z.literal("none"),
+        z.literal("any"),
+        z.object({ sessionId: z.string().trim().min(1).max(256) }).strict(),
+      ])
+      .optional(),
     limit: z.number().int().min(1).max(75).default(10),
     cursor: z.string().min(1).max(2_048).optional(),
   })

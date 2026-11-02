@@ -11,6 +11,7 @@ import type {
   HistoryRemoteTarget,
   HistoryReplicationOperation,
   HistorySearchInput,
+  HistorySearchParent,
   HistorySearchResult,
   HistorySessionDescriptor,
   HistorySessionRecord,
@@ -20,6 +21,8 @@ const PRIVATE_DIRECTORY_MODE = 0o700;
 const PRIVATE_FILE_MODE = 0o600;
 const HISTORY_READ_PAGE_MAX_BYTES = 12 * 1024 * 1024;
 const MAX_SEARCH_SNIPPETS = 3;
+const CHILD_COUNT_COLUMN =
+  "(SELECT COUNT(*) FROM history_sessions c WHERE c.parent_session_id = s.session_id) AS child_count";
 
 type SqlValue = string | number | null;
 type SqlRow = Record<string, SqlValue>;
@@ -66,24 +69,37 @@ export class LocalHistoryStore {
   }
 
   createSession(session: HistorySessionRecord, remote?: HistoryRemoteTarget): void {
+    if (session.parentSessionId === session.sessionId) {
+      throw new Error(`history session '${session.sessionId}' cannot be its own parent`);
+    }
+    const parentSessionId = session.parentSessionId ?? null;
     this.transaction(() => {
       const existing = this.database
-        .prepare("SELECT attributes_json, created_at FROM history_sessions WHERE session_id = ?")
+        .prepare(
+          "SELECT attributes_json, created_at, parent_session_id FROM history_sessions WHERE session_id = ?",
+        )
         .get(session.sessionId) as SqlRow | undefined;
       const attributesJson = stableJson(session.attributes);
       if (existing) {
         if (
           existing.attributes_json !== attributesJson ||
-          existing.created_at !== session.createdAt
+          existing.created_at !== session.createdAt ||
+          existing.parent_session_id !== parentSessionId
         ) {
           throw new Error(`history session '${session.sessionId}' has conflicting immutable data`);
         }
       } else {
         this.database
           .prepare(
-            "INSERT INTO history_sessions (session_id, attributes_json, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            "INSERT INTO history_sessions (session_id, attributes_json, created_at, updated_at, parent_session_id) VALUES (?, ?, ?, ?, ?)",
           )
-          .run(session.sessionId, attributesJson, session.createdAt, session.createdAt);
+          .run(
+            session.sessionId,
+            attributesJson,
+            session.createdAt,
+            session.createdAt,
+            parentSessionId,
+          );
         const insertAttribute = this.database.prepare(
           "INSERT INTO history_attributes (session_id, key, value) VALUES (?, ?, ?)",
         );
@@ -230,6 +246,8 @@ export class LocalHistoryStore {
   async search(input: HistorySearchInput): Promise<HistorySearchResult> {
     const offset = decodeOffsetCursor(input.cursor);
     const values: SqlValue[] = [];
+    const parentFilter = searchParentFilter(input.parent);
+    values.push(...parentFilter.values);
     const attributeClauses = Object.entries(input.attributes ?? {}).map(([key, filter]) => {
       if (typeof filter === "string") {
         values.push(key, filter);
@@ -238,6 +256,8 @@ export class LocalHistoryStore {
       values.push(key, filter.contains);
       return "EXISTS (SELECT 1 FROM history_attributes a WHERE a.session_id = s.session_id AND a.key = ? AND INSTR(a.value, ?) > 0)";
     });
+    const clauses = [...parentFilter.clauses, ...attributeClauses];
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
     const query = input.query?.trim();
     let sql: string;
     if (query) {
@@ -252,17 +272,17 @@ export class LocalHistoryStore {
           WHERE history_entries_fts MATCH ?
           GROUP BY e.session_id
         )
-        SELECT s.*, m.snippets
+        SELECT s.*, m.snippets, ${CHILD_COUNT_COLUMN}
         FROM history_sessions s
         JOIN matches m ON m.session_id = s.session_id
-        ${attributeClauses.length > 0 ? `WHERE ${attributeClauses.join(" AND ")}` : ""}
+        ${where}
         ORDER BY s.updated_at DESC, s.session_id ASC
         LIMIT ? OFFSET ?`;
     } else {
       sql = `
-        SELECT s.*, NULL AS snippets
+        SELECT s.*, NULL AS snippets, ${CHILD_COUNT_COLUMN}
         FROM history_sessions s
-        ${attributeClauses.length > 0 ? `WHERE ${attributeClauses.join(" AND ")}` : ""}
+        ${where}
         ORDER BY s.updated_at DESC, s.session_id ASC
         LIMIT ? OFFSET ?`;
     }
@@ -279,7 +299,9 @@ export class LocalHistoryStore {
   async read(input: HistoryReadInput): Promise<HistoryReadResult> {
     const position = decodePositionCursor(input.cursor);
     const sessionRow = this.database
-      .prepare("SELECT *, NULL AS snippets FROM history_sessions WHERE session_id = ?")
+      .prepare(
+        `SELECT s.*, NULL AS snippets, ${CHILD_COUNT_COLUMN} FROM history_sessions s WHERE s.session_id = ?`,
+      )
       .get(input.sessionId) as SqlRow | undefined;
     if (!sessionRow) {
       throw new Error(`history session '${input.sessionId}' was not found`);
@@ -415,7 +437,8 @@ export class LocalHistoryStore {
         updated_at INTEGER NOT NULL,
         digest_title TEXT,
         digest_summary TEXT,
-        digest_through_entry_id TEXT
+        digest_through_entry_id TEXT,
+        parent_session_id TEXT
       );
       CREATE TABLE IF NOT EXISTS history_attributes (
         session_id TEXT NOT NULL REFERENCES history_sessions(session_id) ON DELETE CASCADE,
@@ -471,6 +494,15 @@ export class LocalHistoryStore {
         PRIMARY KEY (endpoint, session_id)
       );
     `);
+    if (!this.hasColumn("history_sessions", "parent_session_id")) {
+      this.transaction(() => {
+        if (this.hasColumn("history_sessions", "parent_session_id")) return;
+        this.database.exec("ALTER TABLE history_sessions ADD COLUMN parent_session_id TEXT");
+      });
+    }
+    this.database.exec(
+      "CREATE INDEX IF NOT EXISTS history_sessions_parent ON history_sessions(parent_session_id) WHERE parent_session_id IS NOT NULL",
+    );
     const outboxColumns = new Set(
       (this.database.prepare("PRAGMA table_info(history_outbox)").all() as SqlRow[]).map((row) =>
         String(row.name),
@@ -498,6 +530,12 @@ export class LocalHistoryStore {
     }
     this.database.exec(
       "CREATE INDEX IF NOT EXISTS history_outbox_lanes ON history_outbox(endpoint, session_id, id)",
+    );
+  }
+
+  private hasColumn(table: string, column: string): boolean {
+    return (this.database.prepare(`PRAGMA table_info(${table})`).all() as SqlRow[]).some(
+      (row) => row.name === column,
     );
   }
 
@@ -533,6 +571,15 @@ function stableJson(value: Record<string, string>): string {
   );
 }
 
+function searchParentFilter(parent: HistorySearchParent = "none"): {
+  clauses: string[];
+  values: SqlValue[];
+} {
+  if (parent === "any") return { clauses: [], values: [] };
+  if (parent === "none") return { clauses: ["s.parent_session_id IS NULL"], values: [] };
+  return { clauses: ["s.parent_session_id = ?"], values: [parent.sessionId] };
+}
+
 function descriptorFromRow(row: SqlRow): HistorySessionDescriptor {
   const title = typeof row.digest_title === "string" ? row.digest_title : undefined;
   const summary = typeof row.digest_summary === "string" ? row.digest_summary : undefined;
@@ -544,6 +591,10 @@ function descriptorFromRow(row: SqlRow): HistorySessionDescriptor {
     attributes: JSON.parse(String(row.attributes_json)) as Record<string, string>,
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
+    ...(typeof row.parent_session_id === "string"
+      ? { parentSessionId: row.parent_session_id }
+      : {}),
+    childCount: Number(row.child_count),
     ...(title && summary && updatedThroughEntryId
       ? { digest: { title, summary, updatedThroughEntryId } }
       : {}),

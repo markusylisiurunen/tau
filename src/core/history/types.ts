@@ -40,14 +40,20 @@ export type HistorySessionDescriptor = {
   attributes: SessionAttributes;
   createdAt: number;
   updatedAt: number;
+  parentSessionId?: string;
+  childCount: number;
   webUrl?: string;
   digest?: HistoryDigest;
   snippets: string[];
 };
 
+// Absent means "none": only sessions without a parent.
+export type HistorySearchParent = "none" | "any" | { sessionId: string };
+
 export type HistorySearchInput = {
   query?: string;
   attributes?: HistoryAttributeFilters;
+  parent?: HistorySearchParent;
   limit: number;
   cursor?: string;
 };
@@ -79,6 +85,7 @@ export type HistorySessionRecord = {
   sessionId: string;
   attributes: SessionAttributes;
   createdAt: number;
+  parentSessionId?: string;
 };
 
 export type HistoryReplicationOperation =

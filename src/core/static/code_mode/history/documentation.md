@@ -19,6 +19,7 @@ Pass one options object, including `{}` for a recent-session overview.
 type SearchOptions = {
   query?: string;
   attributes?: Record<string, string | { contains: string }>;
+  parent?: "none" | "any" | { sessionId: string };
   limit?: number;
   cursor?: string;
 };
@@ -28,6 +29,8 @@ type Session = {
   attributes: Record<string, string>;
   createdAt: number;
   updatedAt: number;
+  parentSessionId?: string;
+  childCount: number;
   webUrl?: string;
   digest?: {
     title: string;
@@ -41,13 +44,16 @@ type SearchResult = { sessions: Session[]; nextCursor?: string };
 ```
 
 - `query`: nonblank text, at most 1,000 characters. Every tokenized term must occur in the same digest or transcript entry, not necessarily as a phrase. Use separate searches for alternative terminology.
-- `attributes`: up to 32 filters with 1–64-character names and values up to 1,024 characters. Strings require exact matches; `{ contains }` requires a nonempty, case-sensitive substring. All attribute filters and the text query combine.
+- `attributes`: up to 32 filters with 1–64-character names and values up to 1,024 characters. Strings require exact matches; `{ contains }` requires a nonempty, case-sensitive substring. All attribute filters, the text query, and `parent` combine.
+- `parent`: which sessions to search. Omitted or `"none"` covers only sessions without a parent. `"any"` covers all sessions. `{ sessionId }` covers the direct children of that session, with a nonblank ID of at most 256 characters.
 - `limit`: integer 1–75, default 10.
-- `cursor`: opaque `nextCursor` from the preceding page; keep the query and attributes unchanged.
+- `cursor`: opaque `nextCursor` from the preceding page; keep the query, attributes, and `parent` unchanged.
 
-Without a query or attributes, search returns the most recently updated sessions. Conventional attributes include `source` (often `tui` or `telegram`) and `repository` (`host/owner/repository`; composite workspaces use comma-delimited repositories), `machine` (execution environment hostname), `cwd` (working directory in that environment), and `telegram_bot` (configured Telegram bot ID). Attributes may be absent. A repository substring filter can match both individual and composite workspaces.
+Without a query, attributes, or `parent`, search returns the most recently updated sessions without a parent. Conventional attributes include `source` (often `tui` or `telegram`) and `repository` (`host/owner/repository`; composite workspaces use comma-delimited repositories), `machine` (execution environment hostname), `cwd` (working directory in that environment), and `telegram_bot` (configured Telegram bot ID). Attributes may be absent. A repository substring filter can match both individual and composite workspaces.
 
 Timestamps are Unix milliseconds. A digest can be absent or stale; `updatedThroughEntryId` identifies the latest entry it covers. Snippets are bounded excerpts. A digest or snippet may already answer the question; read the transcript only when needed. When `webUrl` is present, return it directly if the user asks for a conversation link. Local-only sessions have no browser URL.
+
+A session with `parentSessionId` is the conversation of a background worker started by that parent session. Its `sessionId` is the worker's ID from `tau.agents`, and it records the worker's whole lifetime. Its attributes are the parent's, except that `cwd` is the worker's working directory. `childCount` is the number of direct children. It can lag in a shared remote collection, so a child may still be on its way. Claude Code workers are not recorded, so their IDs are not in history.
 
 ```js
 const page = await tau.history.search({
@@ -62,6 +68,16 @@ for (const session of page.sessions) {
   if (session.webUrl) printText(session.webUrl);
 }
 if (page.nextCursor) printText("more matching sessions are available");
+```
+
+To follow a session's workers, list its direct children:
+
+```js
+const { session } = await tau.history.read({ sessionId: "selected-session-id", limit: 1 });
+if (session.childCount > 0) {
+  const children = await tau.history.search({ parent: { sessionId: session.sessionId }, limit: 20 });
+  for (const child of children.sessions) printText(`${child.sessionId}: ${child.childCount} children`);
+}
 ```
 
 ## `tau.history.read(options)`
@@ -102,7 +118,7 @@ type ReadResult = { session: Session; entries: Entry[]; nextCursor?: string };
 
 `sessionId` is a required nonblank identifier of at most 256 characters, returned by search or given to you, such as a parent session ID. Omit `source` by default, so the read uses the configured collection. Set `source: "local"` only when your instructions ask for it. It reads only the history saved by the Tau instance running this conversation and skips any shared remote collection. `limit` is an integer 1–100, default 50. Continue with `nextCursor`, the same session, and the same `source`. Pages may contain fewer entries than requested to stay within the response byte budget; only absence of `nextCursor` means the transcript is exhausted. Cursors are opaque strings of at most 2,048 characters.
 
-Entry timestamps are Unix milliseconds. Rewind removes entries; compaction preserves original searchable history. Machine-local history retains complete payloads. In a shared remote collection, payload fields of entries larger than 1 MiB are middle-truncated with an explicit marker; identity and metadata remain intact.
+Entry timestamps are Unix milliseconds. Rewind removes entries but not the sessions of workers started by the removed messages; compaction preserves original searchable history. Machine-local history retains complete payloads. In a shared remote collection, payload fields of entries larger than 1 MiB are middle-truncated with an explicit marker; identity and metadata remain intact.
 
 A transcript may span multiple full conversation context windows, and individual messages or tool results can be very large. Do not print whole transcripts or unselected page payloads. For a known session without a clear entry reference, start with a bounded chronological overview of entry identities and short excerpts, then inspect only the relevant entries in more detail. Skip the overview when an existing reference already identifies the needed evidence. Avoid repeated guessed-term searches. Tool entries already represent completed calls and results; do not repeat their payloads from assistant content.
 

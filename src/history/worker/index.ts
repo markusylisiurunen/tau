@@ -10,6 +10,7 @@ import type {
   HistoryEntry,
   HistoryReadResult,
   HistoryReplicationOperation,
+  HistorySearchParent,
   HistorySearchResult,
   HistorySessionDescriptor,
   HistoryUserContent,
@@ -85,6 +86,10 @@ const MAX_ENTRIES_PER_OPERATION = 25;
 const MAX_SEARCH_LIMIT = 75;
 const MAX_READ_LIMIT = 100;
 const MAX_READ_PAGE_PAYLOAD_BYTES = 12 * 1024 * 1024;
+const MAX_TREE_DEPTH = 8;
+const MAX_TREE_DESCENDANTS = 200;
+const CHILD_COUNT_COLUMN =
+  "(SELECT COUNT(*) FROM sessions c WHERE c.parent_session_id = s.session_id) AS child_count";
 const VIEWER_USERNAME = "tau";
 const VIEWER_SEARCH_PAGE_SIZE = 20;
 const VIEWER_READ_PAGE_PAYLOAD_BYTES = 512 * 1024;
@@ -440,14 +445,18 @@ export async function applyOperation(
     const appliedAt = Date.now();
     if (operation.type === "create") {
       const attributesJson = stableJson(operation.session.attributes);
+      const parentSessionId = operation.session.parentSessionId ?? null;
       const session = await database
-        .prepare("SELECT attributes_json, created_at FROM sessions WHERE session_id = ?")
+        .prepare(
+          "SELECT attributes_json, created_at, parent_session_id FROM sessions WHERE session_id = ?",
+        )
         .bind(operation.sessionId)
-        .first<{ attributes_json: string; created_at: number }>();
+        .first<{ attributes_json: string; created_at: number; parent_session_id: string | null }>();
       if (session) {
         if (
           session.attributes_json !== attributesJson ||
-          session.created_at !== operation.session.createdAt
+          session.created_at !== operation.session.createdAt ||
+          session.parent_session_id !== parentSessionId
         ) {
           throw new HistoryApiError(
             "immutable_conflict",
@@ -459,13 +468,14 @@ export async function applyOperation(
         statements.push(
           database
             .prepare(
-              "INSERT INTO sessions (session_id, attributes_json, created_at, updated_at) VALUES (?, ?, ?, ?)",
+              "INSERT INTO sessions (session_id, attributes_json, created_at, updated_at, parent_session_id) VALUES (?, ?, ?, ?, ?)",
             )
             .bind(
               operation.sessionId,
               attributesJson,
               operation.session.createdAt,
               operation.session.createdAt,
+              parentSessionId,
             ),
         );
       }
@@ -602,6 +612,14 @@ async function search(
   const input = asRecord(raw, "search input");
   const query = optionalString(input.query, "query", 1_000)?.trim();
   const attributes = parseAttributeFilters(input.attributes);
+  const parent = parseSearchParent(input.parent);
+  const parentClause =
+    parent === "any"
+      ? ""
+      : parent === "none"
+        ? "AND s.parent_session_id IS NULL"
+        : "AND s.parent_session_id = ?";
+  const parentValues = typeof parent === "object" ? [parent.sessionId] : [];
   const limit = boundedInteger(input.limit ?? 10, "limit", 1, MAX_SEARCH_LIMIT);
   const offset = decodeCursor(optionalString(input.cursor, "cursor", 2_048), "offset");
   const attributeValues: unknown[] = [];
@@ -619,11 +637,11 @@ async function search(
   if (!query) {
     const rows = await database
       .prepare(
-        `SELECT s.* FROM sessions s
-         WHERE 1 = 1 ${attributeClause}
+        `SELECT s.*, ${CHILD_COUNT_COLUMN} FROM sessions s
+         WHERE 1 = 1 ${parentClause} ${attributeClause}
          ORDER BY s.updated_at DESC, s.session_id ASC LIMIT ? OFFSET ?`,
       )
-      .bind(...attributeValues, limit + 1, offset)
+      .bind(...parentValues, ...attributeValues, limit + 1, offset)
       .all<Record<string, unknown>>();
     return {
       sessions: rows.results.slice(0, limit).map((row) => descriptor(row, origin)),
@@ -649,14 +667,14 @@ async function search(
          FROM matching_sessions
          GROUP BY session_id
        )
-       SELECT s.*
+       SELECT s.*, ${CHILD_COUNT_COLUMN}
        FROM ranked_sessions r
        JOIN sessions s ON s.session_id = r.session_id
-       WHERE 1 = 1 ${attributeClause}
+       WHERE 1 = 1 ${parentClause} ${attributeClause}
        ORDER BY r.source_rank, s.updated_at DESC, s.session_id ASC
        LIMIT ? OFFSET ?`,
     )
-    .bind(ftsQuery, ftsQuery, ...attributeValues, limit + 1, offset)
+    .bind(ftsQuery, ftsQuery, ...parentValues, ...attributeValues, limit + 1, offset)
     .all<Record<string, unknown>>();
   const selectedRows = candidates.results.slice(0, limit);
   const sessions = selectedRows.map((row) => descriptor(row, origin));
@@ -712,7 +730,7 @@ async function read(
   const limit = boundedInteger(input.limit ?? 50, "limit", 1, MAX_READ_LIMIT);
   const position = decodeCursor(optionalString(input.cursor, "cursor", 2_048), "position");
   const session = await database
-    .prepare("SELECT * FROM sessions WHERE session_id = ?")
+    .prepare(`SELECT s.*, ${CHILD_COUNT_COLUMN} FROM sessions s WHERE s.session_id = ?`)
     .bind(sessionId)
     .first<Record<string, unknown>>();
   if (!session) {
@@ -736,6 +754,79 @@ async function read(
     session: descriptor(session, origin),
     entries: rows.results.map((row) => JSON.parse(row.payload_json) as HistoryEntry),
     ...(page.hasMore && last ? { nextCursor: encodeCursor({ position: last.position }) } : {}),
+  };
+}
+
+export type HistorySessionTree = {
+  parent?: RemoteHistorySessionDescriptor;
+  descendants: { session: RemoteHistorySessionDescriptor; depth: number }[];
+  truncated: boolean;
+};
+
+// Parent links are not validated against each other, so traversal must tolerate cycles.
+export async function readSessionTree(
+  database: D1Database,
+  session: Pick<HistorySessionDescriptor, "sessionId" | "parentSessionId">,
+  origin: string,
+): Promise<HistorySessionTree> {
+  const parent = session.parentSessionId
+    ? await database
+        .prepare(`SELECT s.*, ${CHILD_COUNT_COLUMN} FROM sessions s WHERE s.session_id = ?`)
+        .bind(session.parentSessionId)
+        .first<Record<string, unknown>>()
+    : null;
+  const rows = await database
+    .prepare(
+      `WITH RECURSIVE tree(session_id, depth) AS (
+         SELECT session_id, 1 FROM sessions WHERE parent_session_id = ?
+         UNION
+         SELECT c.session_id, t.depth + 1
+         FROM sessions c
+         JOIN tree t ON c.parent_session_id = t.session_id
+         WHERE t.depth < ?
+         ORDER BY 2
+         LIMIT ?
+       )
+       SELECT s.*, ${CHILD_COUNT_COLUMN}, MIN(t.depth) AS depth
+       FROM tree t
+       JOIN sessions s ON s.session_id = t.session_id
+       GROUP BY s.session_id
+       ORDER BY depth`,
+    )
+    .bind(session.sessionId, MAX_TREE_DEPTH, MAX_TREE_DESCENDANTS + 1)
+    .all<Record<string, unknown>>();
+
+  const children = new Map<string, Record<string, unknown>[]>();
+  for (const row of rows.results.slice(0, MAX_TREE_DESCENDANTS)) {
+    const parentId = String(row.parent_session_id);
+    children.set(parentId, [...(children.get(parentId) ?? []), row]);
+  }
+  const descendants: HistorySessionTree["descendants"] = [];
+  const visited = new Set([session.sessionId]);
+  const visit = (parentId: string, depth: number): void => {
+    const siblings = (children.get(parentId) ?? []).toSorted(
+      (left, right) =>
+        Number(left.created_at) - Number(right.created_at) ||
+        String(left.session_id).localeCompare(String(right.session_id)),
+    );
+    for (const row of siblings) {
+      const sessionId = String(row.session_id);
+      if (visited.has(sessionId)) continue;
+      visited.add(sessionId);
+      descendants.push({ session: descriptor(row, origin), depth });
+      visit(sessionId, depth + 1);
+    }
+  };
+  visit(session.sessionId, 1);
+
+  return {
+    ...(parent ? { parent: descriptor(parent, origin) } : {}),
+    descendants,
+    truncated:
+      rows.results.length > MAX_TREE_DESCENDANTS ||
+      descendants.some(
+        (descendant) => descendant.depth === MAX_TREE_DEPTH && descendant.session.childCount > 0,
+      ),
   };
 }
 
@@ -765,6 +856,10 @@ function descriptor(row: Record<string, unknown>, origin: string): RemoteHistory
     attributes: JSON.parse(String(row.attributes_json)),
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
+    ...(typeof row.parent_session_id === "string"
+      ? { parentSessionId: row.parent_session_id }
+      : {}),
+    childCount: Number(row.child_count),
     webUrl: `${origin}/sessions/${encodeURIComponent(String(row.session_id))}`,
     ...(title && summary && through
       ? { digest: { title, summary, updatedThroughEntryId: through } }
@@ -774,6 +869,9 @@ function descriptor(row: Record<string, unknown>, origin: string): RemoteHistory
 }
 
 async function renderViewerIndex(database: D1Database, url: URL): Promise<Response> {
+  const parentSessionId = url.searchParams.get("parent");
+  const parent = parentSessionId === null ? undefined : { sessionId: parentSessionId };
+  const scopeUrl = parent ? `/?parent=${encodeURIComponent(parent.sessionId)}` : "/";
   const query = url.searchParams.get("q")?.trim() || undefined;
   if (query && query.length > 1_000) throw invalidRequest("query is too long");
   const cursor = url.searchParams.get("cursor") || undefined;
@@ -791,6 +889,7 @@ async function renderViewerIndex(database: D1Database, url: URL): Promise<Respon
       attributes: Object.fromEntries(
         Object.entries(attributes).map(([key, value]) => [key, { contains: value }]),
       ),
+      parent,
       limit: VIEWER_SEARCH_PAGE_SIZE,
       cursor,
     },
@@ -801,7 +900,7 @@ async function renderViewerIndex(database: D1Database, url: URL): Promise<Respon
       `<input id="${key}" name="${key}" type="text" aria-label="${key}" maxlength="1024" value="${escapeHtml(attributes[key] ?? "")}" placeholder="${key === "repository" ? "Repository contains…" : "Source contains…"}">`,
   );
   const sessions = result.sessions.map(renderSessionCard).join("");
-  const nextUrl = new URL("/", url.origin);
+  const nextUrl = new URL(scopeUrl, url.origin);
   if (query) nextUrl.searchParams.set("q", query);
   for (const [key, value] of Object.entries(attributes)) nextUrl.searchParams.set(key, value);
   if (result.nextCursor) nextUrl.searchParams.set("cursor", result.nextCursor);
@@ -814,7 +913,9 @@ async function renderViewerIndex(database: D1Database, url: URL): Promise<Respon
 
   return viewerPage(
     "History",
-    `<form class="search" action="/" method="get" role="search">
+    `${parent ? `<nav class="back"><a href="/sessions/${escapeHtml(encodeURIComponent(parent.sessionId))}">← Parent session</a> · <a href="/">All conversations</a></nav><h1>Child sessions</h1>` : ""}
+    <form class="search" action="/" method="get" role="search">
+      ${parent ? `<input type="hidden" name="parent" value="${escapeHtml(parent.sessionId)}">` : ""}
       <div class="search-row">
         <input id="q" name="q" type="search" aria-label="Search conversations" maxlength="1000" value="${escapeHtml(query ?? "")}" placeholder="Search titles, summaries, and transcript text">
         <button type="submit">Search</button>
@@ -824,7 +925,7 @@ async function renderViewerIndex(database: D1Database, url: URL): Promise<Respon
       </div>
     </form>
     <section aria-label="Conversations">
-      ${query || Object.keys(attributes).length > 0 ? '<p><a href="/">Clear filters</a></p>' : ""}
+      ${query || Object.keys(attributes).length > 0 ? `<p><a href="${escapeHtml(scopeUrl)}">Clear filters</a></p>` : ""}
       <div class="session-list">${sessions || '<p class="empty">No conversations found.</p>'}</div>
       ${pagination}
     </section>`,
@@ -883,12 +984,13 @@ async function readViewerEntries(database: D1Database, url: URL): Promise<Respon
 async function renderViewerSession(database: D1Database, url: URL): Promise<Response> {
   const sessionId = viewerSessionId(url);
   const row = await database
-    .prepare("SELECT * FROM sessions WHERE session_id = ?")
+    .prepare(`SELECT s.*, ${CHILD_COUNT_COLUMN} FROM sessions s WHERE s.session_id = ?`)
     .bind(sessionId)
     .first<Record<string, unknown>>();
   if (!row)
     throw new HistoryApiError("not_found", `history session '${sessionId}' was not found`, 404);
   const session = descriptor(row, url.origin);
+  const tree = await readSessionTree(database, session, url.origin);
 
   return viewerPage(
     session.digest?.title ?? "Untitled session",
@@ -900,6 +1002,7 @@ async function renderViewerSession(database: D1Database, url: URL): Promise<Resp
       ${renderAttributes(session.attributes)}
       <p class="timestamps">Created ${renderTime(session.createdAt)} · Updated ${renderTime(session.updatedAt)}</p>
     </header>
+    ${renderSessionLinks(session, tree)}
     <div class="transcript-actions">
       <select data-copy-mode aria-label="Conversation copy contents">
         <option value="messages" selected>Messages only</option>
@@ -915,6 +1018,47 @@ async function renderViewerSession(database: D1Database, url: URL): Promise<Resp
     <noscript>JavaScript is required to load the conversation.</noscript>
     <main class="transcript" aria-label="Conversation transcript" aria-busy="true" data-transcript-url="/sessions/${escapeHtml(encodeURIComponent(sessionId))}/entries"></main>`,
   );
+}
+
+function renderSessionLinks(
+  session: RemoteHistorySessionDescriptor,
+  tree: HistorySessionTree,
+): string {
+  const parent = tree.parent
+    ? `<p>${renderSessionLink(tree.parent)}</p>`
+    : session.parentSessionId
+      ? `<p class="session-id">${escapeHtml(session.parentSessionId)} (not available)</p>`
+      : "";
+  const descendants = renderSessionTree(tree.descendants);
+  if (!parent && !descendants) return "";
+  return `<nav class="session-links" aria-label="Related sessions">
+    ${parent ? `<section><h2>Parent session</h2>${parent}</section>` : ""}
+    ${
+      descendants
+        ? `<section><h2>Child sessions</h2>${descendants}${
+            tree.truncated
+              ? `<p class="session-tree-note">This tree is too large to list in full. <a href="/?parent=${escapeHtml(encodeURIComponent(session.sessionId))}">Browse all direct children</a>, or open a session above to explore its descendants.</p>`
+              : ""
+          }</section>`
+        : ""
+    }
+  </nav>`;
+}
+
+// Descendants arrive depth-first, so depth grows by at most one between neighbors.
+function renderSessionTree(descendants: HistorySessionTree["descendants"]): string {
+  let html = "";
+  let currentDepth = 0;
+  for (const { session, depth } of descendants) {
+    html += depth > currentDepth ? "<ul>" : `</li>${"</ul></li>".repeat(currentDepth - depth)}`;
+    html += `<li>${renderSessionLink(session)}`;
+    currentDepth = depth;
+  }
+  return html && `<div class="session-tree">${html}${"</li></ul>".repeat(currentDepth)}</div>`;
+}
+
+function renderSessionLink(session: RemoteHistorySessionDescriptor): string {
+  return `<a href="${escapeHtml(session.webUrl)}">${escapeHtml(session.digest?.title ?? "Untitled session")}</a> <span class="session-id">${escapeHtml(session.sessionId)}</span>`;
 }
 
 function renderViewerEntry(entry: HistoryEntry): string {
@@ -1345,6 +1489,14 @@ function parseOperations(raw: unknown): HistoryReplicationOperation[] {
       if (requiredString(session.sessionId, "session.sessionId", 256) !== sessionId) {
         throw invalidRequest("operation session IDs do not match");
       }
+      const parentSessionId = optionalString(
+        session.parentSessionId,
+        "session.parentSessionId",
+        256,
+      );
+      if (parentSessionId === sessionId) {
+        throw invalidRequest("a session cannot be its own parent");
+      }
       return {
         id,
         sessionId,
@@ -1353,6 +1505,7 @@ function parseOperations(raw: unknown): HistoryReplicationOperation[] {
           sessionId,
           attributes: parseAttributes(session.attributes, false),
           createdAt: finiteNumber(session.createdAt, "session.createdAt"),
+          ...(parentSessionId ? { parentSessionId } : {}),
         },
       };
     }
@@ -1503,6 +1656,16 @@ function parseAttributeFilters(raw: unknown): Record<string, string | { contains
       );
     }),
   );
+}
+
+function parseSearchParent(raw: unknown): HistorySearchParent {
+  if (raw === undefined) return "none";
+  if (raw === "none" || raw === "any") return raw;
+  const parent = asRecord(raw, "parent");
+  if (Object.keys(parent).length !== 1) {
+    throw invalidRequest('parent must be "none", "any", or an object with only sessionId');
+  }
+  return { sessionId: requiredString(parent.sessionId, "parent.sessionId", 256) };
 }
 
 function parseAttributes(raw: unknown, optional: boolean): Record<string, string> {

@@ -50,7 +50,12 @@ function fixture(run) {
       return await run(input, options, calls.length);
     }),
   };
-  const supervisor = new AgentSupervisor({ onEvent: (event) => events.push(event), recordUsage });
+  const openHistory = vi.fn();
+  const supervisor = new AgentSupervisor({
+    onEvent: (event) => events.push(event),
+    recordUsage,
+    openHistory,
+  });
   const model = parseSubagentLaunchModel("claude-code/claude-sonnet-5-5:medium", { resolveModel })
     .launchModel.model;
   const spawn = () =>
@@ -68,7 +73,7 @@ function fixture(run) {
       config: {},
       backend,
     });
-  return { supervisor, spawn, calls, events, recordUsage, backend };
+  return { supervisor, spawn, calls, events, recordUsage, backend, openHistory };
 }
 
 describe("Claude Code launch models", () => {
@@ -181,6 +186,7 @@ describe("Claude Code supervised lifecycle", () => {
     expect(second.usage.cost).toBe(0.2);
     expect(f.recordUsage.mock.calls.map(([entry]) => entry.usage.input)).toEqual([10, 10]);
     expect(f.recordUsage.mock.calls.map(([entry]) => entry.cost.total)).toEqual([0.1, 0.1]);
+    expect(f.openHistory).not.toHaveBeenCalled();
     f.supervisor.reset();
   });
 

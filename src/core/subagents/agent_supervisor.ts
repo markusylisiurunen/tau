@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { SessionRuntimeSettings } from "../config/index.js";
+import type { OpenSubagentHistory } from "../history/agent_history_recorder.js";
 import type { HistoryQuery } from "../history/types.js";
 import type { McpManager } from "../mcp/manager.js";
 import { type CoreDeps, createDefaultCoreDeps } from "../runtime/deps.js";
@@ -69,6 +70,7 @@ export class AgentSupervisor {
     private readonly options: {
       onEvent: (event: SubagentEvent) => void | Promise<void>;
       recordUsage?: UsageRecorder;
+      openHistory?: OpenSubagentHistory;
       deps?: CoreDeps;
     },
   ) {
@@ -131,13 +133,17 @@ export class AgentSupervisor {
 
     const id = randomUUID();
     const runtimeConfig = { ...options.runtimeConfig, workingDirectory };
+    const createdAt = this.deps.clock.now();
+    const openHistory = this.options.openHistory;
     const runtime = createSubagentRuntime(runtimeConfig, {
       ...options,
       id,
       deps: this.deps,
+      openHistory: openHistory
+        ? () => openHistory({ sessionId: id, workingDirectory, createdAt })
+        : undefined,
       onEvent: async (event) => await this.recordRuntimeEvent(id, event),
     });
-    const createdAt = this.deps.clock.now();
     const record: SubagentRecord = {
       id,
       title: options.title,

@@ -5688,6 +5688,85 @@ describe("LocalSessionHost", () => {
     await host.shutdown();
   });
 
+  it("records one linked native conversation across steering, follow-ups, and parent rewind", async () => {
+    const history = new HistoryManager(new LocalHistoryStore(":memory:"));
+    const host = createHost(new MemorySessionStore(), { history });
+    const gate = deferred();
+    try {
+      const parent = await host.createSession(localCreateInput);
+      const origin = await parent.record({ text: "delegate work" });
+      const supervisor = parent.runtime.supervisor;
+      const child = supervisor.spawn({
+        runtimeConfig: {
+          kind: "native",
+          systemPrompt: "child system",
+          autoCompactThresholdTokens: 80000,
+          workingDirectory: "/repo/child",
+          model: personas[0].model,
+          settings: { reasoning: "medium" },
+          tools: [],
+        },
+        prompt: "first task",
+        title: "child task",
+        originHistoryEntryId: origin.userHistoryEntryId,
+        config: {},
+        backend: createLocalToolExecutionBackend(),
+        jobs: parent.runtime.jobs,
+      });
+      const agent = supervisor.records.get(child.id).runtime.agent;
+      const replies = ["first answer", "steered answer", "follow-up answer"];
+      agent.spec.model.stream = () => ({
+        async *[Symbol.asyncIterator]() {
+          await gate.promise;
+          yield* [];
+        },
+        async result() {
+          return fauxAssistantMessage(replies.shift());
+        },
+      });
+      await vi.waitFor(() => expect(agent.status).toBe("running"));
+      supervisor.sendInput({ id: child.id, mode: "steer", prompt: "change focus" });
+      gate.resolve();
+      await supervisor.waitForAgents([child.id]);
+      supervisor.sendInput({ id: child.id, mode: "queue", prompt: "follow up" });
+      await supervisor.waitForAgents([child.id]);
+      const transcript = await history.query().read({ sessionId: child.id, limit: 100 });
+      expect(transcript.session).toMatchObject({
+        sessionId: child.id,
+        parentSessionId: parent.sessionId,
+        attributes: { source: "test", cwd: "/repo/child", machine: "execution-machine" },
+      });
+      expect(
+        transcript.entries
+          .filter((entry) => entry.type === "user")
+          .map((entry) =>
+            stripTauUserDisplayText(entry.content.map((block) => block.text).join("\n")),
+          ),
+      ).toEqual(["first task", "change focus", "follow up"]);
+      expect(
+        transcript.entries
+          .filter((entry) => entry.type === "assistant")
+          .map((entry) => entry.content),
+      ).toEqual(["first answer", "steered answer", "follow-up answer"]);
+      expect(
+        (await history.query().search({ limit: 10 })).sessions.map((item) => item.sessionId),
+      ).toEqual([parent.sessionId]);
+      expect(
+        (
+          await history.query().search({ parent: { sessionId: parent.sessionId }, limit: 10 })
+        ).sessions.map((item) => item.sessionId),
+      ).toEqual([child.id]);
+      await parent.rewindToHistoryEntryId(origin.userHistoryEntryId);
+      expect(supervisor.list()).toEqual([]);
+      expect((await history.query().read({ sessionId: child.id, limit: 100 })).entries).toEqual(
+        transcript.entries,
+      );
+    } finally {
+      gate.resolve();
+      await host.shutdown();
+    }
+  });
+
   it("keeps recording history when a session reopens during eviction disposal", async () => {
     const history = new HistoryManager(new LocalHistoryStore(":memory:"));
     const disposalStarted = deferred();
@@ -5728,9 +5807,7 @@ describe("LocalSessionHost", () => {
       expect(await readIds()).toEqual([first.userHistoryEntryId, last.userHistoryEntryId]);
 
       await reopened.dispose();
-      expect(
-        history.truncateFromSources(session.sessionId, [last.userHistoryEntryId]),
-      ).toBeDefined();
+      expect(await readIds()).toEqual([first.userHistoryEntryId, last.userHistoryEntryId]);
     } finally {
       finishDisposal.resolve();
       await host.shutdown();
@@ -6167,16 +6244,15 @@ describe("LocalSessionHost", () => {
     expect(snapshot.tools).toEqual({});
     expect(snapshot.facets).toEqual({});
     expect(snapshot.timeline).toMatchObject({
-      sequence: 3,
-      items: [
-        expect.objectContaining({ type: "message", sequence: 1 }),
-        expect.objectContaining({
-          type: "notice",
-          id: "notice-history-unavailable",
-          sequence: 3,
-        }),
-      ],
+      sequence: 2,
+      items: [expect.objectContaining({ type: "message", sequence: 1 })],
     });
+    await recoveredSession.record({ text: "continue after recovery" });
+    expect((await recoveredSession.snapshot()).timeline.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "notice", id: "notice-history-unavailable" }),
+      ]),
+    );
     expect(snapshot.timeline.items.some((item) => item.type === "tool")).toBe(false);
     expect(snapshot.messages).toEqual(
       expect.arrayContaining([

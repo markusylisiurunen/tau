@@ -39,6 +39,8 @@ const descriptorSchema = z
     attributes: z.record(z.string(), z.string()),
     createdAt: z.number(),
     updatedAt: z.number(),
+    parentSessionId: z.string().optional(),
+    childCount: z.number().int().nonnegative(),
     webUrl: z.url(),
     digest: digestSchema.optional(),
     snippets: z.array(z.string()),

@@ -160,6 +160,8 @@ Protect the runner configuration, session state, project-preference state, manag
 
 Tau keeps a flat transcript history in the host user's home, separate from saved sessions. It contains user messages, intermediate system instructions, assistant text, and completed tool calls. The initial persona prompt is not included. Compaction does not remove entries. Rewind removes entries after the rewind point. Apart from that, entries stay; history is not a temporary cache.
 
+History also records each native Tau subagent as its own session, whether or not any agent has the `history` tool. Rewinding the parent session does not remove these sessions, so a rewind can leave subagent transcripts in history that came from the removed work.
+
 Without remote history, it stays in a SQLite database on the host. The `tau.history` capability can search all of it, within the persona's tools and the agent's usage rules. Protect the host account and database as you would the transcripts themselves.
 
 With global `history` configuration, entries are still written to local SQLite first, and a persistent outbox copies them to the configured service in the background. Remote entries are limited in size, with large content truncated in the middle, but they can still contain source code, tool output, instructions, and personal data. The service also summarizes transcript content with its configured Cloudflare AI service.

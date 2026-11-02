@@ -9,7 +9,7 @@ import {
 import { parseModelId } from "../models/model_id.js";
 import { formatPersonaReference, parsePersonaReference } from "../persona_reference.js";
 import { parseSubagentLaunchModelList } from "../subagents/launch_model.js";
-import { REASONING_LEVELS } from "../types.js";
+import { REASONING_LEVELS, type ReasoningEffort } from "../types.js";
 import { normalizeModelNoticeKey } from "../utils/model_notices.js";
 import {
   normalizeSpeechToTextKeywords,
@@ -69,11 +69,22 @@ export type HistoryConfig = {
   apiKeyEnv?: string;
 };
 
+export type TelegramPreset =
+  | { source: "workspace"; label: string }
+  | {
+      source: "persona";
+      label: string;
+      persona: string;
+      reasoning?: ReasoningEffort;
+      autoCompactThresholdTokens?: number;
+    };
+
 export type TelegramBotConfig = {
   botToken?: string;
   allowedProjectIds?: string[];
   autoCompactThresholdTokens?: number;
-  personaMenu?: { id: string; label?: string; autoCompactThresholdTokens?: number }[];
+  startup: { source: "workspace" } | { source: "preset"; preset: string };
+  presets?: Record<string, TelegramPreset>;
   allowedUserIds?: number[];
   allowedChatIds?: number[];
   defaultProjectId?: string;
@@ -90,17 +101,14 @@ export type TelegramRepositoryProjectConfig = TelegramProjectBaseConfig & {
   repo: string;
   ref?: string;
   workingDirectory?: string;
-  persona?: string;
 };
 
 export type TelegramDirectoryProjectConfig = TelegramProjectBaseConfig & {
   directory: string;
-  persona?: string;
 };
 
 export type TelegramCompositeProjectConfig = TelegramProjectBaseConfig & {
   projectIds: string[];
-  persona: string;
   instructions?: string;
   subagents?: {
     launchModels?: string[];

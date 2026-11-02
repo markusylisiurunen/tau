@@ -1217,7 +1217,10 @@ export class SessionProtocolHandler {
     request: Extract<SessionProtocolRequestMessage, { method: "session.setPersona" }>,
   ): Promise<void> {
     await this.withSessionMutation(request, "session persona changed", async (state) => {
-      const snapshot = await state.session.setPersona(request.params.personaId);
+      const snapshot = await state.session.setPersona(request.params.personaId, {
+        reasoning: request.params.reasoning,
+        autoCompactThresholdTokens: request.params.autoCompactThresholdTokens,
+      });
       this.sendMessage(
         createSessionProtocolSuccessResponse(request.id, "session.setPersona", snapshot),
       );

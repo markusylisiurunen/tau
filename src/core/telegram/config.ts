@@ -6,8 +6,7 @@ import {
   type TelegramBotConfig as SchemaTelegramBotConfig,
   type TelegramProjectConfig as SchemaTelegramProjectConfig,
 } from "../config/schema.js";
-import { formatPersonaReference, parsePersonaReference } from "../persona_reference.js";
-import { REASONING_LEVELS } from "../types.js";
+import { ReasoningEffortSchema } from "../types.js";
 
 export type TelegramBotConfig = SchemaTelegramBotConfig;
 export type TelegramProjectConfig = SchemaTelegramProjectConfig;
@@ -26,7 +25,7 @@ export class TelegramConfigError extends Error {
   }
 }
 
-const TELEGRAM_BUILTIN_COMMAND_COUNT = 11;
+const TELEGRAM_BUILTIN_COMMAND_COUNT = 13;
 const TELEGRAM_MAX_COMMAND_COUNT = 100;
 const TELEGRAM_PROJECT_COMMAND_PREFIX = "use_";
 const TELEGRAM_MAX_COMMAND_LENGTH = 32;
@@ -55,33 +54,45 @@ const telegramTopLevelSchema = z
     bots: z.unknown().optional(),
     projects: z.unknown().optional(),
   })
-  .strip();
+  .strict();
 
 const telegramBotSchema = z
   .object({
     botToken: nonEmptyStringSchema,
     autoCompactThresholdTokens: autoCompactThresholdTokensSchema.optional(),
     allowedProjectIds: stringListSchema.min(1, "must not be empty.").optional(),
-    personaMenu: z
-      .array(
+    startup: z.discriminatedUnion("source", [
+      z.object({ source: z.literal("workspace") }).strict(),
+      z.object({ source: z.literal("preset"), preset: nonEmptyStringSchema }).strict(),
+    ]),
+    presets: z
+      .record(
         z
-          .object({
-            id: nonEmptyStringSchema,
-            label: nonEmptyStringSchema.optional(),
-            autoCompactThresholdTokens: autoCompactThresholdTokensSchema.optional(),
-          })
-          .strict(),
+          .string()
+          .min(1)
+          .refine((key) => key.trim() === key, { message: "must not have surrounding whitespace" }),
+        z.discriminatedUnion("source", [
+          z.object({ source: z.literal("workspace"), label: nonEmptyStringSchema }).strict(),
+          z
+            .object({
+              source: z.literal("persona"),
+              label: nonEmptyStringSchema,
+              persona: nonEmptyStringSchema.refine((value) => !value.includes(":"), {
+                message: "must be a persona id without an effort suffix; use reasoning instead.",
+              }),
+              reasoning: ReasoningEffortSchema.optional(),
+              autoCompactThresholdTokens: autoCompactThresholdTokensSchema.optional(),
+            })
+            .strict(),
+        ]),
       )
-      .refine((entries) => new Set(entries.map((entry) => entry.id)).size === entries.length, {
-        message: "must contain unique persona ids.",
-      })
       .optional(),
     allowedUserIds: idListSchema.optional(),
     allowedChatIds: idListSchema.optional(),
     defaultProjectId: nonEmptyStringSchema.optional(),
     systemMessage: nonEmptyStringSchema.optional(),
   })
-  .strip();
+  .strict();
 
 function createProjectBaseShape() {
   return {
@@ -101,25 +112,22 @@ const telegramRepositoryProjectSchema = z
         message: "must be a relative path.",
       })
       .optional(),
-    persona: z.string().optional(),
   })
-  .strip();
+  .strict();
 
 function createDirectoryProjectSchema(configDir: string) {
   return z
     .object({
       ...createProjectBaseShape(),
       directory: nonEmptyStringSchema.transform((value) => resolve(configDir, value)),
-      persona: z.string().optional(),
     })
-    .strip();
+    .strict();
 }
 
 const telegramCompositeProjectSchema = z
   .object({
     ...createProjectBaseShape(),
     projectIds: stringListSchema.min(2, "must contain at least two project ids."),
-    persona: z.string(),
     instructions: nonEmptyStringSchema.optional(),
     subagents: z
       .object({
@@ -129,10 +137,10 @@ const telegramCompositeProjectSchema = z
           })
           .optional(),
       })
-      .strip()
+      .strict()
       .optional(),
   })
-  .strip();
+  .strict();
 
 function formatSectionZodErrors(
   error: z.ZodError,
@@ -161,6 +169,13 @@ function parseTelegramBotConfig(
 
   const config: TelegramBotConfig = parsed.data;
   const errors: string[] = [];
+
+  if (
+    config.startup.source === "preset" &&
+    !Object.hasOwn(config.presets ?? {}, config.startup.preset)
+  ) {
+    errors.push(`${sourceLabel}: ${fieldPath}.startup.preset references an unknown preset.`);
+  }
 
   if (config.allowedProjectIds) {
     const missingProjectIds = config.allowedProjectIds.filter(
@@ -196,7 +211,13 @@ function parseTelegramBotConfig(
   }
 
   const projectCount = config.allowedProjectIds?.length ?? knownProjectIds.size;
-  if (projectCount + TELEGRAM_BUILTIN_COMMAND_COUNT > TELEGRAM_MAX_COMMAND_COUNT) {
+  const hiddenPersonaCommand =
+    config.presets !== undefined && Object.keys(config.presets).length === 0;
+  const commandCount =
+    TELEGRAM_BUILTIN_COMMAND_COUNT -
+    Number(hiddenPersonaCommand) +
+    (projectCount === 1 ? 0 : projectCount);
+  if (commandCount > TELEGRAM_MAX_COMMAND_COUNT) {
     errors.push(
       `${sourceLabel}: ${fieldPath} exposes ${projectCount} projects, exceeding Telegram's ${TELEGRAM_MAX_COMMAND_COUNT}-command limit with built-in commands.`,
     );
@@ -249,38 +270,6 @@ function parseBots(
 
 function isGithubRepoRef(value: string): boolean {
   return /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(value);
-}
-
-function parsePersona(
-  rawPersona: string,
-  sourceLabel: string,
-  fieldPath: string,
-): { persona?: string; errors: string[] } {
-  const parsedPersona = parsePersonaReference(rawPersona);
-  if (parsedPersona.error === "empty-persona") {
-    return { errors: [`${sourceLabel}: ${fieldPath} must be a non-empty string.`] };
-  }
-  if (parsedPersona.error === "missing-reasoning") {
-    return { errors: [`${sourceLabel}: ${fieldPath} is missing a reasoning level after ':'.`] };
-  }
-  if (parsedPersona.error === "invalid-reasoning") {
-    return {
-      errors: [
-        `${sourceLabel}: ${fieldPath} has invalid reasoning level '${parsedPersona.rawReasoning}'. allowed levels: ${REASONING_LEVELS.join(", ")}.`,
-      ],
-    };
-  }
-  if (!parsedPersona.personaId) {
-    return { errors: [`${sourceLabel}: ${fieldPath} must be a non-empty string.`] };
-  }
-
-  return {
-    persona: formatPersonaReference({
-      personaId: parsedPersona.personaId,
-      reasoning: parsedPersona.reasoning,
-    }),
-    errors: [],
-  };
 }
 
 function parseProject(
@@ -337,15 +326,6 @@ function parseProject(
     return { errors: [`${sourceLabel}: ${fieldPath}.projectIds must contain unique project ids.`] };
   }
 
-  if (config.persona === undefined) {
-    return { config, errors: [] };
-  }
-
-  const personaResult = parsePersona(config.persona, sourceLabel, `${fieldPath}.persona`);
-  if (!personaResult.persona) {
-    return { errors: personaResult.errors };
-  }
-  config.persona = personaResult.persona;
   return { config, errors: [] };
 }
 

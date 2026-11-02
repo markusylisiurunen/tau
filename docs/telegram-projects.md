@@ -12,7 +12,7 @@ platform_api
 release2026
 ```
 
-Every project can have an optional non-empty `description`. Repository and persistent-directory projects can select `persona` as `<id>` or `<id>:<reasoning>`. Composite projects require their own persona. Sessions load applicable `AGENTS.md` instructions.
+Every project can have an optional non-empty `description`. The bot selects startup settings through [startup and presets](telegram.md#startup-and-presets). Projects describe workspaces, without a separate persona selection. Sessions load applicable `AGENTS.md` instructions.
 
 Each project must define exactly one workspace source: `repo`, `directory`, or `projectIds`.
 
@@ -26,8 +26,7 @@ A repository project clones one GitHub repository into a session-specific manage
     "ledger": {
       "repo": "acme/ledger",
       "ref": "main",
-      "workingDirectory": "packages/api",
-      "persona": "gpt-6.1-sol-coder"
+      "workingDirectory": "packages/api"
     }
   }
 }
@@ -65,8 +64,7 @@ A persistent-directory project reuses one existing directory instead of creating
 {
   "projects": {
     "notes": {
-      "directory": "/srv/tau/notes",
-      "persona": "gpt-6.1-sol-coder"
+      "directory": "/srv/tau/notes"
     }
   }
 }
@@ -91,7 +89,6 @@ A composite project creates a root containing multiple repositories:
     "api": { "repo": "acme/api", "workingDirectory": "services/http" },
     "platform": {
       "projectIds": ["web", "api"],
-      "persona": "gpt-6.1-sol-coder:high",
       "instructions": "Keep shared contracts synchronized.",
       "subagents": {
         "launchModels": ["openai/gpt-6.1-sol:high"]
@@ -107,7 +104,7 @@ Members are placed at `<composite-root>/<member-project-id>` and use each reposi
 
 `subagents.launchModels` sets which models subagents may be started with. See [subagents](subagents.md) for the syntax and inheritance.
 
-The composite's settings apply to the whole session: persona, subagents, model catalog, configuration, and tools. Members' `.tau/config.json` files are not merged. A subagent started in a member directory rebuilds only the context that depends on the directory: environment and repository details, the applicable `AGENTS.md`, and the skills found there.
+Configuration resolved at the composite root applies to the whole session, including workspace-default persona selection, subagents, model catalog, and tools. Members' `.tau/config.json` files are not merged. A subagent started in a member directory rebuilds only the context that depends on the directory: environment and repository details, the applicable `AGENTS.md`, and the skills found there.
 
 If any member cannot be prepared, Tau removes the whole composite workspace. Composite workspaces and member caches use the top-level `workspaceRoot`.
 

@@ -159,7 +159,7 @@ An empty `allowedReasoningLevels` does not create an empty selector. The TUI use
 
 After editing personas, skills, or project context, run `/reload` while the session is idle. Reload finds personas again and rebuilds the session's prompt and tools.
 
-If the current persona ID still exists, Tau applies its newly loaded definition. This can reset settings such as reasoning or service tier to the definition's values. If the ID is gone, Tau selects the first available persona. Existing messages stay as they are; a persona change never rewrites earlier history.
+If the current persona ID still exists, Tau applies its newly loaded definition. Current session settings, including reasoning and service tier, are preserved. Selecting the persona again reapplies its declared defaults. If the ID is gone, Tau selects the first available persona. Existing messages stay as they are; a persona change never rewrites earlier history.
 
 The TUI refuses to reload while a turn is running. Subagents that are already running keep the setup they started with. Subagents started after the reload use the reloaded persona. See [subagents](subagents.md).
 

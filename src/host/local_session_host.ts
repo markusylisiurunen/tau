@@ -16,6 +16,7 @@ import type { HistoryRemoteTarget } from "../core/history/types.js";
 import { McpManager } from "../core/mcp/manager.js";
 import type { ModelResolver } from "../core/models/catalog.js";
 import type { RemoteModelCatalogSnapshot } from "../core/models/remote_catalog.js";
+import { resolvePersonaSelection } from "../core/persona_selection.js";
 import type { PromptTemplate } from "../core/prompts.js";
 import { ChatRuntime, type ChatRuntimeEnvironment } from "../core/runtime/chat_runtime.js";
 import type { CoreDeps } from "../core/runtime/deps.js";
@@ -70,6 +71,7 @@ import type {
   SessionProtocolMessage,
   SessionProtocolModelSnapshot,
   SessionProtocolOperation,
+  SessionProtocolPersonaOverrides,
   SessionProtocolPersonaSnapshot,
   SessionProtocolRecordParams,
   SessionProtocolRecordResult,
@@ -122,6 +124,7 @@ const PATH_AUTOCOMPLETE_CACHE_TTL_MS = 5_000;
 const HISTORY_UNAVAILABLE_NOTICE_ID = "notice-history-unavailable";
 
 export type LocalSessionResolvedBootstrap = {
+  initialAutoCompactThresholdTokens?: number;
   persona: Persona;
   discoveredSkills: Skill[];
   personas: Persona[];
@@ -133,6 +136,7 @@ export type LocalSessionResolvedBootstrap = {
 export type LocalSessionBootstrapResolver = (args: {
   executionEnvironment: ExecutionEnvironment;
   remoteCatalog: RemoteModelCatalogSnapshot;
+  recovering: boolean;
 }) => Promise<LocalSessionResolvedBootstrap>;
 
 export type LocalSessionHostSessionOptions = {
@@ -291,7 +295,11 @@ export class LocalSessionHost implements TauSessionHost {
     forceNextSnapshotRevision = false,
   ): Promise<LocalHostedSessionHandle> {
     const remoteCatalog = this.sessionOptions.getRemoteModelCatalog();
-    const bootstrap = await this.resolveNewSessionBootstrap(executionEnvironment, remoteCatalog);
+    const bootstrap = await this.resolveSessionBootstrap(
+      executionEnvironment,
+      remoteCatalog,
+      committedSnapshot !== undefined,
+    );
     if (committedSnapshot) {
       this.applySnapshotSettingsToBootstrap(bootstrap, committedSnapshot);
     } else if (createParams) {
@@ -364,7 +372,9 @@ export class LocalSessionHost implements TauSessionHost {
     runtime.setAutoCompactThreshold(
       committedSnapshot
         ? committedSnapshot.settings.autoCompactThresholdTokens
-        : (createParams?.autoCompactThresholdTokens ?? null),
+        : createParams?.autoCompactThresholdTokens !== undefined
+          ? createParams.autoCompactThresholdTokens
+          : (bootstrap.initialAutoCompactThresholdTokens ?? null),
     );
 
     const attributes = committedSnapshot?.attributes ?? createParams?.attributes;
@@ -407,16 +417,17 @@ export class LocalSessionHost implements TauSessionHost {
     return hostedSession;
   }
 
-  private async resolveNewSessionBootstrap(
+  private async resolveSessionBootstrap(
     executionEnvironment: ExecutionEnvironment,
     remoteCatalog: RemoteModelCatalogSnapshot,
+    recovering: boolean,
   ): Promise<LocalSessionResolvedBootstrap> {
     const resolver = this.sessionOptions.resolveSessionBootstrap;
     if (!resolver) {
       return this.defaultSessionBootstrap();
     }
 
-    const bootstrap = await resolver({ executionEnvironment, remoteCatalog });
+    const bootstrap = await resolver({ executionEnvironment, remoteCatalog, recovering });
     return cloneResolvedBootstrap(bootstrap);
   }
 
@@ -1200,21 +1211,22 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     });
   }
 
-  async setPersona(personaId: string): Promise<SessionProtocolSnapshot> {
+  async setPersona(
+    personaId: string | null,
+    overrides?: SessionProtocolPersonaOverrides,
+  ): Promise<SessionProtocolSnapshot> {
     this.assertActive();
     const runtimeConfig = await this.executionEnvironment.resolveRuntimeConfig(
       this.executionEnvironment.snapshot().cwd,
       { remoteCatalog: this.remoteCatalog },
     );
     const personas = runtimeConfig.personas.map(clonePersona);
-    const persona = personas.find(
-      (persona) => persona.id.toLowerCase() === personaId.toLowerCase(),
+    const selectedPersona = resolvePersonaSelection(
+      personas,
+      runtimeConfig.config.defaultPersona,
+      personaId,
+      overrides,
     );
-    if (!persona) {
-      throw new Error(`unknown persona '${personaId}'`);
-    }
-
-    const selectedPersona = clonePersona(persona);
     const runtimeContext = await this.executionEnvironment.resolveRuntimeContext({
       cwd: this.executionEnvironment.snapshot().cwd,
       discoveredSkills: runtimeConfig.skills,
@@ -1227,6 +1239,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       );
       this.runtime.updatePromptContext(runtimeContext.promptBootstrap.promptContext);
       this.runtime.setPersona(selectedPersona);
+      this.runtime.setAutoCompactThreshold(overrides?.autoCompactThresholdTokens ?? null);
       this.bootstrap = {
         persona: clonePersona(selectedPersona),
         discoveredSkills: structuredClone(runtimeConfig.skills),
@@ -1255,9 +1268,12 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
     const personas = runtimeConfig.personas.map(clonePersona);
     const currentPersonaId = this.runtime.persona.id.toLowerCase();
-    const nextPersona =
-      personas.find((persona) => persona.id.toLowerCase() === currentPersonaId) ?? personas[0]!;
-
+    const nextPersona = clonePersona(
+      personas.find((persona) => persona.id.toLowerCase() === currentPersonaId) ?? personas[0]!,
+    );
+    if (nextPersona.id.toLowerCase() === currentPersonaId) {
+      nextPersona.settings = structuredClone(this.runtime.persona.settings);
+    }
     const runtimeContext = await this.executionEnvironment.resolveRuntimeContext({
       cwd: this.executionEnvironment.snapshot().cwd,
       discoveredSkills: runtimeConfig.skills,
@@ -3295,6 +3311,7 @@ function cloneResolvedBootstrap(
   bootstrap: LocalSessionResolvedBootstrap,
 ): LocalSessionResolvedBootstrap {
   return {
+    initialAutoCompactThresholdTokens: bootstrap.initialAutoCompactThresholdTokens,
     persona: clonePersona(bootstrap.persona),
     discoveredSkills: structuredClone(bootstrap.discoveredSkills),
     personas: bootstrap.personas.map(clonePersona),

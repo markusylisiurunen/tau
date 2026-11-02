@@ -40,8 +40,12 @@ describe("telegram runtime", () => {
     const runtime = await startTelegramRuntime({
       config: createTelegramConfig({
         bots: {
-          single: { botToken: "single-token", allowedProjectIds: ["alpha"] },
-          multiple: { botToken: "multiple-token" },
+          single: {
+            botToken: "single-token",
+            startup: { source: "workspace" },
+            allowedProjectIds: ["alpha"],
+          },
+          multiple: { botToken: "multiple-token", startup: { source: "workspace" } },
         },
       }),
       createSessionClient: vi.fn(),
@@ -71,13 +75,15 @@ describe("telegram runtime", () => {
 
   it("passes each bot's persona menu to its adapter", async () => {
     const adapters = new Map();
-    const personaMenu = [{ id: "project-persona", label: "friendly" }];
+    const presets = {
+      friendly: { source: "persona", persona: "project-persona", label: "friendly" },
+    };
     const runtime = await startTelegramRuntime({
       config: createTelegramConfig({
         bots: {
-          curated: { botToken: "token", personaMenu },
-          empty: { botToken: "token", personaMenu: [] },
-          full: { botToken: "token" },
+          curated: { botToken: "token", startup: { source: "workspace" }, presets },
+          empty: { botToken: "token", startup: { source: "workspace" }, presets: {} },
+          full: { botToken: "token", startup: { source: "workspace" } },
         },
       }),
       createSessionClient: vi.fn(),
@@ -89,9 +95,9 @@ describe("telegram runtime", () => {
       },
     });
     try {
-      expect(adapters.get("curated").personaMenu).toEqual(personaMenu);
-      expect(adapters.get("empty").personaMenu).toEqual([]);
-      expect(adapters.get("full").personaMenu).toBeUndefined();
+      expect(adapters.get("curated").presets).toEqual(presets);
+      expect(adapters.get("empty").presets).toEqual({});
+      expect(adapters.get("full").presets).toBeUndefined();
     } finally {
       await runtime.close();
     }
@@ -114,10 +120,19 @@ describe("telegram runtime", () => {
           bots: {
             first: {
               botToken: "first-token",
+              startup: { source: "preset", preset: "chat" },
               autoCompactThresholdTokens: 128000,
-              personaMenu: [{ id: "chat", autoCompactThresholdTokens: 80000 }],
+              presets: {
+                chat: {
+                  source: "persona",
+                  persona: "chat",
+                  label: "Chat",
+                  reasoning: "low",
+                  autoCompactThresholdTokens: 80000,
+                },
+              },
             },
-            second: { botToken: "second-token" },
+            second: { botToken: "second-token", startup: { source: "workspace" } },
           },
         }),
         createSessionClient: async (options) => {
@@ -137,11 +152,17 @@ describe("telegram runtime", () => {
       await vi.waitFor(() => expect(clients).toHaveLength(2));
       expect(
         clients.find((client) => client.ownerId === "telegram:first:chat:123").autoCompactDefaults,
-      ).toEqual({ thresholdTokens: 128000, personaThresholdTokens: { chat: 80000 } });
+      ).toEqual({ thresholdTokens: 128000, personaThresholdTokens: {} });
       expect(
         clients.find((client) => client.ownerId === "telegram:second:chat:-456")
           .autoCompactDefaults,
       ).toEqual({ personaThresholdTokens: {} });
+      expect(
+        clients.find((client) => client.ownerId === "telegram:first:chat:123").personaSelection,
+      ).toEqual({ personaId: "chat", reasoning: "low", autoCompactThresholdTokens: 80000 });
+      expect(
+        clients.find((client) => client.ownerId === "telegram:second:chat:-456").personaSelection,
+      ).toEqual({ personaId: null });
       const content = Buffer.from("ffd8ffe000104a464946000101", "hex");
       for (const client of clients) {
         expect(client.clientTools.map((tool) => tool.schema.name)).toEqual([
@@ -201,6 +222,7 @@ describe("telegram runtime", () => {
         bots: {
           "bot-one": {
             botToken: "token-1",
+            startup: { source: "workspace" },
             allowedProjectIds: ["alpha"],
           },
         },
@@ -246,7 +268,7 @@ describe("telegram runtime", () => {
     const logs = [];
     const runtime = await startTelegramRuntime({
       config: createTelegramConfig({
-        bots: { "bot-one": { botToken: "token-1" } },
+        bots: { "bot-one": { botToken: "token-1", startup: { source: "workspace" } } },
       }),
       createSessionClient: vi.fn(),
       onLog: (line) => {
@@ -278,7 +300,7 @@ describe("telegram runtime", () => {
     const logs = [];
     const runtime = await startTelegramRuntime({
       config: createTelegramConfig({
-        bots: { "bot-one": { botToken: "token-1" } },
+        bots: { "bot-one": { botToken: "token-1", startup: { source: "workspace" } } },
       }),
       createSessionClient: vi.fn(),
       onLog: (line) => {
@@ -340,7 +362,7 @@ describe("telegram runtime", () => {
   it("persists project and TTS preferences across runtime restarts", async () => {
     const ownerId = "telegram:bot-one:chat:42";
     const config = createTelegramConfig({
-      bots: { "bot-one": { botToken: "token-1" } },
+      bots: { "bot-one": { botToken: "token-1", startup: { source: "workspace" } } },
     });
     let firstStore;
     const firstRuntime = await startTelegramRuntime({
@@ -388,9 +410,11 @@ describe("telegram runtime", () => {
           bots: {
             "bot-one": {
               botToken: "token-1",
+              startup: { source: "workspace" },
             },
             "bot-two": {
               botToken: "token-2",
+              startup: { source: "workspace" },
             },
           },
         }),

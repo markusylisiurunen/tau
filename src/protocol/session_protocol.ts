@@ -203,9 +203,14 @@ export type SessionProtocolSetAutoCompactThresholdParams = SessionProtocolSessio
 export type SessionProtocolSetReasoningParams = SessionProtocolSessionIdParams & {
   reasoning: SessionProtocolReasoningEffort;
 };
-export type SessionProtocolSetPersonaParams = SessionProtocolSessionIdParams & {
-  personaId: string;
+export type SessionProtocolPersonaOverrides = {
+  reasoning?: SessionProtocolReasoningEffort;
+  autoCompactThresholdTokens?: number;
 };
+export type SessionProtocolSetPersonaParams = SessionProtocolSessionIdParams &
+  SessionProtocolPersonaOverrides & {
+    personaId: string | null;
+  };
 export type SessionProtocolSettingsUpdateResult = {
   revision: number;
   settings: SessionProtocolSettingsSnapshot;
@@ -1831,9 +1836,19 @@ const sessionProtocolSetReasoningParamsSchema = z
 const sessionProtocolSetPersonaParamsSchema = z
   .object({
     sessionId: nonEmptyStringSchema,
-    personaId: nonEmptyStringSchema,
+    personaId: nonEmptyStringSchema.nullable(),
+    reasoning: sessionProtocolReasoningEffortSchema.optional(),
+    autoCompactThresholdTokens: z.number().int().min(MIN_AUTO_COMPACT_THRESHOLD_TOKENS).optional(),
   })
-  .strip();
+  .strict()
+  .refine(
+    (value) =>
+      value.personaId !== null ||
+      (value.reasoning === undefined && value.autoCompactThresholdTokens === undefined),
+    {
+      message: "workspace selection does not accept overrides",
+    },
+  );
 
 const sessionProtocolResolvePromptParamsSchema = z
   .object({
@@ -5016,6 +5031,10 @@ function validateSetPersonaParams(
     value: {
       sessionId: parsed.data.sessionId,
       personaId: parsed.data.personaId,
+      ...(parsed.data.reasoning !== undefined ? { reasoning: parsed.data.reasoning } : {}),
+      ...(parsed.data.autoCompactThresholdTokens !== undefined
+        ? { autoCompactThresholdTokens: parsed.data.autoCompactThresholdTokens }
+        : {}),
     },
   };
 }

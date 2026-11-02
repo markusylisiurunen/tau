@@ -617,7 +617,6 @@ describe("telegram session manager", () => {
     );
     projects.platform = {
       projectIds,
-      persona: "gpt-5.6-sol-coder:high",
     };
     const manager = createDemoSessionManager(clientHarness, {
       projects,
@@ -645,7 +644,6 @@ describe("telegram session manager", () => {
         beta: { repo: "owner/beta" },
         platform: {
           projectIds: ["alpha", "beta"],
-          persona: "gpt-5.6-sol-coder:high",
         },
       },
       prepareWorkspace: vi.fn(async () => ({
@@ -1365,7 +1363,7 @@ describe("telegram session manager", () => {
       await expect(manager.setPersona(created.id, "other")).resolves.toEqual(
         createProtocolSnapshot(),
       );
-      expect(clientHarness.session.setPersona).toHaveBeenCalledExactlyOnceWith("other");
+      expect(clientHarness.session.setPersona).toHaveBeenCalledExactlyOnceWith("other", undefined);
       clientHarness.session.setPersona.mockRejectedValueOnce(new Error("unknown persona"));
       await expect(manager.setPersona(created.id, "missing")).rejects.toThrow("unknown persona");
       await manager.sendMessage(created.id, "run");
@@ -1519,7 +1517,6 @@ describe("telegram session manager", () => {
       projects: {
         me: {
           directory,
-          persona: "gpt-5.6-sol-coder:high",
         },
       },
       workspaceRoot: join(tempRoot, "managed"),
@@ -1539,11 +1536,9 @@ describe("telegram session manager", () => {
       expect(createClient).toHaveBeenCalledTimes(2);
       expect(createClient).toHaveBeenNthCalledWith(1, {
         cwd: directory,
-        persona: "gpt-5.6-sol-coder:high",
       });
       expect(createClient).toHaveBeenNthCalledWith(2, {
         cwd: directory,
-        persona: "gpt-5.6-sol-coder:high",
       });
       expect(clientHarness.client.sessions.create).toHaveBeenCalledTimes(2);
       expect(clientHarness.client.sessions.create).toHaveBeenCalledWith({
@@ -2788,7 +2783,7 @@ describe("telegram session manager", () => {
       code: "not_found",
     });
     await scopedManager.setPersona("s-demo-owned", "other");
-    expect(manager.setPersona).toHaveBeenCalledWith("s-demo-owned", "other");
+    expect(manager.setPersona).toHaveBeenCalledWith("s-demo-owned", "other", undefined);
 
     await scopedManager.createSession({ projectId: "demo" });
     expect(manager.createSession).toHaveBeenCalledWith({

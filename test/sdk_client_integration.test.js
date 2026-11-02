@@ -27,6 +27,102 @@ async function withTempHome(test) {
 }
 
 describe("sdk client integration", () => {
+  it("applies startup presets atomically and recovers session-owned settings independently", async () => {
+    await withTempHome(async (home) => {
+      const directory = join(home, ".tau", "personas");
+      await mkdir(directory, { recursive: true });
+      for (const [id, effort] of [
+        ["workspace-test", "medium"],
+        ["preset-test", "high"],
+      ]) {
+        await writeFile(
+          join(directory, `${id}.md`),
+          `---
+id: ${id}
+provider: openai
+model: gpt-6.1-sol
+reasoning: ${effort}
+allowedReasoningLevels: [low, medium, high]
+---
+Test persona ${id}.
+`,
+        );
+      }
+      await writeFile(
+        join(home, ".tau", "config.json"),
+        JSON.stringify({ defaultPersona: "workspace-test:low" }),
+      );
+      const runtimeOptions = {
+        autoCompactDefaults: { thresholdTokens: 128000, personaThresholdTokens: {} },
+        initialPersonaSelection: {
+          personaId: "preset-test",
+          reasoning: "medium",
+          autoCompactThresholdTokens: 80000,
+        },
+      };
+      let client = await createTauSdkClientWithHostConfig({ cwd: home }, {}, runtimeOptions);
+      try {
+        let session = await client.sessions.create({
+          executionEnvironment: { kind: "local", cwd: home },
+          attributes: { source: "test" },
+        });
+        const id = session.id;
+        expect((await session.snapshot()).settings).toMatchObject({
+          personaId: "preset-test",
+          reasoning: "medium",
+          autoCompactThresholdTokens: 80000,
+        });
+        await session.setReasoning("low");
+        await session.reload();
+        expect((await session.snapshot()).settings.reasoning).toBe("low");
+        const before = await session.snapshot();
+        await expect(
+          session.setPersona("workspace-test", { reasoning: "xhigh" }),
+        ).rejects.toThrow();
+        await expect(session.setPersona("missing", { reasoning: "high" })).rejects.toThrow();
+        expect(await session.snapshot()).toEqual(before);
+        await session.setPersona("preset-test");
+        expect((await session.snapshot()).settings).toMatchObject({
+          reasoning: "high",
+          autoCompactThresholdTokens: null,
+        });
+        await session.setPersona(null);
+        expect((await session.snapshot()).settings).toMatchObject({
+          personaId: "workspace-test",
+          reasoning: "low",
+        });
+        await session.setPersona("preset-test", {
+          reasoning: "medium",
+          autoCompactThresholdTokens: 90000,
+        });
+        await session.setReasoning("low");
+        await client.close();
+        client = await createTauSdkClientWithHostConfig(
+          { cwd: home },
+          {},
+          {
+            ...runtimeOptions,
+            initialPersonaSelection: { personaId: "removed-preset-persona" },
+          },
+        );
+        session = await client.sessions.observe(id);
+        expect((await session.snapshot()).settings).toMatchObject({
+          personaId: "preset-test",
+          reasoning: "low",
+          autoCompactThresholdTokens: 90000,
+        });
+        await expect(
+          client.sessions.create({
+            executionEnvironment: { kind: "local", cwd: home },
+            attributes: { source: "test" },
+          }),
+        ).rejects.toThrow();
+      } finally {
+        await client.close();
+      }
+    });
+  }, 20000);
+
   it("creates, updates and resets the shared auto-compaction setting", async () => {
     await withTempHome(async (home) => {
       const client = await createTauSdkClient({ cwd: home });

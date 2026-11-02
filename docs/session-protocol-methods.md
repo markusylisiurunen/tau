@@ -140,6 +140,8 @@ params: { sessionId: string; text: string; historyEntryId?: string }
 result: { snapshot: SessionProtocolSnapshot; userHistoryEntryId: string }
 ```
 
+Explicit persona selection accepts optional reasoning and compaction overrides. Omitted reasoning uses the persona default; omitted compaction clears the session override. Workspace selection accepts no overrides. Invalid selections fail before settings change. Effort overrides respect non-empty persona `allowedReasoningLevels`; a model without reasoning accepts only `none`. Compaction thresholds must be safe integers of at least 50,000.
+
 This changes the context and waits its turn behind other changes. It can interrupt a running turn, and rejects pending queued and steering requests before adding the message. Use it for text written by the user that the model should see, not for client diagnostics.
 
 ### `session.submit`
@@ -338,7 +340,7 @@ The effective threshold uses the session override, then any host default (such a
 
 The host saves the setting and publishes a `settings.set` delta to observers. Changing it does not start compaction. A running turn and its steering continuations keep their original threshold.
 
-Reloads, reasoning changes, recovery, and `session.setPersona` with the current persona ID preserve the configured value. `session.setPersona` with a different persona ID resets it to `null`. The effective threshold is recalculated for the selected persona and model. Native Tau subagents launched without a model override inherit the parent's launching-turn threshold. Native launches with an explicit model use the persona's subagent threshold for that model, or the model's default. Claude Code subagents manage their own compaction. Ephemeral threads use the persona default without the main session override. See [automatic compaction](sessions.md#automatic-compaction) for request-size limits and costs.
+Reloads, reasoning changes, and recovery preserve the configured value. `session.setPersona` sets its supplied compaction override or resets it to `null`, including when reapplying the current persona. The effective threshold is recalculated for the selected persona and model. Native Tau subagents launched without a model override inherit the parent's launching-turn threshold. Native launches with an explicit model use the persona's subagent threshold for that model, or the model's default. Claude Code subagents manage their own compaction. Ephemeral threads use the persona default without the main session override. See [automatic compaction](sessions.md#automatic-compaction) for request-size limits and costs.
 
 ### `session.setReasoning`
 
@@ -359,15 +361,19 @@ The change waits its turn behind other changes but does not interrupt a running 
 
 ### `session.setPersona`
 
-Changes the persona to an id in the session catalog.
+Applies a persona and optional settings atomically. `personaId: null` resolves the current workspace default, including its effort suffix.
 
 ```ts
 params: {
   sessionId: string;
-  personaId: string;
+  personaId: string | null;
+  reasoning?: Reasoning;
+  autoCompactThresholdTokens?: number;
 }
 result: SessionProtocolSnapshot;
 ```
+
+Explicit persona selection accepts optional reasoning and compaction overrides. Omitted reasoning uses the persona default; omitted compaction clears the session override. Workspace selection accepts no overrides. Invalid selections fail before settings change. Effort overrides respect non-empty persona `allowedReasoningLevels`; a model without reasoning accepts only `none`. Compaction thresholds must be safe integers of at least 50,000.
 
 This changes the context and waits its turn behind other changes. It interrupts a running turn and rejects pending input, then returns the new snapshot.
 

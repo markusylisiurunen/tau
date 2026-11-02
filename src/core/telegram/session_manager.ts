@@ -11,6 +11,7 @@ import type {
   SessionProtocolFacet,
   SessionProtocolInterruptResult,
   SessionProtocolMessage,
+  SessionProtocolPersonaOverrides,
   SessionProtocolReasoningEffort,
   SessionProtocolRecordResult,
   SessionProtocolResolvePromptResult,
@@ -458,7 +459,7 @@ export type TelegramSessionClientOptions = {
   cwd: string;
   ownerId?: string;
   clientTools?: TauSdkClientTool[];
-  persona?: string;
+  personaSelection?: { personaId: string | null } & SessionProtocolPersonaOverrides;
 };
 
 export type TelegramSessionClientEvent = SessionProtocolDeltaMessage;
@@ -472,7 +473,10 @@ export type TelegramTauSession = {
   record(text: string): Promise<SessionProtocolRecordResult>;
   resolvePrompt(promptId: string): Promise<SessionProtocolResolvePromptResult>;
   compact(mode: "summary-only" | "summary-and-last"): Promise<SessionProtocolCompactResult>;
-  setPersona(personaId: string): Promise<SessionProtocolSnapshot>;
+  setPersona(
+    personaId: string | null,
+    overrides?: SessionProtocolPersonaOverrides,
+  ): Promise<SessionProtocolSnapshot>;
   setAutoCompactThreshold(
     thresholdTokens: number | null,
   ): Promise<SessionProtocolSettingsUpdateResult>;
@@ -522,7 +526,11 @@ export type TelegramSessionManager = {
   interruptSession(sessionId: string): Promise<TelegramSessionInterruptResult>;
   recordPrompt(sessionId: string, promptId: string): Promise<string>;
   compactSession(sessionId: string): Promise<SessionProtocolCompactResult>;
-  setPersona(sessionId: string, personaId: string): Promise<SessionProtocolSnapshot>;
+  setPersona(
+    sessionId: string,
+    personaId: string | null,
+    overrides?: SessionProtocolPersonaOverrides,
+  ): Promise<SessionProtocolSnapshot>;
   setAutoCompactThreshold(
     sessionId: string,
     thresholdTokens: number | null,
@@ -841,7 +849,11 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     return await entry.tauSession.compact("summary-only");
   }
 
-  async setPersona(sessionId: string, personaId: string): Promise<SessionProtocolSnapshot> {
+  async setPersona(
+    sessionId: string,
+    personaId: string | null,
+    overrides?: SessionProtocolPersonaOverrides,
+  ): Promise<SessionProtocolSnapshot> {
     const entry = this.requireSession(sessionId);
     if (entry.record.state === "running" || entry.activeSubmit) {
       throw new TelegramSessionManagerError("busy", "session is running");
@@ -849,7 +861,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     if (!entry.tauSession) {
       throw new TelegramSessionManagerError("not_ready", "session is still preparing");
     }
-    return await entry.tauSession.setPersona(personaId);
+    return await entry.tauSession.setPersona(personaId, overrides);
   }
 
   async setAutoCompactThreshold(
@@ -1775,9 +1787,6 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
   private buildClientOptions(entry: SessionEntry, cwd: string): TelegramSessionClientOptions {
     const options: TelegramSessionClientOptions = { cwd };
     if (entry.record.ownerId) options.ownerId = entry.record.ownerId;
-    if (entry.project.persona) {
-      options.persona = entry.project.persona;
-    }
     return options;
   }
 
@@ -2446,9 +2455,13 @@ class ScopedTelegramSessionManager implements TelegramSessionManager {
     return await this.sessionManager.compactSession(sessionId);
   }
 
-  async setPersona(sessionId: string, personaId: string): Promise<SessionProtocolSnapshot> {
+  async setPersona(
+    sessionId: string,
+    personaId: string | null,
+    overrides?: SessionProtocolPersonaOverrides,
+  ): Promise<SessionProtocolSnapshot> {
     this.requireSession(sessionId);
-    return await this.sessionManager.setPersona(sessionId, personaId);
+    return await this.sessionManager.setPersona(sessionId, personaId, overrides);
   }
 
   async setAutoCompactThreshold(

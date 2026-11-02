@@ -21,6 +21,7 @@ import type {
   SessionProtocolExecParams,
   SessionProtocolExecResult,
   SessionProtocolInterruptSubagentResult,
+  SessionProtocolPersonaOverrides,
   SessionProtocolRecordParams,
   SessionProtocolRecordResult,
   SessionProtocolReloadResult,
@@ -104,6 +105,7 @@ export type TauHostedSession = {
   ): Promise<SessionProtocolSettingsUpdateResult>;
   setPersona(
     personaId: SessionProtocolSetPersonaParams["personaId"],
+    overrides?: SessionProtocolPersonaOverrides,
   ): Promise<SessionProtocolSnapshot>;
   resolvePrompt(
     promptId: SessionProtocolResolvePromptParams["promptId"],

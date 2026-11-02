@@ -3,6 +3,7 @@ import { basename, extname } from "node:path";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { z } from "zod";
 import type {
+  SessionProtocolPersonaOverrides,
   SessionProtocolReasoningEffort,
   SessionProtocolSnapshot,
 } from "../../protocol/session_protocol.js";
@@ -155,7 +156,7 @@ export type TelegramAdapterOptions = {
   botId: string;
   botToken: string;
   projects: Record<string, TelegramProjectConfig>;
-  personaMenu?: TelegramBotConfig["personaMenu"];
+  presets?: TelegramBotConfig["presets"];
   defaultProjectId?: string;
   systemMessage?: string;
   allowedUserIds?: number[];
@@ -1275,7 +1276,7 @@ class TelegramAdapterImpl {
   private readonly projects: Record<string, TelegramProjectConfig>;
   private readonly defaultProjectId?: string;
   private readonly systemMessage?: string;
-  private readonly personaMenu?: TelegramBotConfig["personaMenu"];
+  private readonly presets?: TelegramBotConfig["presets"];
   private readonly allowedUserIds?: Set<number>;
   private readonly allowedChatIds?: Set<number>;
   private readonly botUsername: string;
@@ -1303,8 +1304,7 @@ class TelegramAdapterImpl {
     {
       token: string;
       sessionId: string;
-      personas: { id: string; label: string }[];
-      currentPersonaId: string;
+      personas: { id: string | null; label: string; overrides?: SessionProtocolPersonaOverrides }[];
       text: string;
     }
   >();
@@ -1349,7 +1349,7 @@ class TelegramAdapterImpl {
     this.projects = options.projects;
     this.defaultProjectId = options.defaultProjectId;
     this.systemMessage = options.systemMessage?.trim() || undefined;
-    this.personaMenu = options.personaMenu;
+    this.presets = options.presets;
     this.allowedUserIds =
       options.allowedUserIds && options.allowedUserIds.length > 0
         ? new Set(options.allowedUserIds)
@@ -1453,7 +1453,8 @@ class TelegramAdapterImpl {
       },
       {
         command: "/persona",
-        description: "switch the active session persona",
+        description: "apply a persona preset",
+        hiddenFromMenu: this.presets !== undefined && Object.keys(this.presets).length === 0,
         handler: async (chatId, args) => this.handlePersona(chatId, args),
       },
       {
@@ -2260,6 +2261,10 @@ class TelegramAdapterImpl {
       await this.reply(chatId, "use /persona to choose a persona.");
       return;
     }
+    if (this.presets !== undefined && Object.keys(this.presets).length === 0) {
+      await this.reply(chatId, "no presets configured.");
+      return;
+    }
     const session = await this.requireActiveSession(chatId);
     if (!session) return;
     try {
@@ -2269,51 +2274,30 @@ class TelegramAdapterImpl {
         return;
       }
       const catalog = snapshot.catalog.personas;
-      const currentPersonaId = snapshot.settings.personaId;
-      const menu: { id: string; label?: string }[] =
-        this.personaMenu ?? catalog.map((persona) => ({ id: persona.id }));
-      const personas: { id: string; label: string }[] = [];
-      const missingIds: string[] = [];
-      for (const entry of menu) {
-        const persona = catalog.find((candidate) => candidate.id === entry.id);
-        if (persona)
-          personas.push({ id: persona.id, label: entry.label ?? persona.label ?? persona.id });
-        else missingIds.push(entry.id);
-      }
-      const currentLabel =
-        catalog.find((persona) => persona.id === currentPersonaId)?.label ?? currentPersonaId;
-      const missingText =
-        missingIds.length > 0
-          ? `these personas from this bot's menu aren't available in this session: ${missingIds.join(", ")}.`
-          : undefined;
+      const personas =
+        this.presets === undefined
+          ? catalog.map((persona) => ({ id: persona.id, label: persona.label || persona.id }))
+          : Object.values(this.presets).map((preset) =>
+              preset.source === "workspace"
+                ? { id: null, label: preset.label }
+                : {
+                    id: preset.persona,
+                    label: preset.label,
+                    overrides: {
+                      reasoning: preset.reasoning,
+                      autoCompactThresholdTokens: preset.autoCompactThresholdTokens,
+                    },
+                  },
+            );
       if (personas.length === 0) {
-        if (!this.personaMenu) {
-          await this.reply(chatId, "this session has no personas.");
-          return;
-        }
-        const emptyText =
-          this.personaMenu.length === 0
-            ? "this bot's persona menu is empty, so there are no personas to switch to."
-            : "none of the personas in this bot's menu are available in this session, so there are no personas to switch to.";
-        const lines = [emptyText, missingText, `this session is using ${currentLabel}.`];
-        await this.reply(chatId, lines.filter(Boolean).join("\n\n"));
+        await this.reply(chatId, "no presets configured.");
         return;
       }
-      const currentOutsideText =
-        this.personaMenu && !personas.some((persona) => persona.id === currentPersonaId)
-          ? `this session is using ${currentLabel}, which isn't in this menu.`
-          : undefined;
-      const lines = [
-        "choose a persona for this session. switching is available only while Tau is idle.",
-        currentOutsideText,
-        missingText,
-      ];
       this.personaPickers.set(chatId, {
         token: randomUUID(),
         sessionId: session.id,
         personas,
-        currentPersonaId,
-        text: lines.filter(Boolean).join("\n\n"),
+        text: "choose a preset to apply. switching is available only while Tau is idle.",
       });
       await this.showPersonaPage(chatId, 0);
     } catch (error) {
@@ -2327,7 +2311,7 @@ class TelegramAdapterImpl {
     const start = page * 20;
     const keyboard = picker.personas.slice(start, start + 20).map((persona, index) => [
       {
-        text: `${persona.label}${persona.id === picker.currentPersonaId ? " (current)" : ""}`,
+        text: persona.label,
         callback_data: `persona:${picker.token}:select:${start + index}`,
       },
     ]);
@@ -2380,6 +2364,7 @@ class TelegramAdapterImpl {
       snapshot = await this.getSessionManagerForChat(chatId).setPersona(
         picker.sessionId,
         persona.id,
+        persona.overrides,
       );
     } catch (error) {
       await this.reply(chatId, this.formatManagerError(error));

@@ -447,7 +447,7 @@ describe("LocalSessionHost", () => {
         effectiveAutoCompactThresholdTokens: 128000,
       });
       await session.setAutoCompactThreshold(100000);
-      await session.setPersona("first");
+      await session.setPersona("first", { autoCompactThresholdTokens: 100000 });
       await session.reload();
       await session.setReasoning("high");
       expect((await session.snapshot()).settings.autoCompactThresholdTokens).toBe(100000);
@@ -541,7 +541,7 @@ describe("LocalSessionHost", () => {
         });
         await session.record({ text: "keep this conversation" });
         await session.reload();
-        await session.setPersona(session.runtime.persona.id);
+        await session.setPersona(session.runtime.persona.id, { autoCompactThresholdTokens: 50000 });
         const snapshot = await session.snapshot();
         expect(snapshot.settings.autoCompactThresholdTokens).toBe(50000);
         const { contextId } = await session.createEphemeralContext({

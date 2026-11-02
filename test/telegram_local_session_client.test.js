@@ -93,10 +93,9 @@ describe("local Telegram session client", () => {
               },
               123,
             ),
-            persona: "gpt-5.6-sol-coder",
+            personaSelection: { personaId: "gpt-6.1-sol-coder", reasoning: "high" },
             autoCompactDefaults: {
               thresholdTokens: 128000,
-              personaThresholdTokens: { chat: 80000 },
             },
           },
           hostConfig,
@@ -122,7 +121,6 @@ describe("local Telegram session client", () => {
       expect(createSdkClient.mock.calls[1][0]).not.toHaveProperty("noAgentContextFiles");
       expect(createSdkClient.mock.calls[1][0]).toMatchObject({
         cwd: selectedWorkspace,
-        persona: "gpt-5.6-sol-coder",
         initialize: { client: { name: "tau-telegram", version: "1" } },
       });
       expect(createSdkClient.mock.calls[1][0].clientTools.map((tool) => tool.schema.name)).toEqual([
@@ -143,15 +141,18 @@ describe("local Telegram session client", () => {
       expect(createSdkClient.mock.calls.map((call) => call[2])).toEqual([
         {
           remoteModelCatalog,
-          autoCompactDefaults: { thresholdTokens: 128000, personaThresholdTokens: { chat: 80000 } },
+          initialPersonaSelection: { personaId: "gpt-6.1-sol-coder", reasoning: "high" },
+          autoCompactDefaults: { thresholdTokens: 128000 },
         },
         {
           remoteModelCatalog,
-          autoCompactDefaults: { thresholdTokens: 128000, personaThresholdTokens: { chat: 80000 } },
+          initialPersonaSelection: { personaId: "gpt-6.1-sol-coder", reasoning: "high" },
+          autoCompactDefaults: { thresholdTokens: 128000 },
         },
         {
           remoteModelCatalog,
-          autoCompactDefaults: { thresholdTokens: 128000, personaThresholdTokens: { chat: 80000 } },
+          initialPersonaSelection: { personaId: "gpt-6.1-sol-coder", reasoning: "high" },
+          autoCompactDefaults: { thresholdTokens: 128000 },
         },
       ]);
     } finally {

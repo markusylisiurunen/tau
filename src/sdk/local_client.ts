@@ -8,6 +8,7 @@ import {
   getDefaultModelCatalogStorePath,
   RemoteModelCatalog,
 } from "../core/models/remote_catalog.js";
+import { resolvePersonaSelection } from "../core/persona_selection.js";
 import { createDefaultCoreDeps } from "../core/runtime/deps.js";
 import type { AutoCompactDefaults } from "../core/session/auto_compaction_threshold.js";
 import { createLocalToolExecutionBackend } from "../core/tools/execution_backend.js";
@@ -15,6 +16,7 @@ import type { Persona } from "../core/types.js";
 import { CompositeExecutionEnvironmentResolver } from "../execution/execution_environment.js";
 import { LocalExecutionEnvironmentResolver } from "../execution/local_execution_environment.js";
 import { LocalSessionHost } from "../host/local_session_host.js";
+import type { SessionProtocolPersonaOverrides } from "../protocol/session_protocol.js";
 import { FileSessionStore, getDefaultSessionStoreDirectory } from "../store/file_session_store.js";
 import { InProcessSessionProtocolTransport } from "../transport/in_process_session_transport.js";
 import { TauTransportError } from "../transport/index.js";
@@ -27,6 +29,7 @@ export async function createTauSdkClientWithHostConfig(
   runtimeOptions: {
     remoteModelCatalog?: RemoteModelCatalog;
     autoCompactDefaults?: AutoCompactDefaults;
+    initialPersonaSelection?: { personaId: string | null } & SessionProtocolPersonaOverrides;
   } = {},
 ): Promise<TauSdkClient> {
   resolveTauSdkInitializeParams(options.initialize, options.clientTools);
@@ -44,6 +47,7 @@ async function createInProcessSdkHost(
   runtimeOptions: {
     remoteModelCatalog?: RemoteModelCatalog;
     autoCompactDefaults?: AutoCompactDefaults;
+    initialPersonaSelection?: { personaId: string | null } & SessionProtocolPersonaOverrides;
   },
 ): Promise<LocalSessionHost> {
   const deps = createDefaultCoreDeps();
@@ -103,7 +107,7 @@ async function createInProcessSdkHost(
       now: () => deps.clock.now(),
     },
     deps,
-    resolveSessionBootstrap: async ({ executionEnvironment, remoteCatalog }) => {
+    resolveSessionBootstrap: async ({ executionEnvironment, remoteCatalog, recovering }) => {
       const snapshot = executionEnvironment.snapshot();
       const envRuntime = await executionEnvironment.resolveRuntimeConfig(snapshot.cwd, {
         remoteCatalog,
@@ -114,18 +118,31 @@ async function createInProcessSdkHost(
         );
       }
 
-      const envSelected = selectSdkPersona(envRuntime.personas, {
-        requestedPersona: options.persona,
-        defaultPersona: envRuntime.config.defaultPersona,
-      });
+      const envSelected =
+        !recovering && runtimeOptions.initialPersonaSelection
+          ? {
+              persona: resolvePersonaSelection(
+                envRuntime.personas,
+                envRuntime.config.defaultPersona,
+                runtimeOptions.initialPersonaSelection.personaId,
+                runtimeOptions.initialPersonaSelection,
+              ),
+              reasoning: undefined,
+            }
+          : selectSdkPersona(envRuntime.personas, {
+              requestedPersona: recovering ? undefined : options.persona,
+              defaultPersona: envRuntime.config.defaultPersona,
+            });
       const envPersona = clonePersonaForSession(envSelected.persona);
-      const envReasoning = options.reasoning ?? envSelected.reasoning;
+      const envReasoning = recovering ? undefined : (options.reasoning ?? envSelected.reasoning);
       if (envReasoning !== undefined) {
         envPersona.settings.reasoning = envReasoning;
       }
 
       return {
         persona: envPersona,
+        initialAutoCompactThresholdTokens:
+          runtimeOptions.initialPersonaSelection?.autoCompactThresholdTokens,
         discoveredSkills: envRuntime.skills,
         personas: envRuntime.personas.map(clonePersonaForSession),
         prompts: envRuntime.prompts,

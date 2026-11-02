@@ -36,7 +36,6 @@ export async function createLocalTelegramSessionClient(options: {
   return await deps.createSdkClient(
     {
       cwd: options.client.cwd,
-      ...(options.client.persona !== undefined ? { persona: options.client.persona } : {}),
       initialize: { client: { name: "tau-telegram", version: "1" } },
       clientTools,
       ...(options.reportDiagnostic ? { onDiagnostic: options.reportDiagnostic } : {}),
@@ -45,6 +44,7 @@ export async function createLocalTelegramSessionClient(options: {
     {
       remoteModelCatalog: options.remoteModelCatalog,
       autoCompactDefaults: options.client.autoCompactDefaults,
+      initialPersonaSelection: options.client.personaSelection,
     },
   );
 }

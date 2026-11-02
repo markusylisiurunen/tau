@@ -18,6 +18,7 @@ import type {
   SessionProtocolMethod,
   SessionProtocolPendingUserMessagesMessage,
   SessionProtocolPendingUserMessagesState,
+  SessionProtocolPersonaOverrides,
   SessionProtocolQueueResult,
   SessionProtocolReadyMessage,
   SessionProtocolReasoningEffort,
@@ -211,7 +212,10 @@ export type TauSdkSession = {
     thresholdTokens: number | null,
   ): Promise<TauSdkSessionSetAutoCompactThresholdResult>;
   setReasoning(reasoning: TauSdkReasoningEffort): Promise<TauSdkSessionSetReasoningResult>;
-  setPersona(personaId: string): Promise<TauSdkSessionSetPersonaResult>;
+  setPersona(
+    personaId: string | null,
+    overrides?: SessionProtocolPersonaOverrides,
+  ): Promise<TauSdkSessionSetPersonaResult>;
   resolvePrompt(promptId: string): Promise<TauSdkResolvePromptResult>;
   autocompletePaths(options: {
     query: string;

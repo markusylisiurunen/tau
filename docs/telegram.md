@@ -14,7 +14,7 @@ tau telegram --config-file /etc/tau/telegram.json
 
 The process stays in the foreground until `SIGINT` or `SIGTERM`. Relative `--config-file` paths resolve from the process working directory. Paths inside that file resolve as described below, usually from the config file's directory.
 
-The Telegram file is **not** one of Tau's `config.json` levels. It configures the runner: bot tokens, projects, workspace roots, and routing. Tau still loads normal configuration from the runner's startup directory and from each session's workspace. See [configuration](configuration.md) and [ownership and scope](ownership-and-scope.md).
+The Telegram file is **not** one of Tau's `config.json` levels. It configures the runner: bot tokens, startup settings, presets, projects, workspace roots, and routing. Tau still loads normal configuration from the runner's startup directory and from each session's workspace. See [configuration](configuration.md) and [ownership and scope](ownership-and-scope.md).
 
 Run at most one runner per configuration and workspace root. Two runners would compete for Telegram updates, runner state, and workspace cleanup.
 
@@ -28,6 +28,7 @@ A useful configuration defines at least one bot and one project:
   "bots": {
     "engineering": {
       "botToken": "<telegram-bot-token>",
+      "startup": { "source": "workspace" },
       "allowedProjectIds": ["ledger"],
       "allowedUserIds": [18422031],
       "allowedChatIds": [18422031],
@@ -37,8 +38,7 @@ A useful configuration defines at least one bot and one project:
   "projects": {
     "ledger": {
       "repo": "acme/ledger",
-      "ref": "main",
-      "persona": "gpt-6.1-sol-coder:high"
+      "ref": "main"
     }
   }
 }
@@ -46,7 +46,7 @@ A useful configuration defines at least one bot and one project:
 
 The bot token must be written in the file; it cannot come from an environment variable. Protect the file, never commit it, and rotate an exposed token through BotFather. Never print the config into a session or shared log.
 
-Unknown fields are removed, so a misspelled field silently has no effect. The exception is a `personaMenu` entry, where an unknown field makes the config invalid.
+The runner refuses to start if the file contains an unknown field, and the error names that field.
 
 ## Top-level fields
 
@@ -70,7 +70,8 @@ Each `bots.<id>` object supports:
 | `botToken` | Yes | Telegram Bot API token. |
 | `allowedProjectIds` | No | Non-empty unique subset of configured project IDs; omission exposes all projects. |
 | `autoCompactThresholdTokens` | No | Default automatic-compaction threshold for this bot's sessions. See [compaction thresholds](#compaction-thresholds). |
-| `personaMenu` | No | Ordered list of personas offered by `/persona`; omission offers every persona. See [persona menu](#persona-menu). |
+| `startup` | Yes | `{ "source": "workspace" }` or `{ "source": "preset", "preset": "<key>" }`. See [startup and presets](#startup-and-presets). |
+| `presets` | No | Named choices that `/persona` offers. Omission offers all workspace personas, and `{}` offers none. |
 | `allowedUserIds` | No | Integer user IDs allowed to trigger turns, commands, and callbacks. |
 | `allowedChatIds` | No | Integer chat IDs allowed to interact with the bot; also opts groups in. |
 | `defaultProjectId` | No | Initial project preference, and must be allowed for this bot. |
@@ -84,7 +85,7 @@ Use both lists for a private bot. `allowedUserIds` decides who can start work, b
 
 A bot sees only its `allowedProjectIds`, or every project if the field is missing. If only one project is allowed, it is selected automatically and the command palette omits `/use_<project>` commands. The command still works when typed directly. Otherwise the palette includes project-switch commands, and a chat needs `defaultProjectId` or a `/use_<project>` choice before `/new`. Each startup replaces the palette, removing switch commands if the bot now has only one available project.
 
-Telegram allows 100 commands per bot: twelve built-ins and up to 88 `/use_<projectId>` commands.
+Telegram allows 100 commands per bot: thirteen built-ins and up to 87 `/use_<projectId>` commands. With `presets: {}`, `/persona` is hidden, which leaves room for one more project command.
 
 ## Projects
 
@@ -102,7 +103,7 @@ Project IDs become `/use_<projectId>` commands, so they may contain only lowerca
 
 After preparation, Tau creates an ordinary local session in the workspace. It reads `~/.config/tau` and the `.tau` directories above the workspace as usual, so personas, prompts, skills, project context, host tools, and other settings work as in the TUI.
 
-A project's `persona` replaces the default for its sessions. Composite sessions use the generated root files and their required persona.
+The bot's `startup` selects a new session's settings, as described in [startup and presets](#startup-and-presets).
 
 Every Telegram turn starts with a hidden `<system>` block saying the message comes from Telegram and the reply goes there. It asks for direct answers to simple questions, and for short acknowledgements or useful progress updates during longer work, because users cannot see tool activity.
 
@@ -125,7 +126,7 @@ The runner loads its speech credentials and `speech.voiceId` at startup, from it
 | `/use_<projectId>` | Selects the project for future `/new` sessions. |
 | `/new` | Replaces the active session using the preferred project. |
 | `/status` | Reports session state, project, model, reasoning, context usage, and cost. |
-| `/persona` | Switches persona while idle without losing history or starting a turn. |
+| `/persona` | Applies a persona or preset from a menu while idle, without losing history or starting a turn. |
 | `/effort_low` | Selects low reasoning for future turns. |
 | `/effort_medium` | Selects medium reasoning for future turns. |
 | `/effort_high` | Selects high reasoning for future turns. |
@@ -137,9 +138,9 @@ The runner loads its speech credentials and `speech.voiceId` at startup, from it
 | `/tts_on` | Sends a voice note after each final assistant response. |
 | `/tts_off` | Disables voice responses. |
 
-Changes to the auto-compaction threshold apply from the next turn and survive session recovery. Switching to a different persona removes the override. `/status` shows context usage as a percentage of the full model window. When a session override is set, or the default threshold is below the model-based threshold, it also shows the effective threshold in parentheses. See [compaction thresholds](#compaction-thresholds) for bot defaults and [automatic compaction](sessions.md#automatic-compaction) for limits and costs.
+Changes to the auto-compaction threshold apply from the next turn and survive session recovery. `/status` shows context usage as a percentage of the full model window. When a session override is set, or the default threshold is below the model-based threshold, it also shows the effective threshold in parentheses. See [compaction thresholds](#compaction-thresholds) for bot defaults and [automatic compaction](sessions.md#automatic-compaction) for limits and costs.
 
-A [persona](personas.md) choice applies to the current session only; `/new` uses the project's default.
+A [persona](personas.md) or preset choice applies to the current session only. `/new` starts from the bot's `startup`.
 
 Preferences are saved per bot and chat, and survive restarts and new sessions. A project change applies at the next `/new`, not to the current session.
 
@@ -153,43 +154,58 @@ In groups, commands must explicitly mention the bot. Accepted forms include:
 
 Commands addressed to other bots are ignored.
 
-### Persona menu
+## Startup and presets
 
-By default, `/persona` offers every persona in the session. A bot's `personaMenu` replaces that list with the personas you name, in the order you list them, and can give each one a shorter label:
+`startup` decides how a bot's new sessions start, and `presets` decides what `/persona` offers. `startup` does not add a menu entry.
 
-```json
-"personaMenu": [
-  { "id": "gpt-6.1-sol-coder", "label": "sol" },
-  { "id": "sonnet-5.5-coder", "autoCompactThresholdTokens": 150000 }
-]
-```
-
-Each entry has a required `id`, the exact persona ID, an optional `label`, and an optional `autoCompactThresholdTokens` (see [compaction thresholds](#compaction-thresholds)). The ID and label must be non-empty after surrounding whitespace is trimmed, IDs must be unique, and no other fields are allowed. Without a label, the picker shows the persona's own label, or its ID if it has none. The label appears in the picker and in the switch confirmation. It changes nothing else, so the persona keeps its ID, prompt, model, tools, and reasoning settings, and the TUI still shows its normal name.
-
-The menu is matched against each session's personas when `/persona` runs, because different projects can define different personas. Listed personas that the session lacks are named in the picker message, and the rest of the menu still works. An empty list, `[]`, offers no personas.
-
-Apart from compaction thresholds, the menu only changes what the picker offers. It does not restrict which personas a session may use, and it does not change default personas. A project's `persona` still applies to new sessions even if the menu omits it. When the session's current persona is not in the menu, the picker message names it, but it is not added as a choice.
-
-### Compaction thresholds
-
-A bot can set default [automatic-compaction](sessions.md#automatic-compaction) thresholds for its sessions. Both fields take a safe integer of at least 50,000 tokens:
+`startup` is required. `{ "source": "workspace" }` uses the workspace's `defaultPersona`, found through the same configuration layers as the TUI, including any effort suffix. To start with a named preset instead:
 
 ```json
-"engineering": {
-  "botToken": "<telegram-bot-token>",
-  "autoCompactThresholdTokens": 200000,
-  "personaMenu": [
-    { "id": "gpt-6.1-sol-coder", "autoCompactThresholdTokens": 120000 },
-    { "id": "sonnet-5.5-coder" }
-  ]
+"startup": { "source": "preset", "preset": "astra" },
+"presets": {
+  "workspace": { "source": "workspace", "label": "Workspace default" },
+  "astra": {
+    "source": "persona",
+    "label": "Astra",
+    "persona": "gpt-6-astra-chat",
+    "reasoning": "low",
+    "autoCompactThresholdTokens": 120000
+  }
 }
 ```
 
-A session uses the first threshold that is set: its `/auto_compact` override, the `personaMenu` entry whose `id` exactly matches the current persona, the bot's `autoCompactThresholdTokens`, the persona's own `autoCompactThresholdTokens`, and finally the model's context window minus 16,384 tokens. Every threshold is capped at that model-based limit. In this example, a session using `gpt-6.1-sol-coder` compacts at 120,000 tokens, and a session using any other persona compacts at 200,000 tokens. A menu entry's threshold applies whenever the session uses that persona, including through the project's default `persona`.
+`startup.preset` must name a key in `presets`. There are two kinds of preset:
 
-These defaults are not saved with the session. The runner reads them at startup, so restart the runner after changing them. Recovered sessions then use the new defaults, and keep any `/auto_compact` override they had.
+- A `workspace` preset resolves the workspace's `defaultPersona` each time it is applied.
+- A `persona` preset names a persona ID without an effort suffix. Its optional `reasoning` is one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`, and defaults to the persona's own setting. Its optional `autoCompactThresholdTokens` is [described below](#compaction-thresholds).
 
-Native subagents launched without a model use the session's effective threshold, as described in [subagents](subagents.md#automatic-compaction). Ephemeral threads use the persona's own default and ignore the bot's thresholds.
+Every preset needs a non-empty `label`. Keys must be non-empty, without surrounding whitespace.
+
+The `/persona` menu depends on `presets`:
+
+- Omitted: all personas available in the session's workspace, with their own labels and default settings.
+- `{}`: nothing, and `/persona` is hidden from the command palette. Typing it replies that no presets are configured.
+- With entries: exactly those entries, in the object's order. Integer-like keys sort first, so use non-numeric keys to keep the order you wrote.
+
+Buttons show only labels, because a session does not record which preset was applied. `/status` reports the session's actual settings.
+
+Applying a preset changes the prompt, model, tools, reasoning, and other persona settings together, and keeps the conversation. It applies them once, so effort commands then change only reasoning, and applying the preset again restores its settings.
+
+An unavailable persona stays in the menu. Applying it, or a `reasoning` value the persona does not support, reports an error and changes no settings. The value must be in the persona's `allowedReasoningLevels` when that list is non-empty, and a model without reasoning accepts only `none`. A failing preset at `startup` fails the new session.
+
+A workspace selection works as in the TUI: an unavailable `defaultPersona` falls back to the first available persona, and its effort suffix skips these checks.
+
+Restart the runner after editing `startup` or `presets`. Recovery keeps a session's saved settings and does not reapply them. Reload keeps the session's settings if its persona still exists.
+
+## Compaction thresholds
+
+A bot's optional `autoCompactThresholdTokens` sets a default for its sessions. A persona preset's optional field of the same name sets a saved session override when the preset is applied, including at startup. Both take a safe integer of at least 50,000 tokens.
+
+A session uses its saved override first, then the bot default, the persona default, and finally the model's context window minus 16,384 tokens. The effective threshold is capped at that model-based limit. `/auto_compact` changes the saved override. Applying a persona or preset clears the previous override unless the preset sets a threshold, even when the persona stays the same.
+
+The runner reads the bot default at startup and does not save it with the session. Recovered sessions use the current bot default and keep their saved override.
+
+Native subagents launched without a model use the session's effective threshold, as described in [subagents](subagents.md#automatic-compaction). Ephemeral threads use the persona's own default and ignore both the bot default and the session override.
 
 ## DMs, groups, and active work
 
@@ -250,7 +266,7 @@ Do not verify bot tokens, provider keys, Access secrets, transcript contents, or
 
 ## Troubleshooting
 
-**The runner rejects its config.** Startup errors name every invalid bot or project field. Check the required `bots` and `projects` objects, exact project IDs, positive numbers, allowed project IDs, persona suffixes, `personaMenu` entries, and that each project defines exactly one of `repo`, `directory`, or `projectIds`. Check the JSON syntax without printing the file, which contains bot tokens, and restart the runner after fixing it. Relative paths in the file resolve from its directory.
+**The runner rejects its config.** Startup errors name every invalid bot or project field. Check the required `bots` and `projects` objects, exact project IDs, positive numbers, allowed project IDs, startup sources, preset references, and that each project defines exactly one of `repo`, `directory`, or `projectIds`. Check the JSON syntax without printing the file, which contains bot tokens, and restart the runner after fixing it. Relative paths in the file resolve from its directory.
 
 **The bot ignores a DM.** If `allowedChatIds` is set, the DM's chat ID must be listed. If `allowedUserIds` is set, the sender's user ID must be listed too.
 

@@ -295,14 +295,8 @@ export class ChatRuntime {
   }
 
   private get resolvedAutoCompactThresholdTokens(): number | null {
-    const thresholds = this.autoCompactDefaults?.personaThresholdTokens;
-    const personaThreshold =
-      thresholds && Object.hasOwn(thresholds, this.currentPersona.id)
-        ? thresholds[this.currentPersona.id]
-        : undefined;
     return (
       this.autoCompactOverride ??
-      personaThreshold ??
       this.autoCompactDefaults?.thresholdTokens ??
       this.currentPersona.autoCompactThresholdTokens ??
       null

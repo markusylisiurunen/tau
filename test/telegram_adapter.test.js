@@ -477,7 +477,7 @@ describe("telegram adapter", () => {
       expect(apiHarness.setCommandsCalls[0]).toEqual([
         { command: "new", description: "start a new session" },
         { command: "status", description: "show active session status" },
-        { command: "persona", description: "switch the active session persona" },
+        { command: "persona", description: "choose a persona or preset" },
         { command: "prompt", description: "add a saved prompt without starting a turn" },
         { command: "compact", description: "compact session context" },
         { command: "interrupt", description: "interrupt active run" },
@@ -2885,8 +2885,7 @@ describe("telegram adapter", () => {
     {
       kind: "persona",
       action: "setPersona",
-      pickerText:
-        "choose a persona for this session. switching is available only while Tau is idle.",
+      pickerText: "choose a persona or preset for this session. this works only while Tau is idle.",
       selectedText:
         "switched to persona-20. this session is using Selected Model with high reasoning.",
     },
@@ -2969,7 +2968,11 @@ describe("telegram adapter", () => {
       });
       try {
         await waitFor(() => answers.length === 3);
-        expect(managerHarness.manager[action]).toHaveBeenCalledExactlyOnceWith("s1", `${kind}-20`);
+        expect(managerHarness.manager[action]).toHaveBeenCalledExactlyOnceWith(
+          "s1",
+          `${kind}-20`,
+          ...(kind === "persona" ? [undefined] : []),
+        );
         expect(managerHarness.manager.sendMessage).not.toHaveBeenCalled();
         expect(edits).toHaveLength(2);
         expect(edits.every((edit) => edit.chat_id === chat.id && edit.message_id === 42)).toBe(
@@ -2978,7 +2981,7 @@ describe("telegram adapter", () => {
         const pickerMessage = sendMessages.find((message) => message.reply_markup);
         expect(pickerMessage.text).toBe(pickerText);
         if (kind === "persona") {
-          expect(pickerMessage.reply_markup.inline_keyboard[0][0].text).toBe("persona-0 (current)");
+          expect(pickerMessage.reply_markup.inline_keyboard[0][0].text).toBe("persona-0");
         }
         expect(pickerMessage.reply_markup.inline_keyboard.at(-1)[0].text).toBe("next");
         expect(edits[0].text).toBe(pickerMessage.text);
@@ -2995,81 +2998,97 @@ describe("telegram adapter", () => {
     },
   );
 
-  it("resolves the configured persona menu against each session's catalog", async () => {
-    const chat = { id: 329, type: "private" };
-    const from = { id: 7 };
-    const apiHarness = createApiHarness([]);
-    const managerHarness = createSessionManagerHarness([], {
-      createSnapshot: (sessionId) =>
-        sessionId === "s1"
-          ? {
-              settings: { personaId: "project-default" },
-              catalog: {
-                personas: [
-                  { id: "sonnet", label: "Sonnet Coder" },
-                  { id: "project-default", label: "Project Default" },
-                  { id: "sol", label: "Sol Coder" },
-                ],
+  it.each([false, true])(
+    "offers configured presets and reports selection failures (%s)",
+    async (fails) => {
+      const chat = { id: 329, type: "private" };
+      const from = { id: 7 };
+      const apiHarness = createApiHarness([]);
+      const managerHarness = createSessionManagerHarness([], {
+        createSnapshot: (sessionId) =>
+          sessionId === "s1"
+            ? {
+                settings: { personaId: "project-default" },
+                catalog: {
+                  personas: [
+                    { id: "sonnet", label: "Sonnet Coder" },
+                    { id: "project-default", label: "Project Default" },
+                    { id: "sol", label: "Sol Coder" },
+                  ],
+                },
+              }
+            : {
+                settings: { personaId: "sol" },
+                catalog: { personas: [{ id: "sol", label: "Sol Coder" }] },
               },
-            }
-          : {
-              settings: { personaId: "sol" },
-              catalog: { personas: [{ id: "sol", label: "Sol Coder" }] },
+      });
+      const selectionError = new TauSessionProtocolResponseError({
+        requestId: "selection",
+        error: { code: "invalid_request", message: "selection failure sentinel" },
+      });
+      if (fails) managerHarness.manager.setPersona.mockRejectedValueOnce(selectionError);
+      const pickers = () =>
+        apiHarness.sendMessages.filter((message) => message.options?.replyMarkup);
+      apiHarness.api.getUpdates
+        .mockImplementationOnce(async () => [
+          { update_id: 1, message: { chat, from, text: "/new" } },
+          { update_id: 2, message: { chat, from, text: "/persona" } },
+          { update_id: 3, message: { chat, from, text: "/new" } },
+          { update_id: 4, message: { chat, from, text: "/persona" } },
+        ])
+        .mockImplementationOnce(async () => {
+          await waitFor(() => pickers().length === 2);
+          return [
+            {
+              update_id: 5,
+              callback_query: {
+                id: "select",
+                from,
+                message: { chat, message_id: 42 },
+                data: pickers()[1].options.replyMarkup.inline_keyboard[0][0].callback_data,
+              },
             },
-    });
-    const pickers = () => apiHarness.sendMessages.filter((message) => message.options?.replyMarkup);
-    apiHarness.api.getUpdates
-      .mockImplementationOnce(async () => [
-        { update_id: 1, message: { chat, from, text: "/new" } },
-        { update_id: 2, message: { chat, from, text: "/persona" } },
-        { update_id: 3, message: { chat, from, text: "/new" } },
-        { update_id: 4, message: { chat, from, text: "/persona" } },
-      ])
-      .mockImplementationOnce(async () => {
-        await waitFor(() => pickers().length === 2);
-        return [
-          {
-            update_id: 5,
-            callback_query: {
-              id: "select",
-              from,
-              message: { chat, message_id: 42 },
-              data: pickers()[1].options.replyMarkup.inline_keyboard[0][0].callback_data,
-            },
-          },
-        ];
-      })
-      .mockImplementation(async () => await new Promise(() => {}));
-    const adapter = await startAdapter({
-      sessionManager: managerHarness.manager,
-      api: apiHarness.api,
-      personaMenu: [{ id: "sol", label: "sol" }, { id: "retired" }, { id: "sonnet" }],
-    });
-    try {
-      await waitFor(() => managerHarness.manager.setPersona.mock.calls.length === 1);
-      await waitFor(() => apiHarness.api.editMessage.mock.calls.length === 1);
-      const buttonTexts = (message) =>
-        message.options.replyMarkup.inline_keyboard.flat().map((button) => button.text);
-      const [first, second] = pickers();
-      expect(buttonTexts(first)).toEqual(["sol", "Sonnet Coder"]);
-      expect(first.text).toContain("Project Default");
-      expect(first.text).toContain("retired");
-      expect(buttonTexts(second)).toEqual(["sol (current)"]);
-      expect(second.text).toContain("retired");
-      expect(second.text).toContain("sonnet");
-      expect(second.text).not.toContain("Sol Coder");
-      expect(managerHarness.manager.setPersona).toHaveBeenCalledExactlyOnceWith("s2", "sol");
-      expect(apiHarness.api.editMessage.mock.calls[0][2]).toContain("sol");
-      expect(apiHarness.api.editMessage.mock.calls[0][2]).not.toContain("Sol Coder");
-    } finally {
-      await adapter.close();
-    }
-  });
+          ];
+        })
+        .mockImplementation(async () => await new Promise(() => {}));
+      const adapter = await startAdapter({
+        sessionManager: managerHarness.manager,
+        api: apiHarness.api,
+        presets: {
+          sol: { source: "persona", persona: "sol", label: "sol", reasoning: "high" },
+          workspace: { source: "workspace", label: "Workspace default" },
+        },
+      });
+      try {
+        await waitFor(() => managerHarness.manager.setPersona.mock.calls.length === 1);
+        if (fails) {
+          await waitFor(() =>
+            apiHarness.sendMessages.some((message) =>
+              message.text.includes(selectionError.message),
+            ),
+          );
+          expect(apiHarness.api.editMessage).not.toHaveBeenCalled();
+          return;
+        }
+        await waitFor(() => apiHarness.api.editMessage.mock.calls.length === 1);
+        const buttonTexts = (message) =>
+          message.options.replyMarkup.inline_keyboard.flat().map((button) => button.text);
+        const [first, second] = pickers();
+        expect(buttonTexts(first)).toEqual(["sol", "Workspace default"]);
+        expect(buttonTexts(second)).toEqual(["sol", "Workspace default"]);
+        expect(managerHarness.manager.setPersona).toHaveBeenCalledExactlyOnceWith("s2", "sol", {
+          reasoning: "high",
+          autoCompactThresholdTokens: undefined,
+        });
+        expect(apiHarness.api.editMessage.mock.calls[0][2]).toContain("sol");
+        expect(apiHarness.api.editMessage.mock.calls[0][2]).not.toContain("Sol Coder");
+      } finally {
+        await adapter.close();
+      }
+    },
+  );
 
-  it.each([
-    ["an empty menu", []],
-    ["a menu without available personas", [{ id: "retired", label: "old" }]],
-  ])("offers no persona choices for %s", async (_name, personaMenu) => {
+  it("offers no choices and hides the command for an empty presets map", async () => {
     const chat = { id: 329, type: "private" };
     const from = { id: 7 };
     const apiHarness = createApiHarness([
@@ -3087,16 +3106,17 @@ describe("telegram adapter", () => {
     const adapter = await startAdapter({
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
-      personaMenu,
+      presets: {},
     });
     try {
       await waitFor(() =>
-        apiHarness.sendMessages.some((message) => message.text.includes("Reviewer")),
+        apiHarness.sendMessages.some((message) => message.text.includes("no presets configured")),
       );
       const reply = apiHarness.sendMessages.at(-1);
       expect(reply.options?.replyMarkup).toBeUndefined();
-      expect(reply.text).toContain("Reviewer");
-      if (personaMenu.length > 0) expect(reply.text).toContain("retired");
+      expect(apiHarness.setCommandsCalls[0].some((command) => command.command === "persona")).toBe(
+        false,
+      );
       expect(managerHarness.manager.setPersona).not.toHaveBeenCalled();
     } finally {
       await adapter.close();
@@ -3141,7 +3161,9 @@ describe("telegram adapter", () => {
     const adapter = await startAdapter({
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
-      personaMenu: [{ id: "retired" }, ...catalogIds.toReversed().map((id) => ({ id }))],
+      presets: Object.fromEntries(
+        catalogIds.toReversed().map((id) => [id, { source: "persona", persona: id, label: id }]),
+      ),
     });
     try {
       await waitFor(() => managerHarness.manager.setPersona.mock.calls.length === 1);
@@ -3152,7 +3174,10 @@ describe("telegram adapter", () => {
       expect(apiHarness.api.editMessage.mock.calls[0][2]).toBe(
         apiHarness.sendMessages.find((message) => message.options?.replyMarkup).text,
       );
-      expect(managerHarness.manager.setPersona).toHaveBeenCalledExactlyOnceWith("s1", "persona-0");
+      expect(managerHarness.manager.setPersona).toHaveBeenCalledExactlyOnceWith("s1", "persona-0", {
+        reasoning: undefined,
+        autoCompactThresholdTokens: undefined,
+      });
     } finally {
       await adapter.close();
     }

@@ -334,11 +334,11 @@ result: {
 
 `thresholdTokens` must be a safe integer of at least 50,000, or `null` to remove the session override and use the default threshold. Numeric strings are rejected. Session creation accepts the same values in the optional `autoCompactThresholdTokens` field, which defaults to `null`.
 
-The effective threshold uses the session override, then any host default (such as [Telegram bot thresholds](telegram.md#compaction-thresholds)), then the persona default, then the model's context window minus 16,384 tokens. It cannot exceed that model-based limit. A model with a small context window can therefore have an effective threshold below 50,000.
+The effective threshold uses the session override, then any host default (such as a [Telegram bot's threshold](telegram.md#compaction-thresholds)), then the persona default, then the model's context window minus 16,384 tokens. It cannot exceed that model-based limit. A model with a small context window can therefore have an effective threshold below 50,000.
 
 The host saves the setting and publishes a `settings.set` delta to observers. Changing it does not start compaction. A running turn and its steering continuations keep their original threshold.
 
-Reloads, reasoning changes, recovery, and `session.setPersona` with the current persona ID preserve the configured value. `session.setPersona` with a different persona ID resets it to `null`. The effective threshold is recalculated for the selected persona and model. Native Tau subagents launched without a model override inherit the parent's launching-turn threshold. Native launches with an explicit model use the persona's subagent threshold for that model, or the model's default. Claude Code subagents manage their own compaction. Ephemeral threads use the persona default without the main session override. See [automatic compaction](sessions.md#automatic-compaction) for request-size limits and costs.
+Reloads, reasoning changes, and recovery preserve the configured value. `session.setPersona` sets it to the supplied threshold, or to `null` if none is supplied, even when reapplying the current persona. The effective threshold is recalculated for the selected persona and model. Native Tau subagents launched without a model override inherit the parent's launching-turn threshold. Native launches with an explicit model use the persona's subagent threshold for that model, or the model's default. Claude Code subagents manage their own compaction. Ephemeral threads use the persona default without the main session override. See [automatic compaction](sessions.md#automatic-compaction) for request-size limits and costs.
 
 ### `session.setReasoning`
 
@@ -359,15 +359,22 @@ The change waits its turn behind other changes but does not interrupt a running 
 
 ### `session.setPersona`
 
-Changes the persona to an id in the session catalog.
+Applies a persona and optional settings atomically. A string `personaId` must exactly match an ID in the session catalog. `personaId: null` selects the current workspace default, including its effort suffix, and accepts no overrides. If that default names an unavailable persona, the first persona in the catalog is selected.
 
 ```ts
 params: {
   sessionId: string;
-  personaId: string;
+  personaId: string | null;
+  reasoning?: Reasoning;
+  autoCompactThresholdTokens?: number;
 }
 result: SessionProtocolSnapshot;
 ```
+
+- `reasoning` overrides the persona's default effort. Without it, the persona's default applies.
+- `autoCompactThresholdTokens` sets the session's compaction override, as a safe integer of at least 50,000. Without it, the override is cleared.
+
+The `reasoning` override must be in the persona's `allowedReasoningLevels` when that list is non-empty, and a model without reasoning accepts only `none`. These limits do not apply to a workspace default's effort suffix. An unavailable persona or unsupported override fails with `invalid_request` before any setting changes.
 
 This changes the context and waits its turn behind other changes. It interrupts a running turn and rejects pending input, then returns the new snapshot.
 

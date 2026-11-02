@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { PersonaSelectionError } from "../core/persona_selection.js";
 import {
   createSessionProtocolErrorResponse,
   createSessionProtocolPendingUserMessagesMessage,
@@ -308,6 +309,16 @@ export class SessionProtocolHandler {
           return;
       }
     } catch (error) {
+      if (error instanceof PersonaSelectionError) {
+        this.sendMessage(
+          createSessionProtocolErrorResponse(
+            request.id,
+            SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+            error.message,
+          ),
+        );
+        return;
+      }
       this.sendMessage(
         createSessionProtocolErrorResponse(
           request.id,
@@ -1217,7 +1228,10 @@ export class SessionProtocolHandler {
     request: Extract<SessionProtocolRequestMessage, { method: "session.setPersona" }>,
   ): Promise<void> {
     await this.withSessionMutation(request, "session persona changed", async (state) => {
-      const snapshot = await state.session.setPersona(request.params.personaId);
+      const snapshot = await state.session.setPersona(request.params.personaId, {
+        reasoning: request.params.reasoning,
+        autoCompactThresholdTokens: request.params.autoCompactThresholdTokens,
+      });
       this.sendMessage(
         createSessionProtocolSuccessResponse(request.id, "session.setPersona", snapshot),
       );

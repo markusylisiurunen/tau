@@ -22,14 +22,12 @@ describe("telegram cli", () => {
   it("loads telegram runner config", () => {
     const { dir, path } = writeConfig({
       workspaceRoot: "workspaces",
-      systemMessage: "ignored top-level guidance",
       maxSessions: 2,
       bots: {
         ops: {
           botToken: "token",
+          startup: { source: "workspace" },
           systemMessage: "bot guidance",
-          pollIntervalMs: 1,
-          requestTimeoutSeconds: 1,
           defaultProjectId: "tau",
           allowedProjectIds: ["tau"],
         },
@@ -38,10 +36,7 @@ describe("telegram cli", () => {
         tau: {
           repo: "markusylisiurunen/tau",
           ref: "main",
-          workspaceRoot: "project-workspaces",
-          noAgentContextFiles: true,
           workingDirectory: "packages/core",
-          persona: "gpt-5.6-sol-coder:high",
         },
       },
     });
@@ -52,6 +47,7 @@ describe("telegram cli", () => {
       bots: {
         ops: {
           botToken: "token",
+          startup: { source: "workspace" },
           systemMessage: "bot guidance",
           defaultProjectId: "tau",
           allowedProjectIds: ["tau"],
@@ -62,77 +58,96 @@ describe("telegram cli", () => {
           repo: "markusylisiurunen/tau",
           ref: "main",
           workingDirectory: "packages/core",
-          persona: "gpt-5.6-sol-coder:high",
         },
       },
     });
   });
 
-  it("loads per-bot persona menus without resolving project personas", () => {
+  it("loads explicit presets and keeps omitted and empty menus distinct", () => {
+    const presets = {
+      workspace: { source: "workspace", label: "Workspace default" },
+      fast: {
+        source: "persona",
+        label: "Fast",
+        persona: "project-persona",
+        reasoning: "low",
+        autoCompactThresholdTokens: 80000,
+      },
+    };
     const { path } = writeConfig({
       bots: {
-        curated: {
-          botToken: "token",
-          personaMenu: [{ id: " project-persona ", label: " friendly " }, { id: "other" }],
-        },
-        empty: { botToken: "token", personaMenu: [] },
-        full: { botToken: "token" },
+        curated: { botToken: "token", startup: { source: "preset", preset: "fast" }, presets },
+        empty: { botToken: "token", startup: { source: "workspace" }, presets: {} },
+        full: { botToken: "token", startup: { source: "workspace" } },
       },
-      projects: { tau: { repo: "markusylisiurunen/tau" } },
+      projects: { tau: { repo: "owner/repo" } },
     });
     const { bots } = loadTelegramConfig(path);
-    expect(bots.curated.personaMenu).toEqual([
-      { id: "project-persona", label: "friendly" },
-      { id: "other" },
-    ]);
-    expect(bots.empty.personaMenu).toEqual([]);
-    expect(bots.full.personaMenu).toBeUndefined();
+    expect(bots.curated.presets).toEqual(presets);
+    expect(bots.empty.presets).toEqual({});
+    expect(bots.full.presets).toBeUndefined();
   });
 
-  it.each(
-    [
-      null,
-      "persona",
-      ["persona"],
-      [{}],
-      [{ id: " " }],
-      [{ id: "persona", label: " " }],
-      [{ id: "persona", label: 1 }],
-      [{ id: "persona", extra: true }],
-      [{ id: "persona" }, { id: " persona " }],
-    ].map((personaMenu) => [personaMenu]),
-  )("rejects invalid persona menus: %j", (personaMenu) => {
-    const { path } = writeConfig({
-      bots: { ops: { botToken: "token", personaMenu } },
-      projects: { tau: { repo: "markusylisiurunen/tau" } },
-    });
+  it.each([
+    {},
+    { startup: { source: "preset", preset: "missing" } },
+    { startup: { source: "bot", preset: "fast" } },
+    { startup: { source: "workspace" }, personaMenu: [] },
+    { startup: { source: "workspace" }, presets: [] },
+    {
+      startup: { source: "workspace" },
+      presets: { fast: { source: "persona", label: "Fast", persona: "chat:high" } },
+    },
+    {
+      startup: { source: "workspace" },
+      presets: {
+        fast: { source: "persona", label: "Fast", persona: "chat", reasoning: "invalid" },
+      },
+    },
+    {
+      startup: { source: "workspace" },
+      presets: { workspace: { source: "workspace", label: "Default", reasoning: "low" } },
+    },
+  ])("rejects invalid startup and presets: %j", (fields) => {
+    const { path } = writeConfig({ bots: { bot: { botToken: "token", ...fields } }, projects: {} });
     expect(() => loadTelegramConfig(path)).toThrow();
   });
 
   it.each([49999, 1.5, "128k", null, Number.MAX_SAFE_INTEGER + 1])(
-    "rejects invalid bot and menu thresholds %j",
+    "rejects invalid bot and preset thresholds %j",
     (threshold) => {
       for (const fields of [
         { autoCompactThresholdTokens: threshold },
-        { personaMenu: [{ id: "chat", autoCompactThresholdTokens: threshold }] },
+        {
+          presets: {
+            chat: {
+              source: "persona",
+              persona: "chat",
+              label: "Chat",
+              autoCompactThresholdTokens: threshold,
+            },
+          },
+        },
       ]) {
         const { path } = writeConfig({
-          bots: { bot: { botToken: "token", ...fields } },
-          projects: { tau: { repo: "owner/repo" } },
+          bots: { bot: { botToken: "token", startup: { source: "workspace" }, ...fields } },
+          projects: {},
         });
         expect(() => loadTelegramConfig(path)).toThrow();
       }
     },
   );
 
-  it("loads bot and per-persona compaction defaults", () => {
-    const bot = {
-      botToken: "token",
-      autoCompactThresholdTokens: 128000,
-      personaMenu: [{ id: "chat", autoCompactThresholdTokens: 80000 }],
-    };
-    const { path } = writeConfig({ bots: { bot }, projects: { tau: { repo: "owner/repo" } } });
-    expect(loadTelegramConfig(path).bots.bot).toEqual(bot);
+  it.each([
+    { repo: "owner/repo", persona: "chat" },
+    { directory: "/home/tau", persona: "chat" },
+    { projectIds: ["one", "two"], persona: "chat" },
+  ])("rejects project persona selection: %j", (project) => {
+    const { path } = writeConfig({
+      bots: { bot: { botToken: "token", startup: { source: "workspace" } } },
+      projects: { selected: project },
+    });
+    expect(() => loadTelegramConfig(path)).toThrow();
   });
 
   it("loads persistent directory projects", () => {
@@ -140,27 +155,25 @@ describe("telegram cli", () => {
       bots: {
         ops: {
           botToken: "token",
+          startup: { source: "workspace" },
           allowedProjectIds: ["me"],
         },
       },
       projects: {
         me: {
           directory: "workspaces/me",
-          noAgentContextFiles: true,
-          persona: "gpt-5.6-sol-coder:high",
         },
       },
     });
 
     expect(loadTelegramConfig(path).projects.me).toEqual({
       directory: join(dir, "workspaces/me"),
-      persona: "gpt-5.6-sol-coder:high",
     });
   });
 
   it("rejects projects with multiple workspace sources", () => {
     const { path } = writeConfig({
-      bots: { ops: { botToken: "token" } },
+      bots: { ops: { botToken: "token", startup: { source: "workspace" } } },
       projects: {
         me: {
           repo: "owner/repo",
@@ -179,6 +192,7 @@ describe("telegram cli", () => {
       bots: {
         ops: {
           botToken: "token",
+          startup: { source: "workspace" },
           allowedProjectIds: ["tau", "cowork", "tau_cowork"],
         },
       },
@@ -192,10 +206,7 @@ describe("telegram cli", () => {
           workingDirectory: "packages/server",
         },
         tau_cowork: {
-          workspaceRoot: "composite-workspaces",
-          noAgentContextFiles: true,
           projectIds: ["tau", "cowork"],
-          persona: "gpt-5.6-sol-coder:high",
           instructions: "Keep changes coordinated.",
           subagents: {
             launchModels: ["openai/gpt-5.6-sol:high"],
@@ -206,7 +217,6 @@ describe("telegram cli", () => {
 
     expect(loadTelegramConfig(path).projects.tau_cowork).toEqual({
       projectIds: ["tau", "cowork"],
-      persona: "gpt-5.6-sol-coder:high",
       instructions: "Keep changes coordinated.",
       subagents: {
         launchModels: ["openai/gpt-5.6-sol:high"],
@@ -216,7 +226,7 @@ describe("telegram cli", () => {
 
   it("rejects subagent launch models on repository projects", () => {
     const { path } = writeConfig({
-      bots: { ops: { botToken: "token" } },
+      bots: { ops: { botToken: "token", startup: { source: "workspace" } } },
       projects: {
         me: {
           repo: "owner/repo",
@@ -230,7 +240,7 @@ describe("telegram cli", () => {
 
   it("rejects project ids that cannot be Telegram command suffixes", () => {
     const { path } = writeConfig({
-      bots: { ops: { botToken: "token" } },
+      bots: { ops: { botToken: "token", startup: { source: "workspace" } } },
       projects: { "invalid-project": { repo: "owner/repo" } },
     });
 
@@ -239,7 +249,7 @@ describe("telegram cli", () => {
     );
   });
 
-  it("reserves eleven Telegram commands when validating the project command limit", () => {
+  it("reserves thirteen Telegram commands when validating the project command limit", () => {
     const projects = Object.fromEntries(
       Array.from({ length: 90 }, (_, index) => [`project_${index}`, { repo: "owner/repo" }]),
     );
@@ -247,15 +257,16 @@ describe("telegram cli", () => {
       bots: {
         ops: {
           botToken: "token",
-          allowedProjectIds: Object.keys(projects).slice(0, 89),
+          startup: { source: "workspace" },
+          allowedProjectIds: Object.keys(projects).slice(0, 87),
         },
       },
       projects,
     });
-    expect(loadTelegramConfig(accepted.path).bots.ops.allowedProjectIds).toHaveLength(89);
+    expect(loadTelegramConfig(accepted.path).bots.ops.allowedProjectIds).toHaveLength(87);
 
     const rejected = writeConfig({
-      bots: { ops: { botToken: "token" } },
+      bots: { ops: { botToken: "token", startup: { source: "workspace" } } },
       projects,
     });
     expect(() => loadTelegramConfig(rejected.path)).toThrow(
@@ -265,11 +276,11 @@ describe("telegram cli", () => {
 
   it("rejects composite projects that reference a persistent directory", () => {
     const { path } = writeConfig({
-      bots: { ops: { botToken: "token" } },
+      bots: { ops: { botToken: "token", startup: { source: "workspace" } } },
       projects: {
         me: { directory: "/home/tau/me" },
         one: { repo: "owner/one" },
-        combined: { projectIds: ["me", "one"], persona: "gpt-5.6-sol-coder" },
+        combined: { projectIds: ["me", "one"] },
       },
     });
 
@@ -280,12 +291,12 @@ describe("telegram cli", () => {
 
   it("rejects composite projects that reference another composite", () => {
     const { path } = writeConfig({
-      bots: { ops: { botToken: "token" } },
+      bots: { ops: { botToken: "token", startup: { source: "workspace" } } },
       projects: {
         one: { repo: "owner/one" },
         two: { repo: "owner/two" },
-        pair: { projectIds: ["one", "two"], persona: "gpt-5.6-sol-coder" },
-        nested: { projectIds: ["pair", "one"], persona: "gpt-5.6-sol-coder" },
+        pair: { projectIds: ["one", "two"] },
+        nested: { projectIds: ["pair", "one"] },
       },
     });
 

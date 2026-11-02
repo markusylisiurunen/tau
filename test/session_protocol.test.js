@@ -41,6 +41,33 @@ const bootstrap = createProtocolBootstrap();
 const catalog = createProtocolCatalog();
 
 describe("session_protocol", () => {
+  it("validates atomic persona applications and workspace selection", () => {
+    for (const selection of [
+      { personaId: null },
+      { personaId: "chat" },
+      { personaId: "chat", reasoning: "high", autoCompactThresholdTokens: 80000 },
+    ]) {
+      const params = { sessionId: "s", ...selection };
+      expect(validateSessionProtocolParams("session.setPersona", params)).toEqual({
+        ok: true,
+        value: params,
+      });
+    }
+    for (const selection of [
+      { personaId: null, reasoning: "high" },
+      { personaId: null, autoCompactThresholdTokens: 80000 },
+      { personaId: "chat", reasoning: "invalid" },
+      { personaId: "chat", autoCompactThresholdTokens: 49999 },
+      { personaId: "chat", autoCompactThresholdTokens: Number.MAX_SAFE_INTEGER + 1 },
+      { personaId: "chat", autoCompactThresholdTokens: null },
+      { personaId: "chat", unexpected: true },
+    ]) {
+      expect(
+        validateSessionProtocolParams("session.setPersona", { sessionId: "s", ...selection }).ok,
+      ).toBe(false);
+    }
+  });
+
   it("validates auto-compaction thresholds for creation and mutation", () => {
     for (const thresholdTokens of [null, 50000, 100000, Number.MAX_SAFE_INTEGER]) {
       expect(

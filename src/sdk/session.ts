@@ -5,6 +5,7 @@ import type {
   SessionProtocolCreateParams,
   SessionProtocolEphemeralAgentTool,
   SessionProtocolInitializeParams,
+  SessionProtocolPersonaOverrides,
   SessionProtocolReasoningEffort,
   SessionProtocolResultByMethod,
   SessionProtocolSampleParams,
@@ -437,11 +438,13 @@ class TauSdkClientImpl implements TauSdkClient {
 
   sendSetPersona(
     sessionId: string,
-    personaId: string,
+    personaId: string | null,
+    overrides?: SessionProtocolPersonaOverrides,
   ): Promise<SessionProtocolResultByMethod["session.setPersona"]> {
     return this.transport.request("session.setPersona", {
       sessionId,
       personaId,
+      ...overrides,
     });
   }
 
@@ -808,9 +811,10 @@ class TauSdkSessionImpl implements TauSdkSession {
   }
 
   async setPersona(
-    personaId: string,
+    personaId: string | null,
+    overrides?: SessionProtocolPersonaOverrides,
   ): Promise<SessionProtocolResultByMethod["session.setPersona"]> {
-    const snapshot = await this.client.sendSetPersona(this.activeSessionId(), personaId);
+    const snapshot = await this.client.sendSetPersona(this.activeSessionId(), personaId, overrides);
     this.discardBufferedDeltasThrough(snapshot.revision);
     return snapshot;
   }

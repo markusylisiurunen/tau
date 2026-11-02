@@ -155,19 +155,22 @@ export async function startTelegramRuntime(
       if (!bot?.botToken || !Number.isSafeInteger(chatId)) {
         throw new Error("invalid Telegram session owner or missing bot token");
       }
+      const preset =
+        bot.startup.source === "preset" ? bot.presets?.[bot.startup.preset] : undefined;
       return await options.createSessionClient({
         ...client,
+        personaSelection:
+          preset?.source === "persona"
+            ? {
+                personaId: preset.persona,
+                reasoning: preset.reasoning,
+                autoCompactThresholdTokens: preset.autoCompactThresholdTokens,
+              }
+            : { personaId: null },
         autoCompactDefaults: {
           ...(bot.autoCompactThresholdTokens !== undefined
             ? { thresholdTokens: bot.autoCompactThresholdTokens }
             : {}),
-          personaThresholdTokens: Object.fromEntries(
-            (bot.personaMenu ?? []).flatMap((entry) =>
-              entry.autoCompactThresholdTokens === undefined
-                ? []
-                : [[entry.id, entry.autoCompactThresholdTokens]],
-            ),
-          ),
         },
         clientTools: createTelegramFileTools(createTelegramApi(bot.botToken), chatId),
       });
@@ -207,7 +210,7 @@ export async function startTelegramRuntime(
         projects: scopedProjects,
         defaultProjectId: botConfig.defaultProjectId,
         systemMessage: botConfig.systemMessage,
-        personaMenu: botConfig.personaMenu,
+        presets: botConfig.presets,
         allowedUserIds: botConfig.allowedUserIds,
         allowedChatIds: botConfig.allowedChatIds,
         geminiApiKey: options.geminiApiKey,

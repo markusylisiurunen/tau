@@ -2040,7 +2040,7 @@ const sessionProtocolClientToolResultParamsSchema = z.discriminatedUnion("ok", [
 const sessionProtocolLocalExecutionEnvironmentInputSchema = z
   .object({
     kind: z.literal("local"),
-    cwd: absolutePathSchema,
+    cwd: absolutePathSchema.max(SESSION_PROTOCOL_MAX_ATTRIBUTE_VALUE_CHARS),
     env: environmentVariablesSchema.optional(),
   })
   .strip();
@@ -2049,7 +2049,7 @@ const sessionProtocolFlySpriteExecutionEnvironmentInputSchema = z
   .object({
     kind: z.literal("fly-sprite"),
     spriteName: nonEmptyStringSchema,
-    cwd: absolutePathSchema,
+    cwd: absolutePathSchema.max(SESSION_PROTOCOL_MAX_ATTRIBUTE_VALUE_CHARS),
   })
   .strip();
 
@@ -2061,7 +2061,11 @@ const sessionProtocolExecutionEnvironmentInputSchema = z.discriminatedUnion("kin
 const sessionProtocolCreateParamsSchema = z
   .object({
     executionEnvironment: sessionProtocolExecutionEnvironmentInputSchema,
-    attributes: sessionAttributesSchema,
+    attributes: sessionAttributesSchema.refine(
+      (attributes) =>
+        sessionAttributesSchema.safeParse({ ...attributes, machine: "", cwd: "" }).success,
+      "attributes must leave room for machine and cwd",
+    ),
     personaId: nonEmptyStringSchema.optional(),
     autoCompactThresholdTokens: autoCompactThresholdTokensSchema.optional(),
     reasoning: sessionProtocolReasoningEffortSchema.optional(),
@@ -5297,11 +5301,11 @@ function validateCreateParams(
         : hasIssue(parsed.error, ["executionEnvironment", "kind"])
           ? "session.create params.executionEnvironment.kind must be 'local' or 'fly-sprite'"
           : hasIssue(parsed.error, ["executionEnvironment", "cwd"])
-            ? "session.create params.executionEnvironment.cwd must be an absolute path"
+            ? `session.create params.executionEnvironment.cwd must be an absolute path of at most ${SESSION_PROTOCOL_MAX_ATTRIBUTE_VALUE_CHARS} characters`
             : hasIssue(parsed.error, ["executionEnvironment", "env"])
               ? "session.create params.executionEnvironment.env must use valid environment variable names and string values without null bytes and cannot override HOME"
               : hasIssue(parsed.error, ["attributes"])
-                ? "session.create params.attributes must contain at most 32 bounded string pairs"
+                ? "session.create params.attributes must contain bounded string pairs with room for machine and cwd"
                 : hasIssue(parsed.error, ["personaId"])
                   ? "session.create params.personaId must be a non-empty string"
                   : hasIssue(parsed.error, ["reasoning"])

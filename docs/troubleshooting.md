@@ -200,7 +200,7 @@ If attachment reports an unsupported protocol version or an invalid message, upg
 
 For `tau attach --new`, `--cwd` must be an absolute path inside the chosen execution environment. With the default local kind, it is a path on the host, not on the attaching machine. Tau does not create the directory, clone a repository, or detect repository attributes.
 
-Creating a session also fails if Tau cannot read the hostname from the execution environment, for example because `node` is missing there or the target does not respond in time.
+Creating a session also fails if Tau cannot read the hostname from the execution environment, for example because `node` is missing there or the target does not respond in time. The error gives the reason and any output from the failed command. Over the session protocol, these details are in the error's `data.cause`.
 
 For a Fly Sprite session, check on the host that:
 

@@ -247,7 +247,19 @@ export class LocalSessionHost implements TauSessionHost {
         result.aborted ||
         !result.stdout.trim()
       ) {
-        throw new Error("failed to determine execution machine hostname");
+        const reason = result.timedOut
+          ? "probe timed out"
+          : result.aborted
+            ? "probe aborted"
+            : result.truncated
+              ? "probe exceeded the capture limit"
+              : result.exitCode !== 0
+                ? `probe exited with code ${result.exitCode}`
+                : "probe returned an empty hostname";
+        const output = result.output.trim();
+        throw new Error(
+          `failed to determine execution machine hostname: ${reason}${output ? `: ${output}` : ""}`,
+        );
       }
       const attributes = parseSessionAttributes({
         ...input.attributes,

@@ -482,18 +482,25 @@ describe("LocalSessionHost", () => {
     }
   });
 
-  it("rejects unavailable execution metadata before storing a session", async () => {
+  it.each([
+    { exitCode: 127, output: "node: command not found" },
+    { exitCode: 1, output: "login shell failed" },
+    { exitCode: 0, timedOut: true, output: "partial timeout diagnostic" },
+    { exitCode: 0, aborted: true, output: "partial abort diagnostic" },
+    { exitCode: 0, truncated: true, output: "partial truncated diagnostic" },
+    { exitCode: 0, stdout: "", output: "empty hostname diagnostic" },
+  ])("preserves probe diagnostics and disposes failed creation: %j", async (result) => {
     const store = new MemorySessionStore();
     const environment = createTestExecutionEnvironment();
     environment.getToolExecutionBackend().runNodeScript = vi.fn(async () => ({
-      exitCode: 1,
-      output: "",
+      stdout: "execution-machine",
       truncated: false,
+      ...result,
     }));
     const dispose = vi.spyOn(environment, "dispose");
     const host = createHostForEnvironment(store, environment);
     try {
-      await expect(host.createSession(localCreateInput)).rejects.toThrow("hostname");
+      await expect(host.createSession(localCreateInput)).rejects.toThrow(result.output);
       expect(dispose).toHaveBeenCalledOnce();
       expect(await store.listSessionSnapshots()).toEqual([]);
     } finally {

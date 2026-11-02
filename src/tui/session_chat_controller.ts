@@ -9,7 +9,8 @@ import {
   type CommandRegistry,
   createCommandRegistry,
 } from "../core/commands/index.js";
-import { type Config, getElevenLabsApiKey, getOpenAIApiKey } from "../core/config/index.js";
+import { getElevenLabsApiKey, getOpenAIApiKey } from "../core/config/index.js";
+import type { ClientConfig } from "../core/config/ownership.js";
 import type {
   DiffReviewSnapshotSource,
   StartedDiffReviewBridge,
@@ -41,6 +42,7 @@ import {
   type SpeechToTextDependencies,
 } from "../core/utils/speech_to_text.js";
 import { collectSpeechToTextContext } from "../core/utils/speech_to_text_context.js";
+import { composeSpeechVocabulary } from "../core/utils/speech_to_text_keywords.js";
 import {
   formatTauUserText,
   hasAutoCompactionContinuationMetadata,
@@ -103,12 +105,12 @@ import {
   createListenTempFilePath,
   createListenTranscription,
   deleteListenTempFile,
-  getSpeechToTextApiKey,
   getSpeechToTextApiKeyErrorMessage,
   LISTEN_CAPTURE_START_TIMEOUT_MS,
   LISTEN_RECORDING_MIN_BYTES,
   type ListenRecording,
   readListenAudio,
+  resolveSpeechToTextCredentials,
   startListenAudioCapture,
 } from "./listen_capture.js";
 import { exportMarkdown } from "./markdown_export.js";
@@ -128,7 +130,7 @@ export type SessionChatControllerOptions = {
   createSession?: (input: SessionProtocolCreateParams) => Promise<TauSdkSession>;
   targetLabel: string;
   configuredClientToolNames?: string[];
-  config?: Config;
+  config: ClientConfig;
   diffToolLauncher?: DiffReviewToolLauncher;
   deps?: CoreDeps;
   speechToTextDeps?: SpeechToTextDependencies;
@@ -139,6 +141,14 @@ export type SessionChatControllerOptions = {
 const TRANSCRIPTION_GUIDANCE =
   "Some or all of this message may have been transcribed from speech and may contain misheard words or other transcription errors.";
 
+const MCP_UNAVAILABLE_EXPLANATIONS: Record<
+  Extract<SessionProtocolSnapshot["catalog"]["mcp"], { status: "unavailable" }>["reason"],
+  string
+> = {
+  "remote-execution":
+    "unavailable: this session runs on a remote machine, but servers would run on the Tau host",
+};
+
 const LISTEN_CAPTURE_START_CANCELLED = Symbol("listen capture start cancelled");
 
 export class SessionChatController {
@@ -147,7 +157,7 @@ export class SessionChatController {
   private readonly createSession?: (input: SessionProtocolCreateParams) => Promise<TauSdkSession>;
   private readonly targetLabel: string;
   private readonly configuredClientToolNames: string[];
-  private readonly config: Config;
+  private readonly config: ClientConfig;
   private markdownExportAbortController?: AbortController;
   private readonly diffToolLauncher?: DiffReviewToolLauncher;
   private readonly deps: CoreDeps;
@@ -215,7 +225,7 @@ export class SessionChatController {
     this.subagentActivities = options.session.subagentActivities();
     this.targetLabel = options.targetLabel;
     this.configuredClientToolNames = options.configuredClientToolNames ?? [];
-    this.config = options.config ?? {};
+    this.config = options.config;
     this.diffToolLauncher = options.diffToolLauncher;
     this.deps = options.deps ?? createDefaultCoreDeps();
     this.speechToTextDeps = options.speechToTextDeps;
@@ -304,6 +314,18 @@ export class SessionChatController {
     }
   }
 
+  showSessionConfigWarnings(diagnostic: { cwd: string; warnings: string[] }): void {
+    const directory = formatPathForSessionDisplay(
+      diagnostic.cwd,
+      this.snapshot.executionEnvironment.home,
+    );
+    this.view.addTranscriptNotice(
+      diagnostic.warnings.length === 1 ? "configuration warning" : "configuration warnings",
+      "default",
+      [`found while loading ${directory}`, ...diagnostic.warnings],
+    );
+  }
+
   showHistoryDiagnostic(diagnostic: HistoryDiagnostic): void {
     if (diagnostic.event === "history_recording") {
       const title =
@@ -339,7 +361,7 @@ export class SessionChatController {
       onCtrlP: () => void this.cyclePersonality(),
       onCtrlS: () => void this.stashEditorToClipboard(),
       onToggleRecording: () => void this.toggleListenCapture(),
-      recordingShortcut: this.config.speech?.recordingShortcut,
+      recordingShortcut: this.config.speech.recordingShortcut,
       onDisabledSubmit: (mode) => {
         if (this.listenRecording && !this.listenTransition) {
           void this.runListenTransition(() => this.stopListenCapture(mode));
@@ -501,7 +523,7 @@ export class SessionChatController {
         contextFiles: this.getContextFilePaths(),
         skills: this.snapshot.catalog.skills,
         themes: this.themeIds,
-        recordingShortcut: this.config.speech?.recordingShortcut
+        recordingShortcut: this.config.speech.recordingShortcut
           ? `${this.config.speech.recordingShortcut.gesture === "double-tap" ? "double-tap " : ""}${this.config.speech.recordingShortcut.key}`
           : "ctrl+y",
         formatPath: (path) =>
@@ -569,8 +591,11 @@ export class SessionChatController {
     if (this.snapshot.catalog.skills.length > 0) {
       parts.push(`${this.snapshot.catalog.skills.length} skills`);
     }
-    if (this.snapshot.catalog.mcpServers.length > 0) {
-      const count = this.snapshot.catalog.mcpServers.length;
+    const { mcp } = this.snapshot.catalog;
+    if (mcp.status === "unavailable") {
+      parts.push("MCP unavailable");
+    } else if (mcp.servers.length > 0) {
+      const count = mcp.servers.length;
       parts.push(`${count} MCP server${count === 1 ? "" : "s"}`);
     }
     if (this.configuredClientToolNames.length > 0) {
@@ -615,9 +640,12 @@ export class SessionChatController {
       }
     }
 
-    if (this.snapshot.catalog.mcpServers.length > 0) {
+    const { mcp } = this.snapshot.catalog;
+    if (mcp.status === "unavailable") {
+      lines.push("", "mcp servers:", `  ${MCP_UNAVAILABLE_EXPLANATIONS[mcp.reason]}`);
+    } else if (mcp.servers.length > 0) {
       lines.push("", "mcp servers:");
-      for (const name of this.snapshot.catalog.mcpServers) {
+      for (const name of mcp.servers) {
         lines.push(`  ${name}`);
       }
     }
@@ -948,8 +976,7 @@ export class SessionChatController {
       return;
     }
 
-    const apiKey = getSpeechToTextApiKey(this.config, this.deps);
-    if (!apiKey) {
+    if (!resolveSpeechToTextCredentials(this.config, this.deps)) {
       this.view.addTranscriptNotice("speech-to-text is not configured", "error", [
         getSpeechToTextApiKeyErrorMessage("use /listen"),
       ]);
@@ -1163,10 +1190,17 @@ export class SessionChatController {
   }
 
   private createSpeechTranscription(mode: "streaming" | "file"): ListenRecording["transcription"] {
+    const credentials = resolveSpeechToTextCredentials(this.config, this.deps);
+    if (!credentials) {
+      throw new Error(getSpeechToTextApiKeyErrorMessage("transcribe speech"));
+    }
     const preview = this.listenPreview;
     return createListenTranscription({
-      config: this.config,
-      deps: this.deps,
+      credentials,
+      vocabulary: composeSpeechVocabulary(
+        this.snapshot.catalog.speechVocabulary,
+        this.config.speech.personalVocabulary,
+      ),
       mode,
       context: collectSpeechToTextContext(this.snapshot),
       speechToTextDeps: this.speechToTextDeps,
@@ -2618,7 +2652,7 @@ export class SessionChatController {
       deps: this.deps,
       openAIApiKey: args.openAIApiKey,
       elevenLabsApiKey: args.elevenLabsApiKey,
-      voiceId: this.config.speech?.voiceId,
+      voiceId: this.config.speech.voiceId,
       sourceText: args.sourceText,
       signal: args.signal,
       onActivityLabel: (hint) => {

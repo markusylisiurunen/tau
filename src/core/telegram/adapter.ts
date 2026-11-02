@@ -17,10 +17,8 @@ import {
   SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS,
   type SpeechToTextDependencies,
 } from "../utils/speech_to_text.js";
-import {
-  collectSpeechToTextContext,
-  type SpeechToTextContext,
-} from "../utils/speech_to_text_context.js";
+import { collectSpeechToTextContext } from "../utils/speech_to_text_context.js";
+import { composeSpeechVocabulary } from "../utils/speech_to_text_keywords.js";
 import { formatTauUserText, splitTauUserText } from "../utils/user_metadata.js";
 import { formatZodError } from "../utils/zod.js";
 import type { TelegramProjectPreferenceStore } from "./project_preferences.js";
@@ -165,7 +163,7 @@ export type TelegramAdapterOptions = {
   openAIApiKey?: string;
   elevenLabsApiKey?: string;
   speechVoiceId?: string;
-  speechVocabulary?: string[];
+  personalSpeechVocabulary?: string[];
   speechToTextDeps?: SpeechToTextDependencies;
   sessionManager: TelegramSessionManager;
   projectPreferences: TelegramProjectPreferenceStore;
@@ -1284,7 +1282,7 @@ class TelegramAdapterImpl {
   private readonly openAIApiKey?: string;
   private readonly elevenLabsApiKey?: string;
   private readonly speechVoiceId?: string;
-  private readonly speechVocabulary?: string[];
+  private readonly personalSpeechVocabulary?: string[];
   private readonly speechToTextDeps?: SpeechToTextDependencies;
   private readonly sessionManager: TelegramSessionManager;
   private readonly projectPreferences: TelegramProjectPreferenceStore;
@@ -1363,7 +1361,7 @@ class TelegramAdapterImpl {
     this.openAIApiKey = options.openAIApiKey?.trim() || undefined;
     this.elevenLabsApiKey = options.elevenLabsApiKey?.trim() || undefined;
     this.speechVoiceId = options.speechVoiceId;
-    this.speechVocabulary = options.speechVocabulary;
+    this.personalSpeechVocabulary = options.personalSpeechVocabulary;
     this.speechToTextDeps = options.speechToTextDeps;
     this.sessionManager = options.sessionManager;
     this.projectPreferences = options.projectPreferences;
@@ -1753,7 +1751,10 @@ class TelegramAdapterImpl {
 
     const attachmentResult = await this.queueMessageAttachments(chatId, message, { silent: true });
     const audioResult: TelegramAudioTranscriptionResult = attachmentResult.voice
-      ? await this.transcribeTelegramVoice(chatId, attachmentResult.voice, { silent: true })
+      ? await this.transcribeTelegramVoice(chatId, attachmentResult.voice, {
+          silent: true,
+          sessionId: this.getActiveSession(chatId)?.id,
+        })
       : {};
     const errors = [...attachmentResult.errors, ...(audioResult.error ? [audioResult.error] : [])];
     const contentText = text || audioResult.transcript || "";
@@ -2835,22 +2836,6 @@ class TelegramAdapterImpl {
     }
   }
 
-  private async resolveSpeechToTextContext(
-    chatId: number,
-  ): Promise<SpeechToTextContext | undefined> {
-    const session = this.getActiveSession(chatId);
-    if (!session) {
-      return undefined;
-    }
-
-    try {
-      const snapshot = await this.getSessionManagerForChat(chatId).getSessionSnapshot(session.id);
-      return snapshot ? collectSpeechToTextContext(snapshot) : undefined;
-    } catch {
-      return undefined;
-    }
-  }
-
   private getSpeechToTextApiKey(): string | undefined {
     return this.geminiApiKey;
   }
@@ -2862,7 +2847,7 @@ class TelegramAdapterImpl {
   private async transcribeTelegramVoice(
     chatId: number,
     message: TelegramVoiceMessage,
-    options: { silent?: boolean } = {},
+    options: { silent?: boolean; sessionId?: string } = {},
   ): Promise<TelegramAudioTranscriptionResult> {
     if (message.durationMs > SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS) {
       const error = "audio transcription failed: audio is longer than 20 minutes";
@@ -2883,12 +2868,21 @@ class TelegramAdapterImpl {
 
     let transcript: string;
     try {
+      const snapshot = options.sessionId
+        ? await this.getSessionManagerForChat(chatId).getSessionSnapshot(options.sessionId)
+        : undefined;
+      if (options.sessionId && !snapshot) {
+        throw new Error("session is not ready for speech input");
+      }
       const transcription = createSpeechToTextTranscription({
         mode: "file",
         apiKey,
         openAIApiKey: this.openAIApiKey,
-        context: await this.resolveSpeechToTextContext(chatId),
-        vocabulary: this.speechVocabulary,
+        context: snapshot ? collectSpeechToTextContext(snapshot) : undefined,
+        vocabulary: composeSpeechVocabulary(
+          snapshot?.catalog.speechVocabulary ?? [],
+          this.personalSpeechVocabulary ?? [],
+        ),
         deps: {
           ...this.speechToTextDeps,
           fetchImpl: this.fetchImpl,
@@ -2927,7 +2921,7 @@ class TelegramAdapterImpl {
       return;
     }
 
-    const result = await this.transcribeTelegramVoice(chatId, message);
+    const result = await this.transcribeTelegramVoice(chatId, message, { sessionId: session.id });
     if (!result.transcript) {
       return;
     }

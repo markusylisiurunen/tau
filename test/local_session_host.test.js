@@ -5,10 +5,12 @@ import { fileURLToPath } from "node:url";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { convertResponsesMessages } from "@earendil-works/pi-ai/api/openai-responses-shared";
 import { describe, expect, it, vi } from "vitest";
+import { toSessionConfig } from "../dist/core/config/ownership.js";
 import { HistoryManager } from "../dist/core/history/history_manager.js";
 import { LocalHistoryStore } from "../dist/core/history/local_history_store.js";
 import { createLocalToolExecutionBackend } from "../dist/core/index.js";
 import { resolveModel } from "../dist/core/models/catalog.js";
+import { runWebSocketSessionServer } from "../dist/core/modes/websocket_server.js";
 import { personas } from "../dist/core/personas.js";
 import { ToolCatalog } from "../dist/core/tools/catalog.js";
 import {
@@ -24,6 +26,7 @@ import {
 import { LocalExecutionEnvironment } from "../dist/execution/local_execution_environment.js";
 import { HostedEphemeralAgentSession } from "../dist/host/hosted_ephemeral_agent_session.js";
 import { LocalSessionHost } from "../dist/host/local_session_host.js";
+import { resolveSessionBootstrap } from "../dist/host/session_bootstrap.js";
 import { EphemeralThreadBusyError } from "../dist/host/session_host.js";
 import { SessionProtocolHandler } from "../dist/host/session_protocol_handler.js";
 import {
@@ -36,6 +39,7 @@ import {
   SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_SUBJECT_BYTES,
   SESSION_PROTOCOL_VERSION,
 } from "../dist/protocol/session_protocol.js";
+import { createTauSdkWebSocketClient } from "../dist/sdk/client.js";
 import { FileSessionStore } from "../dist/store/file_session_store.js";
 import { MemorySessionStore } from "../dist/store/memory_session_store.js";
 import {
@@ -84,7 +88,7 @@ function createTestExecutionEnvironment(
   return {
     resolveRuntimeConfig: async () => ({
       bootstrap: { modelResolver: { resolveModel } },
-      config: {},
+      config: toSessionConfig({}),
       personas: [personas[0]],
       prompts: [],
       skills: [],
@@ -120,7 +124,6 @@ function createHost(store, options = {}) {
   return new LocalSessionHost({
     store,
     history: options.history ?? new HistoryManager(new LocalHistoryStore(":memory:")),
-    ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
     ...(options.defaultBootstrap === false
       ? {}
       : {
@@ -130,7 +133,7 @@ function createHost(store, options = {}) {
             personas: options.personas ?? [personas[0]],
             prompts: [],
             modelResolver: resolveModel,
-            ...(options.config ? { config: options.config } : {}),
+            config: { ...toSessionConfig(options.config ?? {}), apiKeys: options.config?.apiKeys },
           },
         }),
     executionEnvironmentResolver,
@@ -237,7 +240,8 @@ function expectedCatalog(persona = personas[0]) {
     personas: [expectedCatalogPersona(persona)],
     prompts: [],
     skills: [],
-    mcpServers: [],
+    mcp: { status: "available", servers: [] },
+    speechVocabulary: [],
   };
 }
 
@@ -385,7 +389,7 @@ describe("HostedEphemeralAgentSession", () => {
       sessionId: "session-1",
       sessionStartedAt: 0,
       persona: personas[0],
-      config: {},
+      config: toSessionConfig({}),
       includeAgentContext: false,
       executionEnvironment: createTestExecutionEnvironment(),
       instructions: "review",
@@ -2045,7 +2049,7 @@ describe("LocalSessionHost", () => {
       },
     ]);
     const snapshot = createStoredSnapshot({ sessionId: "old-services", historyEntries });
-    delete snapshot.catalog.mcpServers;
+    delete snapshot.catalog.mcp.servers;
     writeFileSync(
       join(directory, `${Buffer.from(snapshot.sessionId).toString("base64url")}.json`),
       JSON.stringify({ format: STORED_SESSION_DOCUMENT_FORMAT, version: 9, snapshot }),
@@ -4296,7 +4300,7 @@ describe("LocalSessionHost", () => {
     const liveModelResolver = vi.fn(resolveModel);
     const resolveRuntimeConfig = vi.fn(async () => ({
       bootstrap: { modelResolver: { resolveModel: liveModelResolver } },
-      config: {},
+      config: toSessionConfig({}),
       personas: [livePersona],
       prompts: [],
       skills: [
@@ -4376,6 +4380,7 @@ describe("LocalSessionHost", () => {
           personas: [resolvedPersona],
           prompts: [],
           modelResolver: resolveModel,
+          config: toSessionConfig({}),
         };
       },
     });
@@ -4404,7 +4409,7 @@ describe("LocalSessionHost", () => {
     };
     const resolveRuntimeConfig = vi.fn(async () => ({
       bootstrap: { modelResolver: { resolveModel } },
-      config: {},
+      config: toSessionConfig({}),
       personas: [reloadedPersona],
       prompts: [{ id: "reload-prompt", label: "reload prompt", template: "reload prompt" }],
       skills: [
@@ -4489,7 +4494,7 @@ describe("LocalSessionHost", () => {
     const executionEnvironment = createTestExecutionEnvironment();
     executionEnvironment.resolveRuntimeConfig = vi.fn(async () => ({
       bootstrap: { modelResolver: { resolveModel } },
-      config: {},
+      config: toSessionConfig({}),
       personas: [personas[0]],
       prompts: [],
       skills: [],
@@ -4520,7 +4525,10 @@ describe("LocalSessionHost", () => {
     const resolveRuntimeConfig = executionEnvironment.resolveRuntimeConfig;
     executionEnvironment.resolveRuntimeConfig = async () => ({
       ...(await resolveRuntimeConfig()),
-      config: { apiKeys: { openai: "target-model-key", exa: "target-tool-key" } },
+      config: {
+        ...toSessionConfig({}),
+        apiKeys: { openai: "target-model-key", exa: "target-tool-key" },
+      },
       personas: [personas[0], alternatePersona],
     });
     const host = createHostForEnvironment(new MemorySessionStore(), executionEnvironment, {
@@ -4721,7 +4729,7 @@ describe("LocalSessionHost", () => {
     let promptText = "first body";
     const resolveRuntimeConfig = vi.fn(async () => ({
       bootstrap: { modelResolver: { resolveModel } },
-      config: {},
+      config: toSessionConfig({}),
       personas: [personas[0]],
       prompts: [],
       skills: [],
@@ -4787,7 +4795,7 @@ describe("LocalSessionHost", () => {
       ...createTestExecutionEnvironment(undefined, { runNodeScript }),
       resolveRuntimeConfig: async () => ({
         bootstrap: { modelResolver: { resolveModel } },
-        config: {},
+        config: toSessionConfig({}),
         personas: [personas[0]],
         prompts: [],
         skills: [],
@@ -5253,6 +5261,7 @@ describe("LocalSessionHost", () => {
     const resolveRuntimeConfig = vi.fn(async () => ({
       bootstrap: { modelResolver: { resolveModel } },
       config: {
+        ...toSessionConfig({}),
         modelSystemNotices: {
           [`${personas[0].model.provider}/${personas[0].model.id}`]: "target notice",
         },
@@ -5274,6 +5283,7 @@ describe("LocalSessionHost", () => {
 
     const recoveredHost = createHost(store, {
       config: {
+        ...toSessionConfig({}),
         modelSystemNotices: {
           [`${personas[0].model.provider}/${personas[0].model.id}`]: "host notice",
         },
@@ -6392,8 +6402,81 @@ describe("LocalSessionHost", () => {
   });
 });
 
-describe("host-owned MCP tools", () => {
-  it("projects only enabled host MCP names without opening connections", async () => {
+describe("session-owned MCP tools", () => {
+  it("projects session integrations through WebSocket observation and reload", async () => {
+    let suffix = "";
+    const environmentFor = (cwd) => {
+      const environment = createTestExecutionEnvironment({
+        kind: "local",
+        cwd,
+        home: "/home/user",
+      });
+      const resolve = environment.resolveRuntimeConfig;
+      environment.resolveRuntimeConfig = async () => ({
+        ...(await resolve()),
+        config: toSessionConfig({
+          mcpServers: { [cwd.slice(1)]: { type: "stdio", command: "must-not-run" } },
+          speech: { vocabulary: [cwd + suffix] },
+        }),
+      });
+      return environment;
+    };
+    const host = createHost(new MemorySessionStore(), {
+      defaultBootstrap: false,
+      executionEnvironmentResolver: {
+        resolve: async ({ cwd }) => environmentFor(cwd),
+        canRestore: () => true,
+        restore: async ({ cwd }) => environmentFor(cwd),
+      },
+      resolveSessionBootstrap: (args) =>
+        resolveSessionBootstrap({ ...args, hostApiKeys: undefined }),
+    });
+    const listening = deferred();
+    const controller = new AbortController();
+    const server = runWebSocketSessionServer({
+      host,
+      hostname: "127.0.0.1",
+      port: 0,
+      signal: controller.signal,
+      onListening: listening.resolve,
+    });
+    let client;
+    try {
+      const address = await listening.promise;
+      client = await createTauSdkWebSocketClient({ url: `ws://127.0.0.1:${address.port}` });
+      const a = await client.sessions.create({
+        ...localCreateInput,
+        executionEnvironment: { kind: "local", cwd: "/a" },
+      });
+      const b = await client.sessions.create({
+        ...localCreateInput,
+        executionEnvironment: { kind: "local", cwd: "/b" },
+      });
+      expect((await a.snapshot()).catalog).toMatchObject({
+        mcp: { status: "available", servers: ["a"] },
+        speechVocabulary: ["/a"],
+      });
+      expect((await b.snapshot()).catalog).toMatchObject({
+        mcp: { status: "available", servers: ["b"] },
+        speechVocabulary: ["/b"],
+      });
+      let projected = await a.snapshot();
+      a.onDelta((delta) => {
+        projected = applySessionProtocolDelta(projected, delta);
+      });
+      suffix = "-reloaded";
+      const reloaded = await a.reload();
+      expect(reloaded.snapshot.catalog.speechVocabulary).toEqual(["/a-reloaded"]);
+      expect(projected).toEqual(reloaded.snapshot);
+      expect((await b.snapshot()).catalog.speechVocabulary).toEqual(["/b"]);
+    } finally {
+      await client?.close();
+      controller.abort();
+      await server;
+    }
+  });
+
+  it("projects only enabled session MCP names without opening connections", async () => {
     const store = new MemorySessionStore();
     const servers = {
       zebra: { type: "stdio", command: "must-not-run" },
@@ -6405,8 +6488,7 @@ describe("host-owned MCP tools", () => {
       disabled: { type: "stdio", command: "must-not-run", enabled: false },
     };
     const host = createHost(store, {
-      mcpServers: servers,
-      config: { mcpServers: { target: { type: "stdio", command: "must-not-run" } } },
+      config: { mcpServers: servers },
     });
     let sessionId;
     try {
@@ -6416,36 +6498,105 @@ describe("host-owned MCP tools", () => {
       session.onDelta((delta) => {
         projected = applySessionProtocolDelta(projected, delta);
       });
-      expect(projected.catalog.mcpServers).toEqual(["alpha", "zebra"]);
+      expect(projected.catalog.mcp.servers).toEqual(["alpha", "zebra"]);
       const reloaded = await session.reload();
-      expect(reloaded.snapshot.catalog.mcpServers).toEqual(["alpha", "zebra"]);
+      expect(reloaded.snapshot.catalog.mcp.servers).toEqual(["alpha", "zebra"]);
+      expect(reloaded.warnings).toHaveLength(1);
       expect(projected).toEqual(reloaded.snapshot);
       expect(JSON.stringify(projected.catalog)).not.toContain("private");
       expect(JSON.stringify(projected.catalog)).not.toContain("example.invalid");
     } finally {
       await host.shutdown();
     }
-    const recoveredHost = createHost(store, { mcpServers: { current: servers.zebra } });
+    const recoveredHost = createHost(store, { config: { mcpServers: { current: servers.zebra } } });
     try {
       const recovered = await recoveredHost.observeSession(sessionId);
-      expect((await recovered.snapshot()).catalog.mcpServers).toEqual(["current"]);
+      expect((await recovered.snapshot()).catalog.mcp.servers).toEqual(["current"]);
     } finally {
       await recoveredHost.shutdown();
     }
   });
 
-  it("binds only host servers and persists ordinary tool lifecycle through observers", async () => {
+  it("denies remote MCP at binding, including child access and reload", async () => {
+    const environment = createTestExecutionEnvironment({
+      kind: "fly-sprite",
+      spriteName: "test",
+      cwd: "/remote",
+      home: "/home/remote",
+    });
+    const servers = {
+      forbidden: { type: "stdio", command: "must-not-run", env: { SECRET: "private-secret" } },
+    };
+    const store = new MemorySessionStore();
+    const host = createHostForEnvironment(store, environment, { config: { mcpServers: servers } });
+    try {
+      const session = await host.createSession({
+        ...localCreateInput,
+        executionEnvironment: { kind: "fly-sprite", spriteName: "test", cwd: "/remote" },
+      });
+      const spawn = vi
+        .spyOn(session.runtime.supervisor, "spawn")
+        .mockReturnValue({ id: "worker", status: "working" });
+      const result = await session.runtime.agent.spec.tools.get("code").execute(
+        fauxToolCall("code", {
+          code: 'printText(typeof tau.mcp); await tau.agents.spawn({ title: "remote", prompt: "work" });',
+        }),
+        {
+          agentId: "main",
+          turnId: "turn",
+          assistantMessageId: "assistant",
+          signal: new AbortController().signal,
+          emitActivity: async () => {},
+        },
+      );
+      expect(result.outcome).toBe("succeeded");
+      expect(JSON.stringify(result)).toContain("undefined");
+      const mcp = spawn.mock.calls[0][0].mcp;
+      expect(mcp.available).toBe(false);
+      await expect(
+        mcp.callTool("forbidden", "echo", {}, new AbortController().signal),
+      ).rejects.toThrow();
+      expect((await session.snapshot()).catalog.mcp).toEqual({
+        status: "unavailable",
+        reason: "remote-execution",
+      });
+      expect((await session.reload()).snapshot.catalog.mcp).toEqual({
+        status: "unavailable",
+        reason: "remote-execution",
+      });
+      expect(JSON.stringify(await session.snapshot())).not.toContain("SECRET");
+      await host.shutdown();
+      const recoveredHost = createHostForEnvironment(store, environment, {
+        config: { mcpServers: servers },
+      });
+      try {
+        const recovered = await recoveredHost.observeSession(session.sessionId);
+        expect((await recovered.snapshot()).catalog.mcp).toEqual({
+          status: "unavailable",
+          reason: "remote-execution",
+        });
+        expect(recovered.runtime.mcp.available).toBe(false);
+      } finally {
+        await recoveredHost.shutdown();
+      }
+    } finally {
+      await host.shutdown();
+    }
+  });
+
+  it("binds session servers and persists ordinary tool lifecycle through observers", async () => {
     const store = new MemorySessionStore();
     const host = createHost(store, {
-      mcpServers: {
-        host: {
-          type: "stdio",
-          command: process.execPath,
-          args: [fileURLToPath(new URL("./fixtures/mcp_server.js", import.meta.url))],
-          cwd: tmpdir(),
+      config: {
+        mcpServers: {
+          host: {
+            type: "stdio",
+            command: process.execPath,
+            args: [fileURLToPath(new URL("./fixtures/mcp_server.js", import.meta.url))],
+            cwd: tmpdir(),
+          },
         },
       },
-      config: { mcpServers: { target: { type: "stdio", command: "untrusted-target-command" } } },
     });
     let pid;
     try {
@@ -6539,12 +6690,49 @@ describe("host-owned MCP tools", () => {
     }
   });
 
-  it("does not expose MCP without host configuration or outside the persona allowlist", async () => {
+  it("isolates MCP processes between sessions and closes them on eviction", async () => {
+    const host = createHost(new MemorySessionStore(), {
+      config: {
+        mcpServers: {
+          service: {
+            type: "stdio",
+            command: process.execPath,
+            args: [fileURLToPath(new URL("./fixtures/mcp_server.js", import.meta.url))],
+          },
+        },
+      },
+    });
+    try {
+      const a = await host.createSession(localCreateInput);
+      const b = await host.createSession(localCreateInput);
+      const invoke = async (session) =>
+        (
+          await session.runtime.mcp.callTool(
+            "service",
+            "echo",
+            { message: "hello" },
+            new AbortController().signal,
+          )
+        ).structuredContent.pid;
+      const pidA = await invoke(a);
+      const pidB = await invoke(b);
+      expect(pidA).not.toBe(pidB);
+      host.releaseSession(a);
+      await vi.waitFor(() => expect(() => process.kill(pidA, 0)).toThrow());
+      expect(await invoke(b)).toBe(pidB);
+      await host.shutdown();
+      expect(() => process.kill(pidB, 0)).toThrow();
+    } finally {
+      await host.shutdown();
+    }
+  });
+
+  it("does not expose MCP without session configuration or outside the persona allowlist", async () => {
     const targetOnly = createHost(new MemorySessionStore(), {
-      config: { mcpServers: { target: { type: "stdio", command: "untrusted-command" } } },
+      config: toSessionConfig({}),
     });
     const forbidden = createHost(new MemorySessionStore(), {
-      mcpServers: { host: { type: "stdio", command: "unused-command" } },
+      config: { mcpServers: { host: { type: "stdio", command: "unused-command" } } },
       persona: { ...personas[0], tools: [] },
     });
     try {

@@ -104,7 +104,7 @@ Members are placed at `<composite-root>/<member-project-id>` and use each reposi
 
 `subagents.launchModels` sets which models subagents may be started with. See [subagents](subagents.md) for the syntax and inheritance.
 
-Configuration resolved at the composite root applies to the whole session, including the workspace's `defaultPersona`, subagents, model catalog, and tools. Members' `.tau/config.json` files are not merged. A subagent started in a member directory rebuilds only the context that depends on the directory: environment and repository details, the applicable `AGENTS.md`, and the skills found there.
+Configuration resolved at the composite root applies to the whole session, including the workspace's `defaultPersona`, subagents, model catalog, tools, MCP servers, and speech vocabulary. Members' `.tau/config.json` files are not merged. A subagent started in a member directory rebuilds only the context that depends on the directory: environment and repository details, the applicable `AGENTS.md`, and the skills found there.
 
 If any member cannot be prepared, Tau removes the whole composite workspace. Composite workspaces and member caches use the top-level `workspaceRoot`.
 
@@ -115,6 +115,8 @@ Repository and composite projects work the same way. Tau prepares one workspace 
 If the expected workspace is missing, recovery reconstructs it from the caches and current project configuration. `/new` and session close remove a managed workspace; normal shutdown preserves it. Tau does not commit, push, or save uncommitted changes elsewhere.
 
 ## Managed workspace safety
+
+A project's `.tau/config.json` can define [MCP servers](config-reference.md#mcpservers) that start commands on the runner machine with the runner's credentials, so [review what you prepare](security.md#trust-mcp-servers). A workspace outside the runner user's home does not inherit servers from global configuration.
 
 **Important:** startup removes entries under managed workspace roots that no persisted session references. Dedicate these roots to Tau; never use a home directory, repository collection, or unrelated tree.
 

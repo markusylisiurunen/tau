@@ -74,4 +74,42 @@ describe("runtime config snapshot", () => {
       );
     });
   });
+
+  it("keeps host and client settings on the target out of the result", async () => {
+    await withTempHome(async (home) => {
+      const repo = join(home, "repo");
+      await mkdir(join(home, ".config", "tau"), { recursive: true });
+      await mkdir(repo, { recursive: true });
+      await writeFile(
+        join(home, ".config", "tau", "config.json"),
+        JSON.stringify({
+          apiKeys: { openai: "target-secret" },
+          history: { endpoint: "https://history.example.com", apiKey: "target-secret" },
+          flySprites: { token: "target-secret" },
+          markdownExport: { url: "https://export.example.com", token: "target-secret" },
+          speech: { vocabulary: ["Target"], voiceId: "target-voice" },
+        }),
+        "utf8",
+      );
+
+      const runtime = await loadRuntimeConfigFromToolBackend({
+        backend: createLocalToolExecutionBackend(),
+        cwd: repo,
+        home,
+      });
+
+      expect(Object.keys(runtime).sort()).toEqual([
+        "bootstrap",
+        "config",
+        "personas",
+        "prompts",
+        "skills",
+        "warnings",
+      ]);
+      expect(Object.keys(runtime.bootstrap)).toEqual(["modelResolver"]);
+      expect(runtime.config.speechVocabulary).toEqual(["Target"]);
+      expect(JSON.stringify(runtime)).not.toContain("target-secret");
+      expect(JSON.stringify(runtime)).not.toContain("target-voice");
+    });
+  });
 });

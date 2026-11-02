@@ -9,10 +9,15 @@ import type {
 } from "@earendil-works/pi-ai";
 import { type ZodError, z } from "zod";
 import { MODEL_IMAGE_MAX_BYTES, SUPPORTED_IMAGE_TYPES } from "../core/utils/model_image.js";
+import {
+  SPEECH_TO_TEXT_MAX_KEYWORDS,
+  SPEECH_TO_TEXT_MAX_VOCABULARY_CHARACTERS,
+  speechToTextKeywordSchema,
+} from "../core/utils/speech_to_text_keywords.js";
 import { environmentVariablesSchema } from "./environment_variables.js";
 import { type IntermediateSystemMessage, isIntermediateSystemMessage } from "./system_message.js";
 
-export const SESSION_PROTOCOL_VERSION = 18 as const;
+export const SESSION_PROTOCOL_VERSION = 19 as const;
 export const MIN_AUTO_COMPACT_THRESHOLD_TOKENS = 50_000;
 export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_IMAGES = 16;
 export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_CONTENT_BLOCKS = 1024;
@@ -884,7 +889,10 @@ export type SessionProtocolContentCatalogSnapshot = {
   personas: SessionProtocolPersonaSnapshot[];
   prompts: SessionProtocolPromptTemplateSnapshot[];
   skills: SessionProtocolSkillSnapshot[];
-  mcpServers: string[];
+  mcp:
+    | { status: "available"; servers: string[] }
+    | { status: "unavailable"; reason: "remote-execution" };
+  speechVocabulary: string[];
 };
 
 export type SessionProtocolSettingsSnapshot = {
@@ -2161,7 +2169,20 @@ const sessionProtocolContentCatalogSnapshotSchema = z
     personas: z.array(sessionProtocolPersonaSnapshotSchema),
     prompts: z.array(sessionProtocolPromptTemplateSnapshotSchema),
     skills: z.array(sessionProtocolSkillSnapshotSchema),
-    mcpServers: z.array(nonEmptyStringSchema),
+    mcp: z.discriminatedUnion("status", [
+      z.object({ status: z.literal("available"), servers: z.array(nonEmptyStringSchema) }).strict(),
+      z
+        .object({ status: z.literal("unavailable"), reason: z.literal("remote-execution") })
+        .strict(),
+    ]),
+    speechVocabulary: z
+      .array(speechToTextKeywordSchema)
+      .max(SPEECH_TO_TEXT_MAX_KEYWORDS)
+      .refine(
+        (terms) =>
+          terms.reduce((total, term) => total + [...term].length, 0) <=
+          SPEECH_TO_TEXT_MAX_VOCABULARY_CHARACTERS,
+      ),
   })
   .strip();
 

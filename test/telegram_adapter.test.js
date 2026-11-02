@@ -238,6 +238,8 @@ function createStatusSnapshot(overrides = {}) {
       ],
       prompts: [],
       skills: [],
+      mcp: { status: "available", servers: [] },
+      speechVocabulary: [],
     },
     executionEnvironment: { kind: "local", cwd: "/tmp/project", home: "/tmp" },
     messages: [
@@ -271,6 +273,7 @@ function createStatusSnapshot(overrides = {}) {
 
 function createManagedSession(overrides) {
   return {
+    snapshot: createStatusSnapshot(),
     projectId: "demo",
     createdAt: "2024-01-01T00:00:00.000Z",
     updatedAt: "2024-01-01T00:00:00.000Z",
@@ -1726,6 +1729,41 @@ describe("telegram adapter", () => {
     }
   });
 
+  it("does not transcribe group audio before a session can receive the attachment", async () => {
+    const groupChatId = -1002;
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: {
+            chat: { id: groupChatId, type: "group" },
+            from: { id: 7 },
+            voice: { duration: 1, file_id: "voice-1", mime_type: "audio/ogg" },
+          },
+        },
+      ],
+    ]);
+    const managerHarness = createSessionManagerHarness();
+    const geminiFetch = createGeminiTranscriptionFetchMock("transcribed audio");
+    const adapter = await startAdapter({
+      allowedChatIds: [groupChatId],
+      geminiApiKey: "gemini-key",
+      personalSpeechVocabulary: ["Personal"],
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      fetchImpl: geminiFetch,
+    });
+    try {
+      await waitFor(() => apiHarness.api.getUpdates.mock.calls.length > 1);
+      expect(geminiFetch).not.toHaveBeenCalled();
+      expect(apiHarness.api.downloadFile).not.toHaveBeenCalled();
+      expect(managerHarness.manager.getSessionSnapshot).not.toHaveBeenCalled();
+      expect(managerHarness.manager.sendMessage).not.toHaveBeenCalled();
+    } finally {
+      await adapter.close();
+    }
+  });
+
   it("includes group attachments and audio transcripts as pending context messages", async () => {
     const groupChatId = -1002;
     const apiHarness = createApiHarness([
@@ -1795,6 +1833,9 @@ describe("telegram adapter", () => {
       [
         createManagedSession({
           id: "s-group",
+          snapshot: createStatusSnapshot({
+            catalog: { ...createStatusSnapshot().catalog, speechVocabulary: ["ProjectOnly"] },
+          }),
           state: "waiting-input",
         }),
       ],
@@ -1804,6 +1845,7 @@ describe("telegram adapter", () => {
     const adapter = await startAdapter({
       allowedChatIds: [groupChatId],
       geminiApiKey: "gemini-key",
+      personalSpeechVocabulary: ["Personal"],
       elevenLabsApiKey: "eleven-key",
       openAIApiKey: "openai-key",
       sessionManager: managerHarness.manager,
@@ -1813,6 +1855,13 @@ describe("telegram adapter", () => {
 
     try {
       await waitFor(() => managerHarness.manager.sendMessage.mock.calls.length === 1);
+      const interaction = geminiFetch.mock.calls.find(([input]) =>
+        getRequestUrl(input).endsWith("/interactions"),
+      );
+      expect(
+        JSON.parse(interaction[1].body).generation_config.transcription_config.custom_vocabulary,
+      ).toEqual(["ProjectOnly", "Personal"]);
+      expect(managerHarness.manager.getSessionSnapshot).toHaveBeenCalledWith("s-group");
       const text = managerHarness.manager.sendMessage.mock.calls[0][1];
       expect(text).toContain('1. sender: {"user-id":7,"name":"Ada","username":"ada"}');
       const attachments = splitTauUserText(text).hiddenSystemBlocks.filter(({ text }) =>
@@ -2709,6 +2758,12 @@ describe("telegram adapter", () => {
         createManagedSession({
           id: "s21",
           state: "waiting-input",
+          snapshot: createStatusSnapshot({
+            catalog: {
+              ...createStatusSnapshot().catalog,
+              speechVocabulary: ["Tau", "ChatRuntime"],
+            },
+          }),
         }),
       ],
       { defaultOwnerId: ownerIdForChat(210) },
@@ -2718,7 +2773,7 @@ describe("telegram adapter", () => {
 
     const adapter = await startAdapter({
       geminiApiKey: "gemini-key",
-      speechVocabulary: ["Tau", "ChatRuntime"],
+      personalSpeechVocabulary: ["tau", "Personal"],
       elevenLabsApiKey: "eleven-key",
       openAIApiKey: "openai-key",
       sessionManager: managerHarness.manager,
@@ -2758,7 +2813,7 @@ describe("telegram adapter", () => {
       );
       expect(
         JSON.parse(interaction[1].body).generation_config.transcription_config.custom_vocabulary,
-      ).toEqual(["Tau", "ChatRuntime"]);
+      ).toEqual(["Tau", "ChatRuntime", "Personal"]);
       await waitFor(() =>
         apiHarness.setMessageReactions.some(
           (entry) => entry.chatId === 210 && entry.messageId === 902,

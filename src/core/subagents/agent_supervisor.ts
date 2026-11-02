@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Config } from "../config/index.js";
+import type { SessionRuntimeSettings } from "../config/index.js";
 import type { HistoryQuery } from "../history/types.js";
 import type { McpManager } from "../mcp/manager.js";
 import { type CoreDeps, createDefaultCoreDeps } from "../runtime/deps.js";
@@ -107,7 +107,7 @@ export class AgentSupervisor {
     prompt: string;
     title: string;
     originHistoryEntryId: string;
-    config: Config;
+    config: SessionRuntimeSettings;
     backend: ToolExecutionBackend;
     jobs: AgentJobRegistry;
     history?: HistoryQuery;

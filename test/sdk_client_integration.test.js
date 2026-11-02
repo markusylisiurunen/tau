@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { createTauSdkClient } from "@markusylisiurunen/tau/sdk";
@@ -27,6 +27,92 @@ async function withTempHome(test) {
 }
 
 describe("sdk client integration", () => {
+  it("resolves integrations per project and refreshes vocabulary on reload and recovery", async () => {
+    await withTempHome(async (home) => {
+      const writeConfig = async (cwd, name) => {
+        await mkdir(join(cwd, ".tau"), { recursive: true });
+        await writeFile(
+          join(cwd, ".tau", "config.json"),
+          JSON.stringify({
+            mcpServers: { [name]: { type: "stdio", command: "must-not-run" } },
+            speech: { vocabulary: [name] },
+          }),
+        );
+      };
+      await mkdir(join(home, ".config", "tau"), { recursive: true });
+      await writeFile(
+        join(home, ".config", "tau", "config.json"),
+        JSON.stringify({
+          speech: { vocabulary: ["Personal"] },
+          mcpServers: { global: { type: "stdio", command: "must-not-run" } },
+        }),
+      );
+      const startup = join(home, "startup");
+      const projectA = join(home, "a");
+      const projectB = join(home, "b");
+      await writeConfig(startup, "Startup");
+      await writeConfig(projectA, "ProjectA");
+      await writeConfig(projectB, "ProjectB");
+      const client = await createTauSdkClient({ cwd: startup, refreshModelCatalog: false });
+      let sessionId;
+      try {
+        const a = await client.sessions.create({
+          executionEnvironment: { kind: "local", cwd: projectA },
+          attributes: { source: "test" },
+        });
+        const b = await client.sessions.create({
+          executionEnvironment: { kind: "local", cwd: projectB },
+          attributes: { source: "test" },
+        });
+        sessionId = a.id;
+        expect((await a.snapshot()).catalog).toMatchObject({
+          mcp: { status: "available", servers: ["ProjectA", "global"] },
+          speechVocabulary: ["ProjectA", "Personal"],
+        });
+        expect((await b.snapshot()).catalog).toMatchObject({
+          mcp: { status: "available", servers: ["ProjectB", "global"] },
+          speechVocabulary: ["ProjectB", "Personal"],
+        });
+        await writeConfig(projectA, "Changed");
+        const reloaded = await a.reload();
+        expect(reloaded.snapshot.catalog).toMatchObject({
+          mcp: { status: "available", servers: ["ProjectA", "global"] },
+          speechVocabulary: ["Changed", "Personal"],
+        });
+        expect(reloaded.warnings).toHaveLength(1);
+        expect((await b.snapshot()).catalog.speechVocabulary).toEqual(["ProjectB", "Personal"]);
+      } finally {
+        await client.close();
+      }
+      const storedPath = join(
+        home,
+        ".config",
+        "tau",
+        "sessions",
+        `${Buffer.from(sessionId).toString("base64url")}.json`,
+      );
+      const legacy = JSON.parse(await readFile(storedPath, "utf8"));
+      legacy.version = 13;
+      legacy.snapshot.catalog.mcpServers = legacy.snapshot.catalog.mcp.servers;
+      delete legacy.snapshot.catalog.mcp;
+      delete legacy.snapshot.catalog.speechVocabulary;
+      await writeFile(storedPath, JSON.stringify(legacy));
+      const recoveredClient = await createTauSdkClient({
+        cwd: startup,
+        refreshModelCatalog: false,
+      });
+      try {
+        const recovered = await recoveredClient.sessions.observe(sessionId);
+        expect((await recovered.snapshot()).catalog).toMatchObject({
+          mcp: { status: "available", servers: ["Changed", "global"] },
+          speechVocabulary: ["Changed", "Personal"],
+        });
+      } finally {
+        await recoveredClient.close();
+      }
+    });
+  }, 20000);
+
   it.each(["workspace-test:high", "missing:high"])(
     "resolves workspace default %s consistently at startup and on reapplication",
     async (defaultPersona) => {
@@ -234,7 +320,7 @@ Test persona ${id}.
       let unsubscribe = () => {};
 
       try {
-        expect(client.ready.version).toBe(18);
+        expect(client.ready.version).toBe(19);
         await expect(client.sessions.list()).resolves.toEqual([]);
 
         const session = await client.sessions.create(localCreateInput);

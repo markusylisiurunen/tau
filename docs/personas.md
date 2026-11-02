@@ -115,7 +115,7 @@ The selectable tool names are:
 
 Names such as `web`, `history`, `mcp`, and `models` enable capabilities inside the `code` tool, and `bash` also enables `tau.bash`. `agents` enables `tau.agents` inside `code` and the `wait_for_agents` tool. Tau builds the `code` tool from whichever of these capabilities are selected and usable.
 
-A `tools` list replaces the defaults. Names are lowercased and duplicates removed. An unknown name makes the persona invalid. `tools: []` gives the persona none of these tools. The built-in `tau_docs` tool is always available, independent of this list. `mcp` works only when the host has enabled MCP servers. [Tools](tools.md) explains eligibility and ownership.
+A `tools` list replaces the defaults. Names are lowercased and duplicates removed. An unknown name makes the persona invalid. `tools: []` gives the persona none of these tools. The built-in `tau_docs` tool is always available, independent of this list. `mcp` works only when the session has enabled MCP servers, which a session on a remote execution environment never has. [Tools](tools.md) explains eligibility and ownership.
 
 ## Selecting a persona
 

@@ -16,7 +16,7 @@ The **host** creates, observes, persists, and recovers sessions. It owns model c
 
 Session snapshots, authentication storage, usage logs, and the local history database live in the host user's home. Manage them with Tau commands and session operations. Do not edit their files directly.
 
-MCP connections belong to the host. Configure servers on the host. Stdio servers run there, with the host's credentials and access to the host's resources. They do not run in the session's execution environment.
+MCP connections belong to the hosted session and end when the host unloads it. Stdio servers run on the host, with the host's credentials and access to the host's resources. They do not run in the session's execution environment. A session on a local execution environment reads its server definitions from the global and project configuration of its working directory. A session on a remote execution environment has no MCP servers.
 
 The built-in `tau_docs` tool also belongs to the host. It reads the documentation installed with the host's Tau version.
 
@@ -54,6 +54,7 @@ A Fly Sprite puts the execution environment on another machine while the host st
 | Agent `cwd`, home, repository, files, and commands | Execution environment | Use target paths in prompts, `session.create`, and agent tool calls. |
 | `.tau/config.json`, personas, prompts, skills, and `AGENTS.md` used by a session | Execution environment | Edit them on the target and relative to the session `cwd`. |
 | Global runtime content for a session | Execution-environment home | `~/.config/tau` is the target user's home when runtime content is collected. |
+| MCP servers | Host, for local sessions | Define them in the session's project or global configuration. They run on the host with host credentials. Sessions on a remote execution environment have none. See [security](security.md#trust-mcp-servers). |
 | Model and host-tool credentials | Host | Set environment secrets where the host process runs. API keys come from the host environment or private global host configuration. |
 | Codex OAuth accounts | Host home | Run `tau auth …` on the host machine. Do not edit auth storage. |
 | Session snapshots | Host home | Local defaults live under the host's Tau config directory. Do not edit session files. |
@@ -62,6 +63,7 @@ A Fly Sprite puts the execution environment on another machine while the host st
 | `/diff` process | TUI client | Tau’s built-in browser tool runs on the client machine. Repository capture still runs through the session execution environment. |
 | Configured command client tools | Owning client | Commands and their environment are on the client. File access they make on behalf of the session goes to the execution environment. |
 | `/listen` and `/speak` capture or playback | TUI client | Required programs, devices, and media credentials belong on the client machine. |
+| Speech vocabulary | Session, plus client global terms | Project terms come from the session's working directory. The transcribing client adds terms from its own global configuration. |
 | Host execution-environment targets | Host startup | Fly Sprite connection settings must be in the host's configuration before it accepts sessions that use them. |
 | Telegram bot token, bot environment, routing, workspaces, and generated runner state | Telegram runner | Manage these through the Telegram config and runner commands, not project `config.json`. |
 
@@ -69,8 +71,8 @@ A Fly Sprite puts the execution environment on another machine while the host st
 
 Start from the behavior that consumes the setting:
 
-1. If it changes what the agent sees or can do in the project, edit configuration or content in the execution environment's discovery path.
-2. If it changes the TUI's theme, speech, or command client tools, edit the TUI client's configuration and restart that client.
+1. If it changes what the agent sees or can do in the project, or the project's speech vocabulary, edit configuration or content in the execution environment's discovery path.
+2. If it changes the TUI's theme, voice, recording shortcut, personal speech vocabulary, or command client tools, edit the TUI client's configuration and restart that client.
 3. If it changes credentials, session storage, remote history, or hosted execution environment connections, set it for the host process and restart the host when required.
 4. If it changes Telegram routing, bot startup settings, bot environments, presets, or workspace preparation, edit the runner's `--config-file` on the runner machine.
 

@@ -1,4 +1,4 @@
-import type { Config } from "../config/index.js";
+import type { SessionRuntimeSettings } from "../config/index.js";
 import type { HistoryQuery } from "../history/types.js";
 import type { McpManager } from "../mcp/manager.js";
 import type { CoreDeps } from "../runtime/deps.js";
@@ -32,7 +32,7 @@ export interface SubagentRuntime {
 
 export type SubagentRuntimeOptions = {
   id: string;
-  config: Config;
+  config: SessionRuntimeSettings;
   backend: ToolExecutionBackend;
   jobs: AgentJobRegistry;
   history?: HistoryQuery;

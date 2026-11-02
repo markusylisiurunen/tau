@@ -23,7 +23,7 @@ import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { formatCodexAuthError } from "../auth/auth_messages.js";
 import type { AuthStorage } from "../auth/auth_storage.js";
 import { TauCredentialStore } from "../auth/credential_store.js";
-import type { Config } from "../config/schema.js";
+import type { ApiKeysConfig } from "../config/schema.js";
 import type { ReasoningEffort, ServiceTier } from "../types.js";
 import type { TauStreamOptions } from "./streaming_settings.js";
 
@@ -40,7 +40,7 @@ type OpenAIResponsesStreamOptions = ProviderStreamOptions & {
 
 type ModelRuntimeOptions = {
   authStorage?: AuthStorage;
-  getConfig?: () => Config;
+  getConfig?: () => ApiKeysConfig;
   authPath?: string;
   env?: NodeJS.ProcessEnv;
 };

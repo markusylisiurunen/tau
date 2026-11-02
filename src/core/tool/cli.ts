@@ -1,4 +1,4 @@
-import type { Config } from "../config/schema.js";
+import type { ApiKeysConfig } from "../config/schema.js";
 import { ToolCliError } from "./errors.js";
 import { runImageGenerateCommand } from "./image_generate.js";
 import { runOpenRouterCommand } from "./openrouter.js";
@@ -6,7 +6,7 @@ import { printPdfUnpackHelp, runPdfUnpackCommand } from "./pdf_unpack.js";
 import { runSpeechGenerateCommand } from "./speech_generate.js";
 
 export type RunToolCommandOptions = {
-  config: Config;
+  config: ApiKeysConfig;
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   stdout?: (line: string) => void;

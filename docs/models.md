@@ -12,7 +12,7 @@ The bundled catalog comes from Tau's model library, `pi-ai`. It lists known prov
 
 ## Remote catalog
 
-A Tau host that runs models loads cached catalogs from `~/.config/tau/models-store.json` at startup. If the cache is older than four hours, it checks `pi.dev` in the background. This check happens only at startup; there is no recurring refresh. Set `TAU_OFFLINE` to skip it.
+A Tau host that runs models loads cached catalogs from `~/.config/tau/models-store.json` at startup. If the cache is older than four hours, it checks `pi.dev` in the background. This check happens only at startup; there is no recurring refresh. Set `TAU_OFFLINE` to skip it, or `refreshModelCatalog: false` to skip it for one [Node SDK](node-sdk.md) client. Skipping the check does not remove an existing cache or block an explicit `tau models refresh`.
 
 Tau requests the catalog separately for each provider that its `pi-ai` version supports. Each request has a 15-second timeout. A successful provider is cached even when another fails. A failed provider keeps its previous cached data, or the bundled data if there is none. Run `tau models refresh` on the host to refresh immediately, regardless of cache age. It keeps every successful update and exits nonzero if any provider failed.
 

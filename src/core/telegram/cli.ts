@@ -1,11 +1,6 @@
 import { createDefaultConfigDeps } from "../config/deps.js";
-import type { Config } from "../config/schema.js";
-import {
-  getElevenLabsApiKey,
-  getGoogleApiKey,
-  getOpenAIApiKey,
-  loadConfig,
-} from "../config/schema.js";
+import { type ClientConfig, loadClientConfig } from "../config/ownership.js";
+import { getElevenLabsApiKey, getGoogleApiKey, getOpenAIApiKey } from "../config/schema.js";
 import { loadTelegramConfig, TelegramConfigError } from "./config.js";
 import { startTelegramRuntime, TelegramRuntimeError } from "./runtime.js";
 import type { TelegramSessionClient, TelegramSessionClientOptions } from "./session_manager.js";
@@ -26,7 +21,7 @@ type ParsedTelegramArgs = {
 export type RunTelegramCommandOptions = {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
-  config?: Config;
+  config?: ClientConfig;
   createSessionClient?: (options: TelegramSessionClientOptions) => Promise<TelegramSessionClient>;
   stdout?: (line: string) => void;
 };
@@ -134,7 +129,7 @@ export async function runTelegramCommand(
 
   const cwd = options.cwd ?? process.cwd();
   const env = options.env ?? process.env;
-  const config = options.config ?? loadConfig(cwd, createDefaultConfigDeps());
+  const config = options.config ?? loadClientConfig(cwd, createDefaultConfigDeps());
   const geminiApiKey = getGoogleApiKey(config, env);
 
   const createSessionClient = options.createSessionClient;
@@ -149,8 +144,8 @@ export async function runTelegramCommand(
         geminiApiKey,
         openAIApiKey: getOpenAIApiKey(config, env),
         elevenLabsApiKey: getElevenLabsApiKey(config, env),
-        speechVoiceId: config.speech?.voiceId,
-        speechVocabulary: config.speech?.vocabulary,
+        speechVoiceId: config.speech.voiceId,
+        personalSpeechVocabulary: config.speech.personalVocabulary,
         createSessionClient,
         onLog: stdout,
       });

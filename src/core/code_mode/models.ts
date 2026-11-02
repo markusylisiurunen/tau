@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import type { Config } from "../config/index.js";
+import type { ApiKeysConfig } from "../config/index.js";
 import {
   openRouterModels,
   requestOpenRouterChat,
@@ -39,7 +39,7 @@ const decisionOptions = z.strictObject({
 
 export function createModelsCapability(
   backend: ToolExecutionBackend,
-  config: Config,
+  config: ApiKeysConfig,
   fetchImpl?: typeof fetch,
 ): CodeModeCapability {
   function mediaAdapter(signal: AbortSignal): OpenRouterMediaAdapter {

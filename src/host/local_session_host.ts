@@ -4,7 +4,7 @@ import { isDeepStrictEqual } from "node:util";
 import type { Api, AssistantMessage, Message, Model, ToolCall } from "@earendil-works/pi-ai";
 import type { AgentStateRecovery, AgentSubturnResult } from "../core/agent/agent_runtime.js";
 import type { AgentEvent, AgentTurnFailure } from "../core/agent/events.js";
-import { type Config, resolvePromptTemplateWithBackend } from "../core/config/index.js";
+import { resolvePromptTemplateWithBackend, type SessionConfig } from "../core/config/index.js";
 import type { HistoryManager } from "../core/history/history_manager.js";
 import {
   assistantHistoryEntries,
@@ -14,10 +14,8 @@ import {
 } from "../core/history/transcript.js";
 import type { HistoryRemoteTarget } from "../core/history/types.js";
 import { McpManager } from "../core/mcp/manager.js";
-import type { ModelResolver } from "../core/models/catalog.js";
 import type { RemoteModelCatalogSnapshot } from "../core/models/remote_catalog.js";
 import { resolvePersonaSelection } from "../core/persona_selection.js";
-import type { PromptTemplate } from "../core/prompts.js";
 import { ChatRuntime, type ChatRuntimeEnvironment } from "../core/runtime/chat_runtime.js";
 import type { CoreDeps } from "../core/runtime/deps.js";
 import type { RuntimePromptBootstrap } from "../core/runtime/runtime_bootstrap.js";
@@ -29,7 +27,7 @@ import {
 import type { SubagentEvent } from "../core/subagents/types.js";
 import type { ToolActivity } from "../core/tools/activity.js";
 import { buildToolRunPresentation, TOOL_UI_FACET_VERSION } from "../core/tools/presentation.js";
-import type { Persona, ReasoningEffort, Skill } from "../core/types.js";
+import type { Persona, ReasoningEffort } from "../core/types.js";
 import {
   appendUsageLogEntry,
   getUsageCostTotal,
@@ -114,6 +112,7 @@ import type { SessionStore } from "../store/session_store.js";
 import { ClientToolBroker } from "./client_tool_broker.js";
 import { createExecutionEnvironmentSubagentPromptResolver } from "./execution_runtime.js";
 import { HostedEphemeralAgentSession } from "./hosted_ephemeral_agent_session.js";
+import type { SessionBootstrap } from "./session_bootstrap.js";
 import {
   SessionExecBusyError,
   SessionRetryUnavailableError,
@@ -124,15 +123,7 @@ import {
 const PATH_AUTOCOMPLETE_CACHE_TTL_MS = 5_000;
 const HISTORY_UNAVAILABLE_NOTICE_ID = "notice-history-unavailable";
 
-export type LocalSessionResolvedBootstrap = {
-  initialAutoCompactThresholdTokens?: number;
-  persona: Persona;
-  discoveredSkills: Skill[];
-  personas: Persona[];
-  prompts: PromptTemplate[];
-  modelResolver: ModelResolver;
-  config?: Config;
-};
+export type LocalSessionResolvedBootstrap = SessionBootstrap;
 
 export type LocalSessionBootstrapResolver = (args: {
   executionEnvironment: ExecutionEnvironment;
@@ -163,7 +154,6 @@ export type LocalSessionHostOptions = LocalSessionHostSessionOptions & {
   store: SessionStore;
   history: HistoryManager;
   historyRemote?: HistoryRemoteTarget;
-  mcpServers?: Config["mcpServers"];
   onShutdown?: () => Promise<void>;
 };
 
@@ -186,14 +176,12 @@ export class LocalSessionHost implements TauSessionHost {
   private readonly historyRemote?: HistoryRemoteTarget;
   private readonly onShutdown?: () => Promise<void>;
   private readonly clientToolBroker = new ClientToolBroker();
-  private readonly mcp: McpManager;
   private readonly sessionOptions: LocalSessionHostSessionOptions;
   private shutdownPromise?: Promise<void>;
   private shuttingDown = false;
 
   constructor(options: LocalSessionHostOptions) {
-    const { store, history, historyRemote, mcpServers, onShutdown, ...sessionOptions } = options;
-    this.mcp = new McpManager(mcpServers);
+    const { store, history, historyRemote, onShutdown, ...sessionOptions } = options;
     this.store = store;
     this.history = history;
     this.historyRemote = historyRemote;
@@ -346,18 +334,26 @@ export class LocalSessionHost implements TauSessionHost {
       discoveredSkills: bootstrap.discoveredSkills,
       includeAgentContext: this.sessionOptions.includeAgentContext,
     });
-    const catalog = createContentCatalogSnapshot(
-      bootstrap,
-      this.mcp
-        .listServers()
-        .map(({ name }) => name)
-        .sort(),
+    const mcp = new McpManager(
+      executionEnvironment.snapshot().kind === "local" ? bootstrap.config.mcpServers : {},
     );
+    const mcpState: SessionProtocolContentCatalogSnapshot["mcp"] =
+      executionEnvironment.snapshot().kind === "local"
+        ? {
+            status: "available",
+            servers: mcp
+              .listServers()
+              .map(({ name }) => name)
+              .sort(),
+          }
+        : { status: "unavailable", reason: "remote-execution" };
+    const catalog = createContentCatalogSnapshot(bootstrap, mcpState);
     return this.createLocalSessionHandleFromRuntimeContext(
       executionEnvironment,
       runtimeContext,
       bootstrap,
       catalog,
+      mcp,
       remoteCatalog,
       committedSnapshot,
       createParams,
@@ -370,6 +366,7 @@ export class LocalSessionHost implements TauSessionHost {
     runtimeContext: Awaited<ReturnType<ExecutionEnvironment["resolveRuntimeContext"]>>,
     bootstrap: LocalSessionResolvedBootstrap,
     catalog: SessionProtocolContentCatalogSnapshot,
+    mcp: McpManager,
     remoteCatalog: RemoteModelCatalogSnapshot,
     committedSnapshot?: SessionProtocolSnapshot,
     createParams?: SessionProtocolCreateParams,
@@ -396,11 +393,11 @@ export class LocalSessionHost implements TauSessionHost {
       eventSink: async (event) => await hostedSession.enqueueRuntimeEvent(event),
       subagentEventSink: async (event) => await hostedSession.recordSubagentEvent(event),
       history: this.history.query(this.historyRemote),
-      mcp: this.mcp,
+      mcp,
       initialPromptComposition: committedSnapshot
         ? promptCompositionFromSnapshot(committedSnapshot)
         : undefined,
-      config: bootstrap.config ?? {},
+      config: bootstrap.config,
       recordUsage: this.sessionOptions.recordUsage,
       deps: this.sessionOptions.deps,
     });
@@ -421,6 +418,7 @@ export class LocalSessionHost implements TauSessionHost {
       runtime,
       runtimeContext.promptBootstrap,
       catalog,
+      mcp,
       bootstrap,
       remoteCatalog,
       this.sessionOptions.getRemoteModelCatalog,
@@ -713,11 +711,6 @@ export class LocalSessionHost implements TauSessionHost {
     this.sessionEvictions.clear();
 
     try {
-      await this.mcp.close();
-    } catch (error) {
-      errors.push(error);
-    }
-    try {
       await this.history.flush();
     } catch (error) {
       errors.push(error);
@@ -818,6 +811,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   private disposePromise?: Promise<void>;
   private disposing = false;
   private costTotal = 0;
+  private readonly boundMcpServers: SessionConfig["mcpServers"];
   private forceNextSnapshotRevision: boolean;
   private projectionFailure?: Error;
   private disposed = false;
@@ -826,6 +820,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     readonly runtime: ChatRuntime,
     readonly promptBootstrap: RuntimePromptBootstrap,
     private catalog: SessionProtocolContentCatalogSnapshot,
+    private readonly mcp: McpManager,
     private bootstrap: LocalSessionResolvedBootstrap,
     private remoteCatalog: RemoteModelCatalogSnapshot,
     private readonly getLatestRemoteModelCatalog: () => RemoteModelCatalogSnapshot,
@@ -842,6 +837,9 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     private readonly removeFromHost: (session: LocalHostedSessionHandle) => void = () => {},
   ) {
     this.session = runtime;
+    this.boundMcpServers = structuredClone(
+      catalog.mcp.status === "available" ? bootstrap.config.mcpServers : {},
+    );
     this.persistedSnapshot = committedSnapshot
       ? cloneSessionProtocolSnapshot(committedSnapshot)
       : undefined;
@@ -1284,7 +1282,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         modelResolver: runtimeConfig.bootstrap.modelResolver.resolveModel,
         config: runtimeConfig.config,
       };
-      this.catalog = createContentCatalogSnapshot(this.bootstrap, this.catalog.mcpServers);
+      this.catalog = createContentCatalogSnapshot(this.bootstrap, this.catalog.mcp);
       const snapshot = await this.commitSnapshot();
       this.emitSnapshotReset("configuration", snapshot);
       return snapshot;
@@ -1333,13 +1331,21 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         config: runtimeConfig.config,
       };
 
-      this.catalog = createContentCatalogSnapshot(this.bootstrap, this.catalog.mcpServers);
+      this.catalog = createContentCatalogSnapshot(this.bootstrap, this.catalog.mcp);
 
       const snapshot = await this.commitSnapshot();
       this.emitSnapshotReset("configuration", snapshot);
       return {
         snapshot,
-        warnings: runtimeConfig.warnings,
+        warnings: [
+          ...runtimeConfig.warnings,
+          ...(this.catalog.mcp.status === "available" &&
+          !isDeepStrictEqual(this.boundMcpServers, runtimeConfig.config.mcpServers)
+            ? [
+                "MCP configuration changed; new definitions take effect after this session unloads and is opened again.",
+              ]
+            : []),
+        ],
         counts: {
           personas: runtimeConfig.personas.length,
           prompts: runtimeConfig.prompts.length,
@@ -1636,6 +1642,11 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       errors.push(error);
     }
 
+    try {
+      await this.mcp.close();
+    } catch (error) {
+      errors.push(error);
+    }
     try {
       await this.executionEnvironment.dispose();
     } catch (error) {
@@ -3353,13 +3364,13 @@ function cloneResolvedBootstrap(
     personas: bootstrap.personas.map(clonePersona),
     prompts: structuredClone(bootstrap.prompts),
     modelResolver: bootstrap.modelResolver,
-    ...(bootstrap.config !== undefined ? { config: structuredClone(bootstrap.config) } : {}),
+    config: structuredClone(bootstrap.config),
   };
 }
 
 function createContentCatalogSnapshot(
   bootstrap: LocalSessionResolvedBootstrap,
-  mcpServers: string[],
+  mcp: SessionProtocolContentCatalogSnapshot["mcp"],
 ): SessionProtocolContentCatalogSnapshot {
   return {
     personas: bootstrap.personas.map(personaSnapshotFromPersona),
@@ -3372,7 +3383,8 @@ function createContentCatalogSnapshot(
       description: skill.description,
       path: skill.path,
     })),
-    mcpServers: [...mcpServers],
+    mcp: structuredClone(mcp),
+    speechVocabulary: [...bootstrap.config.speechVocabulary],
   };
 }
 

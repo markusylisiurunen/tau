@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Config } from "../config/index.js";
+import type { ApiKeysConfig } from "../config/index.js";
 import { getApiKeyForProvider } from "../config/schema.js";
 import { parseMediaJson, readMediaResponse } from "../utils/media_validation.js";
 import { withOpenRouterBudget } from "./openrouter_budget.js";
@@ -20,7 +20,7 @@ import {
 } from "./openrouter_media.js";
 
 export type OpenRouterRequestOptions = {
-  config: Config;
+  config: ApiKeysConfig;
   signal: AbortSignal;
   env?: NodeJS.ProcessEnv;
   fetchImpl?: typeof fetch;

@@ -2,7 +2,7 @@ import { cleanupSessionResources } from "@earendil-works/pi-ai";
 import type { AgentSpec } from "../agent/agent_runtime.js";
 import { getAuthPath } from "../auth/auth_paths.js";
 import { AuthStorage } from "../auth/auth_storage.js";
-import type { Config } from "../config/index.js";
+import type { SessionRuntimeSettings } from "../config/index.js";
 import type { Persona } from "../types.js";
 import { CODEX_ORIGINATOR, CODEX_USER_AGENT } from "../utils/codex.js";
 import { resolveModelNotice } from "../utils/model_notices.js";
@@ -18,7 +18,7 @@ export type ResolvedAgentModel = Pick<
 
 export function resolveAgentModel(
   persona: Persona,
-  config: Config,
+  config: SessionRuntimeSettings,
   options: { includeModelNotice: boolean; deps?: CoreDeps },
 ): ResolvedAgentModel {
   const resolvedDeps = options.deps ?? createDefaultCoreDeps();

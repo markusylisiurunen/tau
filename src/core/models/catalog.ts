@@ -1,6 +1,7 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import type { RemoteModelCatalogSnapshot } from "./remote_catalog.js";
+import { supplementalModels } from "./supplemental_models.js";
 
 type CatalogState = {
   providers: Map<string, Map<string, Model<Api>>>;
@@ -66,6 +67,12 @@ function createCatalogState(remoteCatalog?: RemoteModelCatalogSnapshot): Catalog
     for (const model of models) {
       providerModels.set(model.id, structuredClone(model));
     }
+  }
+
+  for (const model of supplementalModels) {
+    const providerModels = providers.get(model.provider);
+    if (!providerModels || providerModels.has(model.id)) continue;
+    providerModels.set(model.id, structuredClone(model));
   }
 
   return { providers };

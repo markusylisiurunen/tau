@@ -183,7 +183,7 @@
     },
     ".cowork/config.json": {
       "type": "file",
-      "hash": "a68c88a79cf0055bb426317f192651aa90d44e23291254a3e2a504ad2d126b79"
+      "hash": "55f8a25f1642d85656de9d4a8f45ebe3176a1c149e28ebadad38cecb869ac75e"
     },
     ".cowork/prompts/issue-implement.append.md": {
       "type": "file",
@@ -211,7 +211,7 @@
     },
     ".tau/config.json": {
       "type": "file",
-      "hash": "88156f2d4b37a6dfde9c3b9159afb9c916e59ed7fdb6d914ddf2427981630484"
+      "hash": "6b2c47cedf34bb79bc6405550770c0316953bb586f23a5ac54da2404426c5154"
     },
     ".tau/prompts/address-review-comments.md": {
       "type": "file",
@@ -291,7 +291,7 @@
     },
     "AGENTS.md": {
       "type": "section",
-      "hash": "7ac9a67a7ef86cdf20d4393dc58d2f40258d2015ed4b9836d5d695bfe12d81ef"
+      "hash": "96763b958882d619e7c2d69c64360f6f22c2f1c6b32efc4a607b69398016f706"
     }
   }
 }

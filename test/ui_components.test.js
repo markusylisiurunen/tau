@@ -239,7 +239,7 @@ test("SubagentPanelComponent renders authoritative typed activities", () => {
 test("SubagentPanelComponent keeps resolved model settings with the selected worker's usage", () => {
   const panel = new SubagentPanelComponent(createUiTheme("plain"));
   const native = createSubagentState("native", "native task");
-  native.model = { provider: "openai-codex", id: "gpt-6-astra", reasoning: "medium" };
+  native.model = { provider: "openai-codex", id: "gpt-6.2-astra", reasoning: "medium" };
   const claude = createSubagentState("claude", "claude task");
   claude.model = { provider: "claude-code", id: "claude-opus-5-5", reasoning: "high" };
   claude.costTotal = 0.04;
@@ -250,7 +250,7 @@ test("SubagentPanelComponent keeps resolved model settings with the selected wor
   panel.reconcile(snapshots);
 
   const status = () => stripAnsi(panel.render(160).at(-2)).trim();
-  expect(status()).toContain("openai-codex/gpt-6-astra:medium · ");
+  expect(status()).toContain("openai-codex/gpt-6.2-astra:medium · ");
   panel.cycleSelection(1);
   expect(status()).toContain("claude-code/claude-opus-5-5:high · ");
   expect(status()).toContain("$0.04");

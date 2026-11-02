@@ -56,7 +56,7 @@ Rules that follow:
 - Client and host code must not inspect execution-environment paths. The only exception is narrow pre-creation metadata a client reads from an environment it manages directly.
 - Session creation attributes are complete, authoritative client input. Host and stores never infer or normalize them.
 - Process-local temp paths come from `node:os` `tmpdir()`, never a hard-coded `/tmp`. Target temp paths come from target capabilities, never from the caller's temp directory.
-- Model catalogs and their cache belong to the host. Model metadata comes only from the bundled and refreshed catalogs. Execution environments and backends never read the cache; host-side config resolution may receive an immutable catalog snapshot. A live session keeps one catalog generation until explicit reload. Startup refresh is async and never a recurring timer.
+- Model catalogs and their cache belong to the host. Model metadata comes from Pi's bundled and refreshed catalogs, with code-owned supplemental definitions filling missing provider/model entries. Pi entries take precedence over supplements; supplements never modify the remote cache. Execution environments and backends never read the cache; host-side config resolution may receive an immutable catalog snapshot. A live session keeps one catalog generation until explicit reload. Startup refresh is async and never a recurring timer.
 - API-key config is global-only (credential precedence: `src/core/auth/`). Codex OAuth uses exactly one active stored account. Do not add session pinning, quota-based selection, or failover.
 - Telegram workspaces are prepared once per session and preserved across runner restarts (`docs/telegram.md`, `test/telegram_workspace.test.js`).
 
@@ -279,7 +279,7 @@ For Claude subagents, prefer the Claude Code models, which use subscription limi
 - Luna: `openai-codex/gpt-6-luna`; allowed efforts: low, medium, high, xhigh; default: `medium`.
 - Terra: `openai-codex/gpt-6.1-terra`; allowed efforts: low, medium, high; default: `medium`.
 - Sol: `openai-codex/gpt-6.1-sol`; allowed efforts: low, medium, high; default: `medium`.
-- Astra: `openai-codex/gpt-6-astra`; allowed efforts: low, medium, high; default: `low`.
+- Astra: `openai-codex/gpt-6.2-astra`; allowed efforts: low, medium, high; default: `low`.
 - Sonnet: `anthropic/claude-sonnet-5-5`; allowed efforts: low, medium, high; default: `medium`.
 - Claude Code Sonnet: `claude-code/claude-sonnet-5-5`; allowed efforts: low, medium, high; default: `medium`.
 - Claude Code Opus: `claude-code/claude-opus-5-5`; allowed efforts: low, medium, high; default: `medium`.

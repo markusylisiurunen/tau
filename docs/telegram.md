@@ -14,6 +14,8 @@ tau telegram --config-file /etc/tau/telegram.json
 
 The process stays in the foreground until `SIGINT` or `SIGTERM`. Relative `--config-file` paths resolve from the process working directory. Paths inside that file resolve as described below, usually from the config file's directory.
 
+Add `--check-config` to validate the file and exit without starting the runner. It does not check tokens, directories, or repository access.
+
 The Telegram file is **not** one of Tau's `config.json` levels. It configures the runner: bot tokens, startup settings, presets, projects, workspace roots, and routing. Tau still loads normal configuration from the runner's startup directory and from each session's workspace. See [configuration](configuration.md) and [ownership and scope](ownership-and-scope.md).
 
 Run at most one runner per configuration and workspace root. Two runners would compete for Telegram updates, runner state, and workspace cleanup.
@@ -68,7 +70,7 @@ Each `bots.<id>` object supports:
 | Field | Required | Behavior |
 | --- | --- | --- |
 | `botToken` | Yes | Telegram Bot API token. |
-| `env` | No | Environment variables for this bot’s workspace preparation and session tools. See [bot environments](telegram-projects.md#bot-environments). |
+| `env` | No | Environment variables for this bot's workspace preparation and new sessions. See [bot environments](telegram-projects.md#bot-environments). |
 | `allowedProjectIds` | No | Non-empty unique subset of configured project IDs; omission exposes all projects. |
 | `autoCompactThresholdTokens` | No | Default automatic-compaction threshold for this bot's sessions. See [compaction thresholds](#compaction-thresholds). |
 | `startup` | Yes | `{ "source": "workspace" }` or `{ "source": "preset", "preset": "<key>" }`. See [startup and presets](#startup-and-presets). |
@@ -254,7 +256,7 @@ If a failed session still has submitted work with an unknown result, Tau can rec
 
 ## Verify a runner safely
 
-1. Check that the Telegram file is valid JSON, without showing it in a shared terminal.
+1. Run `--check-config`, without showing the file in a shared terminal.
 2. Confirm the runner user can execute `tau`, `git`, and `gh`, and that `gh` can access each repository.
 3. Start the runner and watch for config, polling, command-sync, cache, checkout, and recovery errors. Successful startup prints `tau telegram running`.
 4. In an allowed DM, run `/status`, select a project if needed, then run `/new`.

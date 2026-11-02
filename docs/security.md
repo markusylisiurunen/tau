@@ -148,6 +148,8 @@ Each bot's `allowedProjectIds` should list only the intended projects. Telegram 
 
 Repository and composite projects use managed workspaces and persistent bare repository caches. New or reconstructed repositories may run an executable `.tau/scripts/provision` in the background. Review that script like any other trusted project automation. Persistent-directory projects are never provisioned and never deleted by Tau.
 
+A bot's `env` can select its own GitHub account and commit identity, but it does not isolate bots from each other. All bots run as the same operating-system user and share repository caches, so a command in one bot's session can read any credential store that user can read. Run separate runners under separate OS accounts when bots must be isolated. Tau saves `env` in each session, so it should hold paths to credential stores and no secrets. See [bot environments](telegram-projects.md#bot-environments).
+
 Protect the runner configuration, session state, project-preference state, managed workspace root, and temporary attachment storage with a suitable OS account and file permissions. Never run two Telegram runners on the same state. Operational details are in [Telegram](telegram.md) and [Telegram projects and workspaces](telegram-projects.md).
 
 ## Know what history retains

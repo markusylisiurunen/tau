@@ -1109,7 +1109,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       !isDeepStrictEqual(snapshot.executionEnvironment.env ?? {}, env)
     ) {
       throw new Error(
-        "bot environment changed; save any managed workspace changes before starting a new session with /new",
+        "the bot's environment changed. save any managed workspace changes before starting a new session with /new",
       );
     }
     if (

@@ -63,7 +63,7 @@ A Fly Sprite puts the execution environment on another machine while the host st
 | Configured command client tools | Owning client | Commands and their environment are on the client. File access they make on behalf of the session goes to the execution environment. |
 | `/listen` and `/speak` capture or playback | TUI client | Required programs, devices, and media credentials belong on the client machine. |
 | Host execution-environment targets | Host startup | Fly Sprite connection settings must be in the host's configuration before it accepts sessions that use them. |
-| Telegram bot token, routing, workspaces, and generated runner state | Telegram runner | Manage these through the Telegram config and runner commands, not project `config.json`. |
+| Telegram bot token, bot environment, routing, workspaces, and generated runner state | Telegram runner | Manage these through the Telegram config and runner commands, not project `config.json`. |
 
 ## Decide where to edit configuration
 
@@ -72,7 +72,7 @@ Start from the behavior that consumes the setting:
 1. If it changes what the agent sees or can do in the project, edit configuration or content in the execution environment's discovery path.
 2. If it changes the TUI's theme, speech, or command client tools, edit the TUI client's configuration and restart that client.
 3. If it changes credentials, session storage, remote history, or hosted execution environment connections, set it for the host process and restart the host when required.
-4. If it changes Telegram routing, bot startup settings, presets, or workspace preparation, edit the runner's `--config-file` on the runner machine.
+4. If it changes Telegram routing, bot startup settings, bot environments, presets, or workspace preparation, edit the runner's `--config-file` on the runner machine.
 
 For a local `tau` session these locations are often the same home and repository. Following the ownership rule anyway means the configuration still works when the session becomes remote.
 

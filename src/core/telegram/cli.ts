@@ -94,7 +94,7 @@ export function printTelegramHelp(log: (line: string) => void = console.log): vo
       "",
       "options:",
       "  --config-file <path>  telegram runner config file path.",
-      "  --check-config       validate configuration without starting the runner.",
+      "  --check-config        validate configuration without starting the runner.",
       "  --help                show this help and exit.",
     ].join("\n"),
   );

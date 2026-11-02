@@ -712,7 +712,7 @@ if (argv[0] === "telegram") {
   try {
     const telegramConfig = loadConfig(cwd, configDeps);
     const telegramArgs = argv.slice(1);
-    if (!telegramArgs.some((arg) => arg === "--help" || arg === "-h")) {
+    if (!telegramArgs.some((arg) => arg === "--help" || arg === "-h" || arg === "--check-config")) {
       refreshRemoteModelCatalogAtStartup();
     }
     await runTelegramCommand(telegramArgs, {

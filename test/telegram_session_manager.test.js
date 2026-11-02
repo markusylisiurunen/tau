@@ -342,6 +342,98 @@ describe("telegram session manager", () => {
     }
   });
 
+  it("uses the owner's environment for preparation and session execution", async () => {
+    const harness = createClientHarness();
+    const env = { GH_CONFIG_DIR: "/bot/gh", GH_TOKEN: "" };
+    const environmentForOwner = vi.fn(() => env);
+    const prepareWorkspace = vi.fn(async () => ({
+      workspacePath: "/tmp/ws/demo",
+      sessionCwd: "/tmp/ws/demo",
+      provisionTargets: [],
+    }));
+    const manager = createDemoSessionManager(harness, { environmentForOwner, prepareWorkspace });
+    try {
+      const created = await manager.createSession({
+        projectId: "demo",
+        ownerId: "telegram:bot:chat:123",
+      });
+      await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+      expect(environmentForOwner).toHaveBeenCalledWith("telegram:bot:chat:123");
+      expect(prepareWorkspace).toHaveBeenCalledWith(expect.objectContaining({ env }));
+      expect(harness.client.sessions.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          executionEnvironment: { kind: "local", cwd: "/tmp/ws/demo", env },
+        }),
+      );
+    } finally {
+      await manager.close();
+    }
+  });
+
+  it.each([
+    [undefined, { GH_CONFIG_DIR: "/bot/gh" }, "failed"],
+    [{ GH_CONFIG_DIR: "/old/gh" }, { GH_CONFIG_DIR: "/bot/gh" }, "failed"],
+    [{ GH_CONFIG_DIR: "/bot/gh" }, {}, "failed"],
+    [{ A: "one", B: "two" }, { B: "two", A: "one" }, "waiting-input"],
+  ])("checks the saved environment on recovery (%j → %j)", async (saved, configured, state) => {
+    const root = await mkdtemp(join(tmpdir(), "tau-telegram-env-"));
+    const directory = join(root, "workspace");
+    await mkdir(directory);
+    await writeFile(join(directory, "work.txt"), "unfinished");
+    const persistencePath = join(root, "sessions.json");
+    await writeFile(
+      persistencePath,
+      JSON.stringify({
+        version: 1,
+        sessions: [
+          {
+            id: "active",
+            projectId: "demo",
+            ownerId: "telegram:bot:chat:123",
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+            tauSessionId: "session-1",
+          },
+        ],
+      }),
+    );
+    const harness = createClientHarness();
+    harness.session.snapshot.mockResolvedValue(
+      createProtocolSnapshot({
+        sessionId: "session-1",
+        executionEnvironment: {
+          kind: "local",
+          cwd: directory,
+          home: root,
+          ...(saved ? { env: saved } : {}),
+        },
+      }),
+    );
+    const prepareWorkspace = vi.fn();
+    const manager = createDemoSessionManager(harness, {
+      projects: { demo: { directory } },
+      workspaceRoot: join(root, "managed"),
+      persistencePath,
+      environmentForOwner: () => configured,
+      prepareWorkspace,
+    });
+    try {
+      await manager.initialize();
+      expect(manager.getSession("active").state).toBe(state);
+      expect(prepareWorkspace).not.toHaveBeenCalled();
+      expect(harness.client.sessions.create).not.toHaveBeenCalled();
+      if (state === "failed") {
+        await expect(manager.sendMessage("active", "do work")).rejects.toThrow();
+        expect(harness.session.submit).not.toHaveBeenCalled();
+        expect(harness.client.close).toHaveBeenCalled();
+      }
+      expect(await readFile(join(directory, "work.txt"), "utf8")).toBe("unfinished");
+    } finally {
+      await manager.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("creates a session and transitions to waiting-input after workspace/client setup", async () => {
     const workspaceDeferred = deferred();
     const clientHarness = createClientHarness();
@@ -1546,7 +1638,7 @@ describe("telegram session manager", () => {
       });
       expect(clientHarness.client.sessions.create).toHaveBeenCalledTimes(2);
       expect(clientHarness.client.sessions.create).toHaveBeenCalledWith({
-        executionEnvironment: { kind: "local", cwd: directory },
+        executionEnvironment: { kind: "local", cwd: directory, env: {} },
         attributes: { source: "telegram", project: "me" },
       });
 

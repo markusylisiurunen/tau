@@ -21,6 +21,7 @@ export type PrepareWorkspaceOptions = {
   project: TelegramProjectConfig;
   projects: Record<string, TelegramProjectConfig>;
   workspaceRoot: string;
+  env?: Record<string, string>;
   signal?: AbortSignal;
   onLog?: (entry: WorkspaceLogEntry) => void;
 };
@@ -75,10 +76,12 @@ async function runCommand(args: {
   command: string;
   commandArgs: string[];
   cwd?: string;
+  env?: Record<string, string>;
   signal?: AbortSignal;
 }): Promise<{ output: string; exitCode: number | null }> {
   const result = await spawnWithCapture(args.command, args.commandArgs, {
     cwd: args.cwd,
+    env: { ...process.env, ...args.env },
     signal: args.signal,
     captureOutput: "combined",
     maxCaptureBytes: 1024 * 1024,
@@ -142,12 +145,14 @@ async function runRepositoryCacheConfig(options: {
   cachePath: string;
   key: string;
   value: string;
+  env?: Record<string, string>;
   signal?: AbortSignal;
   onLog?: (entry: WorkspaceLogEntry) => void;
 }): Promise<void> {
   const configResult = await runCommand({
     command: "git",
     commandArgs: ["-C", options.cachePath, "config", options.key, options.value],
+    env: options.env,
     signal: options.signal,
   });
 
@@ -162,6 +167,7 @@ async function runRepositoryCacheConfig(options: {
 async function configureRepositoryCache(options: {
   cachePath: string;
   repo?: string;
+  env?: Record<string, string>;
   signal?: AbortSignal;
   onLog?: (entry: WorkspaceLogEntry) => void;
 }): Promise<void> {
@@ -169,6 +175,7 @@ async function configureRepositoryCache(options: {
     cachePath: options.cachePath,
     key: "gc.auto",
     value: "0",
+    env: options.env,
     signal: options.signal,
     onLog: options.onLog,
   });
@@ -178,6 +185,7 @@ async function configureRepositoryCache(options: {
       cachePath: options.cachePath,
       key: "tau.repo",
       value: options.repo,
+      env: options.env,
       signal: options.signal,
       onLog: options.onLog,
     });
@@ -187,6 +195,7 @@ async function configureRepositoryCache(options: {
 async function initializeRepositoryCache(options: {
   repo: string;
   cachePath: string;
+  env?: Record<string, string>;
   signal?: AbortSignal;
   onLog?: (entry: WorkspaceLogEntry) => void;
 }): Promise<void> {
@@ -202,6 +211,7 @@ async function initializeRepositoryCache(options: {
   const cloneResult = await runCommand({
     command: "gh",
     commandArgs: ["repo", "clone", options.repo, options.cachePath, "--", "--bare"],
+    env: options.env,
     signal: options.signal,
   });
 
@@ -220,6 +230,7 @@ async function initializeRepositoryCache(options: {
   await configureRepositoryCache({
     cachePath: options.cachePath,
     repo: options.repo,
+    env: options.env,
     signal: options.signal,
     onLog: options.onLog,
   });
@@ -232,6 +243,7 @@ async function initializeRepositoryCache(options: {
 
 async function fetchRepositoryCache(options: {
   cachePath: string;
+  env?: Record<string, string>;
   signal?: AbortSignal;
   onLog?: (entry: WorkspaceLogEntry) => void;
 }): Promise<void> {
@@ -250,6 +262,7 @@ async function fetchRepositoryCache(options: {
       "origin",
       "+refs/heads/*:refs/heads/*",
     ],
+    env: options.env,
     signal: options.signal,
   });
 
@@ -274,6 +287,7 @@ async function prepareRepositoryCache(options: {
   workspaceRoot: string;
   projectId: string;
   repo: string;
+  env?: Record<string, string>;
   signal?: AbortSignal;
   onLog?: (entry: WorkspaceLogEntry) => void;
 }): Promise<string> {
@@ -287,12 +301,14 @@ async function prepareRepositoryCache(options: {
       const cachedRepo = await getRepositoryCacheConfig({
         cachePath,
         key: "tau.repo",
+        env: options.env,
         signal: options.signal,
       });
 
       if (cachedRepo === options.repo) {
         await fetchRepositoryCache({
           cachePath,
+          env: options.env,
           signal: options.signal,
           onLog: options.onLog,
         });
@@ -305,6 +321,7 @@ async function prepareRepositoryCache(options: {
         await initializeRepositoryCache({
           repo: options.repo,
           cachePath,
+          env: options.env,
           signal: options.signal,
           onLog: options.onLog,
         });
@@ -313,6 +330,7 @@ async function prepareRepositoryCache(options: {
       await initializeRepositoryCache({
         repo: options.repo,
         cachePath,
+        env: options.env,
         signal: options.signal,
         onLog: options.onLog,
       });
@@ -325,11 +343,13 @@ async function prepareRepositoryCache(options: {
 async function getRepositoryCacheConfig(options: {
   cachePath: string;
   key: string;
+  env?: Record<string, string>;
   signal?: AbortSignal;
 }): Promise<string | undefined> {
   const configResult = await runCommand({
     command: "git",
     commandArgs: ["-C", options.cachePath, "config", "--get", options.key],
+    env: options.env,
     signal: options.signal,
   });
 
@@ -342,12 +362,14 @@ async function getRepositoryCacheConfig(options: {
 
 async function getRepositoryCacheRemoteUrl(options: {
   cachePath: string;
+  env?: Record<string, string>;
   signal?: AbortSignal;
   onLog?: (entry: WorkspaceLogEntry) => void;
 }): Promise<string> {
   const remoteResult = await runCommand({
     command: "git",
     commandArgs: ["-C", options.cachePath, "remote", "get-url", "origin"],
+    env: options.env,
     signal: options.signal,
   });
 
@@ -371,12 +393,14 @@ async function getRepositoryCacheRemoteUrl(options: {
 async function cloneRepositoryFromCache(options: {
   cachePath: string;
   workspacePath: string;
+  env?: Record<string, string>;
   signal?: AbortSignal;
   onLog?: (entry: WorkspaceLogEntry) => void;
 }): Promise<void> {
   const cloneStart = process.hrtime.bigint();
   const remoteUrl = await getRepositoryCacheRemoteUrl({
     cachePath: options.cachePath,
+    env: options.env,
     signal: options.signal,
     onLog: options.onLog,
   });
@@ -389,6 +413,7 @@ async function cloneRepositoryFromCache(options: {
   const cloneResult = await runCommand({
     command: "git",
     commandArgs: ["clone", "--shared", options.cachePath, options.workspacePath],
+    env: options.env,
     signal: options.signal,
   });
 
@@ -408,6 +433,7 @@ async function cloneRepositoryFromCache(options: {
   const setRemoteResult = await runCommand({
     command: "git",
     commandArgs: ["-C", options.workspacePath, "remote", "set-url", "origin", remoteUrl],
+    env: options.env,
     signal: options.signal,
   });
 
@@ -521,6 +547,7 @@ async function prepareRepositoryWorkspace(options: {
   cacheWorkspaceRoot: string;
   projectId: string;
   project: TelegramRepositoryProjectConfig;
+  env?: Record<string, string>;
   signal?: AbortSignal;
   onLog?: (entry: WorkspaceLogEntry) => void;
 }): Promise<string> {
@@ -528,6 +555,7 @@ async function prepareRepositoryWorkspace(options: {
     workspaceRoot: options.cacheWorkspaceRoot,
     projectId: options.projectId,
     repo: options.project.repo,
+    env: options.env,
     signal: options.signal,
     onLog: options.onLog,
   });
@@ -535,6 +563,7 @@ async function prepareRepositoryWorkspace(options: {
   await cloneRepositoryFromCache({
     cachePath,
     workspacePath: options.workspacePath,
+    env: options.env,
     signal: options.signal,
     onLog: options.onLog,
   });
@@ -548,6 +577,7 @@ async function prepareRepositoryWorkspace(options: {
     const checkoutResult = await runCommand({
       command: "git",
       commandArgs: ["-C", options.workspacePath, "checkout", options.project.ref],
+      env: options.env,
       signal: options.signal,
     });
 
@@ -703,6 +733,7 @@ export async function prepareWorkspace(
         cacheWorkspaceRoot: options.workspaceRoot,
         projectId: options.projectId,
         project: options.project,
+        env: options.env,
         signal: options.signal,
         onLog: options.onLog,
       });
@@ -739,6 +770,7 @@ export async function prepareWorkspace(
         cacheWorkspaceRoot: options.workspaceRoot,
         projectId: memberProjectId,
         project: memberProject,
+        env: options.env,
         signal: options.signal,
         onLog: options.onLog,
       });

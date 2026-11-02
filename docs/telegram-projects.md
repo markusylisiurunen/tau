@@ -32,7 +32,7 @@ A repository project clones one GitHub repository into a session-specific manage
 }
 ```
 
-`repo` must be a GitHub `owner/repo`; other Git URLs are not accepted. The runner needs `gh` and `git` on its login shell's `PATH`, and `gh` must already be signed in with access to the repository.
+`repo` must be a GitHub `owner/repo`; other Git URLs are not accepted. The runner needs `gh` and `git` on its login shell's `PATH`, and `gh` must already be signed in with access to the repository. A bot can use its own sign-in through its [environment](#bot-environments).
 
 All managed projects use the top-level `workspaceRoot`. A session workspace is:
 
@@ -126,9 +126,63 @@ A repository can include `.tau/scripts/provision` at its root. It must be a regu
 
 New and reconstructed workspaces run their hooks; preserved workspaces and persistent-directory projects do not. Composite sessions run member hooks in order and continue after failures. A failure is reported to linked chats but leaves the session usable. Keep hooks repeatable and non-interactive.
 
+## Bot environments
+
+Bots in one runner can use different environment variables, for example to give each bot its own GitHub account and commit identity. Set `bots.<id>.env` to a map of variable names to string values:
+
+```json
+"env": {
+  "GH_CONFIG_DIR": "/var/lib/assistant-github/gh",
+  "GIT_CONFIG_GLOBAL": "/var/lib/assistant-github/gitconfig",
+  "GH_TOKEN": "",
+  "GITHUB_TOKEN": ""
+}
+```
+
+Set up the files this example refers to as the runner's user:
+
+1. Sign in to `gh` in that directory with `GH_CONFIG_DIR=/var/lib/assistant-github/gh gh auth login`.
+2. Create the Git config file. Git uses it in place of the user's `~/.gitconfig`. Git HTTPS operations need the credential helper, and commits need the identity:
+
+   ```ini
+   [credential "https://github.com"]
+     helper =
+     helper = !gh auth git-credential
+   [user]
+     name = Assistant
+     email = assistant@example.com
+   ```
+
+The empty tokens override any token in the runner's environment, which `gh` would otherwise use in place of the signed-in account.
+
+The map applies in two places:
+
+- **Workspace preparation.** The bot's repository clone and fetch commands run with the runner's environment plus the map. The map wins when both set a variable.
+- **New sessions.** Session tools, provision hooks, and subagents run with the session's usual environment, which has inherited secret-like variables removed, plus the map.
+
+The runner's own environment and other bots do not change. The map does not set model-provider credentials or configure client tools.
+
+Names and values follow these rules:
+
+- Names must match `[A-Za-z_][A-Za-z0-9_]*`.
+- Values cannot contain NUL.
+- `HOME` is not allowed, because the execution environment sets it.
+- Values are literal. Tau does not expand `$HOME` or `~` and does not resolve relative paths, so use absolute paths for credential directories.
+
+Tau saves the map in each session, so do not put tokens or other secrets in it. Use paths to separately protected credential stores instead. The map is not a security boundary. Bots still share the operating-system user's permissions and repository caches, and commands can override their own environment.
+
+### Changing a bot's environment
+
+Restart the runner after changing or removing `env`. New sessions use the new map. A saved session whose map differs fails recovery before it accepts turns, because it would otherwise continue under the old identity. This check does not change the session's files. A session resumes normally if its map is unchanged, and that includes an older session with no saved map if the bot has no `env`.
+
+A session that failed this check has two ways forward:
+
+- Restore the previous `env` and restart the runner. The session then resumes.
+- Start a new session with `/new`. For a repository or composite project, this deletes the old workspace, so first save any unfinished work from it on the runner machine. Persistent-directory projects keep their files.
+
 ## Troubleshooting
 
-**Repository preparation fails.** Check that the runner machine has `gh` signed in with access to the repository, `git`, and network access. Check `repo`, `ref`, the workspace root's permissions and free space, and that `workingDirectory` exists after checkout. Changing the repository of an existing project ID rebuilds its cache. Do not delete caches or workspaces first; keep the logs and fix access or configuration.
+**Repository preparation fails.** Check that the runner machine has `gh` signed in with access to the repository, `git`, and network access. If the bot sets `env`, check the sign-in that its [environment](#bot-environments) selects. Check `repo`, `ref`, the workspace root's permissions and free space, and that `workingDirectory` exists after checkout. Changing the repository of an existing project ID rebuilds its cache. Do not delete caches or workspaces first; keep the logs and fix access or configuration.
 
 **Startup removed unexpected files.** The workspace root was not dedicated to Tau. Stop the runner and move `workspaceRoot` to an empty directory of its own before restarting. Tau cannot restore unrelated files it deleted.
 
@@ -136,4 +190,6 @@ New and reconstructed workspaces run their hooks; preserved workspaces and persi
 
 **A persistent-directory session fails recovery.** Recovery rejects a saved `cwd` that differs from the configured directory. Restore the directory at its original path, or set the project config back, or start a new session in the new directory. Tau does not move an existing session to a new directory.
 
-**A recovered session does not match the current configuration.** Preserved workspaces are used as they are, and composite root files are not regenerated, so configuration changes apply only to new workspaces. Recovery also needs the same `workspaceRoot`, project definitions, host home, and Tau sessions. Check the runner logs and `/status`. Do not edit runner state, project preferences, saved sessions, or managed workspaces to force a match.
+**A session fails recovery after a bot's `env` changes.** Recovery rejects a saved environment that differs from the bot's current `env`, and `/status` reports the failure. See [changing a bot's environment](#changing-a-bots-environment) for the ways forward.
+
+**A recovered session does not match the current configuration.** Preserved workspaces are used as they are, and composite root files are not regenerated, so configuration changes apply only to new workspaces. Recovery also needs the same `workspaceRoot`, project definitions, bot `env`, host home, and Tau sessions. Check the runner logs and `/status`. Do not edit runner state, project preferences, saved sessions, or managed workspaces to force a match.

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { z } from "zod";
+import { environmentVariablesSchema } from "../../protocol/environment_variables.js";
 import {
   autoCompactThresholdTokensSchema,
   type TelegramBotConfig as SchemaTelegramBotConfig,
@@ -59,6 +60,7 @@ const telegramTopLevelSchema = z
 const telegramBotSchema = z
   .object({
     botToken: nonEmptyStringSchema,
+    env: environmentVariablesSchema.optional(),
     autoCompactThresholdTokens: autoCompactThresholdTokensSchema.optional(),
     allowedProjectIds: stringListSchema.min(1, "must not be empty.").optional(),
     startup: z.discriminatedUnion("source", [

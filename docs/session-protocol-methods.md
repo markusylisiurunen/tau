@@ -79,7 +79,9 @@ result: { sessionId: string }
 
 `cwd` must be an absolute path inside the chosen execution environment. A Fly Sprite must already exist, and the host must have a `flySprites` connection configured. Tau does not create the target or the repository.
 
-`attributes` is required, even when empty. It accepts at most 32 pairs, which never change after creation. Keys are 1 to 64 characters and values at most 1,024 characters. Tau stores them as given and does not fill in missing ones. Conventional attributes and their use are covered in [sessions](sessions.md) and [history](history.md).
+`attributes` is required, even when empty. Tau adds `machine` and `cwd` from the execution environment and replaces any values the caller sends for those two keys. It stores other attributes as given and does not fill in missing ones. Attributes never change after creation. Conventional attributes and their use are covered in [sessions](sessions.md) and [history](history.md).
+
+The final set can have at most 32 pairs, so a caller can send at most 30 attributes other than `machine` and `cwd`. Keys are 1 to 64 characters and values at most 1,024 characters. `executionEnvironment.cwd` has the same 1,024-character limit because it becomes an attribute value. A request that breaks these limits returns `invalid_params` before Tau starts the execution environment. Creation can still fail after that if Tau cannot read the hostname from the execution environment, or if the resulting `machine` or `cwd` value is too long.
 
 A local `env` sets environment variables for the execution environment. Names must be valid variable names, values cannot contain NUL, and `HOME` is not allowed because the execution environment sets it. These variables are saved with the session, so do not put secrets there unless the session store is protected accordingly.
 

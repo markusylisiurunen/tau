@@ -68,6 +68,37 @@ describe("session_protocol", () => {
     }
   });
 
+  it("reserves creation attribute capacity and bounds target paths", () => {
+    for (const kind of ["local", "fly-sprite"]) {
+      for (const count of [30, 31, 32, 33]) {
+        for (const overrides of [
+          {},
+          { machine: "client" },
+          { cwd: "/client" },
+          { machine: "client", cwd: "/client" },
+        ]) {
+          const result = validateSessionProtocolParams("session.create", {
+            executionEnvironment: { kind, spriteName: "sprite", cwd: "/repo" },
+            attributes: {
+              ...Object.fromEntries(Array.from({ length: count }, (_, i) => [`key${i}`, "value"])),
+              ...overrides,
+            },
+          });
+          expect(result.ok).toBe(count === 30);
+          if (!result.ok) expect(result.error.code).toBe("invalid_params");
+        }
+      }
+      for (const length of [1024, 1025]) {
+        const result = validateSessionProtocolParams("session.create", {
+          executionEnvironment: { kind, spriteName: "sprite", cwd: `/${"a".repeat(length - 1)}` },
+          attributes: {},
+        });
+        expect(result.ok).toBe(length === 1024);
+        if (!result.ok) expect(result.error.code).toBe("invalid_params");
+      }
+    }
+  });
+
   it("validates auto-compaction thresholds for creation and mutation", () => {
     for (const thresholdTokens of [null, 50000, 100000, Number.MAX_SAFE_INTEGER]) {
       expect(

@@ -71,9 +71,16 @@ function createTestExecutionEnvironment(
 ) {
   const runNodeScript = toolBackend.runNodeScript.bind(toolBackend);
   toolBackend.runNodeScript = (script, args, options) =>
-    args[2] === "skills"
-      ? Promise.resolve({ exitCode: 0, output: JSON.stringify({ files: [] }), truncated: false })
-      : runNodeScript(script, args, options);
+    script === 'process.stdout.write(require("node:os").hostname())'
+      ? Promise.resolve({
+          exitCode: 0,
+          stdout: "execution-machine",
+          output: "execution-machine",
+          truncated: false,
+        })
+      : args[2] === "skills"
+        ? Promise.resolve({ exitCode: 0, output: JSON.stringify({ files: [] }), truncated: false })
+        : runNodeScript(script, args, options);
   return {
     resolveRuntimeConfig: async () => ({
       bootstrap: { modelResolver: { resolveModel } },
@@ -423,6 +430,102 @@ describe("HostedEphemeralAgentSession", () => {
 });
 
 describe("LocalSessionHost", () => {
+  it("records execution attributes in snapshots and history without changing them on recovery", async () => {
+    const store = new MemorySessionStore();
+    const historyStore = new LocalHistoryStore(":memory:");
+    const history = new HistoryManager(historyStore);
+    const environment = createTestExecutionEnvironment({
+      kind: "fly-sprite",
+      spriteName: "test-sprite",
+      cwd: "/remote/work",
+      home: "/root",
+    });
+    vi.spyOn(environment.getToolExecutionBackend(), "runNodeScript").mockResolvedValueOnce({
+      exitCode: 0,
+      stdout: "execution-machine",
+      stderr: "node warning",
+      output: "execution-machinenode warning",
+      truncated: false,
+    });
+    const host = createHostForEnvironment(store, environment, { history });
+    const session = await host.createSession({
+      ...localCreateInput,
+      attributes: {
+        source: "sdk",
+        machine: "client-machine",
+        cwd: "/client/work",
+        custom: "value",
+      },
+    });
+    const expected = {
+      source: "sdk",
+      machine: "execution-machine",
+      cwd: "/remote/work",
+      custom: "value",
+    };
+    expect((await session.snapshot()).attributes).toEqual(expected);
+    expect(
+      (await historyStore.read({ sessionId: session.sessionId, limit: 10 })).session.attributes,
+    ).toEqual(expected);
+    await host.shutdown();
+    const recoveredEnvironment = createTestExecutionEnvironment();
+    const probe = vi.spyOn(recoveredEnvironment.getToolExecutionBackend(), "runNodeScript");
+    const recoveredHost = createHostForEnvironment(store, recoveredEnvironment);
+    try {
+      const recovered = await recoveredHost.observeSession(session.sessionId);
+      expect((await recovered.snapshot()).attributes).toEqual(expected);
+      expect(
+        probe.mock.calls.some(([script]) => script.includes('require("node:os").hostname()')),
+      ).toBe(false);
+    } finally {
+      await recoveredHost.shutdown();
+    }
+  });
+
+  it.each([
+    { exitCode: 127, output: "node: command not found" },
+    { exitCode: 1, output: "login shell failed" },
+    { exitCode: 0, timedOut: true, output: "partial timeout diagnostic" },
+    { exitCode: 0, aborted: true, output: "partial abort diagnostic" },
+    { exitCode: 0, truncated: true, output: "partial truncated diagnostic" },
+    { exitCode: 0, stdout: "", output: "empty hostname diagnostic" },
+  ])("preserves probe diagnostics and disposes failed creation: %j", async (result) => {
+    const store = new MemorySessionStore();
+    const environment = createTestExecutionEnvironment();
+    environment.getToolExecutionBackend().runNodeScript = vi.fn(async () => ({
+      stdout: "execution-machine",
+      truncated: false,
+      ...result,
+    }));
+    const dispose = vi.spyOn(environment, "dispose");
+    const host = createHostForEnvironment(store, environment);
+    try {
+      await expect(host.createSession(localCreateInput)).rejects.toThrow(result.output);
+      expect(dispose).toHaveBeenCalledOnce();
+      expect(await store.listSessionSnapshots()).toEqual([]);
+    } finally {
+      await host.shutdown();
+    }
+  });
+
+  it("validates the combined client and execution attributes before persistence", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    try {
+      await expect(
+        host.createSession({
+          ...localCreateInput,
+          attributes: Object.fromEntries(
+            Array.from({ length: 31 }, (_, i) => [`key${i}`, "value"]),
+          ),
+        }),
+      ).rejects.toThrow();
+      expect(await store.listSessionSnapshots()).toEqual([]);
+    } finally {
+      await host.shutdown();
+    }
+  });
+
   it("keeps host defaults separate from overrides through switches, reloads and recovery", async () => {
     const first = { ...personas[0], id: "first", autoCompactThresholdTokens: 200000 };
     const second = { ...first, id: "second", model: { ...first.model, contextWindow: 90000 } };

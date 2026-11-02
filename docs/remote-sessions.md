@@ -85,7 +85,7 @@ tau attach \
 
 With the default `local` execution kind, this path is on the host machine, not the attaching machine. The directory must already exist and contain the repository or workspace you want. Tau creates only the session, not the directory or repository.
 
-A remote `--new` sets the creation attribute `source: "tui"`. It does not look at the remote directory to fill in repository information. Clients that need it should create sessions through the SDK or protocol and send complete attributes. See [sessions](sessions.md).
+A remote `--new` sets the creation attribute `source: "tui"`. It does not look at the remote directory to fill in repository information. Clients that need it should create sessions through the SDK or protocol and send `repository` themselves. The host still records `machine` and `cwd` for the session. See [sessions](sessions.md).
 
 `tau attach` does not accept the persona flags of local startup. Set the server's default when starting the host, for example `tau serve --persona opus-5.5-coder`, or switch the new session with `/persona:<id>` after attaching.
 

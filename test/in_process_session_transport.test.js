@@ -445,6 +445,34 @@ describe("InProcessSessionProtocolTransport", () => {
     await client.close();
   });
 
+  it("rejects oversized creation metadata before calling the host", async () => {
+    const { host } = createHost();
+    const create = vi.spyOn(host, "createSession");
+    const transport = new InProcessSessionProtocolTransport({ host });
+    const client = await createTauSdkClientFromTransport(transport);
+    try {
+      for (const input of [
+        {
+          ...localCreateInput,
+          attributes: Object.fromEntries(
+            Array.from({ length: 31 }, (_, i) => [`key${i}`, "value"]),
+          ),
+        },
+        {
+          ...localCreateInput,
+          executionEnvironment: { kind: "local", cwd: `/${"a".repeat(1024)}` },
+        },
+      ]) {
+        await expect(client.sessions.create(input)).rejects.toMatchObject({
+          code: "invalid_params",
+        });
+      }
+      expect(create).not.toHaveBeenCalled();
+    } finally {
+      await client.close();
+    }
+  });
+
   it("validates request params before dispatching directly to the host", async () => {
     const { host } = createHost();
     const transport = new InProcessSessionProtocolTransport({ host });

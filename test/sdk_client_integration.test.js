@@ -1,5 +1,5 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { createTauSdkClient } from "@markusylisiurunen/tau/sdk";
 import { describe, expect, it, vi } from "vitest";
@@ -241,6 +241,11 @@ Test persona ${id}.
         unsubscribe = session.onDelta(() => {});
         const snapshot = await session.snapshot();
         expect(snapshot.sessionId).toBe(session.id);
+        expect(snapshot.attributes).toEqual({
+          source: "test",
+          machine: hostname(),
+          cwd: localCreateInput.executionEnvironment.cwd,
+        });
         expect(snapshot.lifecycle).toBe("idle");
         expect(snapshot.messages.length).toBeGreaterThanOrEqual(1);
         expect(snapshot.messages[0].message.role).toBe("system");

@@ -9,6 +9,7 @@ import type {
 } from "@earendil-works/pi-ai";
 import { type ZodError, z } from "zod";
 import { MODEL_IMAGE_MAX_BYTES, SUPPORTED_IMAGE_TYPES } from "../core/utils/model_image.js";
+import { environmentVariablesSchema } from "./environment_variables.js";
 import { type IntermediateSystemMessage, isIntermediateSystemMessage } from "./system_message.js";
 
 export const SESSION_PROTOCOL_VERSION = 18 as const;
@@ -1450,11 +1451,6 @@ const noticeTitleSchema = nonEmptyStringSchema
 const sessionProtocolRequestIdSchema = nonEmptyStringSchema;
 const nullableSessionProtocolRequestIdSchema = sessionProtocolRequestIdSchema.nullable();
 const absolutePathSchema = nonEmptyStringSchema.refine((value) => value.startsWith("/"));
-const environmentVariableNameSchema = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
-const environmentVariableValueSchema = z.string().refine((value) => !value.includes("\0"));
-const environmentVariablesSchema = z
-  .record(environmentVariableNameSchema, environmentVariableValueSchema)
-  .refine((value) => !("HOME" in value), "HOME is controlled by the execution environment");
 const sessionAttributesSchema = z
   .record(z.string().min(1).max(64), z.string().max(SESSION_PROTOCOL_MAX_ATTRIBUTE_VALUE_CHARS))
   .refine(

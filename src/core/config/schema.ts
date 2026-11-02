@@ -81,6 +81,7 @@ export type TelegramPreset =
 
 export type TelegramBotConfig = {
   botToken?: string;
+  env?: Record<string, string>;
   allowedProjectIds?: string[];
   autoCompactThresholdTokens?: number;
   startup: { source: "workspace" } | { source: "preset"; preset: string };

@@ -137,3 +137,27 @@ New and reconstructed workspaces run their hooks; preserved workspaces and persi
 **A persistent-directory session fails recovery.** Recovery rejects a saved `cwd` that differs from the configured directory. Restore the directory at its original path, or set the project config back, or start a new session in the new directory. Tau does not move an existing session to a new directory.
 
 **A recovered session does not match the current configuration.** Preserved workspaces are used as they are, and composite root files are not regenerated, so configuration changes apply only to new workspaces. Recovery also needs the same `workspaceRoot`, project definitions, host home, and Tau sessions. Check the runner logs and `/status`. Do not edit runner state, project preferences, saved sessions, or managed workspaces to force a match.
+
+## Bot environments
+
+Validate the file without polling Telegram or creating sessions with `tau telegram --config-file /etc/tau/telegram.json --check-config`. This checks configuration syntax and references, not credentials or repository access.
+
+Set `bots.<id>.env` to a map of environment variable names to string values. The runner uses these values for the bot's repository clone and fetch commands and passes the same map to each new local session. Session tools, provision hooks, and subagents inherit that execution environment. Other bots and the runner's own environment are unchanged. These are execution settings, not model-provider credentials or client-tool settings.
+
+```json
+{
+  "env": {
+    "GH_CONFIG_DIR": "/var/lib/assistant-github/gh",
+    "GH_TOKEN": "",
+    "GITHUB_TOKEN": ""
+  }
+}
+```
+
+Authenticate `gh` in that directory separately. Empty token overrides keep inherited token variables from selecting another account. Git HTTPS operations also need a credential helper such as `!gh auth git-credential`; commit author and committer settings are separate from authentication.
+
+Names follow `[A-Za-z_][A-Za-z0-9_]*`; values cannot contain NUL. `HOME` is reserved for the execution environment. Values are literal: Tau does not expand `$HOME`, `~`, or relative paths. Use absolute paths for credential directories. Workspace preparation inherits the runner environment, with this map taking precedence. Session tools apply the map after their usual filtering of inherited secret-like variables.
+
+The map is saved in each session. Do not put tokens or other secrets in it; use paths to separately protected credential stores. This setting is not a security boundary: bots still share the operating-system user's permissions and repository caches, and commands can override their own environment.
+
+After changing or removing a bot's environment, restart the runner. A saved session whose environment differs fails recovery before accepting turns, rather than continuing under the old identity. Its files remain untouched by this check. Save any unfinished work before `/new`: replacing a managed repository or composite session deletes its old workspace as usual. Persistent-directory projects keep their files. Sessions whose environment is unchanged resume normally, including older sessions without an environment when the bot still has none.

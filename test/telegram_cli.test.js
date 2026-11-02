@@ -1,7 +1,7 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { runTelegramCommand } from "../dist/core/telegram/cli.js";
 import { loadTelegramConfig } from "../dist/core/telegram/config.js";
 
@@ -18,6 +18,54 @@ describe("telegram cli", () => {
       message: "missing --config-file <path>",
     });
   });
+
+  it("checks configuration without starting sessions or requiring provider configuration", async () => {
+    const { path } = writeConfig({
+      bots: {
+        bot: {
+          botToken: "token",
+          startup: { source: "workspace" },
+          env: { GH_CONFIG_DIR: "/bot/gh" },
+        },
+      },
+      projects: {},
+    });
+    const createSessionClient = vi.fn();
+    await runTelegramCommand(["--config-file", path, "--check-config"], {
+      createSessionClient,
+      stdout: () => {},
+    });
+    expect(createSessionClient).not.toHaveBeenCalled();
+    const invalid = writeConfig({
+      bots: {
+        bot: { botToken: "token", startup: { source: "workspace" }, env: { HOME: "/other" } },
+      },
+      projects: {},
+    });
+    await expect(
+      runTelegramCommand(["--config-file", invalid.path, "--check-config"], { stdout: () => {} }),
+    ).rejects.toThrow();
+  });
+
+  it("loads bot environments without expanding or trimming values", () => {
+    const env = { GH_CONFIG_DIR: "/bot/gh", GH_TOKEN: "", VALUE: " $HOME " };
+    const { path } = writeConfig({
+      bots: { bot: { botToken: "token", startup: { source: "workspace" }, env } },
+      projects: {},
+    });
+    expect(loadTelegramConfig(path).bots.bot.env).toEqual(env);
+  });
+
+  it.each([{ HOME: "/other" }, { "BAD=KEY": "value" }, { VALUE: "bad\0value" }, { VALUE: 1 }])(
+    "rejects invalid bot environments %j",
+    (env) => {
+      const { path } = writeConfig({
+        bots: { bot: { botToken: "token", startup: { source: "workspace" }, env } },
+        projects: {},
+      });
+      expect(() => loadTelegramConfig(path)).toThrow();
+    },
+  );
 
   it("loads telegram runner config", () => {
     const { dir, path } = writeConfig({

@@ -68,6 +68,7 @@ Each `bots.<id>` object supports:
 | Field | Required | Behavior |
 | --- | --- | --- |
 | `botToken` | Yes | Telegram Bot API token. |
+| `env` | No | Environment variables for this bot’s workspace preparation and session tools. See [bot environments](telegram-projects.md#bot-environments). |
 | `allowedProjectIds` | No | Non-empty unique subset of configured project IDs; omission exposes all projects. |
 | `autoCompactThresholdTokens` | No | Default automatic-compaction threshold for this bot's sessions. See [compaction thresholds](#compaction-thresholds). |
 | `startup` | Yes | `{ "source": "workspace" }` or `{ "source": "preset", "preset": "<key>" }`. See [startup and presets](#startup-and-presets). |
@@ -95,7 +96,7 @@ Each project tells the runner where a session works. There are three kinds:
 - A **persistent-directory project** reuses one existing directory for all of its sessions.
 - A **composite project** combines several repository projects in one workspace.
 
-Project IDs become `/use_<projectId>` commands, so they may contain only lowercase letters, digits, and underscores, and be at most 28 characters. Every project can have a `description`, and must define exactly one of `repo`, `directory`, or `projectIds`. [Telegram projects and workspaces](telegram-projects.md) describes each kind, where workspaces live, provision hooks, and what happens to workspaces on restart.
+[Telegram projects and workspaces](telegram-projects.md) describes project fields, workspace preparation, provision hooks, and recovery.
 
 **Important:** at startup, the runner deletes everything under its managed workspace roots that no saved session uses. Give Tau a dedicated `workspaceRoot`; never use a home directory, a collection of repositories, or any directory with other content.
 

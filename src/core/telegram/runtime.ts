@@ -139,6 +139,13 @@ export async function startTelegramRuntime(
 
   const sessionManager = createTelegramSessionManager({
     projects: options.config.projects,
+    environmentForOwner: (ownerId) => {
+      const match = /^telegram:(.+):chat:(-?\d+)$/.exec(ownerId ?? "");
+      if (!match) return {};
+      const bot = options.config.bots[match[1] ?? ""];
+      if (!bot) throw new Error("unknown Telegram session owner");
+      return bot.env ?? {};
+    },
     workspaceRoot: options.config.workspaceRoot,
     maxSessions: options.config.maxSessions,
     persistencePath: resolveTelegramSessionStatePath(options.config.workspaceRoot),

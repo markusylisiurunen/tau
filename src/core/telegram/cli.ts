@@ -19,6 +19,7 @@ export class TelegramCliError extends Error {
 
 type ParsedTelegramArgs = {
   help: boolean;
+  checkConfig: boolean;
   configFilePath?: string;
 };
 
@@ -45,6 +46,7 @@ function requireTrimmedValue(value: string | undefined, message: string): string
 
 function parseTelegramArgs(argv: string[]): ParsedTelegramArgs {
   let help = false;
+  let checkConfig = false;
   let configFilePath: string | undefined;
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -52,6 +54,11 @@ function parseTelegramArgs(argv: string[]): ParsedTelegramArgs {
 
     if (arg === "--help" || arg === "-h") {
       help = true;
+      continue;
+    }
+
+    if (arg === "--check-config") {
+      checkConfig = true;
       continue;
     }
 
@@ -74,6 +81,7 @@ function parseTelegramArgs(argv: string[]): ParsedTelegramArgs {
 
   return {
     help,
+    checkConfig,
     ...(configFilePath === undefined ? {} : { configFilePath }),
   };
 }
@@ -82,10 +90,11 @@ export function printTelegramHelp(log: (line: string) => void = console.log): vo
   log(
     [
       "usage:",
-      "  tau telegram --config-file <path>",
+      "  tau telegram --config-file <path> [--check-config]",
       "",
       "options:",
       "  --config-file <path>  telegram runner config file path.",
+      "  --check-config       validate configuration without starting the runner.",
       "  --help                show this help and exit.",
     ].join("\n"),
   );
@@ -107,16 +116,6 @@ export async function runTelegramCommand(
     throw new TelegramCliError("missing --config-file <path>");
   }
 
-  const cwd = options.cwd ?? process.cwd();
-  const env = options.env ?? process.env;
-  const config = options.config ?? loadConfig(cwd, createDefaultConfigDeps());
-  const geminiApiKey = getGoogleApiKey(config, env);
-
-  const createSessionClient = options.createSessionClient;
-  if (!createSessionClient) {
-    throw new TelegramCliError("missing telegram session client factory");
-  }
-
   const telegramConfig = (() => {
     try {
       return loadTelegramConfig(parsed.configFilePath);
@@ -127,6 +126,21 @@ export async function runTelegramCommand(
       throw error;
     }
   })();
+
+  if (parsed.checkConfig) {
+    stdout("telegram configuration is valid");
+    return;
+  }
+
+  const cwd = options.cwd ?? process.cwd();
+  const env = options.env ?? process.env;
+  const config = options.config ?? loadConfig(cwd, createDefaultConfigDeps());
+  const geminiApiKey = getGoogleApiKey(config, env);
+
+  const createSessionClient = options.createSessionClient;
+  if (!createSessionClient) {
+    throw new TelegramCliError("missing telegram session client factory");
+  }
 
   const runtime = await (async () => {
     try {

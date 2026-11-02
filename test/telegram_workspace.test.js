@@ -32,6 +32,52 @@ describe("telegram workspace", () => {
     return join(root, "workspaces");
   }
 
+  it("keeps concurrent bot environments separate through cache refresh and composite preparation", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const envs = [
+      { GH_CONFIG_DIR: "/first/gh", GH_TOKEN: "" },
+      { GH_CONFIG_DIR: "/second/gh", GH_TOKEN: "" },
+    ];
+    const projects = {
+      one: { repo: "owner/one", ref: "main" },
+      two: { repo: "owner/two", ref: "main" },
+    };
+    spawnWithCaptureMock.mockImplementation(async (command, args, options) => {
+      expect(envs).toContainEqual({
+        GH_CONFIG_DIR: options.env.GH_CONFIG_DIR,
+        GH_TOKEN: options.env.GH_TOKEN,
+      });
+      if (command === "gh") await mkdir(args[3], { recursive: true });
+      if (command === "git" && args[0] === "clone") await mkdir(args[3], { recursive: true });
+      if (args[2] === "remote" && args[3] === "get-url")
+        return { exitCode: 0, output: "https://github.com/owner/repo.git" };
+      if (args[2] === "config" && args[3] === "--get")
+        return { exitCode: 0, output: args[1].endsWith("one.git") ? "owner/one" : "owner/two" };
+      return { exitCode: 0, output: "" };
+    });
+    await Promise.all(
+      envs.map((env, index) =>
+        prepareWorkspace({
+          sessionId: `session-${index}`,
+          projectId: "all",
+          project: { projectIds: ["one", "two"] },
+          projects,
+          workspaceRoot,
+          env,
+        }),
+      ),
+    );
+    for (const env of envs) {
+      const calls = spawnWithCaptureMock.mock.calls.filter(
+        ([, , options]) => options.env.GH_CONFIG_DIR === env.GH_CONFIG_DIR,
+      );
+      expect(calls.some(([command, args]) => command === "gh" || args[2] === "fetch")).toBe(true);
+      expect(calls.some(([, args]) => args[2] === "checkout")).toBe(true);
+      expect(calls.some(([, args]) => args[2] === "remote" && args[3] === "set-url")).toBe(true);
+    }
+    expect(spawnWithCaptureMock.mock.calls.some(([, args]) => args[2] === "fetch")).toBe(true);
+  });
+
   it("removes orphaned workspace entries while preserving active workspaces", async () => {
     const workspaceRoot = await createWorkspaceRoot();
     const activeWorkspace = join(workspaceRoot, "demo", "active");

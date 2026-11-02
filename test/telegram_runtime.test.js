@@ -103,6 +103,64 @@ describe("telegram runtime", () => {
     }
   });
 
+  it("routes each bot's environment to its sessions without changing the runner", async () => {
+    const root = await mkdtemp(join(tmpdir(), "tau-bot-env-"));
+    const requests = [];
+    let manager;
+    let runtime;
+    const inherited = process.env.GH_CONFIG_DIR;
+    try {
+      runtime = await startTelegramRuntime({
+        config: createTelegramConfig({
+          workspaceRoot: join(root, "managed"),
+          projects: { alpha: { directory: root } },
+          bots: {
+            first: {
+              botToken: "first-token",
+              startup: { source: "workspace" },
+              env: { GH_CONFIG_DIR: "/first/gh" },
+            },
+            second: { botToken: "second-token", startup: { source: "workspace" } },
+          },
+        }),
+        createSessionClient: async (options) => ({
+          sessions: {
+            create: async (request) => {
+              requests.push({ ownerId: options.ownerId, env: request.executionEnvironment.env });
+              throw new Error("stop after session creation request");
+            },
+          },
+          close: async () => {},
+        }),
+        deps: {
+          startTelegramAdapter: async (options) => {
+            manager = options.sessionManager;
+            return { close: async () => {} };
+          },
+        },
+      });
+      await Promise.all(
+        ["first", "second"].map((bot) =>
+          manager.createSession({
+            projectId: "alpha",
+            ownerId: `telegram:${bot}:chat:123`,
+          }),
+        ),
+      );
+      await vi.waitFor(() => expect(requests).toHaveLength(2));
+      expect(requests).toEqual(
+        expect.arrayContaining([
+          { ownerId: "telegram:first:chat:123", env: { GH_CONFIG_DIR: "/first/gh" } },
+          { ownerId: "telegram:second:chat:123", env: {} },
+        ]),
+      );
+      expect(process.env.GH_CONFIG_DIR).toBe(inherited);
+    } finally {
+      await runtime?.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("binds file tools to each session's owning bot and chat", async () => {
     const root = await mkdtemp(join(tmpdir(), "tau-file-routing-"));
     const clients = [];

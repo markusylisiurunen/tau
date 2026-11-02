@@ -54,6 +54,25 @@ describe("model catalog", () => {
     });
   });
 
+  it("supplements Codex Astra until Pi supplies its metadata", () => {
+    const model = resolveModel("openai-codex", "gpt-6.2-astra");
+    expect(model).toMatchObject({
+      api: "openai-codex-responses",
+      provider: "openai-codex",
+      contextWindow: 272000,
+      maxTokens: 128000,
+    });
+    expect(resolveModel("openai", "gpt-6.2-astra")).toBeUndefined();
+    expect(loadModelResolver().resolveConfiguredModel("openai-codex", model.id)).toEqual(model);
+
+    const remote = { ...model, contextWindow: 400000, cost: { ...model.cost, input: 20 } };
+    const resolver = loadModelResolver({
+      remoteCatalog: new Map([["openai-codex", [remote]]]),
+    });
+    expect(resolver.resolveConfiguredModel("openai-codex", model.id)).toEqual(remote);
+    expect(model.contextWindow).toBe(272000);
+  });
+
   it("returns no models for unknown providers", () => {
     expect(listModels("missing-provider")).toEqual([]);
     expect(resolveModel("missing-provider", "missing-model")).toBeUndefined();

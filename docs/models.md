@@ -10,6 +10,12 @@ A **provider** has its own authentication and one or more request APIs. A **mode
 
 The bundled catalog comes from Tau's model library, `pi-ai`. It lists known provider IDs and model IDs, with request API names, endpoints, capabilities, token limits, and pricing. A model in the catalog is not necessarily usable: the provider may lack credentials, the account may not have access to the model, or the endpoint may reject it. See [credentials](credentials.md).
 
+## Supplemental models
+
+Tau includes code-owned definitions for selected models missing from Pi's catalog. These fill gaps after the bundled and remote catalogs are combined; a Pi entry for the same provider and model always takes precedence. Supplemental definitions do not modify the remote catalog cache.
+
+`openai-codex/gpt-6.2-astra` uses provisional metadata copied from GPT-6 Astra, including capabilities, token limits, and pricing. This makes its ChatGPT personas available before Pi lists it, but does not guarantee provider access. There is no supplemental entry for the OpenAI API provider.
+
 ## Remote catalog
 
 A Tau host that runs models loads cached catalogs from `~/.config/tau/models-store.json` at startup. If the cache is older than four hours, it checks `pi.dev` in the background. This check happens only at startup; there is no recurring refresh. Set `TAU_OFFLINE` to skip it.

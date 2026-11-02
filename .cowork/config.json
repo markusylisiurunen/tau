@@ -1,7 +1,7 @@
 {
   "workflows": {
     "issue-plan": {
-      "persona": "gpt-6-astra-chatgpt-coder",
+      "persona": "gpt-6.2-astra-chatgpt-coder",
       "reasoning": "medium"
     },
     "pull-request-explain": {
@@ -9,7 +9,7 @@
       "reasoning": "medium"
     },
     "pull-request-review": {
-      "persona": "gpt-6-astra-chatgpt-coder",
+      "persona": "gpt-6.2-astra-chatgpt-coder",
       "reasoning": "high"
     },
     "pull-request-diff": {
@@ -17,15 +17,15 @@
       "reasoning": "medium"
     },
     "issue-implement": {
-      "persona": "gpt-6-astra-chatgpt-coder",
+      "persona": "gpt-6.2-astra-chatgpt-coder",
       "reasoning": "medium"
     },
     "pull-request-deslop": {
-      "persona": "gpt-6-astra-chatgpt-coder",
+      "persona": "gpt-6.2-astra-chatgpt-coder",
       "reasoning": "medium"
     },
     "pull-request-fix": {
-      "persona": "gpt-6-astra-chatgpt-coder",
+      "persona": "gpt-6.2-astra-chatgpt-coder",
       "reasoning": "medium"
     }
   }

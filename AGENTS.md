@@ -279,7 +279,7 @@ For Claude subagents, prefer the Claude Code models, which use subscription limi
 - Luna: `openai-codex/gpt-6-luna`; allowed efforts: low, medium, high, xhigh; default: `medium`.
 - Terra: `openai-codex/gpt-6.1-terra`; allowed efforts: low, medium, high; default: `medium`.
 - Sol: `openai-codex/gpt-6.1-sol`; allowed efforts: low, medium, high; default: `medium`.
-- Astra: `openai-codex/gpt-6-astra`; allowed efforts: low, medium, high; default: `low`.
+- Astra: `openai-codex/gpt-6.2-astra`; allowed efforts: low, medium, high; default: `low`.
 - Sonnet: `anthropic/claude-sonnet-5-5`; allowed efforts: low, medium, high; default: `medium`.
 - Claude Code Sonnet: `claude-code/claude-sonnet-5-5`; allowed efforts: low, medium, high; default: `medium`.
 - Claude Code Opus: `claude-code/claude-opus-5-5`; allowed efforts: low, medium, high; default: `medium`.

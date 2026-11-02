@@ -108,7 +108,7 @@ Run commands that change the context, such as persona changes, compaction, rewin
 
 The footer shows context usage as a percentage of the full model window, such as `20%/272k`. When a session override is set, or the default threshold is below the model-based threshold, the effective compaction threshold appears in parentheses: `20%/272k (50k)`. This threshold cannot exceed the model's context window minus 16,384 tokens. Without an override or a lower default, the footer shows no threshold. Switching to a different persona removes the session override.
 
-While subagents are running, a panel above the editor shows the selected subagent's title, recent activity, and a usage line such as `openai-codex/gpt-6-astra:medium · ↑12k ↓2k (r8k w0) · 14%/200k · $0.04`. The line starts with the subagent's provider, model, and reasoning effort, including settings inherited from the persona. Text that does not fit the terminal width is cut off on the right.
+While subagents are running, a panel above the editor shows the selected subagent's title, recent activity, and a usage line such as `openai-codex/gpt-6.2-astra:medium · ↑12k ↓2k (r8k w0) · 14%/200k · $0.04`. The line starts with the subagent's provider, model, and reasoning effort, including settings inherited from the persona. Text that does not fit the terminal width is cut off on the right.
 
 [Sessions](sessions.md) describes compaction, rewind, recovery, and retry. [Prompts and project context](prompts-and-project-context.md) covers prompt files.
 

@@ -173,7 +173,7 @@ describe("custom personas", () => {
       const levels = resolveConfigLevels(deps, { cwd: fx.cwd });
       const resolveAvailableModel = (provider, modelId) =>
         [
-          "gpt-6-astra",
+          "gpt-6.2-astra",
           "gpt-6.1-sol",
           "gpt-6.1-terra",
           "gpt-6-luna",
@@ -196,20 +196,22 @@ describe("custom personas", () => {
       expect(personas.find((persona) => persona.id === "opus-5.5-coder")).toBeUndefined();
       expect(personas.find((persona) => persona.id === "sonnet-5.5-chat")).toBeUndefined();
       expect(personas.find((persona) => persona.id === "sonnet-5.5-coder")).toBeUndefined();
-      expect(personas.find((persona) => persona.id === "gpt-6-astra-chat")).toBeUndefined();
+      expect(personas.find((persona) => persona.id === "gpt-6.2-astra-chat")).toBeUndefined();
       expect(
         personas.some((persona) => /^gpt-(6(?:\.1)?-sol|6\.1-terra|6-luna)-/.test(persona.id)),
       ).toBe(false);
-      expect(personas.find((persona) => persona.id === "gpt-6-astra-coder")).toBeUndefined();
-      expect(personas.find((persona) => persona.id === "gpt-6-astra-chatgpt-chat")).toBeUndefined();
+      expect(personas.find((persona) => persona.id === "gpt-6.2-astra-coder")).toBeUndefined();
       expect(
-        personas.find((persona) => persona.id === "gpt-6-astra-chatgpt-coder"),
+        personas.find((persona) => persona.id === "gpt-6.2-astra-chatgpt-chat"),
       ).toBeUndefined();
       expect(
-        personas.find((persona) => persona.id === "gpt-6-astra-chatgpt-fast-chat"),
+        personas.find((persona) => persona.id === "gpt-6.2-astra-chatgpt-coder"),
       ).toBeUndefined();
       expect(
-        personas.find((persona) => persona.id === "gpt-6-astra-chatgpt-fast-coder"),
+        personas.find((persona) => persona.id === "gpt-6.2-astra-chatgpt-fast-chat"),
+      ).toBeUndefined();
+      expect(
+        personas.find((persona) => persona.id === "gpt-6.2-astra-chatgpt-fast-coder"),
       ).toBeUndefined();
     } finally {
       fx.cleanup();
@@ -361,7 +363,7 @@ describe("custom personas", () => {
   });
 
   it.each([
-    ["gpt-6-astra", "medium"],
+    ["gpt-6.2-astra", "medium"],
     ["gpt-6.1-sol", "medium"],
     ["gpt-6.1-terra", "medium"],
     ["gpt-6-luna", "medium"],
@@ -412,7 +414,7 @@ describe("custom personas", () => {
 
   it("omits retired GPT personas even when their models are in both remote OpenAI catalogs", async () => {
     const fx = setupFixture();
-    const modelIds = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-sol"];
+    const modelIds = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-sol", "gpt-6-astra"];
 
     try {
       const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });

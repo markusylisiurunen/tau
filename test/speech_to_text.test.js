@@ -1,7 +1,23 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import { createSpeechToTextTranscription } from "../dist/core/utils/speech_to_text.js";
+import { composeSpeechVocabulary } from "../dist/core/utils/speech_to_text_keywords.js";
 import { createListenTranscription } from "../dist/tui/listen_capture.js";
+
+describe("composeSpeechVocabulary", () => {
+  it("keeps session terms first and removes duplicates", () => {
+    expect(composeSpeechVocabulary(["Tau", " Shared "], ["Shared", "Personal"])).toEqual([
+      "Tau",
+      "Shared",
+      "Personal",
+    ]);
+  });
+
+  it("gives session terms priority under the term limit", () => {
+    const sessionTerms = Array.from({ length: 100 }, (_, index) => `session-${index}`);
+    expect(composeSpeechVocabulary(sessionTerms, ["Personal"])).toEqual(sessionTerms);
+  });
+});
 
 describe("speech-to-text transcription", () => {
   it("returns the live transcript without a quiet delay when the final activity covers the recording", async () => {
@@ -12,8 +28,8 @@ describe("speech-to-text transcription", () => {
     socket.terminate = vi.fn();
     const transcription = createListenTranscription({
       mode: "streaming",
-      config: { apiKeys: { google: "key" }, speech: { vocabulary: ["Tau"] } },
-      deps: { env: { env: () => ({}) } },
+      credentials: { googleApiKey: "key" },
+      vocabulary: ["Tau"],
       speechToTextDeps: { webSocketFactory: () => socket },
     });
     const emit = (event) => socket.emit("message", JSON.stringify(event));

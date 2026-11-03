@@ -38,6 +38,7 @@ import { TauSessionProtocolResponseError } from "../dist/transport/errors.js";
 import { formatDiffReviewUserMessage } from "../dist/tui/chat_controller/diff_review_user_message.js";
 import { formatRewindCandidateAge } from "../dist/tui/chat_controller/history_labels.js";
 import { copyTextToClipboard } from "../dist/tui/clipboard.js";
+import { HostDiagnosticRelay } from "../dist/tui/host_diagnostic_relay.js";
 import * as listenCapture from "../dist/tui/listen_capture.js";
 import { LISTEN_CAPTURE_START_TIMEOUT_MS } from "../dist/tui/listen_capture.js";
 import { exportMarkdown } from "../dist/tui/markdown_export.js";
@@ -942,12 +943,16 @@ function createSpawnResult(overrides = {}) {
   };
 }
 
+const EMPTY_CLIENT_CONFIG = { speech: { personalVocabulary: [] } };
+
 async function createControllerHarness({
   session = new FakeSession(),
   view = new FakeView(),
+  config,
   ...options
 } = {}) {
   const controller = new SessionChatController({
+    config: { ...config, speech: { ...EMPTY_CLIENT_CONFIG.speech, ...config?.speech } },
     view,
     session,
     snapshot: await session.snapshot(),
@@ -968,7 +973,69 @@ describe("formatRewindCandidateAge", () => {
   });
 });
 
+describe("HostDiagnosticRelay", () => {
+  const configWarnings = (cwd, warnings) => ({ event: "session_config_warnings", cwd, warnings });
+  const historyDiagnostic = { event: "history_recording", status: "delayed" };
+  const createTarget = () => ({
+    showHistoryDiagnostic: vi.fn(),
+    showSessionConfigWarnings: vi.fn(),
+  });
+
+  it("holds diagnostics until a controller attaches, then delivers live", () => {
+    const relay = new HostDiagnosticRelay({ cwd: "/launch", warnings: [] });
+    const target = createTarget();
+    relay.report(configWarnings("/project", ["early"]));
+    relay.report(historyDiagnostic);
+    expect(target.showSessionConfigWarnings).not.toHaveBeenCalled();
+
+    relay.attach(target);
+    expect(target.showSessionConfigWarnings).toHaveBeenCalledExactlyOnceWith({
+      cwd: "/project",
+      warnings: ["early"],
+    });
+    expect(target.showHistoryDiagnostic).toHaveBeenCalledExactlyOnceWith(historyDiagnostic);
+
+    relay.report(configWarnings("/project", ["live"]));
+    expect(target.showSessionConfigWarnings).toHaveBeenLastCalledWith({
+      cwd: "/project",
+      warnings: ["live"],
+    });
+  });
+
+  it("skips warnings already printed or shown, but not new ones or other directories", () => {
+    const relay = new HostDiagnosticRelay({ cwd: "/launch", warnings: ["printed"] });
+    const target = createTarget();
+    relay.report(configWarnings("/launch", ["printed"]));
+    relay.attach(target);
+    expect(target.showSessionConfigWarnings).not.toHaveBeenCalled();
+
+    relay.report(configWarnings("/launch", ["printed", "new"]));
+    expect(target.showSessionConfigWarnings).toHaveBeenLastCalledWith({
+      cwd: "/launch",
+      warnings: ["new"],
+    });
+    relay.report(configWarnings("/launch", ["new"]));
+    expect(target.showSessionConfigWarnings).toHaveBeenCalledOnce();
+
+    relay.report(configWarnings("/project", ["printed"]));
+    expect(target.showSessionConfigWarnings).toHaveBeenLastCalledWith({
+      cwd: "/project",
+      warnings: ["printed"],
+    });
+  });
+});
+
 describe("SessionChatController", () => {
+  it("shows session configuration warnings as one nonfatal transcript notice", async () => {
+    const { view, controller } = await createControllerHarness();
+    controller.showSessionConfigWarnings({ cwd: "/srv/project", warnings: ["first", "second"] });
+    expect(view.transcriptNotices).toHaveLength(1);
+    const [notice] = view.transcriptNotices;
+    expect(notice.tone).toBe("default");
+    expect(notice.content.join("\n")).toContain("/srv/project");
+    expect(notice.content).toEqual(expect.arrayContaining(["first", "second"]));
+  });
+
   it.each(["in-process", "ws://host"])(
     "exports only completed assistant Markdown from %s",
     async (targetLabel) => {
@@ -1119,7 +1186,7 @@ describe("SessionChatController", () => {
         personas: [bootstrap.persona],
         prompts: [{ id: "fix", label: "Fix", template: "fix the bug" }],
         themes: [{ id: "gold" }],
-        mcpServers: ["github"],
+        mcp: { status: "available", servers: ["github"] },
         skills: [
           {
             name: "alpha",
@@ -1216,6 +1283,27 @@ describe("SessionChatController", () => {
     const intro = view.messages.find((message) => message.model.type === "app_intro").model;
     expect(intro.title).not.toContain("MCP server");
     expect(intro.body).not.toContain("mcp servers");
+  });
+
+  it("shows that MCP is unavailable for remote execution instead of listing servers", async () => {
+    const { controller, view } = await createControllerHarness({
+      session: new FakeSession(
+        createProtocolSnapshot({
+          catalog: { mcp: { status: "unavailable", reason: "remote-execution" } },
+          executionEnvironment: {
+            kind: "fly-sprite",
+            spriteName: "sprite",
+            cwd: "/home/sprite/repo",
+            home: "/home/sprite",
+          },
+        }),
+      ),
+    });
+    controller.start();
+    const intro = view.messages.find((message) => message.model.type === "app_intro").model;
+    expect(intro.title).toContain("MCP unavailable");
+    expect(intro.title).not.toContain("MCP server");
+    expect(intro.body).toMatch(/mcp servers:\n {2}unavailable: /);
   });
 
   it("renders persisted protocol notices in timeline order", async () => {
@@ -1379,6 +1467,7 @@ describe("SessionChatController", () => {
     const session = new FakeSession(snapshot);
     const view = new FakeView();
     const controller = new SessionChatController({
+      config: EMPTY_CLIENT_CONFIG,
       view,
       session,
       snapshot,
@@ -1491,6 +1580,7 @@ describe("SessionChatController", () => {
     const session = new FakeSession(snapshot);
     const view = new FakeView();
     const controller = new SessionChatController({
+      config: EMPTY_CLIENT_CONFIG,
       view,
       session,
       snapshot,
@@ -1610,6 +1700,7 @@ describe("SessionChatController", () => {
     const session = new FakeSession(snapshot);
     const view = new FakeView();
     const controller = new SessionChatController({
+      config: EMPTY_CLIENT_CONFIG,
       view,
       session,
       snapshot,
@@ -1776,6 +1867,7 @@ describe("SessionChatController", () => {
     const session = new FakeSession(snapshot);
     const view = new FakeView();
     const controller = new SessionChatController({
+      config: EMPTY_CLIENT_CONFIG,
       view,
       session,
       snapshot,
@@ -2002,6 +2094,7 @@ describe("SessionChatController", () => {
     const attachedSession = new FakeSession(compactedSnapshot);
     const attachedView = new FakeView();
     const attachedController = new SessionChatController({
+      config: EMPTY_CLIENT_CONFIG,
       view: attachedView,
       session: attachedSession,
       snapshot: await attachedSession.snapshot(),
@@ -2274,6 +2367,7 @@ describe("SessionChatController", () => {
     }));
     const view = new FakeView();
     const controller = new SessionChatController({
+      config: EMPTY_CLIENT_CONFIG,
       view,
       session,
       snapshot,
@@ -2455,6 +2549,7 @@ describe("SessionChatController", () => {
     const session = new FakeSession(snapshot);
     const view = new FakeView();
     const controller = new SessionChatController({
+      config: EMPTY_CLIENT_CONFIG,
       view,
       session,
       snapshot,
@@ -2523,6 +2618,7 @@ describe("SessionChatController", () => {
     const session = new FakeSession(snapshot);
     const view = new FakeView();
     const controller = new SessionChatController({
+      config: EMPTY_CLIENT_CONFIG,
       view,
       session,
       snapshot,
@@ -3309,6 +3405,7 @@ describe("SessionChatController", () => {
     const session = new FakeSession(snapshot);
     const view = new FakeView();
     const controller = new SessionChatController({
+      config: EMPTY_CLIENT_CONFIG,
       view,
       session,
       snapshot: await session.snapshot(),
@@ -3387,6 +3484,7 @@ describe("SessionChatController", () => {
     const session = new FakeSession(snapshot);
     const view = new FakeView();
     const controller = new SessionChatController({
+      config: EMPTY_CLIENT_CONFIG,
       view,
       session,
       snapshot: await session.snapshot(),
@@ -3555,6 +3653,7 @@ describe("SessionChatController", () => {
     const session = new FakeSession(snapshot);
     const view = new FakeView();
     const controller = new SessionChatController({
+      config: EMPTY_CLIENT_CONFIG,
       view,
       session,
       snapshot: await session.snapshot(),
@@ -3671,6 +3770,7 @@ describe("SessionChatController", () => {
     const session = new FakeSession(snapshot);
     const view = new FakeView();
     const controller = new SessionChatController({
+      config: EMPTY_CLIENT_CONFIG,
       view,
       session,
       snapshot: await session.snapshot(),
@@ -3763,6 +3863,7 @@ describe("SessionChatController", () => {
     const snapshotSpy = vi.spyOn(session, "snapshot");
     const view = new FakeView();
     const controller = new SessionChatController({
+      config: EMPTY_CLIENT_CONFIG,
       view,
       session,
       snapshot: await session.snapshot(),
@@ -3839,6 +3940,7 @@ describe("SessionChatController", () => {
     const session = new FakeSession(snapshot);
     const view = new FakeView();
     const controller = new SessionChatController({
+      config: EMPTY_CLIENT_CONFIG,
       view,
       session,
       snapshot: await session.snapshot(),
@@ -3929,6 +4031,7 @@ describe("SessionChatController", () => {
     const postRecoveryDelta = createMessageAppendDelta(session.id, 3, postRecoveryMessage);
     const view = new FakeView();
     const controller = new SessionChatController({
+      config: EMPTY_CLIENT_CONFIG,
       view,
       session,
       snapshot: baseSnapshot,
@@ -3997,6 +4100,7 @@ describe("SessionChatController", () => {
     const session = new FakeSession(snapshot);
     const view = new FakeView();
     const controller = new SessionChatController({
+      config: EMPTY_CLIENT_CONFIG,
       view,
       session,
       snapshot: await session.snapshot(),
@@ -4515,6 +4619,7 @@ describe("SessionChatController", () => {
     const session = new FakeSession(snapshot);
     const view = new FakeView();
     const controller = new SessionChatController({
+      config: EMPTY_CLIENT_CONFIG,
       view,
       session,
       snapshot: await session.snapshot(),
@@ -4753,6 +4858,7 @@ describe("SessionChatController", () => {
     );
     const view = new FakeView();
     const controller = new SessionChatController({
+      config: EMPTY_CLIENT_CONFIG,
       view,
       session,
       snapshot: await session.snapshot(),
@@ -5713,6 +5819,7 @@ describe("SessionChatController", () => {
     });
     const view = new FakeView();
     const controller = new SessionChatController({
+      config: EMPTY_CLIENT_CONFIG,
       view,
       session,
       snapshot: await session.snapshot(),
@@ -5823,6 +5930,7 @@ describe("SessionChatController", () => {
     };
 
     const opening = SessionChatApp.open({
+      config: EMPTY_CLIENT_CONFIG,
       client,
       configuredClientToolNames: [],
       targetLabel: "in-process",
@@ -5851,6 +5959,7 @@ describe("SessionChatController", () => {
         sessionSelection: { mode: "select" },
         clientToolsEnabled: true,
         config: {
+          ...EMPTY_CLIENT_CONFIG,
           clientTools: [
             {
               name: "prefill_input",
@@ -6586,6 +6695,75 @@ describe("SessionChatController", () => {
     expect(controller.retainedListenAudio).toBeUndefined();
   });
 
+  it("captures session and personal vocabulary when each recording starts", async () => {
+    const audioPath = join(tmpdir(), `tau-session-listen-vocabulary-${Date.now()}.wav`);
+    const spawn = vi.fn(async (command, _args, options = {}) => {
+      if (command === "mktemp") return createSpawnResult({ stdout: `${audioPath}\n` });
+      if (command === "ffmpeg") {
+        const stdout = new EventEmitter();
+        options.onSpawn({ stdout });
+        queueMicrotask(() => stdout.emit("data", Buffer.from([1, 2, 3, 4])));
+        return await new Promise((resolve) => {
+          options.signal.addEventListener("abort", () => {
+            resolve(createSpawnResult({ aborted: true }));
+          });
+        });
+      }
+      throw new Error(`unexpected command: ${command}`);
+    });
+    const sockets = [];
+    const webSocketFactory = vi.fn(() => {
+      const socket = new EventEmitter();
+      socket.send = vi.fn((_data, callback) => callback?.());
+      socket.close = vi.fn();
+      socket.terminate = vi.fn();
+      sockets.push(socket);
+      return socket;
+    });
+    const readSentVocabulary = async (socket) => {
+      socket.emit("open");
+      await waitUntil(() => socket.send.mock.calls.length > 0);
+      return JSON.parse(socket.send.mock.calls[0][0]).setup.inputAudioTranscription
+        .customVocabulary;
+    };
+    const session = new FakeSession(
+      createProtocolSnapshot({ catalog: { speechVocabulary: ["Session", "Shared"] } }),
+    );
+    const { controller } = await createControllerHarness({
+      session,
+      deps: createMockDeps(spawn),
+      config: {
+        apiKeys: { google: "gemini-key" },
+        speech: { personalVocabulary: ["Shared", "Personal"] },
+      },
+      speechToTextDeps: { webSocketFactory },
+    });
+
+    try {
+      await controller.onUserInput("/listen");
+      session.snapshotValue = updateSnapshot(session.snapshotValue, {
+        catalog: { ...session.snapshotValue.catalog, speechVocabulary: ["Reloaded"] },
+      });
+      await controller.onUserInput("/reload");
+      await expect(readSentVocabulary(sockets[0])).resolves.toEqual([
+        "Session",
+        "Shared",
+        "Personal",
+      ]);
+
+      await controller.cancelListenCapture();
+      await controller.onUserInput("/listen");
+      await expect(readSentVocabulary(sockets[1])).resolves.toEqual([
+        "Reloaded",
+        "Shared",
+        "Personal",
+      ]);
+      await controller.dispose();
+    } finally {
+      await rm(audioPath, { force: true });
+    }
+  });
+
   it("deletes retained voice input when a new recording replaces it", async () => {
     const retainedPath = join(tmpdir(), `tau-session-listen-replaced-${Date.now()}.wav`);
     const nextPath = join(tmpdir(), `tau-session-listen-next-${Date.now()}.wav`);
@@ -7010,6 +7188,7 @@ describe("SessionChatController", () => {
           discoveredSkills: [],
           prompts: [],
           modelResolver: resolveModel,
+          config: { mcpServers: {}, speechVocabulary: [] },
         },
         environment: { now: () => Date.now() },
         executionEnvironmentResolver: { resolve: async () => environment },
@@ -7524,6 +7703,7 @@ describe("SessionChatController", () => {
     const createSession = vi.fn(async () => nextSession);
     const view = new FakeView();
     const controller = new SessionChatController({
+      config: EMPTY_CLIENT_CONFIG,
       view,
       session,
       snapshot: await session.snapshot(),
@@ -7595,6 +7775,7 @@ describe("SessionChatController", () => {
     });
     const view = new FakeView();
     const controller = new SessionChatController({
+      config: EMPTY_CLIENT_CONFIG,
       view,
       session,
       snapshot: await session.snapshot(),
@@ -7653,6 +7834,7 @@ describe("SessionChatController", () => {
     });
     const view = new FakeView();
     const controller = new SessionChatController({
+      config: EMPTY_CLIENT_CONFIG,
       view,
       session,
       snapshot: await session.snapshot(),
@@ -7683,6 +7865,7 @@ describe("SessionChatController", () => {
     const createSession = vi.fn(async () => await sessionCreated.promise);
     const view = new FakeView();
     const controller = new SessionChatController({
+      config: EMPTY_CLIENT_CONFIG,
       view,
       session,
       snapshot: await session.snapshot(),
@@ -7720,6 +7903,7 @@ describe("SessionChatController", () => {
     const createSession = vi.fn(async () => nextSession);
     const view = new FakeView();
     const controller = new SessionChatController({
+      config: EMPTY_CLIENT_CONFIG,
       view,
       session,
       snapshot: await session.snapshot(),

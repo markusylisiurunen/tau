@@ -105,6 +105,15 @@ Unknown fields are removed without a warning, both at the top level and inside n
 
 This is valid JSON but sets nothing, because `defaultPersnoa` is not a known field. Check edited keys against the [configuration reference](config-reference.md), especially when no warning appears.
 
+### See configuration warnings
+
+Where warnings appear depends on how the session was loaded:
+
+- `tau` prints warnings for its startup directory before opening the TUI. It shows warnings for other sessions it loads in the transcript.
+- `tau serve` and `tau telegram` write warnings for each session they create or recover to standard error, as JSON.
+- An in-process [Node SDK](node-sdk.md) client receives them through `onDiagnostic`.
+- `/reload` and `session.reload` return warnings for the current session, also in an attached client.
+
 ## Make a safe edit
 
 First find out what reads the setting, and on which machine, `cwd`, and home. Then choose the narrowest level that works:
@@ -140,13 +149,15 @@ Tau loads client configuration before opening the TUI. Restart the local TUI or 
 
 - `defaultTheme`
 - `clientTools` and `enabledClientTools`
+- `speech.voiceId` and `speech.recordingShortcut`
+- the client's global `speech.vocabulary` terms
 - client environment variables
 
 `/theme:<id>` changes only the current client's appearance. Themes are not saved in the session.
 
 ### Current session runtime
 
-When no turn is running, `/reload` reads configuration and content again from the execution environment. It updates the session's runtime configuration, model catalog, personas, prompts, skills, the selected persona's definition, and project context. It also reports warnings and refreshes the session catalog.
+When no turn is running, `/reload` reads configuration and content again from the execution environment. It updates the session's runtime configuration, model catalog, personas, prompts, skills, the selected persona's definition, and project context. It also reports warnings and refreshes the session catalog, including its speech vocabulary. MCP server definitions stay as they were when the host loaded the session, and reload warns if the definitions on disk differ. See [`mcpServers`](config-reference.md#mcpservers).
 
 The session keeps its current persona if that persona still exists. Otherwise Tau picks the first available persona. Changing `defaultPersona` does not switch an existing session on reload. It applies to new sessions, unless a CLI flag or creation request chooses another persona.
 
@@ -166,7 +177,7 @@ For `tau serve`, make the changes on the host machine and restart the server. Re
 
 Some settings apply only when something new is created. `defaultPersona` and startup persona flags choose the persona of a new session. The execution environment's kind, identity, `cwd`, and home are fixed when the session is created or recovered.
 
-The Telegram runner loads its speech provider and its runner config at startup. Restart it after changing speech, bot startup settings, presets, projects, routing, or workspace preparation.
+The Telegram runner loads its speech provider and its runner config at startup. Restart it after changing its voice, its global speech vocabulary, bot startup settings, presets, projects, routing, or workspace preparation.
 
 - Workspace-preparation changes apply when a managed workspace is created or reconstructed. Restarting does not change a preserved workspace.
 - Command client tools are chosen when the runner creates the client for a session. Changes apply to new sessions, and also to existing sessions when a runner restart recovers them.

@@ -22,7 +22,7 @@ Project and global content can change which persona ids exist. A configured defa
 | --- | --- | --- | --- | --- |
 | `apiKeys` | Object of string values | Global only | Provider-keyed map | Owning host or feature process; restart after changes |
 | `defaultPersona` | Non-empty string | Global, project | Most-specific wins | Session host; new session |
-| `speech` | Object with optional `voiceId`, `recordingShortcut`, and `vocabulary` | Global, project | Merge by field; vocabulary is additive | TUI client or Telegram runner; process restart |
+| `speech` | Object with optional `voiceId`, `recordingShortcut`, and `vocabulary` | Global, project | Merge by field; vocabulary is additive | `voiceId` and `recordingShortcut`: TUI client or Telegram runner; process restart. `vocabulary`: session host; `/reload` or new session. Global `vocabulary` terms are also read by the client; process restart |
 | `defaultTheme` | Non-empty string | Global, project | Most-specific wins | TUI client; client restart |
 | `markdownExport` | Object with `url` and optional `token`, `tokenEnv` | Global only | One global object | TUI client; client restart |
 | `clientTools` | Array of objects | Global only | One global definition list | Owning client; TUI restart or new Telegram session client |
@@ -31,7 +31,7 @@ Project and global content can change which persona ids exist. A configured defa
 | `modelSystemNotices` | String map | Global, project | Merge by model target | Session runtime; `/reload`, affects later inputs |
 | `flySprites` | Object | Global, project | Merge connection fields | Host startup; host restart |
 | `history` | Object | Global only | One global object | Host startup; host restart |
-| `mcpServers` | Object keyed by server name | Global and project | Merge names; nearer entry replaces | Host startup; host restart |
+| `mcpServers` | Object keyed by server name | Global and project | Merge names; nearer entry replaces | Session host, local sessions only; next time the host loads the session |
 
 Unknown fields are removed without a warning. Wrong types and invalid values produce warnings, and Tau continues with the valid fields. A field at a level where it is not allowed is rejected.
 
@@ -177,7 +177,19 @@ Authentication, permission, rate-limit, and network errors during voice lookup d
 
 Speech uses Eleven v4 Turbo, the delivery note `[Brisk but relaxed, speaking naturally to a colleague]`, and a 1.15× tempo adjustment. GPT-6 Luna rewrites the text with reasoning disabled before ElevenLabs synthesis, so both OpenAI and ElevenLabs credentials are required. Voice Library API access may require a paid ElevenLabs plan, and shared voices can become unavailable.
 
-The TUI reads these speech settings from its own client configuration, including project configuration discovered from its startup directory, also when attached to a remote host. It does not load vocabulary from the remote session's repository. Telegram reads it from the runner's startup configuration, not from session workspaces. Restart the respective process after changes. This setting does not affect the explicit voices supplied to `tau tool speech-generate`.
+`voiceId` and `recordingShortcut` come from the client's own configuration. The TUI reads them from its startup directory's configuration, also when attached to a remote host, and Telegram reads `voiceId` from the runner's startup configuration. Restart the respective process after changes. `voiceId` does not affect the explicit voices supplied to `tau tool speech-generate`.
+
+Vocabulary follows the session. The host resolves it from the global and project levels of the session's working directory, on the execution environment. The client that transcribes the audio then adds the terms from its own global configuration, after the session's terms. Project configuration in the client's startup directory is not used. For example:
+
+| Location | `vocabulary` |
+| --- | --- |
+| Global config on the session's machine | `["Team"]` |
+| `.tau/config.json` in the session's project | `["Ledger"]` |
+| Global config on the machine running `tau attach` | `["Personal"]` |
+| `.tau/config.json` where `tau attach` started | `["Notes"]` |
+| **Terms used for this session** | `["Ledger", "Team", "Personal"]` |
+
+A client adds its global terms only when it started inside its user's home, because that is when it reads the global level. See [configuration](configuration.md). Run `/reload` after changing the session's terms, and restart the client after changing its global terms.
 
 ### `history`
 
@@ -202,13 +214,15 @@ Tau uses the first key it finds: `TAU_HISTORY_API_KEY`, then the variable named 
 
 ### `mcpServers`
 
-The host reads MCP servers once at startup, from the global config and the project levels of the directory where the host was launched.
+Each session on a local execution environment uses the servers from the global config and project levels of its own working directory. The directory where the host was launched does not choose them, so `tau`, `tau serve`, the SDK, and Telegram behave the same way.
 
 - Server names add up across levels. A nearer definition replaces the whole entry with the same name, including credentials.
 - Set `enabled: false` to turn off an inherited server.
-- All sessions on the host share the same servers. Subagents have their parent's access, even in another working directory.
-- Configuration in a session's execution environment never adds servers.
-- Restart the host after changing definitions or static credentials. `/reload` does not reload servers. OAuth credentials updated through `tau mcp login` take effect without restarting.
+- The global level applies only when the session's working directory is inside the home directory. See [configuration](configuration.md).
+- Each session has its own servers and connections. Subagents use their parent's, even in another working directory.
+- A session on a remote execution environment, such as a Fly Sprite, has no MCP servers. Tau does not use definitions from that environment or from the host. Servers would run on the host, and Tau cannot tell which of them expose the host's files. [Security](security.md#trust-mcp-servers) explains the trade-off.
+- The host reads definitions when it creates or recovers a session, and they stay fixed while the session is loaded. `/reload` does not change them, but it warns if the definitions on disk differ. To apply a change, start a new session, or reopen the session after the host has unloaded it. The host unloads a session when its last client has detached and its work has finished, and when the host shuts down.
+- Restart the host after changing the environment variables that servers use. OAuth credentials updated through `tau mcp login` take effect without restarting.
 
 ```json
 {
@@ -243,7 +257,7 @@ Stdio executables run directly, without a shell. Bare commands resolve through t
 
 Values in `env` and `headers` can reference host environment variables as `${NAME}`. A missing variable makes the connection fail. Command substitution is not supported. Stdio servers inherit the host environment, and `env` overrides matching names. Keep secrets in the host environment instead of committing them to JSON.
 
-An invalid entry is skipped with a diagnostic, and the other servers stay configured. HTTP OAuth sign-in is available through `tau mcp login`; see [credentials](credentials.md#mcp-oauth). MCP prompts, subscriptions, elicitation, sampling, execution-environment servers, and user approval dialogs are not supported. See [code mode](code-mode.md#capabilities) for discovery, calls, and result handling.
+An invalid entry is skipped with a [configuration warning](configuration.md#see-configuration-warnings), and the other servers stay configured. HTTP OAuth sign-in is available through `tau mcp login`; see [credentials](credentials.md#mcp-oauth). MCP prompts, subscriptions, elicitation, sampling, execution-environment servers, and user approval dialogs are not supported. See [code mode](code-mode.md#capabilities) for discovery, calls, and result handling.
 
 ## TUI presentation and diff review
 

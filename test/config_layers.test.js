@@ -107,7 +107,7 @@ describe("config paths", () => {
       const runtime = await loadRuntimeConfig(repo, deps);
 
       expect(runtime.themes).toEqual(builtinThemes);
-      expect(runtime.config.defaultTheme).toBe("azure");
+      expect(runtime.bootstrap.client.defaultTheme).toBe("azure");
       expect(runtime.warnings).toEqual([]);
       expect(inspectedPaths.some((path) => path.includes("/themes"))).toBe(false);
       expect(runtime.prompts).toEqual([]);

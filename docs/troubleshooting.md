@@ -61,10 +61,11 @@ Run `tau --debug` from the intended directory for a new local startup. For a run
 | Change | How to apply |
 | --- | --- |
 | Session configuration and content | `/reload` while idle |
-| Theme, speech, or TUI client tools | Restart `tau` or `tau attach` |
+| MCP server definitions | Start a new session, or reopen the session after the host has unloaded it |
+| Theme, voice, recording shortcut, personal speech vocabulary, or TUI client tools | Restart `tau` or `tau attach` |
 | Host environment, `apiKeys`, history, hosted environments, listener, or Tau version | Restart the host |
 | Default persona or execution environment | Create a new session if it must change |
-| Telegram config, routing, speech, or workspaces | Restart the runner |
+| Telegram config, routing, voice, personal speech vocabulary, or workspaces | Restart the runner |
 
 ## `/reload` is unavailable, refused, or not enough
 
@@ -73,7 +74,8 @@ Run `tau --debug` from the intended directory for a new local startup. For a run
 Reload updates configuration, personas, prompts, skills, `AGENTS.md` context, and host tools for later turns. It does not:
 
 - change the execution environment, its `cwd`, or its home;
-- reload an attached client's themes, speech settings, or tools;
+- change the session's MCP servers;
+- reload an attached client's themes, voice, recording shortcut, personal speech vocabulary, or tools;
 - read environment variables again in a running process;
 - reload the host's history service or hosted environment settings;
 - update Tau's code or built-in documentation; or

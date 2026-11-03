@@ -34,7 +34,7 @@ Trusting a repository therefore means trusting this content. Before using a repo
 - `enabledClientTools`, which can turn on commands from your global configuration; and
 - provision scripts or other repository automation used by integrations such as Telegram.
 
-Project configuration cannot define client tool commands. It can only select commands defined in global configuration. A repository therefore cannot add a new process to your machine, but a selected command can still do anything it was written to do.
+Project configuration cannot define client tool commands. It can only select commands defined in global configuration. A repository therefore cannot add a new client tool command to your machine, but a selected command can still do anything it was written to do. MCP servers follow different rules: [project configuration can define them](#trust-mcp-servers).
 
 `--no-agent-context-files` turns off `AGENTS.md` loading and the list of nested `AGENTS.md` files. Project configuration, personas, skills, and tools still load. `--no-client-tools` turns off TUI client tools, not host tools. Neither flag is a general safe mode.
 
@@ -114,7 +114,11 @@ The `history` API is read-only, but it can see transcripts from every repository
 
 ## Trust MCP servers
 
-MCP servers come from the global and project configuration of the directory where the host was launched. Launching a host inside a repository lets that repository's configuration start commands on the host and use host credentials, with no approval step. MCP is available to every session on that host whose persona allows `mcp`, and to their subagents. It is not separated per repository or client. Configuration in a session's execution environment cannot add servers.
+A session on a local execution environment uses the MCP servers from the global and project configuration of its working directory, if its persona allows `mcp`. Its subagents use the same servers. Opening a session in a repository therefore lets that repository's `.tau/config.json` start commands on the host and use host credentials, with no approval step. This also applies to repositories that Telegram prepares and to directories that a WebSocket client chooses. Review a project's configuration before you open a session in it.
+
+Anyone who can write a project's configuration can use this authority, including the agent. If the agent adds a server to `.tau/config.json`, that server becomes available the next time a session loads that configuration, for example after recovery. Tau removes secret-like variables from [Bash commands](#understand-environment-sanitization), but a stdio server inherits the full host environment. Definitions can also put any host environment variable into `env` or `headers` with `${NAME}`, and send it to the configured command or URL.
+
+A session on a remote execution environment has no MCP servers, including servers configured on the host. Servers run on the host, so they could expose the host's files to a session that should see only its own machine, and neither the transport type nor a server's description shows whether they do. Configuration on the remote machine therefore cannot start commands on the host. The cost is that remote sessions also lose servers that only call an external service. This rule does not cover everything outside the remote machine: [Claude Code subagents](subagents.md#claude-code-subagents) use their own MCP configuration on that machine, and an attached client can still offer [command tools](client-tools.md) that run on the client's machine.
 
 A stdio MCP server is trusted code on the host. It runs outside the code-mode sandbox with the host account's file and process permissions and its full environment, including credentials. Review the executable and arguments before configuring a server. HTTP servers receive the configured headers and the arguments sent to their tools. Use HTTPS for remote servers and give them only the access they need.
 
@@ -122,7 +126,7 @@ MCP has no confirmation step. Tools can change external systems or host resource
 
 How a stdio server shuts down depends on the MCP transport. Child processes that ignore `SIGTERM` can outlive the server, so do not rely on shutdown to stop untrusted server processes.
 
-The execution environment does not contain an MCP server that runs on the host. A server that exposes host files or commands gives the agent access to the host, even when Bash runs in a remote sandbox. If that access is not acceptable, remove `mcp` from the persona or disable the server. Connections and credentials stay outside the model's JavaScript, but the server decides what its tools return.
+A server that exposes host files or commands gives the agent that access. If that access is not acceptable, remove `mcp` from the persona or disable the server. Connections and credentials stay outside the model's JavaScript, but the server decides what its tools return.
 
 ## Protect remote session transports
 

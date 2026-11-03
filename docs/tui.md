@@ -27,7 +27,9 @@ printf 'summarize the current changes' | tau
 
 Use `tau attach` for a session hosted elsewhere. The terminal, themes, clipboard, speech commands, built-in diff review tool, and command client tools stay on the attaching machine. Bash tools, file access, project configuration, and model calls use the session's execution environment. See [remote sessions](remote-sessions.md) for connecting and creating sessions.
 
-The startup summary lists discovered skills, project context files, configured client tools, and enabled MCP servers. MCP servers are shown as configured, not connected, because connections open on first use. In attached sessions, the MCP list comes from the host. Empty sections are left out.
+The startup summary lists discovered skills, project context files, configured client tools, and enabled MCP servers. MCP servers are shown as configured, not connected, because connections open on first use. The MCP list comes from the session, also in attached sessions, and a session on a remote execution environment shows MCP as unavailable. Empty sections are left out.
+
+In a local TUI, configuration problems found when the host loads a session appear in the transcript. An attached TUI shows them when you run `/reload`.
 
 ## Work in the editor
 
@@ -238,7 +240,7 @@ A submitted draft that contains dictation carries hidden guidance saying that so
 
 The editor is locked from the start of recording until finalization. Escape cancels voice input at any stage: startup, recording, microphone shutdown, transcription, or retry. Cancelling removes the preview at once, restores the original draft, and unlocks the editor without inserting or submitting anything. The cancelled recording is deleted once pending file work finishes. A failure also restores the original draft. A recording or retry cannot start while another editor update is pending.
 
-For live transcription, GPT-6 Luna, with reasoning disabled, extracts spelling hints from the recent conversation while recording starts. Tau buffers audio until the transcription session is ready, then streams it. Gemini uses `gemini-3.5-transcribe-live` in verbatim mode with English (`en-US`) and Finnish (`fi-FI`) language hints. Missing OpenAI credentials or a failed hint extraction do not stop transcription. Configured [`speech.vocabulary`](config-reference.md#speech) terms take priority over extracted hints and remain available when extraction fails.
+For live transcription, GPT-6 Luna, with reasoning disabled, extracts spelling hints from the recent conversation while recording starts. Tau buffers audio until the transcription session is ready, then streams it. Gemini uses `gemini-3.5-transcribe-live` in verbatim mode with English (`en-US`) and Finnish (`fi-FI`) language hints. Missing OpenAI credentials or a failed hint extraction do not stop transcription. The session's [`speech.vocabulary`](config-reference.md#speech) terms, followed by the terms in the TUI's own global configuration, take priority over extracted hints and remain available when extraction fails.
 
 If transcription fails, Tau keeps the local WAV file and reports its path:
 
@@ -279,9 +281,9 @@ See [`speech` configuration](config-reference.md#speech) for the default Maisie 
 
 ## Reload the right component
 
-Run `/reload` while idle after changing configuration, personas, prompts, skills, or `AGENTS.md` content in the execution environment. The host reads them again from the session's working directory, keeps the current persona if it still exists, and otherwise selects the first available persona. Warnings appear in the transcript.
+Run `/reload` while idle after changing configuration, personas, prompts, skills, or `AGENTS.md` content in the execution environment. The host reads them again from the session's working directory, keeps the current persona if it still exists, and otherwise selects the first available persona. Warnings appear in the transcript. This also refreshes the session's speech vocabulary. MCP server definitions do not change on reload; a warning tells you when they differ, and [the configuration reference](config-reference.md#mcpservers) explains how to apply them.
 
-Restart the TUI instead after changing themes, speech settings, or configured client tools. Codex auth storage is read again on every new request. Restart the host after changing its Tau version, environment variables, `apiKeys`, WebSocket listener, or hosted execution environment settings. [Credentials](credentials.md) and [remote sessions](remote-sessions.md) explain which process owns what.
+Restart the TUI instead after changing themes, voice, recording shortcut, personal speech vocabulary, or configured client tools. Codex auth storage is read again on every new request. Restart the host after changing its Tau version, environment variables, `apiKeys`, WebSocket listener, or hosted execution environment settings. [Credentials](credentials.md) and [remote sessions](remote-sessions.md) explain which process owns what.
 
 ## Common mistakes
 

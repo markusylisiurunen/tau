@@ -158,9 +158,10 @@ Each kind of change belongs to a different process:
 | Change | Action |
 | --- | --- |
 | Project config, personas, prompts, skills, or AGENTS.md in the execution environment | Wait for idle, then run `/reload`. |
+| MCP server definitions | Start a new session, or reopen the session after the host has unloaded it. See [`mcpServers`](config-reference.md#mcpservers). |
 | Global model `apiKeys` on the host | Restart the host. |
 | Codex auth changed with `tau auth` | No restart needed; every new request reads auth storage again. |
-| Attaching themes, speech config, or configured client tools | Restart `tau attach`. |
+| Attaching themes, voice, recording shortcut, personal speech vocabulary, or configured client tools | Restart `tau attach`. |
 | Host environment variables, history target, WebSocket listener, Fly Sprite connection, or host startup flags | Restart `tau serve`. |
 | Host Tau package, built-in tools, protocol, session recovery code, or built-in documentation | Upgrade and restart the host. |
 | TUI package, keybindings, rendering, local speech, or client-tool implementation | Upgrade and restart the attaching client. |

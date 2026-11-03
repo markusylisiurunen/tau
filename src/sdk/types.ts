@@ -161,6 +161,11 @@ export type TauSdkHostDiagnostic =
       pendingOperations: number;
       pendingBytes: number;
       message: string;
+    }
+  | {
+      event: "session_config_warnings";
+      cwd: string;
+      warnings: string[];
     };
 
 export type TauSdkClientOptions = TauSdkTransportClientOptions & {

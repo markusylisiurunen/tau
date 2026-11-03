@@ -1,5 +1,5 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
-import type { Config } from "../config/index.js";
+import type { SessionRuntimeSettings } from "../config/index.js";
 import { prependTauHiddenSystemMessages } from "./user_metadata.js";
 
 export function normalizeModelNoticeKey(provider: string, modelId: string): string {
@@ -7,7 +7,7 @@ export function normalizeModelNoticeKey(provider: string, modelId: string): stri
 }
 
 export function resolveModelNotice(
-  config: Config | undefined,
+  config: Pick<SessionRuntimeSettings, "modelSystemNotices"> | undefined,
   model: Model<Api>,
 ): string | undefined {
   const notices = config?.modelSystemNotices;

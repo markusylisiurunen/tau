@@ -50,13 +50,13 @@ type TauSdkClientOptions = {
 };
 ```
 
-`persona`, `reasoning`, and `noAgentContextFiles` apply to sessions created by this host. `connectTimeoutMs` defaults to 5,000 ms. Default initialization metadata is `{ client: { name: "tau-sdk", version: "1" } }`.
+`persona`, `reasoning`, and `noAgentContextFiles` apply to sessions created by this host. `persona` (an ID, optionally with `:<reasoning>`) must exist in the new session's directory, or creation fails. Recovered sessions keep their saved settings. `connectTimeoutMs` defaults to 5,000 ms. Default initialization metadata is `{ client: { name: "tau-sdk", version: "1" } }`.
 
-The in-process host never writes background diagnostics to stdout or stderr. Set `onDiagnostic` to receive them as structured objects and route them to your application's logging. `history_recording` reports delayed, dropped, or recovered local recording, with a session ID and pending operation and byte counts. `history_replication_failed` reports remote delivery failures. Neither stops agent work; see [history](history.md) for retry behavior and durability limits.
+The in-process host never writes background diagnostics to stdout or stderr. `onDiagnostic` receives them as structured objects. `history_recording` reports delayed, dropped, or recovered local recording, with a session ID and pending operation and byte counts. `history_replication_failed` reports remote delivery failures. Neither stops agent work; see [history](history.md) for retries and durability limits. `session_config_warnings` reports `cwd` and `warnings` when the host loads a session with invalid configuration or content. The session still starts, and an error thrown by `onDiagnostic` does not block it.
 
-By default, creating an in-process client starts one background check of the model catalog against `pi.dev`. The host loads `~/.config/tau/models-store.json` first, never refreshes on a timer, and keeps each session on the catalog it started with until `session.reload()`. Set `refreshModelCatalog: false` to skip this client's check, or set `TAU_OFFLINE` to skip automatic checks for the whole process. Neither removes an existing cache or blocks an explicit `tau models refresh`. See [models](models.md) for details and [security](security.md) for why the catalog is trusted.
+By default, an in-process client starts one background model catalog check against `pi.dev`. Each session keeps the catalog it started with until `session.reload()`. Set `refreshModelCatalog: false` to skip this client's check, or `TAU_OFFLINE` to skip automatic checks for the whole process. See [models](models.md) and [security](security.md).
 
-Closing this client saves live sessions and shuts down its host. It also cancels its catalog refresh and waits for it. A refresh shared with another in-process client continues until the last of them closes.
+Closing this client saves live sessions, shuts down its host, and cancels and waits for its catalog refresh. A refresh shared with another in-process client continues until the last of them closes.
 
 ### Connect to `tau serve`
 

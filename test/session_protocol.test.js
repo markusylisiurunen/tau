@@ -164,7 +164,8 @@ describe("session_protocol", () => {
     const snapshot = createProtocolSnapshot();
     const next = structuredClone(snapshot);
     next.revision += 1;
-    next.catalog.mcpServers = ["github", "linear"];
+    next.catalog.mcp = { status: "available", servers: ["github", "linear"] };
+    next.catalog.speechVocabulary = ["Tau", "日本語"];
     expect(validateSessionProtocolResult("session.snapshot", next).ok).toBe(true);
     const delta = createSessionProtocolDeltaMessage({
       sessionId: snapshot.sessionId,
@@ -174,14 +175,48 @@ describe("session_protocol", () => {
       delta: { type: "snapshot.reset", snapshot: next },
     });
     expect(applySessionProtocolDelta(snapshot, delta)).toEqual(next);
-    for (const mcpServers of [undefined, [""], [{ name: "github" }]]) {
+    for (const mcp of [
+      undefined,
+      { status: "available", servers: [""] },
+      { status: "unavailable", reason: "remote-execution", servers: [] },
+    ]) {
       expect(
         validateSessionProtocolResult("session.snapshot", {
           ...snapshot,
-          catalog: { ...snapshot.catalog, mcpServers },
+          catalog: { ...snapshot.catalog, mcp },
         }).ok,
       ).toBe(false);
     }
+  });
+
+  it("bounds session vocabulary and rejects malformed MCP availability", () => {
+    const snapshot = createProtocolSnapshot();
+    for (const speechVocabulary of [
+      undefined,
+      [""],
+      ["<term>"],
+      ["a\nb"],
+      ["語".repeat(101)],
+      Array(101).fill("term"),
+    ]) {
+      expect(
+        validateSessionProtocolResult("session.snapshot", {
+          ...snapshot,
+          catalog: { ...snapshot.catalog, speechVocabulary },
+        }).ok,
+      ).toBe(false);
+    }
+    const speechVocabulary = Array.from({ length: 100 }, (_, i) => `${i}${"語".repeat(98)}`);
+    expect(
+      validateSessionProtocolResult("session.snapshot", {
+        ...snapshot,
+        catalog: {
+          ...snapshot.catalog,
+          speechVocabulary,
+          mcp: { status: "unavailable", reason: "remote-execution" },
+        },
+      }).ok,
+    ).toBe(true);
   });
 
   it("uses one Fly connection and requires canonical labeled prompt metadata", () => {

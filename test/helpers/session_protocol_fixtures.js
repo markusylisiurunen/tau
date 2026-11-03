@@ -135,7 +135,8 @@ export function createProtocolSnapshot(overrides = {}) {
         label: prompt.label,
       })),
       skills: catalog.skills ?? [],
-      mcpServers: catalog.mcpServers ?? [],
+      mcp: catalog.mcp ?? { status: "available", servers: [] },
+      speechVocabulary: catalog.speechVocabulary ?? [],
     },
     executionEnvironment: overrides.executionEnvironment ?? {
       kind: "local",

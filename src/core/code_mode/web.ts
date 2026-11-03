@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { z } from "zod";
-import { type Config, getExaApiKey } from "../config/index.js";
+import { type ApiKeysConfig, getExaApiKey } from "../config/index.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
 import { discoverAgentContent } from "../tools/web_discovery.js";
 import { formatZodError } from "../utils/zod.js";
@@ -409,7 +409,7 @@ const defaultDeps: WebToolDeps = { createExaClient, discover: discoverAgentConte
 
 export function createWebCapability(
   backend: ToolExecutionBackend,
-  config: Config,
+  config: ApiKeysConfig,
   deps: WebToolDeps = defaultDeps,
 ): CodeModeCapability {
   let exa: ExaClient | undefined;

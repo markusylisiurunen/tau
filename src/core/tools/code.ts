@@ -19,7 +19,7 @@ import { createMcpCapability } from "../code_mode/mcp.js";
 import { createModelsCapability } from "../code_mode/models.js";
 import { bindCodeModeSdk } from "../code_mode/sdk.js";
 import { createWebCapability } from "../code_mode/web.js";
-import type { Config } from "../config/index.js";
+import type { SessionRuntimeSettings } from "../config/index.js";
 import type { HistoryQuery } from "../history/types.js";
 import type { McpManager } from "../mcp/manager.js";
 import { formatZodError } from "../utils/zod.js";
@@ -81,7 +81,7 @@ export function createCodeToolDefinition(options: {
   backend: ToolExecutionBackend;
   cwd: string;
   allowedTools: readonly string[];
-  config: Config;
+  config: SessionRuntimeSettings;
   bashJobs: BashJobRegistry;
   codeJobs: CodeJobRegistry;
   history?: HistoryQuery;

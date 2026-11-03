@@ -1,5 +1,5 @@
 import { createDefaultConfigDeps } from "../config/deps.js";
-import { loadConfig } from "../config/schema.js";
+import { loadHostConfig } from "../config/ownership.js";
 import { resolveHistoryRemoteTarget } from "./config.js";
 import { HistoryManager } from "./history_manager.js";
 import { getDefaultHistoryDatabasePath, LocalHistoryStore } from "./local_history_store.js";
@@ -47,7 +47,7 @@ export async function runHistoryCommand(
         throw new Error("tau history retry requires a session ID");
       }
       const deps = createDefaultConfigDeps();
-      const config = loadConfig(process.cwd(), deps);
+      const config = loadHostConfig(process.cwd(), deps);
       if (!config.history) throw new Error("remote history is not configured on this host");
       const endpoint = config.history.endpoint;
       const target = sessionId ? resolveHistoryRemoteTarget(config, options.env) : undefined;

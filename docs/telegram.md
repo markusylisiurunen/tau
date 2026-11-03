@@ -104,7 +104,7 @@ Each project tells the runner where a session works. There are three kinds:
 
 ## Normal Tau configuration inside workspaces
 
-After preparation, Tau creates an ordinary local session in the workspace. It reads `~/.config/tau` and the `.tau` directories above the workspace as usual, so personas, prompts, skills, project context, host tools, and other settings work as in the TUI.
+After preparation, Tau creates an ordinary local session in the workspace. It reads `~/.config/tau` and the `.tau` directories above the workspace as usual, so personas, prompts, skills, project context, host tools, [MCP servers](config-reference.md#mcpservers), and other settings work as in the TUI.
 
 The bot's `startup` selects a new session's settings, as described in [startup and presets](#startup-and-presets).
 
@@ -216,7 +216,7 @@ In a DM, ordinary text goes to the active session. If none is selected but the c
 
 In an allowed group, a message starts a turn only when it mentions the bot's username. Other text and captions are kept as background context, labeled with their sender. At the next mention, Tau includes up to the 50 most recent kept messages since the last turn, and clears them once the turn is submitted.
 
-Group context can include attachment paths, audio transcripts, and processing errors. The model receives it as untrusted input. `allowedUserIds` stops an unlisted sender from starting work, but their messages can still become context in an allowed group.
+Group context can include attachment paths, audio transcripts, and processing errors. The model receives it as untrusted input.
 
 Text and transcribed audio either start or steer a turn. When the session is idle, the message starts a normal turn. When Tau is working, the message steers the running turn: the turn stops at its next safe point and continues with the new message. Further steering is batched as usual. Telegram has no command to queue a separate turn. Use `/interrupt` to stop instead of steering.
 
@@ -232,7 +232,7 @@ Sending a file only queues it, and its caption is kept as metadata. The next tex
 
 Files are stored in the execution environment's temporary directory, so system cleanup can remove them. Queued files and group context are cleared on shutdown. Treat file contents and metadata as untrusted.
 
-Voice transcription uses Gemini with `GEMINI_API_KEY`, or else `apiKeys.google`. Optional spelling hints use GPT-6 Luna (reasoning disabled) with OpenAI credentials. The runner's [`speech.vocabulary`](config-reference.md#speech) terms precede extracted hints and work without OpenAI credentials or conversation context. Gemini transcribes verbatim with `gemini-3.5-transcribe`, using English (`en-US`) and Finnish (`fi-FI`) hints, and Tau tries to delete the uploaded file afterward. Receiving files needs no Google key. See [credentials](credentials.md).
+Voice transcription uses Gemini with `GEMINI_API_KEY`, or else `apiKeys.google`. Optional spelling hints use GPT-6 Luna (reasoning disabled) with OpenAI credentials. The session's [`speech.vocabulary`](config-reference.md#speech) terms, then the runner's global terms, precede extracted hints and work without OpenAI credentials or conversation context. Without a selected session, Tau does not download or transcribe audio. Transcription fails if the session is not ready. Gemini transcribes verbatim with `gemini-3.5-transcribe`, using English (`en-US`) and Finnish (`fi-FI`) hints, and Tau tries to delete the uploaded file afterward. Receiving files needs no Google key. See [credentials](credentials.md).
 
 `/tts_on` rewrites text with `gpt-6-luna` (reasoning disabled) and generates speech with Eleven v4 Turbo. It requires both OpenAI and ElevenLabs credentials and runner `ffmpeg` with Opus. Voice notes use brisk delivery and 1.15× speed. See [`speech` configuration](config-reference.md#speech) for default and custom voice selection. Source and rewritten text are limited to 10,000 Unicode characters each, and audio to 32 MiB. Rewriting times out after one minute and the whole job after five. Jobs are not saved. On failure, the bot sends `voice response failed. please try again.`; the text reply is unaffected and details go to the logs.
 
@@ -281,7 +281,7 @@ Do not verify bot tokens, provider keys, Access secrets, transcript contents, or
 
 **Audio or an attachment fails.** The reply or runner log names the step that failed: download, saving, format, or transcription. Check that Telegram can deliver the file to the bot, the type is supported, the runner can write to its temporary directory, and Gemini accepts the media type. Transcription needs `GEMINI_API_KEY` or `apiKeys.google` for the runner process; restart the runner after setting it. Changing a workspace's environment does not affect the runner. Do not log media or transcripts to debug this.
 
-**Voice replies fail.** `/tts_on` needs OpenAI and ElevenLabs credentials and `ffmpeg` with Opus on the runner. Check [`speech.voiceId`](config-reference.md#speech) if a configured voice is unavailable. The bot replies `voice response failed. please try again.` and logs the details; the text reply is still delivered.
+**Voice replies fail.** `/tts_on` needs OpenAI and ElevenLabs credentials and `ffmpeg` with Opus on the runner. Check [`speech.voiceId`](config-reference.md#speech) if a configured voice is unavailable.
 
 **Replies or notifications arrive late or not at all.** Each outgoing message part has a deadline and is retried twice on retryable errors. Tau honors Telegram's `retry_after`, and later notifications in a chat wait for earlier ones. Long replies are split, so only a later part may have failed. The runner log shows the method, status, retry class, attempt, chat, session, and message. Fix network, rate-limit, token, or chat permission problems on the runner. Before resending by hand, check which parts arrived. A delivery failure is not a failed turn, and notifications about failed or blocked turns are sent again after a restart. Never fix delivery by editing runner state.
 

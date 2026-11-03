@@ -13,13 +13,19 @@ import {
   printHelp,
 } from "./core/cli.js";
 import { createDefaultConfigDeps } from "./core/config/deps.js";
-import type { RuntimeBootstrap, RuntimeConfigResult } from "./core/config/runtime.js";
+import {
+  type ClientConfig,
+  type HostConfig,
+  loadClientConfig,
+  loadHostConfig,
+  loadSessionConfig,
+  type SessionConfig,
+} from "./core/config/ownership.js";
+import type { RuntimeBootstrap } from "./core/config/runtime.js";
 import { loadRuntimeBootstrap, loadRuntimeConfig } from "./core/config/runtime.js";
-import type { Config } from "./core/config/schema.js";
-import { loadConfig } from "./core/config/schema.js";
 import type { ThemeDefinition } from "./core/config/theme_variants.js";
 import { resolveHistoryRemoteTarget } from "./core/history/config.js";
-import { type HistoryDiagnostic, HistoryManager } from "./core/history/history_manager.js";
+import { HistoryManager } from "./core/history/history_manager.js";
 import { getDefaultHistoryDatabasePath } from "./core/history/local_history_store.js";
 import {
   getDefaultModelCatalogStorePath,
@@ -33,13 +39,15 @@ import type { Persona, ReasoningEffort, Skill } from "./core/types.js";
 import { CompositeExecutionEnvironmentResolver } from "./execution/execution_environment.js";
 import { LocalExecutionEnvironmentResolver } from "./execution/local_execution_environment.js";
 import { LocalSessionHost } from "./host/local_session_host.js";
+import { resolveSessionBootstrap } from "./host/session_bootstrap.js";
 import type {
   SessionProtocolCreateParams,
   SessionProtocolExecutionEnvironmentInput,
 } from "./protocol/session_protocol.js";
 import { createTauSdkClientWithHostConfig } from "./sdk/local_client.js";
+import type { TauSdkHostDiagnostic } from "./sdk/types.js";
 import { FileSessionStore, getDefaultSessionStoreDirectory } from "./store/file_session_store.js";
-import { createTuiClientTools, SessionChatApp } from "./tui/index.js";
+import { createTuiClientTools, HostDiagnosticRelay, SessionChatApp } from "./tui/index.js";
 import { createLocalTuiSessionAttributes } from "./tui/session_creation_attributes.js";
 import { detectTerminalColors } from "./tui/terminal_appearance.js";
 
@@ -56,7 +64,7 @@ function refreshRemoteModelCatalogAtStartup(): void {
   }
 }
 
-function reportHostDiagnostic(diagnostic: HistoryDiagnostic): void {
+function reportHostDiagnostic(diagnostic: TauSdkHostDiagnostic): void {
   process.stderr.write(`${JSON.stringify(diagnostic)}\n`);
 }
 
@@ -385,7 +393,9 @@ function parsePort(value: string): number {
 }
 
 // Load configuration + content from file
-let config: Config;
+let hostConfig: HostConfig;
+let clientConfig: ClientConfig;
+let launchSessionConfig: SessionConfig;
 
 async function readPipedStdin(): Promise<string | undefined> {
   if (process.stdin.isTTY) return undefined;
@@ -398,76 +408,9 @@ async function readPipedStdin(): Promise<string | undefined> {
   return data;
 }
 
-function clonePersonaForSession(persona: Persona): Persona {
-  return {
-    ...persona,
-    settings: { ...persona.settings },
-    allowedReasoningLevels: persona.allowedReasoningLevels
-      ? [...persona.allowedReasoningLevels]
-      : undefined,
-  };
-}
-
-async function resolveHostedSessionBootstrap(options: {
-  cli: CliOptions;
-  runtime: RuntimeConfigResult;
-  apiKeys: Config["apiKeys"];
-  cwd: string;
-}): Promise<{
-  persona: Persona;
-  discoveredSkills: Skill[];
-  personas: Persona[];
-  prompts: RuntimeConfigResult["prompts"];
-  modelResolver: RuntimeConfigResult["bootstrap"]["modelResolver"]["resolveModel"];
-  config: Config;
-}> {
-  const runtime = options.runtime;
-  if (runtime.personas.length === 0) {
-    throw new Error(
-      `no personas available for execution environment cwd '${options.cwd}'. add a custom persona or enable built-ins.`,
-    );
-  }
-
-  let personaId = options.cli.personaId;
-  let reasoningOverride = options.cli.reasoningOverride;
-  if (!personaId && runtime.config.defaultPersona) {
-    const parsedDefaultPersona = parsePersonaString(
-      runtime.config.defaultPersona,
-      runtime.personas,
-    );
-    personaId = parsedDefaultPersona.personaId;
-    if (reasoningOverride === undefined && parsedDefaultPersona.reasoning !== undefined) {
-      reasoningOverride = parsedDefaultPersona.reasoning;
-    }
-  }
-
-  const personaBase = personaId
-    ? runtime.personas.find((persona) => persona.id === personaId)
-    : runtime.personas[0];
-  if (!personaBase) {
-    throw new Error(
-      `persona '${personaId}' is not available for execution environment cwd '${options.cwd}'`,
-    );
-  }
-
-  const persona = clonePersonaForSession(personaBase);
-  if (reasoningOverride !== undefined) {
-    persona.settings.reasoning = reasoningOverride;
-  }
-
-  return {
-    persona,
-    discoveredSkills: runtime.skills,
-    personas: runtime.personas.map(clonePersonaForSession),
-    prompts: runtime.prompts,
-    modelResolver: runtime.bootstrap.modelResolver.resolveModel,
-    config: { ...runtime.config, apiKeys: options.apiKeys },
-  };
-}
-
 async function createLocalSessionHost(options: {
   cli: CliOptions;
-  config: Config;
+  config: HostConfig;
 }): Promise<LocalSessionHost> {
   const deps = createDefaultCoreDeps();
   const home = deps.env.home() || process.env.HOME || homedir();
@@ -496,7 +439,6 @@ async function createLocalSessionHost(options: {
       reportRecording: reportHostDiagnostic,
     }),
     historyRemote: resolveHistoryRemoteTarget(options.config),
-    mcpServers: options.config.mcpServers,
     executionEnvironmentResolver: new CompositeExecutionEnvironmentResolver(resolvers),
     includeAgentContext: !options.cli.noAgentContextFiles,
     getRemoteModelCatalog: () => remoteModelCatalog.snapshot(),
@@ -504,18 +446,18 @@ async function createLocalSessionHost(options: {
       now: () => deps.clock.now(),
     },
     deps,
-    resolveSessionBootstrap: async ({ executionEnvironment, remoteCatalog }) => {
-      const snapshot = executionEnvironment.snapshot();
-      const runtime = await executionEnvironment.resolveRuntimeConfig(snapshot.cwd, {
+    resolveSessionBootstrap: async ({ executionEnvironment, remoteCatalog, recovering }) =>
+      await resolveSessionBootstrap({
+        executionEnvironment,
         remoteCatalog,
-      });
-      return await resolveHostedSessionBootstrap({
-        cli: options.cli,
-        runtime,
-        apiKeys: options.config.apiKeys,
-        cwd: snapshot.cwd,
-      });
-    },
+        recovering,
+        hostApiKeys: options.config.apiKeys,
+        personaRequest: {
+          persona: options.cli.personaId,
+          reasoning: options.cli.reasoningOverride,
+        },
+        onDiagnostic: reportHostDiagnostic,
+      }),
   });
 }
 
@@ -525,6 +467,7 @@ let prompts: PromptTemplate[];
 let skills: Skill[];
 let themes: ThemeDefinition[] = [];
 let runtimeBootstrap: RuntimeBootstrap | undefined;
+let launchConfigWarnings: string[] = [];
 
 if (argv[0] === "mcp") {
   const { getAuthPath } = await import("./core/auth/auth_paths.js");
@@ -537,10 +480,9 @@ if (argv[0] === "mcp") {
     const command = parseMcpCliArgs(argv.slice(1));
     if (command.type === "help") console.log(mcpHelp);
     else {
-      const config = loadConfig(cwd, configDeps);
       await runMcpCommand({
         command,
-        servers: config.mcpServers ?? {},
+        servers: loadSessionConfig(cwd, configDeps).mcpServers,
         authPath: getAuthPath(hostHome),
         signal: controller.signal,
         log: console.log,
@@ -710,7 +652,7 @@ if (argv[0] === "telegram") {
     TelegramCliError,
   } = await import("./core/telegram/index.js");
   try {
-    const telegramConfig = loadConfig(cwd, configDeps);
+    const telegramHostConfig = loadHostConfig(cwd, configDeps);
     const telegramArgs = argv.slice(1);
     if (!telegramArgs.some((arg) => arg === "--help" || arg === "-h" || arg === "--check-config")) {
       refreshRemoteModelCatalogAtStartup();
@@ -718,11 +660,11 @@ if (argv[0] === "telegram") {
     await runTelegramCommand(telegramArgs, {
       cwd,
       env: process.env,
-      config: telegramConfig,
+      config: loadClientConfig(cwd, configDeps),
       createSessionClient: async (options) =>
         await createLocalTelegramSessionClient({
           client: options,
-          hostConfig: telegramConfig,
+          hostConfig: telegramHostConfig,
           configDeps,
           remoteModelCatalog,
           reportDiagnostic: reportHostDiagnostic,
@@ -745,11 +687,10 @@ if (argv[0] === "telegram") {
 if (argv[0] === "tool") {
   const { runToolCommand, ToolCliError } = await import("./core/tool/cli.js");
   try {
-    const toolConfig = loadConfig(cwd, configDeps);
     await runToolCommand(argv.slice(1), {
       cwd,
       env: process.env,
-      config: toolConfig,
+      config: loadHostConfig(cwd, configDeps),
     });
     process.exit(0);
   } catch (err) {
@@ -813,11 +754,14 @@ try {
     remoteCatalog: remoteModelCatalog.snapshot(),
   });
   runtimeBootstrap = runtime.bootstrap;
-  config = runtime.config;
+  hostConfig = runtime.bootstrap.host;
+  clientConfig = runtime.bootstrap.client;
+  launchSessionConfig = runtime.bootstrap.session;
   personas = runtime.personas;
   prompts = runtime.prompts;
   skills = runtime.skills;
   themes = runtime.themes;
+  launchConfigWarnings = runtime.warnings;
   if (runtime.warnings.length > 0) {
     // eslint-disable-next-line no-console
     console.error("config warnings:");
@@ -836,7 +780,9 @@ try {
   runtimeBootstrap = loadRuntimeBootstrap(cwd, configDeps, {
     remoteCatalog: remoteModelCatalog.snapshot(),
   });
-  config = runtimeBootstrap.config;
+  hostConfig = runtimeBootstrap.host;
+  clientConfig = runtimeBootstrap.client;
+  launchSessionConfig = runtimeBootstrap.session;
 
   const { virtualBundle } = runtimeBootstrap;
 
@@ -889,9 +835,9 @@ if (isAttachSubcommand) {
     authToken: attach.authToken ?? process.env.TAU_WS_AUTH_TOKEN,
     sessionSelection,
     terminalColors,
-    themeId: config.defaultTheme,
+    themeId: clientConfig.defaultTheme,
     themes,
-    config,
+    config: clientConfig,
     clientToolsEnabled: !attach.noClientTools,
   });
 
@@ -987,8 +933,8 @@ let reasoningOverride: ReasoningEffort | undefined = cli.reasoningOverride;
 
 if (cli.personaId) {
   initialPersonaId = cli.personaId;
-} else if (!isServeSubcommand && config.defaultPersona) {
-  const parsedDefaultPersona = parsePersonaString(config.defaultPersona, personas);
+} else if (!isServeSubcommand && launchSessionConfig.defaultPersona) {
+  const parsedDefaultPersona = parsePersonaString(launchSessionConfig.defaultPersona, personas);
   initialPersonaId = parsedDefaultPersona.personaId;
   if (
     reasoningOverride === undefined &&
@@ -1016,7 +962,7 @@ if (cli.debug) {
   const selectedPersona = initialPersonaId
     ? personas.find((persona) => persona.id === initialPersonaId)
     : personas[0];
-  const debugPersona = selectedPersona ? clonePersonaForSession(selectedPersona) : undefined;
+  const debugPersona = selectedPersona ? structuredClone(selectedPersona) : undefined;
   if (debugPersona && reasoningOverride !== undefined) {
     debugPersona.settings.reasoning = reasoningOverride;
   }
@@ -1038,7 +984,7 @@ if (cli.debug) {
       ? ToolCatalog.createDebugRegistry({
           backend: debugBackend,
           cwd,
-          config,
+          config: { ...launchSessionConfig, apiKeys: hostConfig.apiKeys },
           persona: debugPersona,
           modelResolver: runtimeBootstrap.modelResolver.resolveModel,
           history: HistoryManager.open(getDefaultHistoryDatabasePath()).query(),
@@ -1063,7 +1009,7 @@ if (cli.debug) {
 if (isServeSubcommand) {
   refreshRemoteModelCatalogAtStartup();
   const [sessionHost, { runWebSocketSessionServer }] = await Promise.all([
-    createLocalSessionHost({ cli, config }),
+    createLocalSessionHost({ cli, config: hostConfig }),
     import("./core/modes/websocket_server.js"),
   ]);
 
@@ -1114,38 +1060,31 @@ const initialUserMessage = await readPipedStdin();
 const terminalColors = detectTerminalColors();
 
 let sessionChatApp: SessionChatApp | undefined;
-const pendingHistoryDiagnostics: HistoryDiagnostic[] = [];
+const hostDiagnostics = new HostDiagnosticRelay({ cwd, warnings: launchConfigWarnings });
 const clientTools = createTuiClientTools({
   enabled: !cli.noClientTools,
   getController: () => sessionChatApp?.getController(),
-  commandTools: config.clientTools,
+  commandTools: clientConfig.clientTools,
 });
 refreshRemoteModelCatalogAtStartup();
 const sessionClient = await createTauSdkClientWithHostConfig(
   {
     cwd,
-    persona: initialPersonaId,
-    reasoning: reasoningOverride,
+    persona: cli.personaId,
+    reasoning: cli.reasoningOverride,
     noAgentContextFiles: cli.noAgentContextFiles,
     initialize: { client: { name: "tau-tui", version: "1" } },
     clientTools,
-    onDiagnostic: (diagnostic) => {
-      const controller = sessionChatApp?.getController();
-      if (controller) {
-        controller.showHistoryDiagnostic(diagnostic);
-      } else {
-        pendingHistoryDiagnostics.push(diagnostic);
-      }
-    },
+    onDiagnostic: (diagnostic) => hostDiagnostics.report(diagnostic),
   },
-  config,
+  hostConfig,
   { remoteModelCatalog },
 );
 const app = await SessionChatApp.open({
   client: sessionClient,
   configuredClientToolNames: cli.noClientTools
     ? []
-    : (config.clientTools ?? []).map((tool) => tool.name),
+    : (clientConfig.clientTools ?? []).map((tool) => tool.name),
   targetLabel: "in-process",
   sessionSelection: {
     mode: "create",
@@ -1158,14 +1097,12 @@ const app = await SessionChatApp.open({
   },
   themes,
   terminalColors,
-  themeId: config.defaultTheme,
+  themeId: clientConfig.defaultTheme,
   initialUserMessage,
-  config,
+  config: clientConfig,
 });
 sessionChatApp = app;
-for (const diagnostic of pendingHistoryDiagnostics.splice(0)) {
-  app.getController().showHistoryDiagnostic(diagnostic);
-}
+hostDiagnostics.attach(app.getController());
 
 let isShuttingDown = false;
 const shutdown = async (code = 0) => {

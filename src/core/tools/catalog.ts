@@ -1,5 +1,5 @@
 import type { AgentsCapabilityOptions } from "../code_mode/agents.js";
-import type { Config } from "../config/index.js";
+import type { SessionConfig, SessionRuntimeSettings } from "../config/index.js";
 import type { HistoryQuery } from "../history/types.js";
 import { McpManager } from "../mcp/manager.js";
 import type { ModelResolver } from "../models/catalog.js";
@@ -25,7 +25,7 @@ function createCommonTools(options: {
   backend: ToolExecutionBackend;
   cwd: string;
   allowedTools: readonly string[];
-  config: Config;
+  config: SessionRuntimeSettings;
   bashJobs: BashJobRegistry;
   codeJobs: CodeJobRegistry;
   history?: HistoryQuery;
@@ -53,7 +53,7 @@ export const ToolCatalog = {
   createDebugRegistry(options: {
     backend: ToolExecutionBackend;
     cwd: string;
-    config: Config;
+    config: SessionConfig;
     persona: Persona;
     modelResolver: ModelResolver;
     history: HistoryQuery;
@@ -73,7 +73,7 @@ export const ToolCatalog = {
   createSessionRegistry(options: {
     backend: ToolExecutionBackend;
     cwd: string;
-    config: Config;
+    config: SessionRuntimeSettings;
     persona: Persona;
     subagentSystemPrompt: string | undefined;
     autoCompactThresholdTokens: number | null;
@@ -104,7 +104,7 @@ export const ToolCatalog = {
     allowedTools: SubagentToolName[],
     backend: ToolExecutionBackend,
     cwd: string,
-    config: Config,
+    config: SessionRuntimeSettings,
     bashJobs: BashJobRegistry,
     codeJobs: CodeJobRegistry,
     history?: HistoryQuery,

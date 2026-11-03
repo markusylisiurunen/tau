@@ -423,7 +423,7 @@ result: {
 }
 ```
 
-Reload changes the context and waits its turn behind other changes. It interrupts a running turn and rejects pending input. It does not reload client themes or tools, process environment variables, or host services. See [configuration](configuration.md) for when changes apply.
+Reload changes the context and waits its turn behind other changes. It interrupts a running turn and rejects pending input. It does not reload client themes or tools, process environment variables, or host services. MCP server definitions also stay as they were when the host loaded the session. If the definitions on disk differ, `warnings` says so. See [configuration](configuration.md) for when changes apply.
 
 ### `session.compact`
 

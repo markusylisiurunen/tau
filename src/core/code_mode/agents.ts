@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import { z } from "zod";
 import type { TauCodeModeHandler } from "../../code_mode/runtime.js";
-import type { Config } from "../config/index.js";
+import type { SessionRuntimeSettings } from "../config/index.js";
 import type { HistoryQuery } from "../history/types.js";
 import type { McpManager } from "../mcp/manager.js";
 import type { ModelResolver } from "../models/catalog.js";
@@ -26,7 +26,7 @@ export type AgentsCapabilityOptions = {
   supervisor: AgentSupervisor;
   persona: Persona;
   autoCompactThresholdTokens: number | null;
-  config: Config;
+  config: SessionRuntimeSettings;
   modelResolver: ModelResolver;
   subagentSystemPrompt: string | undefined;
   history: HistoryQuery;

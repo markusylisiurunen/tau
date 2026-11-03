@@ -1,5 +1,5 @@
 import { createDefaultConfigDeps } from "../core/config/deps.js";
-import { loadConfig } from "../core/config/schema.js";
+import { loadHostConfig } from "../core/config/ownership.js";
 import { createDefaultCoreDeps } from "../core/runtime/deps.js";
 import { WebSocketSessionProtocolTransport } from "../transport/index.js";
 import { createTauSdkClientWithHostConfig } from "./local_client.js";
@@ -8,7 +8,7 @@ import type { TauSdkClient, TauSdkClientOptions, TauSdkWebSocketClientOptions } 
 
 export async function createTauSdkClient(options: TauSdkClientOptions = {}): Promise<TauSdkClient> {
   const deps = createDefaultCoreDeps();
-  const config = loadConfig(options.cwd ?? deps.env.cwd(), createDefaultConfigDeps());
+  const config = loadHostConfig(options.cwd ?? deps.env.cwd(), createDefaultConfigDeps());
   return await createTauSdkClientWithHostConfig(options, config);
 }
 

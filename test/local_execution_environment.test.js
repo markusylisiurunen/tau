@@ -306,7 +306,11 @@ describe("LocalExecutionEnvironment", () => {
       const repo = join(storedHome, "repo");
       await mkdir(join(storedHome, ".config", "tau"), { recursive: true });
       await mkdir(join(repo, ".tau", "prompts"), { recursive: true });
-      await writeFile(join(storedHome, ".config", "tau", "config.json"), "{}", "utf8");
+      await writeFile(
+        join(storedHome, ".config", "tau", "config.json"),
+        JSON.stringify({ speech: { vocabulary: ["StoredHome"] } }),
+        "utf8",
+      );
       const largePrompt = "x".repeat(1_100_000);
       await writeFile(
         join(repo, ".tau", "prompts", "large.md"),
@@ -325,7 +329,7 @@ describe("LocalExecutionEnvironment", () => {
       });
       const runtime = await environment.resolveRuntimeConfig(repo, { remoteCatalog: new Map() });
 
-      expect(runtime.bootstrap.levels[0].levelRoot).toBe(storedHome);
+      expect(runtime.config.speechVocabulary).toEqual(["StoredHome"]);
       expect(runtime.prompts.find((prompt) => prompt.id === "large")?.template).toBe(largePrompt);
     } finally {
       await rm(storedHome, { recursive: true, force: true });

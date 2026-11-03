@@ -26,10 +26,10 @@ A native Tau subagent can receive these tools. [Claude Code subagents](#claude-c
 - `view_image`
 - `web`
 - `history`
-- `mcp`, when the host has enabled MCP servers
+- `mcp`, when the session has enabled MCP servers
 - `models`
 
-A subagent gets each of these that the main persona also has. For example, a main persona with `bash`, `edit`, `history`, and `agents` gives its subagents `bash`, `edit`, and `history`. Names such as `web` and `history` enable the matching capability in the subagent's `code` tool. MCP uses the host's existing connections, whatever the subagent's working directory. There is no separate tool list for subagents.
+A subagent gets each of these that the main persona also has. For example, a main persona with `bash`, `edit`, `history`, and `agents` gives its subagents `bash`, `edit`, and `history`. Names such as `web` and `history` enable the matching capability in the subagent's `code` tool. MCP uses the parent session's servers and connections, whatever the subagent's working directory. There is no separate tool list for subagents.
 
 Every native Tau subagent also gets the built-in `tau_docs` tool, and a persona's `tools` list cannot remove it. Subagents never get `agents`: their `code` tool has no `tau.agents`, and they have no `wait_for_agents`. A subagent cannot start or manage other agents.
 
@@ -114,7 +114,7 @@ Claude Code loads its user, project, and local settings and discovers its own in
 | `edit`             | Edit                   |
 | `web`              | WebSearch, WebFetch    |
 
-Workers receive no Tau `code` capabilities, host MCP connections, `tau_docs`, or client tools. Nested agents and interactive questions are disabled. Hooks and automatic memory are disabled too. Claude Code discovers its own MCP servers from its normal configuration sources, including project and user configuration on the execution environment. These connections are independent of the parent persona's `mcp` tool selection; Tau does not map or forward its host MCP connections. Managed Claude Code policies still apply.
+Workers receive no Tau `code` capabilities, Tau MCP connections, `tau_docs`, or client tools. Nested agents and interactive questions are disabled. Hooks and automatic memory are disabled too. Claude Code discovers its own MCP servers from its normal configuration sources, including project and user configuration on the execution environment. These connections are independent of the parent persona's `mcp` tool selection and of Tau's `mcpServers` setting, and Tau does not map or forward its own MCP connections. They run on the execution environment, so workers can use them even in a session on a remote execution environment, where Tau's own MCP is unavailable. Managed Claude Code policies still apply.
 
 Selected tools use `bypassPermissions`, with Claude Code's sandbox disabled. They run with the execution environment's operating-system authority, like Tau's tools. Review the local Claude settings, skills, and MCP configuration before enabling these workers.
 

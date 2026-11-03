@@ -13,7 +13,7 @@ import {
   type SteeringSubmission,
 } from "../agent/agent_runtime.js";
 import type { AgentEventSink } from "../agent/events.js";
-import type { Config } from "../config/index.js";
+import type { SessionRuntimeSettings } from "../config/index.js";
 import type { HistoryQuery } from "../history/types.js";
 import type { McpManager } from "../mcp/manager.js";
 import type { ModelResolver } from "../models/catalog.js";
@@ -61,7 +61,7 @@ export type CreateChatRuntimeOptions = {
   mcp?: McpManager;
   recordUsage?: UsageRecorder;
   initialPromptComposition?: SessionPromptComposition;
-  config: Config;
+  config: SessionRuntimeSettings;
   deps?: CoreDeps;
 };
 
@@ -73,8 +73,8 @@ export class ChatRuntime {
   private currentPersona: Persona;
   private readonly autoCompactDefaults: AutoCompactDefaults | undefined;
   private autoCompactOverride: number | null = null;
-  private currentConfig: Config;
-  private readonly hostApiKeys: Config["apiKeys"];
+  private currentConfig: SessionRuntimeSettings;
+  private readonly hostApiKeys: SessionRuntimeSettings["apiKeys"];
   private currentModelResolver: ModelResolver;
   private promptContext: ChatRuntimePromptContext;
   private readonly sessionIdValue: string;
@@ -164,7 +164,7 @@ export class ChatRuntime {
     return this.latestPromptComposition;
   }
 
-  get config(): Config {
+  get config(): SessionRuntimeSettings {
     return structuredClone({ ...this.currentConfig, apiKeys: this.hostApiKeys });
   }
 
@@ -280,7 +280,7 @@ export class ChatRuntime {
     return this.agent.snapshot();
   }
 
-  setRuntimeConfig(config: Config, modelResolver: ModelResolver): void {
+  setRuntimeConfig(config: SessionRuntimeSettings, modelResolver: ModelResolver): void {
     this.currentConfig = config;
     this.currentModelResolver = modelResolver;
     this.resolvedModel = resolveAgentModel(this.currentPersona, this.config, {

@@ -119,7 +119,8 @@ describe("FileSessionStore", () => {
         home: "/home/sprite",
       });
       expect(loaded.catalog.prompts).toEqual([{ id: "review", label: "review" }]);
-      expect(loaded.catalog.mcpServers).toEqual([]);
+      expect(loaded.catalog.mcp).toEqual({ status: "unavailable", reason: "remote-execution" });
+      expect(loaded.catalog.speechVocabulary).toEqual([]);
       for (const persona of loaded.catalog.personas) expect(persona).not.toHaveProperty("skills");
     });
   });

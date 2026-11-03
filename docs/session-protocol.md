@@ -18,7 +18,7 @@ The server sends `ready` as its first message:
 
 ```json
 {
-  "version": 18,
+  "version": 19,
   "type": "ready",
   "methods": ["initialize", "session.create", "session.list"]
 }
@@ -30,7 +30,7 @@ After `ready`, send `initialize` with non-empty client metadata:
 
 ```json
 {
-  "version": 18,
+  "version": 19,
   "type": "request",
   "id": "init-1",
   "method": "initialize",
@@ -50,7 +50,7 @@ Every request has the same envelope:
 
 ```json
 {
-  "version": 18,
+  "version": 19,
   "type": "request",
   "id": "req-42",
   "method": "session.snapshot",
@@ -64,7 +64,7 @@ Successful responses echo the request id:
 
 ```json
 {
-  "version": 18,
+  "version": 19,
   "type": "response",
   "id": "req-42",
   "ok": true,
@@ -101,7 +101,7 @@ Observing controls which updates you receive; it does not make you the owner. `s
 | `lifecycle` | `idle` or `running`. |
 | `agentState` | Independent agent revision, model context key, and optional usage checkpoint. |
 | `settings`, `costTotal` | Persona, reasoning, and auto-compaction settings, and accumulated session cost. |
-| `bootstrap`, `catalog` | Selected model and prompt metadata plus available personas, prompt metadata, skills, and enabled host-configured MCP server names. |
+| `bootstrap`, `catalog` | Selected model and prompt metadata plus available personas, prompt metadata, skills, MCP availability, and speech vocabulary. |
 | `executionEnvironment` | The environment kind, identity, `cwd`, and home used for agent-visible work. |
 | `messages`, `turns` | Messages sent to the model, and a saved record for each accepted turn. |
 | `timeline` | Ordered active transcript placement. |
@@ -115,7 +115,17 @@ Both auto-compaction fields in `settings` are required:
 
 `bootstrap.model.contextWindow` is the full model window, regardless of the compaction threshold.
 
-`catalog.mcpServers` lists the enabled MCP servers in the host configuration, by name only. It does not mean they are connected; servers connect on first use. Connection settings and credentials are never included.
+`catalog.mcp` says whether the session can use MCP. A session on a local execution environment lists its enabled servers by name, and a session on a remote execution environment has none:
+
+```ts
+catalog.mcp:
+  | { status: "available"; servers: string[] }
+  | { status: "unavailable"; reason: "remote-execution" };
+```
+
+A listed server may not be connected yet, because servers connect on first use. Connection settings and credentials are never included. The host sets this field when it loads the session, and it stays the same until the host loads the session again.
+
+`catalog.speechVocabulary` holds the session's merged [`speech.vocabulary`](config-reference.md#speech) terms. The list has at most 100 terms and at most 10,000 Unicode characters in total. Each term is trimmed and non-empty, has at most 100 Unicode characters, and contains no angle brackets or line breaks. Clients that transcribe speech use these terms for this session. The host resolves them again on load, reload, and persona changes.
 
 `bootstrap.prompt.subagentSystemPrompt` is present when subagents can be started. Each catalog persona has a `subagentLaunchModels` allowlist. Subagent records have task titles and IDs; there are no worker types.
 
@@ -141,7 +151,7 @@ Observed snapshot changes arrive as `session.delta`:
 
 ```json
 {
-  "version": 18,
+  "version": 19,
   "type": "session.delta",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "fromRevision": 8,
@@ -179,7 +189,7 @@ Some live state is not part of the snapshot. Each of these channels has its own 
 
 ```json
 {
-  "version": 18,
+  "version": 19,
   "type": "session.pendingUserMessages",
   "sessionId": "...",
   "state": {
@@ -216,7 +226,7 @@ An initialized client that advertised a tool can receive:
 
 ```json
 {
-  "version": 18,
+  "version": 19,
   "type": "session.clientTool.call",
   "sessionId": "...",
   "agentId": "main",
@@ -242,7 +252,7 @@ Error responses use `ok: false`:
 
 ```json
 {
-  "version": 18,
+  "version": 19,
   "type": "response",
   "id": "req-42",
   "ok": false,

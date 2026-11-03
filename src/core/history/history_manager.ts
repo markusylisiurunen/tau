@@ -62,14 +62,15 @@ type PendingRecording = {
   bytes: number;
 };
 
+export type HistorySessionWriter = {
+  append(entries: HistoryEntry[]): string | undefined;
+  truncateFromSources(sourceIds: string[]): string | undefined;
+};
+
 export class HistoryManager {
   private readonly replicationRuns = new Map<string, Promise<void>>();
   private readonly replicationRetries = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly targets = new Map<string, HistoryRemoteTarget>();
-  private readonly sessions = new Map<
-    string,
-    { session: HistorySessionRecord; references: number }
-  >();
   private readonly pending: PendingRecording[] = [];
   private pendingBytes = 0;
   private recording: Promise<void> | undefined;
@@ -92,35 +93,20 @@ export class HistoryManager {
     return new HistoryManager(new ThreadedHistoryStore(path), options);
   }
 
-  registerSession(session: HistorySessionRecord, remote?: HistoryRemoteTarget): string | undefined {
-    const references = (this.sessions.get(session.sessionId)?.references ?? 0) + 1;
-    this.sessions.set(session.sessionId, { session: structuredClone(session), references });
-    return this.enqueue(session.sessionId, { type: "register" }, remote);
-  }
-
-  append(
-    sessionId: string,
-    entries: HistoryEntry[],
-    remote?: HistoryRemoteTarget,
-  ): string | undefined {
-    if (entries.length === 0) return undefined;
-    return this.enqueue(sessionId, { type: "append", entries }, remote);
-  }
-
-  truncateFromSources(
-    sessionId: string,
-    sourceIds: string[],
-    remote?: HistoryRemoteTarget,
-  ): string | undefined {
-    if (sourceIds.length === 0) return undefined;
-    return this.enqueue(sessionId, { type: "truncate", sourceIds }, remote);
-  }
-
-  forgetSession(sessionId: string): void {
-    const registration = this.sessions.get(sessionId);
-    if (!registration) return;
-    registration.references -= 1;
-    if (registration.references === 0) this.sessions.delete(sessionId);
+  openSession(session: HistorySessionRecord, remote?: HistoryRemoteTarget): HistorySessionWriter {
+    const record = structuredClone(session);
+    const target = remote ? { ...remote } : undefined;
+    this.enqueue(record, { type: "register" }, target);
+    return {
+      append: (entries) =>
+        entries.length === 0
+          ? undefined
+          : this.enqueue(record, { type: "append", entries }, target),
+      truncateFromSources: (sourceIds) =>
+        sourceIds.length === 0
+          ? undefined
+          : this.enqueue(record, { type: "truncate", sourceIds }, target),
+    };
   }
 
   query(remote?: HistoryRemoteTarget): HistoryQuery {
@@ -167,7 +153,6 @@ export class HistoryManager {
     this.replicationRetries.clear();
     this.pending.length = 0;
     this.pendingBytes = 0;
-    this.sessions.clear();
     try {
       void Promise.resolve(this.local.close()).catch(() => {});
     } catch {
@@ -176,17 +161,15 @@ export class HistoryManager {
   }
 
   private enqueue(
-    sessionId: string,
+    session: HistorySessionRecord,
     change: RecordingChange,
     remote?: HistoryRemoteTarget,
   ): string | undefined {
     if (this.closed) return "history manager is closed";
-    const session = this.sessions.get(sessionId)?.session;
-    if (!session) return `history session '${sessionId}' was not registered`;
     const bytes = Buffer.byteLength(JSON.stringify({ session, change }));
     if (this.pendingBytes + bytes > (this.options.maxPendingBytes ?? MAX_PENDING_BYTES)) {
       const message = "history buffer is full; this change was dropped";
-      this.reportRecording("dropped", sessionId, message);
+      this.reportRecording("dropped", session.sessionId, message);
       return message;
     }
     this.pending.push({ session, change: structuredClone(change), remote, bytes });

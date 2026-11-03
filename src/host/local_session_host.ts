@@ -5,13 +5,8 @@ import type { Api, AssistantMessage, Message, Model, ToolCall } from "@earendil-
 import type { AgentStateRecovery, AgentSubturnResult } from "../core/agent/agent_runtime.js";
 import type { AgentEvent, AgentTurnFailure } from "../core/agent/events.js";
 import { resolvePromptTemplateWithBackend, type SessionConfig } from "../core/config/index.js";
+import { AgentHistoryRecorder } from "../core/history/agent_history_recorder.js";
 import type { HistoryManager } from "../core/history/history_manager.js";
-import {
-  assistantHistoryEntries,
-  systemHistoryEntry,
-  toolHistoryEntry,
-  userHistoryEntry,
-} from "../core/history/transcript.js";
 import type { HistoryRemoteTarget } from "../core/history/types.js";
 import { McpManager } from "../core/mcp/manager.js";
 import type { RemoteModelCatalogSnapshot } from "../core/models/remote_catalog.js";
@@ -375,6 +370,10 @@ export class LocalSessionHost implements TauSessionHost {
     let hostedSession: LocalHostedSessionHandle;
     const sessionId = committedSnapshot?.sessionId ?? randomUUID();
     const createdAt = committedSnapshot?.createdAt ?? this.sessionOptions.environment.now();
+    const attributes = committedSnapshot?.attributes ?? createParams?.attributes;
+    if (!attributes) {
+      throw new Error("session attributes are required");
+    }
     const runtime = ChatRuntime.create({
       sessionId,
       createdAt,
@@ -393,6 +392,23 @@ export class LocalSessionHost implements TauSessionHost {
       eventSink: async (event) => await hostedSession.enqueueRuntimeEvent(event),
       subagentEventSink: async (event) => await hostedSession.recordSubagentEvent(event),
       history: this.history.query(this.historyRemote),
+      openSubagentHistory: (child) => {
+        const recorder = new AgentHistoryRecorder(
+          this.history.openSession(
+            {
+              sessionId: child.sessionId,
+              parentSessionId: sessionId,
+              attributes: { ...attributes, cwd: child.workingDirectory },
+              createdAt: child.createdAt,
+            },
+            this.historyRemote,
+          ),
+        );
+        return async (event) => {
+          const failure = recorder.record(event);
+          if (failure) await hostedSession.recordSubagentHistoryFailure(failure);
+        };
+      },
       mcp,
       initialPromptComposition: committedSnapshot
         ? promptCompositionFromSnapshot(committedSnapshot)
@@ -410,10 +426,10 @@ export class LocalSessionHost implements TauSessionHost {
           : (bootstrap.initialAutoCompactThresholdTokens ?? null),
     );
 
-    const attributes = committedSnapshot?.attributes ?? createParams?.attributes;
-    if (!attributes) {
-      throw new Error("session attributes are required");
-    }
+    const historyWriter = this.history.openSession(
+      { sessionId, attributes, createdAt },
+      this.historyRemote,
+    );
     hostedSession = new LocalHostedSessionHandle(
       runtime,
       runtimeContext.promptBootstrap,
@@ -425,8 +441,7 @@ export class LocalSessionHost implements TauSessionHost {
       this.sessionOptions.includeAgentContext,
       executionEnvironment,
       this.store,
-      this.history,
-      this.historyRemote,
+      new AgentHistoryRecorder(historyWriter),
       attributes,
       createdAt,
       committedSnapshot,
@@ -435,18 +450,8 @@ export class LocalSessionHost implements TauSessionHost {
       (session) => {
         this.sessions.delete(session);
         this.sessionReferences.delete(session);
-        this.history.forgetSession(session.sessionId);
       },
     );
-    const historyFailure = this.history.registerSession(
-      {
-        sessionId: committedSnapshot?.sessionId ?? hostedSession.sessionId,
-        attributes,
-        createdAt,
-      },
-      this.historyRemote,
-    );
-    await hostedSession.recordHistoryFailure(historyFailure);
     this.sessions.add(hostedSession);
     return hostedSession;
   }
@@ -827,8 +832,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     private readonly includeAgentContext: boolean,
     private readonly executionEnvironment: ExecutionEnvironment,
     private readonly store: SessionStore,
-    private readonly history: HistoryManager,
-    private readonly historyRemote: HistoryRemoteTarget | undefined,
+    private readonly historyRecorder: AgentHistoryRecorder,
     private readonly attributes: Record<string, string>,
     private readonly createdAt: number,
     committedSnapshot: SessionProtocolSnapshot | undefined,
@@ -2086,7 +2090,10 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   }
 
   async enqueueRuntimeEvent(event: AgentEvent): Promise<void> {
-    await this.enqueueMutation(() => this.recordRuntimeEvent(event));
+    await this.enqueueMutation(async () => {
+      await this.recordRuntimeEvent(event);
+      await this.recordHistoryFailure(this.historyRecorder.record(event));
+    });
   }
 
   private removeToolRun(tool: SessionProtocolToolRun, changes: SessionProtocolChange[]): void {
@@ -2101,6 +2108,15 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       { type: "tool.remove", id: tool.id },
       { type: "timeline.remove", id: timelineItemId },
     );
+  }
+
+  async recordSubagentHistoryFailure(reason: string): Promise<void> {
+    if (this.disposing || this.disposed) return;
+    try {
+      await this.enqueueMutation(() => this.recordHistoryFailure(reason));
+    } catch {
+      // A history diagnostic must not fail a worker when its parent is unavailable.
+    }
   }
 
   async recordHistoryFailure(reason: string | undefined): Promise<void> {
@@ -2142,19 +2158,13 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       throw new Error(`transcript tool call '${tool.toolCallId}' is not terminal`);
     }
     await this.recordHistoryFailure(
-      this.history.append(
-        this.sessionId,
-        [
-          toolHistoryEntry({
-            callHistoryEntryId: tool.call.messageId,
-            resultHistoryEntryId,
-            call,
-            result,
-            outcome: tool.status,
-          }),
-        ],
-        this.historyRemote,
-      ),
+      this.historyRecorder.recordTool({
+        callHistoryEntryId: tool.call.messageId,
+        resultHistoryEntryId,
+        call,
+        result,
+        outcome: tool.status,
+      }),
     );
   }
 
@@ -2320,13 +2330,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
           ],
           { persist: true },
         );
-        await this.recordHistoryFailure(
-          this.history.append(
-            this.sessionId,
-            [systemHistoryEntry(event.historyEntryId, event.message)],
-            this.historyRemote,
-          ),
-        );
         return;
       }
       case "user_message": {
@@ -2367,13 +2370,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         if (turn) {
           this.pendingAcceptedTurnHistoryEntryIds.delete(event.historyEntryId);
         }
-        await this.recordHistoryFailure(
-          this.history.append(
-            this.sessionId,
-            [userHistoryEntry(event.historyEntryId, event.message)],
-            this.historyRemote,
-          ),
-        );
         return;
       }
       case "history_rewound": {
@@ -2389,13 +2385,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         this.emitSnapshotReset(
           { type: "rewind", epoch: this.timeline.epoch, cutoffSequence },
           snapshot,
-        );
-        await this.recordHistoryFailure(
-          this.history.truncateFromSources(
-            this.sessionId,
-            event.removedEntryIds,
-            this.historyRemote,
-          ),
         );
         return;
       }
@@ -2446,13 +2435,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
             : []),
           ...toolChanges,
         ]);
-        await this.recordHistoryFailure(
-          this.history.append(
-            this.sessionId,
-            assistantHistoryEntries(event.historyEntryId, event.message),
-            this.historyRemote,
-          ),
-        );
         return;
       }
       case "tool_run_queued":
@@ -2511,7 +2493,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
             },
             { type: "tool.set", tool: structuredClone(nextTool) },
           ]);
-          await this.appendToolHistory(existing, event.historyEntryId, event.message);
           return;
         }
         await this.emitPatch("tool-result", [
@@ -2541,10 +2522,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
             },
           },
         ];
-        const historyTools: Array<{
-          tool: Exclude<SessionProtocolToolRun, { status: "streaming" }>;
-          result: (typeof event.toolResults)[number];
-        }> = [];
         for (const toolResult of event.toolResults) {
           const existing = this.tools.get(toolResult.toolCallId);
           if (!existing || existing.status === "streaming") {
@@ -2558,12 +2535,8 @@ class LocalHostedSessionHandle implements LocalHostedSession {
           };
           this.tools.set(nextTool.id, nextTool);
           changes.push({ type: "tool.set", tool: structuredClone(nextTool) });
-          historyTools.push({ tool: existing, result: toolResult });
         }
         await this.emitPatch({ type: "resync" }, changes);
-        for (const { tool, result } of historyTools) {
-          await this.appendToolHistory(tool, event.historyEntryId, result);
-        }
         return;
       }
       case "feedback": {

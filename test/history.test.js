@@ -36,6 +36,7 @@ import historyWorker, {
   formatDigestEntry,
   generateDigest,
   isDigestContextOverflowError,
+  readSessionTree,
   refreshDigestIfNeeded,
   runAi,
   selectHistoryReadPage,
@@ -51,6 +52,10 @@ import {
 
 const HISTORY_INITIAL_MIGRATION_SQL = readFileSync(
   new URL("../dist/history/worker/migrations/0001_initial.sql", import.meta.url),
+  "utf8",
+);
+const HISTORY_PARENT_SESSION_MIGRATION_SQL = readFileSync(
+  new URL("../dist/history/worker/migrations/0002_parent_session.sql", import.meta.url),
   "utf8",
 );
 
@@ -185,6 +190,7 @@ function createSqliteD1Harness() {
 
 function initializeHistoryD1(harness) {
   harness.sqlite.exec(HISTORY_INITIAL_MIGRATION_SQL);
+  harness.sqlite.exec(HISTORY_PARENT_SESSION_MIGRATION_SQL);
 }
 
 async function callHistoryWorker(path, body, harness, origin = "https://history.example.com") {
@@ -689,15 +695,23 @@ describe("session history", () => {
     const store = new LocalHistoryStore(":memory:");
     const history = new HistoryManager(store);
     const remoteRead = vi.spyOn(RemoteHistoryClient.prototype, "read").mockResolvedValue({
-      session: { sessionId: "parent", attributes: {}, createdAt: 1, updatedAt: 1, snippets: [] },
+      session: {
+        sessionId: "parent",
+        attributes: {},
+        createdAt: 1,
+        updatedAt: 1,
+        childCount: 0,
+        snippets: [],
+      },
       entries: [],
     });
     const remoteSearch = vi
       .spyOn(RemoteHistoryClient.prototype, "search")
       .mockResolvedValue({ sessions: [] });
     try {
-      history.registerSession({ sessionId: "parent", attributes: {}, createdAt: 1 });
-      history.append("parent", [createTextEntry("entry", "user", "local context", 2)]);
+      history
+        .openSession({ sessionId: "parent", attributes: {}, createdAt: 1 })
+        .append([createTextEntry("entry", "user", "local context", 2)]);
       const query = history.query({ endpoint: "https://history.example.com", apiKey: "secret" });
       const capability = createHistoryCapability(query);
       const context = { signal: new AbortController().signal };
@@ -748,20 +762,15 @@ describe("session history", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     try {
-      history.registerSession(
-        { sessionId: "conflicting", attributes: { source: "test" }, createdAt: 1 },
-        remote,
-      );
-      history.append(
-        "conflicting",
-        [createTextEntry("conflicting-entry", "user", "conflicting", 2)],
-        remote,
-      );
-      history.registerSession(
-        { sessionId: "healthy", attributes: { source: "test" }, createdAt: 3 },
-        remote,
-      );
-      history.append("healthy", [createTextEntry("healthy-entry", "user", "healthy", 4)], remote);
+      history
+        .openSession(
+          { sessionId: "conflicting", attributes: { source: "test" }, createdAt: 1 },
+          remote,
+        )
+        .append([createTextEntry("conflicting-entry", "user", "conflicting", 2)]);
+      history
+        .openSession({ sessionId: "healthy", attributes: { source: "test" }, createdAt: 3 }, remote)
+        .append([createTextEntry("healthy-entry", "user", "healthy", 4)]);
 
       await history.flush();
 
@@ -832,13 +841,16 @@ describe("session history", () => {
       callHistoryWorker("/v1/operations", JSON.parse(init.body), harness),
     );
     try {
-      manager.registerSession({ sessionId: "rewinds", attributes: {}, createdAt: 1 }, remote);
+      const writer = manager.openSession(
+        { sessionId: "rewinds", attributes: {}, createdAt: 1 },
+        remote,
+      );
       await manager.flush();
       expect(interleaved).toBe(true);
       expect(reportReplicationFailure).not.toHaveBeenCalled();
       expect(store.listReplicationFailures(remote.endpoint)).toEqual([]);
       expect(store.listPendingOperations(remote.endpoint, 10)).toEqual([]);
-      manager.append("rewinds", [createTextEntry("d", "user", "after rewind", 10)], remote);
+      writer.append([createTextEntry("d", "user", "after rewind", 10)]);
       await manager.flush();
       expect(
         harness.sqlite
@@ -876,7 +888,7 @@ describe("session history", () => {
       callHistoryWorker("/v1/operations", JSON.parse(init.body), harness),
     );
     try {
-      manager.registerSession(session, remote);
+      manager.openSession(session, remote);
       await manager.flush();
       expect(store.listReplicationFailures(remote.endpoint)).toMatchObject([
         { operationId: rewind.id, code: "not_found" },
@@ -984,7 +996,7 @@ describe("session history", () => {
     );
 
     try {
-      history.registerSession(
+      history.openSession(
         { sessionId: "retryable", attributes: { source: "test" }, createdAt: 1 },
         remote,
       );
@@ -1251,6 +1263,7 @@ describe("session history", () => {
         "  }",
         '  const migration = join(process.cwd(), "migrations", "0001_initial.sql");',
         "  if (!existsSync(migration)) process.exit(33);",
+        '  if (!existsSync(join(process.cwd(), "migrations", "0002_parent_session.sql"))) process.exit(38);',
         '  const sql = readFileSync(migration, "utf8");',
         '  if (sql.includes("DROP TABLE IF EXISTS history_schema_migrations")) process.exit(34);',
         '  if (args[0] === "d1" && process.env.TEST_FAIL_MIGRATION === "1") process.exit(35);',
@@ -1711,6 +1724,108 @@ describe("session history", () => {
     }
   });
 
+  it("links a session page to its parent and nested descendants", async () => {
+    const harness = createSqliteD1Harness();
+    const insert = (sessionId, parentSessionId, title, createdAt = 1) =>
+      harness.sqlite
+        .prepare(
+          "INSERT INTO sessions (session_id, attributes_json, created_at, updated_at, parent_session_id, digest_title, digest_summary, digest_through_entry_id) VALUES (?, '{}', ?, ?, ?, ?, ?, ?)",
+        )
+        .run(
+          sessionId,
+          createdAt,
+          createdAt,
+          parentSessionId,
+          title ?? null,
+          title ? "summary" : null,
+          title ? "entry" : null,
+        );
+    const page = async (sessionId) => {
+      const response = await callHistoryViewer(
+        `/sessions/${encodeURIComponent(sessionId)}`,
+        harness,
+      );
+      expect(response.status).toBe(200);
+      return await response.text();
+    };
+    // Reads each link's list depth from the rendered markup, as a browser would nest it.
+    const childLinks = (html) => {
+      const tree = html.match(/<div class="session-tree">.*?<\/div>/s)?.[0] ?? "";
+      let depth = 0;
+      return [...tree.matchAll(/<ul>|<\/ul>|href="([^"]+)"/g)].flatMap((match) => {
+        if (match[0] === "<ul>") depth += 1;
+        else if (match[0] === "</ul>") depth -= 1;
+        else return [[match[1].replace("https://history.example.com/sessions/", ""), depth]];
+        return [];
+      });
+    };
+    try {
+      initializeHistoryD1(harness);
+      insert("root", null, "Root <title>");
+      insert("child/a", "root", "Child <b>a</b>", 2);
+      insert("nested", "child/a", undefined, 3);
+      insert("child-b", "root", "Child b", 4);
+      insert("orphan", "not-replicated", "Orphan");
+      insert("deep-0", null);
+      for (let level = 1; level <= 9; level += 1) insert(`deep-${level}`, `deep-${level - 1}`);
+
+      const root = await page("root");
+      expect(childLinks(root)).toEqual([
+        ["child%2Fa", 1],
+        ["nested", 2],
+        ["child-b", 1],
+      ]);
+      expect(root).toContain("Child &lt;b&gt;a&lt;/b&gt;");
+      expect(root).not.toContain("<b>a</b>");
+      expect(root).not.toContain('class="session-tree-note"');
+      expect(root.indexOf('class="session-links"')).toBeLessThan(root.indexOf("data-copy-mode"));
+
+      const child = await page("child/a");
+      const parentSection = child.match(/<nav class="session-links".*?<\/section>/s)[0];
+      expect(parentSection).toContain('href="https://history.example.com/sessions/root"');
+      expect(parentSection).toContain("Root &lt;title&gt;");
+      expect(childLinks(child)).toEqual([["nested", 1]]);
+
+      const orphan = await page("orphan");
+      expect(orphan).toContain("not-replicated");
+      expect(orphan).not.toContain("/sessions/not-replicated");
+      expect(childLinks(orphan)).toEqual([]);
+
+      const leaf = await page("deep-9");
+      expect(childLinks(leaf)).toEqual([]);
+      const deep = await page("deep-0");
+      expect(childLinks(deep).at(-1)).toEqual(["deep-8", 8]);
+      expect(deep).toContain('class="session-tree-note"');
+
+      const index = await (await callHistoryViewer("/", harness)).text();
+      expect(index).toContain("/sessions/root");
+      expect(index).not.toContain("/sessions/nested");
+    } finally {
+      harness.sqlite.close();
+    }
+  });
+
+  it("seeds a development fixture with a nested session tree", async () => {
+    const harness = createSqliteD1Harness();
+    try {
+      initializeHistoryD1(harness);
+      const seed = readFileSync(
+        new URL("../src/history/worker/dev-seed.sql", import.meta.url),
+        "utf8",
+      );
+      harness.sqlite.exec(seed);
+      harness.sqlite.exec(seed);
+
+      const response = await callHistoryViewer("/sessions/local-history-demo", harness);
+      const html = await response.text();
+      for (const child of ["renderer", "contrast", "tests"]) {
+        expect(html).toContain(`/sessions/local-history-demo-${child}`);
+      }
+    } finally {
+      harness.sqlite.close();
+    }
+  });
+
   it("keeps the development Worker isolated from production", () => {
     const config = JSON.parse(
       readFileSync(new URL("../src/history/worker/wrangler.dev.json", import.meta.url), "utf8"),
@@ -1969,6 +2084,7 @@ describe("session history", () => {
         attributes_json: "{}",
         created_at: index,
         updated_at: index,
+        child_count: 0,
       })),
     });
     const boundedSearch = await callHistoryWorker(
@@ -2116,7 +2232,7 @@ describe("session history", () => {
       "/v1/search",
       {},
       createD1Harness({
-        throwOnQuery: "SELECT s.* FROM sessions",
+        throwOnQuery: "FROM sessions s",
         throwMessage: "sensitive D1 detail",
       }),
     );
@@ -2704,6 +2820,7 @@ describe("session history", () => {
               attributes: {},
               createdAt: 1,
               updatedAt: 2,
+              childCount: 0,
               webUrl: "https://history.example.com/sessions/remote-session",
               snippets: [],
             },
@@ -2737,6 +2854,7 @@ describe("session history", () => {
               attributes: {},
               createdAt: 1,
               updatedAt: 1,
+              childCount: 0,
               snippets: [],
             },
           ],
@@ -2828,5 +2946,385 @@ describe("session history", () => {
     const excessiveLimit = await runTool(tool, "await tau.history.search({ limit: 76 });");
     expect(toolText(excessiveLimit)).toContain("expected number to be <=75");
     expect(history.search).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("history parent links", () => {
+  const ids = (page) => page.sessions.map((session) => session.sessionId);
+  const remoteOrigin = "https://history.example.com";
+  const createOperation = (sessionId, parentSessionId, createdAt = 1) => ({
+    id: `create-${sessionId}`,
+    sessionId,
+    type: "create",
+    session: {
+      sessionId,
+      attributes: { source: "test" },
+      createdAt,
+      ...(parentSessionId ? { parentSessionId } : {}),
+    },
+  });
+  const appendOperation = (sessionId, text, timestamp) => ({
+    id: `append-${sessionId}`,
+    sessionId,
+    type: "append",
+    entries: [createTextEntry(`${sessionId}-entry`, "user", text, timestamp)],
+  });
+
+  it("scopes local search by parent and pages direct children", async () => {
+    const store = new LocalHistoryStore(":memory:");
+    try {
+      store.createSession({ sessionId: "root", attributes: {}, createdAt: 1 });
+      store.createSession({
+        sessionId: "child-1",
+        attributes: { kind: "worker" },
+        createdAt: 2,
+        parentSessionId: "root",
+      });
+      store.createSession({
+        sessionId: "child-2",
+        attributes: { kind: "worker" },
+        createdAt: 3,
+        parentSessionId: "root",
+      });
+      store.createSession({
+        sessionId: "grandchild",
+        attributes: {},
+        createdAt: 4,
+        parentSessionId: "child-1",
+      });
+      for (const sessionId of ["root", "child-1", "child-2", "grandchild"]) {
+        store.append(sessionId, [createTextEntry(`${sessionId}-e`, "user", "needle", 10)]);
+      }
+
+      await expect(store.search({ limit: 10 }).then(ids)).resolves.toEqual(["root"]);
+      await expect(store.search({ limit: 10, parent: "none" }).then(ids)).resolves.toEqual([
+        "root",
+      ]);
+      await expect(store.search({ query: "needle", limit: 10 }).then(ids)).resolves.toEqual([
+        "root",
+      ]);
+      expect(ids(await store.search({ query: "needle", limit: 10, parent: "any" })).sort()).toEqual(
+        ["child-1", "child-2", "grandchild", "root"],
+      );
+      expect(
+        ids(
+          await store.search({ limit: 10, parent: "any", attributes: { kind: "worker" } }),
+        ).sort(),
+      ).toEqual(["child-1", "child-2"]);
+
+      const parent = { sessionId: "root" };
+      const firstPage = await store.search({ limit: 1, parent });
+      const secondPage = await store.search({ limit: 1, parent, cursor: firstPage.nextCursor });
+      expect([...ids(firstPage), ...ids(secondPage)].sort()).toEqual(["child-1", "child-2"]);
+      expect(secondPage.nextCursor).toBeUndefined();
+      await expect(
+        store.search({ query: "needle", limit: 10, parent: { sessionId: "child-1" } }).then(ids),
+      ).resolves.toEqual(["grandchild"]);
+
+      const root = await store.read({ sessionId: "root", limit: 1 });
+      expect(root.session.childCount).toBe(2);
+      expect(root.session).not.toHaveProperty("parentSessionId");
+      const child = await store.read({ sessionId: "child-1", limit: 1 });
+      expect(child.session).toMatchObject({ parentSessionId: "root", childCount: 1 });
+      const [listed] = (await store.search({ limit: 1 })).sessions;
+      expect(listed.childCount).toBe(2);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("keeps a local parent link immutable and replicates it", () => {
+    const store = new LocalHistoryStore(":memory:");
+    const remote = { endpoint: remoteOrigin, apiKey: "secret" };
+    const child = { sessionId: "child", attributes: {}, createdAt: 1, parentSessionId: "root" };
+    try {
+      store.createSession(child, remote);
+      store.createSession(child, remote);
+      expect(() => store.createSession({ ...child, parentSessionId: "other" }, remote)).toThrow();
+      expect(() =>
+        store.createSession({ sessionId: "child", attributes: {}, createdAt: 1 }, remote),
+      ).toThrow();
+      expect(() =>
+        store.createSession({
+          sessionId: "self",
+          attributes: {},
+          createdAt: 1,
+          parentSessionId: "self",
+        }),
+      ).toThrow();
+      expect(store.listPendingOperations(remote.endpoint, 10)).toMatchObject([
+        { operation: { type: "create", session: child } },
+      ]);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("upgrades an existing local database without changing its sessions", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "tau-history-parent-upgrade-"));
+    const path = join(directory, "history.sqlite");
+    const legacy = new DatabaseSync(path);
+    legacy.exec(`
+      CREATE TABLE history_sessions (
+        session_id TEXT PRIMARY KEY,
+        attributes_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        digest_title TEXT,
+        digest_summary TEXT,
+        digest_through_entry_id TEXT
+      );
+      INSERT INTO history_sessions (session_id, attributes_json, created_at, updated_at)
+        VALUES ('existing', '{}', 1, 2);
+    `);
+    legacy.close();
+    const store = new LocalHistoryStore(path);
+    const reopened = new LocalHistoryStore(path);
+    try {
+      store.createSession({ sessionId: "existing", attributes: {}, createdAt: 1 });
+      store.createSession({
+        sessionId: "child",
+        attributes: {},
+        createdAt: 3,
+        parentSessionId: "existing",
+      });
+      const page = await reopened.search({ limit: 10 });
+      expect(page.sessions).toMatchObject([{ sessionId: "existing", childCount: 1 }]);
+    } finally {
+      store.close();
+      reopened.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("scopes remote search and tolerates a child that arrives before its parent", async () => {
+    const harness = createSqliteD1Harness();
+    try {
+      initializeHistoryD1(harness);
+      const operations = [
+        createOperation("child-1", "root", 2),
+        appendOperation("child-1", "needle", 20),
+        createOperation("root", undefined, 1),
+        appendOperation("root", "needle", 10),
+        createOperation("child-2", "root", 3),
+      ];
+      const applied = await callHistoryWorker("/v1/operations", { operations }, harness);
+      expect(applied.status).toBe(200);
+
+      const search = async (body) => {
+        const response = await callHistoryWorker("/v1/search", { limit: 10, ...body }, harness);
+        expect(response.status).toBe(200);
+        return await response.json();
+      };
+      expect(ids(await search({}))).toEqual(["root"]);
+      expect(ids(await search({ parent: "none", query: "needle" }))).toEqual(["root"]);
+      expect(ids(await search({ parent: "any" })).sort()).toEqual(["child-1", "child-2", "root"]);
+      expect(ids(await search({ parent: "any", query: "needle" })).sort()).toEqual([
+        "child-1",
+        "root",
+      ]);
+      const parent = { sessionId: "root" };
+      expect(ids(await search({ parent, query: "needle" }))).toEqual(["child-1"]);
+      const firstPage = await search({ parent, limit: 1 });
+      expect(ids(firstPage)).toEqual(["child-1"]);
+      expect(ids(await search({ parent, limit: 1, cursor: firstPage.nextCursor }))).toEqual([
+        "child-2",
+      ]);
+
+      const client = new RemoteHistoryClient(
+        { endpoint: remoteOrigin, apiKey: "secret" },
+        async (url, init) =>
+          await callHistoryWorker(new URL(url).pathname, JSON.parse(init.body), harness),
+      );
+      const root = await client.read({ sessionId: "root", limit: 1 });
+      expect(root.session.childCount).toBe(2);
+      expect(root.session).not.toHaveProperty("parentSessionId");
+      const child = await client.read({ sessionId: "child-1", limit: 1 });
+      expect(child.session).toMatchObject({ parentSessionId: "root", childCount: 0 });
+      const children = await client.search({ limit: 10, parent });
+      expect(children.sessions).toMatchObject([
+        { parentSessionId: "root", childCount: 0 },
+        { parentSessionId: "root", childCount: 0 },
+      ]);
+    } finally {
+      harness.sqlite.close();
+    }
+  });
+
+  it("rejects invalid or conflicting remote parent data before writing it", async () => {
+    const harness = createSqliteD1Harness();
+    const countSessions = () =>
+      harness.sqlite.prepare("SELECT COUNT(*) AS count FROM sessions").get().count;
+    try {
+      initializeHistoryD1(harness);
+      const apply = async (operation) =>
+        await callHistoryWorker("/v1/operations", { operations: [operation] }, harness);
+
+      expect((await apply(createOperation("self", "self"))).status).toBe(400);
+      expect(
+        (
+          await apply({
+            ...createOperation("blank"),
+            session: { ...createOperation("blank").session, parentSessionId: "" },
+          })
+        ).status,
+      ).toBe(400);
+      expect(countSessions()).toBe(0);
+
+      expect((await apply(createOperation("child", "root"))).status).toBe(200);
+      for (const conflict of [createOperation("child", "other"), createOperation("child")]) {
+        const response = await apply({ ...conflict, id: `conflict-${Math.random()}` });
+        expect(response.status).toBe(409);
+        await expect(response.json()).resolves.toMatchObject({
+          error: { code: "immutable_conflict" },
+        });
+      }
+      expect((await apply({ ...createOperation("child", "root"), id: "retry" })).status).toBe(200);
+      expect(
+        harness.sqlite.prepare("SELECT parent_session_id FROM sessions").get().parent_session_id,
+      ).toBe("root");
+
+      for (const parent of ["all", null, 1, [], {}, { sessionId: "" }, { sessionId: "a", x: 1 }]) {
+        const response = await callHistoryWorker("/v1/search", { parent }, harness);
+        expect(response.status).toBe(400);
+      }
+    } finally {
+      harness.sqlite.close();
+    }
+  });
+
+  it("adds the parent column to an already migrated remote collection", async () => {
+    const harness = createSqliteD1Harness();
+    try {
+      harness.sqlite.exec(HISTORY_INITIAL_MIGRATION_SQL);
+      harness.sqlite.exec(
+        "INSERT INTO sessions (session_id, attributes_json, created_at, updated_at) VALUES ('existing', '{}', 1, 2)",
+      );
+      harness.sqlite.exec(HISTORY_PARENT_SESSION_MIGRATION_SQL);
+
+      const response = await callHistoryWorker("/v1/search", {}, harness);
+      await expect(response.json()).resolves.toMatchObject({
+        sessions: [{ sessionId: "existing", childCount: 0 }],
+      });
+    } finally {
+      harness.sqlite.close();
+    }
+  });
+
+  it("reads a bounded descendant tree in depth-first order", async () => {
+    const harness = createSqliteD1Harness();
+    const insert = (sessionId, parentSessionId, createdAt = 1) =>
+      harness.sqlite
+        .prepare(
+          "INSERT INTO sessions (session_id, attributes_json, created_at, updated_at, parent_session_id) VALUES (?, '{}', ?, ?, ?)",
+        )
+        .run(sessionId, createdAt, createdAt, parentSessionId);
+    const tree = (sessionId, parentSessionId) =>
+      readSessionTree(harness.database, { sessionId, parentSessionId }, remoteOrigin);
+    const shape = (result) =>
+      result.descendants.map(({ session, depth }) => [session.sessionId, depth]);
+    try {
+      initializeHistoryD1(harness);
+      insert("root", null);
+      insert("late", "root", 5);
+      insert("early", "root", 2);
+      insert("nested", "early", 3);
+      insert("unrelated", null);
+
+      const full = await tree("root");
+      expect(shape(full)).toEqual([
+        ["early", 1],
+        ["nested", 2],
+        ["late", 1],
+      ]);
+      expect(full.truncated).toBe(false);
+      expect(full).not.toHaveProperty("parent");
+      expect(full.descendants[0].session).toMatchObject({
+        parentSessionId: "root",
+        childCount: 1,
+        webUrl: `${remoteOrigin}/sessions/early`,
+      });
+
+      await expect(tree("early", "root")).resolves.toMatchObject({
+        parent: { sessionId: "root", childCount: 2 },
+        descendants: [{ session: { sessionId: "nested" }, depth: 1 }],
+      });
+      const dangling = await tree("orphan", "not-replicated");
+      expect(dangling).not.toHaveProperty("parent");
+      expect(dangling.descendants).toEqual([]);
+
+      insert("cycle-a", "cycle-b");
+      insert("cycle-b", "cycle-a");
+      const cycle = await tree("cycle-a", "cycle-b");
+      expect(shape(cycle)).toEqual([["cycle-b", 1]]);
+
+      let parent = "deep-0";
+      insert(parent, null);
+      for (let depth = 1; depth <= 9; depth += 1) {
+        insert(`deep-${depth}`, parent);
+        parent = `deep-${depth}`;
+      }
+      const deep = await tree("deep-0");
+      expect(deep.descendants.at(-1).depth).toBe(8);
+      expect(deep.truncated).toBe(true);
+
+      insert("wide", null);
+      for (let index = 0; index < 201; index += 1) insert(`wide-${index}`, "wide");
+      const wide = await tree("wide");
+      expect(wide.descendants).toHaveLength(200);
+      expect(wide.truncated).toBe(true);
+
+      const sessionPage = await (await callHistoryViewer("/sessions/wide", harness)).text();
+      expect(sessionPage).toContain('href="/?parent=wide"');
+      const discovered = new Set();
+      let path = "/?parent=wide";
+      while (path) {
+        const response = await callHistoryViewer(path, harness);
+        expect(response.status).toBe(200);
+        const html = await response.text();
+        for (const match of html.matchAll(
+          /href="https:\/\/history.example.com\/sessions\/(wide-\d+)"/g,
+        )) {
+          discovered.add(match[1]);
+        }
+        expect(html).not.toContain('href="https://history.example.com/sessions/unrelated"');
+        expect(html).toContain('name="parent" value="wide"');
+        const cursor = html.match(/name="cursor" value="([^"]+)"/);
+        path = cursor ? `/?parent=wide&cursor=${encodeURIComponent(cursor[1])}` : undefined;
+      }
+      expect(discovered).toEqual(
+        new Set(Array.from({ length: 201 }, (_, index) => `wide-${index}`)),
+      );
+
+      const filtered = await (
+        await callHistoryViewer("/?parent=wide&source=missing", harness)
+      ).text();
+      expect(filtered).toContain('href="/?parent=wide"');
+      expect((await callHistoryViewer("/?parent=", harness)).status).toBe(400);
+    } finally {
+      harness.sqlite.close();
+    }
+  });
+
+  it("validates the code-mode parent option before querying", async () => {
+    const search = vi.fn(async () => ({ sessions: [] }));
+    const capability = createHistoryCapability({ search, read: vi.fn() });
+    const context = { signal: new AbortController().signal };
+
+    await capability.api.search([{}], context);
+    expect(search).toHaveBeenLastCalledWith({ limit: 10 }, context.signal);
+    await capability.api.search([{ parent: "any" }], context);
+    expect(search).toHaveBeenLastCalledWith({ parent: "any", limit: 10 }, context.signal);
+    await capability.api.search([{ parent: { sessionId: " root " } }], context);
+    expect(search).toHaveBeenLastCalledWith(
+      { parent: { sessionId: "root" }, limit: 10 },
+      context.signal,
+    );
+
+    search.mockClear();
+    for (const parent of ["all", null, {}, { sessionId: " " }, { sessionId: "a", extra: 1 }]) {
+      await expect(capability.api.search([{ parent }], context)).rejects.toThrow();
+    }
+    expect(search).not.toHaveBeenCalled();
   });
 });

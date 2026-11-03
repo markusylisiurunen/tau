@@ -14,6 +14,7 @@ import {
 } from "../agent/agent_runtime.js";
 import type { AgentEventSink } from "../agent/events.js";
 import type { SessionRuntimeSettings } from "../config/index.js";
+import type { OpenSubagentHistory } from "../history/agent_history_recorder.js";
 import type { HistoryQuery } from "../history/types.js";
 import type { McpManager } from "../mcp/manager.js";
 import type { ModelResolver } from "../models/catalog.js";
@@ -58,6 +59,7 @@ export type CreateChatRuntimeOptions = {
   eventSink: AgentEventSink;
   subagentEventSink: (event: SubagentEvent) => void | Promise<void>;
   history: HistoryQuery;
+  openSubagentHistory: OpenSubagentHistory;
   mcp?: McpManager;
   recordUsage?: UsageRecorder;
   initialPromptComposition?: SessionPromptComposition;
@@ -127,6 +129,7 @@ export class ChatRuntime {
     this.latestPromptComposition = composition;
     this.supervisor = new AgentSupervisor({
       onEvent: options.subagentEventSink,
+      openHistory: options.openSubagentHistory,
       ...(options.recordUsage ? { recordUsage: options.recordUsage } : {}),
       deps: this.deps,
     });

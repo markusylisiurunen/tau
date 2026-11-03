@@ -35,13 +35,37 @@ Hosts emit `history_recording` diagnostics with a `delayed`, `dropped`, or `reco
 
 History follows the transcript, not the model's current context.
 
-**Rewind removes later entries.** When a session rewinds to a message, Tau deletes history from that message onward. The same deletion is queued for a configured remote collection.
+**Rewind removes later entries.** When a session rewinds to a message, Tau deletes history from that message onward. The same deletion is queued for a configured remote collection. [Subagent sessions](#native-subagent-sessions) stay.
 
 **Compaction keeps entries.** Compaction replaces the session's model context with a summary, but the original entries stay in history. Work from before a compaction can still be found, even though the session no longer contains it word for word.
 
 **Retry deletes nothing.** Only operations that remove messages from the session, such as rewind, delete history. Retrying does not.
 
 These rules differ from how the session itself behaves. Use [sessions](sessions.md) to understand what a recovered session shows or sends to the model.
+
+## Native subagent sessions
+
+Each native Tau [subagent](subagents.md) has its own history session for its whole lifetime, including its assignment, later input, and all its work. The session ID is the subagent's ID from `tau.agents`. Recording happens even when no agent has the `history` tool. Claude Code subagents are not recorded.
+
+A subagent's session is a child of the session that started it:
+
+- `parentSessionId` names the parent. Tau sets it when it creates the child, and it never changes. Sessions without a parent do not have this field.
+- `childCount` is the number of direct children, and every session has it.
+- Attributes are copied from the parent, except `cwd`, which is the subagent's working directory.
+
+Search leaves out child sessions by default, so it finds main sessions only. The `parent` option of `tau.history.search` changes this:
+
+| `parent`            | Sessions searched                |
+| ------------------- | -------------------------------- |
+| omitted or `"none"` | Only sessions without a parent   |
+| `"any"`             | All sessions, including children |
+| `{ sessionId }`     | Direct children of that session  |
+
+`tau.history.read` accepts any session ID, including a child's.
+
+A child session stays in history after its subagent ends, even when the parent rewinds past the message that started the subagent. History cannot restore the subagent.
+
+Child sessions replicate independently of their parents, so a shared collection can hold a child before its parent, and `childCount` can lag behind the subagents started.
 
 ## Filter by attributes
 
@@ -109,13 +133,15 @@ Open the service's address, for example `https://history.example.net/`, to brows
 - The password never appears in a URL, and pages are not cached by the browser.
 - The password gives read access to transcripts, attributes, tool arguments, and tool results from every host that uses the service. Keep it private.
 
-The index lists recently updated sessions with titles, summaries, times, and attributes, plus a search form.
+The index lists recently updated sessions without a parent, with titles, summaries, times, and attributes, plus a search form. Its search also covers only those sessions, so open a [subagent's session](#native-subagent-sessions) through the links on its parent's page or through its `webUrl`.
 
 - Repository and source filters match case-sensitive substrings. They combine with text search and stay active across pages.
 - **Older sessions** loads the next page; pages never load by themselves.
 - A summary can be pending or out of date while the transcript is already available.
 
 A session page starts empty, then loads the transcript in batches and adds them in order, with no scrolling or page controls. Tool entries start collapsed. Text and metadata are shown as plain text, never as HTML or Markdown. Valid PNG, JPEG, GIF, and WebP blocks are shown as images, and other structured content as plain text.
+
+Above the transcript, a session page links to related sessions when it has any. **Parent session** links to the parent, or shows its ID marked as not available when the service does not have that session. **Child sessions** is a nested list of the sessions below this one. It shows up to 200 sessions and 8 levels, and a note appears when the list is incomplete. When the tree is incomplete, the note links to a paginated list of all direct children. Open a child session to explore its descendants. Each link opens that session's normal page, and transcripts are never combined.
 
 **Copy conversation** at the top works once the whole transcript has loaded. If loading fails, a retry button appears and copying stays off. The selector next to it chooses what to copy:
 
@@ -149,6 +175,18 @@ Remote history can be set only in the host's global Tau config, normally `~/.con
 If `history` is set but no key is found, the host fails to start, instead of quietly running without remote history. The key stays on the host and is never visible to history code-mode programs. See [credentials](credentials.md) for where to put it.
 
 Restart the host after changing this block or its environment variables. `/reload` does not reload it.
+
+## Keep the service and hosts on one version
+
+The service and every host that uses it must run the same Tau release, because they do not negotiate versions. A mismatch has these effects:
+
+- A service older than the host ignores fields it does not know, including parent links. It stores those child sessions without a parent, so they appear as ordinary sessions, and upgrading the service later does not restore the links. The host also rejects the older service's search and read responses.
+- A host older than the service rejects the service's search and read responses, so its remote searches and reads fail. Replication and local recording keep working.
+
+To upgrade without losing parent links:
+
+1. Upgrade Tau on the machine you use for setup, then run `tau history setup` with the existing API key and viewer password. Setup deploys the Worker from the installed Tau release and applies new D1 migrations.
+2. Upgrade and restart each host. Until a host restarts on the new release, its remote searches and reads fail.
 
 ## Replication and outages
 
@@ -218,6 +256,8 @@ Cloudflare problems show up in the normal Worker logs, Cron Events, and D1 diagn
 **The browser keeps asking for credentials.** Use username `tau` and the viewer password from the latest setup. The API key is for hosts and does not work in the browser.
 
 **A session does not appear in remote search.** Confirm the host was restarted with the remote config, the session was used while the config was active, and enough history activity has happened to send the outbox. Check host logs for `history_replication_failed`. A permanent rejection affects only the named session, while other failures are retried. Summaries are not immediate.
+
+**Remote search or read fails with an invalid response after an upgrade.** The host and the service are on different Tau releases. [Put them on the same release](#keep-the-service-and-hosts-on-one-version).
 
 **Local history is delayed or dropping changes.** Brief SQLite contention is retried automatically. For sustained failures, check the host's `history_recording` diagnostics, file access, free space, ownership of `~/.config/tau`, and whether another process holds a long database transaction. Fixing the underlying problem lets later writes proceed without restarting the host; dropped changes remain gaps. `tau history status` reports remote replication quarantines, not the live recording buffer. Do not edit, replace, or delete the SQLite files as a first repair, and do not inspect outbox rows or keys.
 

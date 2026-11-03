@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
+import { AgentHistoryRecorder } from "../dist/core/history/agent_history_recorder.js";
 import { HistoryManager } from "../dist/core/history/history_manager.js";
 import { LocalHistoryStore } from "../dist/core/history/local_history_store.js";
 
@@ -68,10 +69,10 @@ describe("background history recording", () => {
     let released = false;
     try {
       const start = performance.now();
-      expect(manager.registerSession(session, remote)).toBeUndefined();
-      manager.append(session.sessionId, [entry("a"), entry("b"), entry("c")], remote);
-      manager.truncateFromSources(session.sessionId, ["b", "c"], remote);
-      manager.append(session.sessionId, [entry("d")], remote);
+      const writer = manager.openSession(session, remote);
+      writer.append([entry("a"), entry("b"), entry("c")]);
+      writer.truncateFromSources(["b", "c"]);
+      writer.append([entry("d")]);
       expect(performance.now() - start).toBeLessThan(500);
       await delay(5_300);
       expect(ticks).toBeGreaterThan(50);
@@ -82,7 +83,7 @@ describe("background history recording", () => {
       expect(reportRecording).toHaveBeenCalledWith(
         expect.objectContaining({ status: "recovered" }),
       );
-      manager.append(session.sessionId, [entry("later")], remote);
+      writer.append([entry("later")]);
       await waitForEntries(reader, ["a", "d", "later"]);
       await manager.flush();
       expect(replicated.map((operation) => operation.type)).toEqual([
@@ -111,12 +112,12 @@ describe("background history recording", () => {
     const reportRecording = vi.fn();
     const manager = HistoryManager.open(join(parent, "history.sqlite"), { reportRecording });
     try {
-      manager.registerSession(session);
-      manager.append(session.sessionId, [entry("lost")]);
+      const writer = manager.openSession(session);
+      writer.append([entry("lost")]);
       await manager.flush();
       expect(reportRecording).toHaveBeenCalledWith(expect.objectContaining({ status: "dropped" }));
       rmSync(parent);
-      manager.append(session.sessionId, [entry("later")]);
+      writer.append([entry("later")]);
       const result = await manager.query().read({ sessionId: session.sessionId, limit: 10 });
       expect(result.entries.map((item) => item.id)).toEqual(["later"]);
     } finally {
@@ -139,12 +140,12 @@ describe("background history recording", () => {
     const reportRecording = vi.fn();
     const manager = new HistoryManager(store, { maxPendingBytes: 500, reportRecording });
     try {
-      manager.registerSession(session);
-      expect(manager.append(session.sessionId, [entry("x".repeat(500))])).toBeTypeOf("string");
+      const writer = manager.openSession(session);
+      expect(writer.append([entry("x".repeat(500))])).toBeTypeOf("string");
       expect(reportRecording).toHaveBeenCalledWith(expect.objectContaining({ status: "dropped" }));
       release();
       await manager.flush();
-      manager.append(session.sessionId, [entry("later")]);
+      writer.append([entry("later")]);
       await manager.flush();
       expect(
         (await store.read({ sessionId: session.sessionId, limit: 10 })).entries.map((e) => e.id),
@@ -165,11 +166,11 @@ describe("background history recording", () => {
       },
     });
     try {
-      manager.registerSession(session);
-      manager.append(session.sessionId, [entry("lost")]);
-      manager.append(session.sessionId, [entry("later")]);
-      manager.registerSession({ ...session, sessionId: "other" });
-      manager.append("other", [entry("other")]);
+      const writer = manager.openSession(session);
+      writer.append([entry("lost")]);
+      writer.append([entry("later")]);
+      const other = manager.openSession({ ...session, sessionId: "other" });
+      other.append([entry("other")]);
       await manager.flush();
       expect(
         (await store.read({ sessionId: session.sessionId, limit: 10 })).entries.map((e) => e.id),
@@ -188,10 +189,65 @@ describe("background history recording", () => {
       throw Object.assign(new Error("database is locked"), { errcode: 5 });
     });
     const manager = new HistoryManager(store);
-    manager.registerSession(session);
+    manager.openSession(session);
     const start = performance.now();
     await manager.flush();
     expect(performance.now() - start).toBeLessThan(3_000);
     manager.close();
+  });
+});
+
+describe("native agent history projection", () => {
+  it("records rejected calls and recovery results, retains pre-compaction entries, and truncates on rewind", async () => {
+    const store = new LocalHistoryStore(":memory:");
+    const manager = new HistoryManager(store);
+    const recorder = new AgentHistoryRecorder(manager.openSession(session));
+    const call = { type: "toolCall", id: "call", name: "bash", arguments: { command: "pwd" } };
+    const result = {
+      role: "toolResult",
+      toolCallId: call.id,
+      toolName: call.name,
+      content: [{ type: "text", text: "blocked" }],
+      isError: true,
+      timestamp: 3,
+    };
+    try {
+      recorder.record({
+        type: "user_message",
+        historyEntryId: "user",
+        message: { role: "user", content: "task", timestamp: 1 },
+      });
+      recorder.record({ type: "tool_run_blocked", toolCallId: call.id });
+      recorder.record({
+        type: "assistant_final",
+        historyEntryId: "assistant",
+        message: { content: [{ type: "text", text: "answer" }, call], timestamp: 2 },
+      });
+      expect(
+        recorder.record({
+          type: "tool_recovery",
+          historyEntryId: "recovery",
+          toolResults: [result],
+        }),
+      ).toBeUndefined();
+      recorder.record({ type: "compaction_end", outcome: "compacted" });
+      await manager.flush();
+      const before = await store.read({ sessionId: session.sessionId, limit: 100 });
+      expect(before.entries.map((entry) => entry.type)).toEqual(["user", "assistant", "tool"]);
+      expect(before.entries[2]).toMatchObject({
+        id: "call",
+        sourceIds: ["assistant", "recovery"],
+        arguments: call.arguments,
+        result: result.content,
+        outcome: "blocked",
+      });
+      recorder.record({ type: "history_rewound", removedEntryIds: ["assistant", "recovery"] });
+      await manager.flush();
+      expect((await store.read({ sessionId: session.sessionId, limit: 100 })).entries).toEqual([
+        before.entries[0],
+      ]);
+    } finally {
+      manager.close();
+    }
   });
 });

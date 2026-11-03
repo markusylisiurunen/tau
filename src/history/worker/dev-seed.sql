@@ -1,8 +1,8 @@
-DELETE FROM entries_fts WHERE session_id = 'local-history-demo';
-DELETE FROM sessions_fts WHERE session_id = 'local-history-demo';
-DELETE FROM entries WHERE session_id = 'local-history-demo';
-DELETE FROM attributes WHERE session_id = 'local-history-demo';
-DELETE FROM sessions WHERE session_id = 'local-history-demo';
+DELETE FROM entries_fts WHERE session_id LIKE 'local-history-%';
+DELETE FROM sessions_fts WHERE session_id LIKE 'local-history-%';
+DELETE FROM entries WHERE session_id LIKE 'local-history-%';
+DELETE FROM attributes WHERE session_id LIKE 'local-history-%';
+DELETE FROM sessions WHERE session_id LIKE 'local-history-%';
 
 INSERT INTO sessions (
   session_id,
@@ -89,3 +89,128 @@ INSERT INTO sessions_fts (session_id, title, summary) VALUES (
   'Refine the private history viewer',
   'The conversation iterates on a minimal dark monospace history viewer, inspects the Worker implementation, and verifies the focused history tests after updating its controls and tool presentation.'
 );
+
+INSERT INTO sessions (
+  session_id,
+  attributes_json,
+  created_at,
+  updated_at,
+  parent_session_id,
+  digest_title,
+  digest_summary,
+  digest_through_entry_id
+) VALUES
+  (
+    'local-history-demo-renderer',
+    '{"source":"subagent"}',
+    1787673640000,
+    1787673680000,
+    'local-history-demo',
+    'Inspect the viewer renderer',
+    'A worker reads the Worker renderer and reports which styles can move into shared variables.',
+    'renderer-assistant'
+  ),
+  (
+    'local-history-demo-contrast',
+    '{"source":"subagent"}',
+    1787673650000,
+    1787673670000,
+    'local-history-demo-renderer',
+    'Check muted text contrast against the dark background of the transcript cards',
+    'A nested worker measures the contrast of the muted and dim text tones.',
+    'contrast-assistant'
+  ),
+  (
+    'local-history-demo-tests',
+    '{"source":"subagent"}',
+    1787673740000,
+    1787673760000,
+    'local-history-demo',
+    NULL,
+    NULL,
+    NULL
+  ),
+  (
+    'local-history-orphan',
+    '{"source":"subagent"}',
+    1787673000000,
+    1787673100000,
+    'local-history-parent-not-replicated',
+    'Review a worker whose parent is missing',
+    'This worker reached the history service before its parent session did.',
+    'orphan-assistant'
+  );
+INSERT INTO entries (session_id, position, entry_id, timestamp, payload_json, search_text) VALUES
+  (
+    'local-history-demo-renderer', 1, 'renderer-user', 1787673640000,
+    '{"id":"renderer-user","sourceIds":["renderer-user"],"type":"user","timestamp":1787673640000,"content":"Read the viewer renderer and list the styles that repeat."}',
+    'Read the viewer renderer and list the styles that repeat.'
+  ),
+  (
+    'local-history-demo-renderer', 2, 'renderer-assistant', 1787673680000,
+    '{"id":"renderer-assistant","sourceIds":["renderer-assistant"],"type":"assistant","timestamp":1787673680000,"content":"Spacing and text tones repeat across the cards, so both can move into shared variables."}',
+    'Spacing and text tones repeat across the cards, so both can move into shared variables.'
+  ),
+  (
+    'local-history-demo-contrast', 1, 'contrast-user', 1787673650000,
+    '{"id":"contrast-user","sourceIds":["contrast-user"],"type":"user","timestamp":1787673650000,"content":"Measure the contrast of the muted and dim text tones."}',
+    'Measure the contrast of the muted and dim text tones.'
+  ),
+  (
+    'local-history-demo-contrast', 2, 'contrast-assistant', 1787673670000,
+    '{"id":"contrast-assistant","sourceIds":["contrast-assistant"],"type":"assistant","timestamp":1787673670000,"content":"Both tones stay above 4.5:1 on the background and on the card surface."}',
+    'Both tones stay above 4.5:1 on the background and on the card surface.'
+  ),
+  (
+    'local-history-demo-tests', 1, 'tests-user', 1787673740000,
+    '{"id":"tests-user","sourceIds":["tests-user"],"type":"user","timestamp":1787673740000,"content":"Run the focused history tests."}',
+    'Run the focused history tests.'
+  ),
+  (
+    'local-history-orphan', 1, 'orphan-assistant', 1787673100000,
+    '{"id":"orphan-assistant","sourceIds":["orphan-assistant"],"type":"assistant","timestamp":1787673100000,"content":"The parent session has not been replicated."}',
+    'The parent session has not been replicated.'
+  );
+INSERT INTO entries_fts (session_id, entry_id, position, text)
+SELECT session_id, entry_id, position, search_text FROM entries
+WHERE session_id IN ('local-history-demo-renderer', 'local-history-demo-contrast', 'local-history-demo-tests', 'local-history-orphan');
+INSERT INTO sessions_fts (session_id, title, summary)
+SELECT session_id, digest_title, digest_summary FROM sessions
+WHERE session_id IN ('local-history-demo-renderer', 'local-history-demo-contrast', 'local-history-orphan');
+
+-- A chain deeper than the tree limit and a parent with more children than the limit.
+INSERT INTO sessions (session_id, attributes_json, created_at, updated_at, parent_session_id, digest_title, digest_summary, digest_through_entry_id)
+WITH RECURSIVE chain(level) AS (
+  SELECT 0 UNION ALL SELECT level + 1 FROM chain WHERE level < 10
+)
+SELECT
+  'local-history-deep-' || level,
+  '{"source":"subagent"}',
+  1787670000000 + level,
+  1787670000000 + level,
+  CASE WHEN level = 0 THEN NULL ELSE 'local-history-deep-' || (level - 1) END,
+  'Deep tree level ' || level,
+  'Fixture session at level ' || level || ' of a deep tree.',
+  'none'
+FROM chain;
+INSERT INTO sessions (session_id, attributes_json, created_at, updated_at, parent_session_id, digest_title, digest_summary, digest_through_entry_id)
+WITH RECURSIVE wide(position) AS (
+  SELECT 0 UNION ALL SELECT position + 1 FROM wide WHERE position < 205
+)
+SELECT
+  'local-history-wide-' || position,
+  '{"source":"subagent"}',
+  1787660000000 + position,
+  1787660000000 + position,
+  CASE WHEN position = 0 THEN NULL ELSE 'local-history-wide-0' END,
+  CASE WHEN position = 0 THEN 'Wide tree root' ELSE 'Wide tree child ' || position END,
+  'Fixture session ' || position || ' of a wide tree.',
+  'none'
+FROM wide;
+
+INSERT INTO attributes (session_id, key, value)
+SELECT session_id, 'source', 'subagent' FROM sessions
+WHERE session_id LIKE 'local-history-%' AND session_id <> 'local-history-demo';
+INSERT INTO sessions_fts (session_id, title, summary)
+SELECT session_id, digest_title, digest_summary FROM sessions
+WHERE session_id LIKE 'local-history-deep-%' OR session_id LIKE 'local-history-wide-%';

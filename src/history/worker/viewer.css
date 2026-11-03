@@ -69,4 +69,13 @@ blockquote { padding-left: var(--space-4); border-left: 1px solid currentColor; 
 .tool-section { margin-top: var(--space-2); }
 .outcome { margin-left: var(--space-2); }
 .pagination { margin-top: var(--space-6); }
-.timestamps, .session-id, .entry-heading time, .entry-time { color: var(--text-dim); }
+.session-links { margin-bottom: var(--space-6); }
+.session-links section + section { margin-top: var(--space-3); }
+.session-links h2 { margin-bottom: var(--space-1); }
+.session-links p { margin-bottom: 0; }
+.session-links a + .session-id { display: inline-block; }
+.session-tree ul { margin: 0; padding: 0; list-style: none; }
+.session-tree li { padding-top: var(--space-half); }
+.session-tree ul ul { margin-left: var(--space-half); padding-left: var(--space-4); border-left: 1px solid var(--border); }
+.session-links .session-tree-note { margin-top: var(--space-2); }
+.timestamps, .session-id, .entry-heading time, .entry-time, .session-tree-note { color: var(--text-dim); }

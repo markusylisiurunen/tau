@@ -86,6 +86,22 @@ function getRecord(supervisor, id) {
 }
 
 describe("AgentSupervisor", () => {
+  it("opens native history only after runtime construction succeeds", () => {
+    const openHistory = vi.fn();
+    const supervisor = new AgentSupervisor({ onEvent: () => {}, openHistory });
+    const registry = vi.spyOn(ToolCatalog, "createSubagentRegistry").mockImplementationOnce(() => {
+      throw new Error("registry unavailable");
+    });
+    try {
+      expect(() => supervisor.spawn(createSpawnOptions())).toThrow();
+      expect(openHistory).not.toHaveBeenCalled();
+      expect(supervisor.list()).toEqual([]);
+    } finally {
+      registry.mockRestore();
+      supervisor.reset();
+    }
+  });
+
   it("binds the parent's MCP manager without resolving servers from the child workspace", async () => {
     const supervisor = new AgentSupervisor({ onEvent: () => {} });
     const mcp = { available: true, listServers: vi.fn(() => [{ name: "host" }]) };

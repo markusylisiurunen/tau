@@ -47,6 +47,7 @@ function createRuntime(overrides = {}) {
     promptContext: createPromptContext(),
     eventSink: async () => {},
     subagentEventSink: async () => {},
+    openSubagentHistory: () => async () => {},
     history: {
       search: async () => ({ sessions: [] }),
       read: async () => {

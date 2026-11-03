@@ -1,3 +1,4 @@
+import type { AgentEventSink } from "../agent/events.js";
 import type { SessionRuntimeSettings } from "../config/index.js";
 import type { HistoryQuery } from "../history/types.js";
 import type { McpManager } from "../mcp/manager.js";
@@ -36,6 +37,7 @@ export type SubagentRuntimeOptions = {
   backend: ToolExecutionBackend;
   jobs: AgentJobRegistry;
   history?: HistoryQuery;
+  openHistory?: () => AgentEventSink;
   mcp?: McpManager;
   personaId?: string;
   deps: CoreDeps;

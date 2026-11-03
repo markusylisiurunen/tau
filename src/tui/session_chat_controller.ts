@@ -184,6 +184,8 @@ export class SessionChatController {
   private readonly snapshotRecoveryDeltas: SessionProtocolDeltaMessage[] = [];
   private hasPendingUserMessages = false;
   private pendingIdleNotification = false;
+  private programStatus: "idle" | "working" | "done" | "error" | "clear" = "clear";
+  private programStatusTurnStart?: SessionProtocolSnapshot;
   private isStreaming = false;
   private assistantInterruptRequested = false;
   private submittedTurnInProgress = false;
@@ -274,6 +276,7 @@ export class SessionChatController {
     });
     this.renderSnapshot(this.snapshot);
     this.hydrateRunningSnapshotState();
+    this.syncProgramStatus();
     this.eventUnsubscribe = this.session.onDelta((delta) => this.onSdkDelta(delta));
     this.ephemeralUnsubscribe = this.session.onEphemeral((message) => this.onSdkEphemeral(message));
     this.pendingUserMessagesUnsubscribe = this.session.onPendingUserMessages((message) =>
@@ -287,6 +290,7 @@ export class SessionChatController {
 
   async dispose(): Promise<void> {
     this.disposed = true;
+    this.setProgramStatus("clear");
     this.markdownExportAbortController?.abort();
     this.endListenPreview();
     this.eventUnsubscribe?.();
@@ -1472,8 +1476,10 @@ export class SessionChatController {
       this.autoSpeak = false;
       this.pendingAutoSpeak = undefined;
       this.lastAutoSpeakMessageId = undefined;
+      this.setProgramStatus("clear");
       this.session = nextSession;
       this.snapshot = nextSnapshot;
+      this.syncProgramStatus();
       this.subagentActivities = nextSession.subagentActivities();
       this.observedSessionRevision = nextSnapshot.revision;
       this.eventUnsubscribe = nextEventUnsubscribe;
@@ -1586,9 +1592,11 @@ export class SessionChatController {
       delta.cause.type === "compaction" ||
       delta.cause.type === "resync";
     if (invalidatesSpeech) this.pendingAutoSpeak = undefined;
+    const previousSnapshot = this.snapshot;
     const previousLifecycle = this.snapshot.lifecycle;
     const previousTurns = this.snapshot.turns;
     if (this.tryApplySdkDelta(delta)) {
+      this.syncProgramStatus(previousSnapshot);
       if (this.autoSpeak && !invalidatesSpeech) {
         if (previousLifecycle !== "running" && this.snapshot.lifecycle === "running") {
           this.pendingAutoSpeak = undefined;
@@ -2131,6 +2139,61 @@ export class SessionChatController {
     return undefined;
   }
 
+  private setProgramStatus(state: typeof this.programStatus): void {
+    if (state === this.programStatus) return;
+    this.programStatus = state;
+    if (state !== "working") this.programStatusTurnStart = undefined;
+    this.view.setProgramStatus(state);
+  }
+
+  private syncProgramStatus(previous?: SessionProtocolSnapshot): void {
+    if (this.disposed) return;
+    const turns = Object.values(this.snapshot.turns);
+    if (this.snapshot.lifecycle === "running" || turns.some((turn) => turn.state === "running")) {
+      if (this.programStatus !== "working") this.programStatusTurnStart = previous ?? this.snapshot;
+      this.setProgramStatus("working");
+      return;
+    }
+    if (!previous) {
+      this.programStatusTurnStart = undefined;
+      this.setProgramStatus("idle");
+      return;
+    }
+    if (this.programStatus !== "working") return;
+    const start = this.programStatusTurnStart ?? previous;
+    const settled = turns.findLast(
+      (turn) =>
+        turn.state === "settled" && start.turns[turn.userHistoryEntryId]?.state !== "settled",
+    );
+    if (settled?.state === "settled") {
+      this.setProgramStatus(
+        settled.outcome.status === "completed"
+          ? "done"
+          : settled.outcome.status === "aborted"
+            ? "idle"
+            : "error",
+      );
+      return;
+    }
+    const failed = this.snapshot.timeline.items.some(
+      (item) =>
+        item.type === "notice" &&
+        (item.notice.kind === "tau.turn.failed" || item.notice.kind === "tau.turn.blocked") &&
+        !start.timeline.items.some((old) => old.id === item.id),
+    );
+    const assistant = this.snapshot.messages.findLast(
+      (entry) =>
+        isAssistantMessage(entry.message) && !start.messages.some((old) => old.id === entry.id),
+    )?.message;
+    this.setProgramStatus(
+      failed || (assistant && isAssistantMessage(assistant) && assistant.stopReason === "error")
+        ? "error"
+        : assistant && isAssistantMessage(assistant) && assistant.stopReason !== "aborted"
+          ? "done"
+          : "idle",
+    );
+  }
+
   private updateStreamingStateFromSnapshot(snapshot: SessionProtocolSnapshot): void {
     if (snapshot.lifecycle === "running") {
       this.startObservedSessionTurn();
@@ -2163,6 +2226,7 @@ export class SessionChatController {
   ): Promise<boolean> {
     try {
       const snapshot = await this.session.snapshot();
+      const previousSnapshot = this.snapshot;
       for (const id of ephemeralTimelineItemIdsToDiscard ?? []) {
         this.ephemeralTimelineItems.delete(id);
       }
@@ -2171,6 +2235,7 @@ export class SessionChatController {
       } else {
         this.syncRenderedHistory(snapshot);
       }
+      this.syncProgramStatus(previousSnapshot);
       this.refreshStatus();
       return true;
     } catch (error) {
@@ -2263,7 +2328,9 @@ export class SessionChatController {
       const deltas = this.snapshotRecoveryDeltas.splice(0);
       for (let index = 0; index < deltas.length; index++) {
         const delta = deltas[index]!;
+        const previousSnapshot = this.snapshot;
         if (this.tryApplySdkDelta(delta)) {
+          this.syncProgramStatus(previousSnapshot);
           continue;
         }
         if (!(await this.syncFromSessionSnapshotAfterRevisionGap())) {

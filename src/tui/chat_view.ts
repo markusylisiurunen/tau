@@ -1,4 +1,4 @@
-import type { AutocompleteProvider, Component } from "@earendil-works/pi-tui";
+import type { AutocompleteProvider, Component, ProgramStatus } from "@earendil-works/pi-tui";
 import { Spacer, TuiMainScreen } from "@earendil-works/pi-tui";
 import { resolveThemeTokensForAppearance, type ThemeDefinition } from "../core/config/index.js";
 import type { RecordingShortcut } from "../core/config/schema.js";
@@ -93,6 +93,7 @@ export interface ChatView {
   resetToolUiSessionPreservingSubagents(): void;
   cycleSubagentSelection(direction: 1 | -1): string | undefined;
   getSelectedSubagentId(): string | undefined;
+  setProgramStatus(state: ProgramStatus["state"]): void;
   sendTerminalNotification(title: string): void;
   setPendingUserMessages(messages: SessionProtocolPendingUserMessage[]): void;
   getEditorText(): string;
@@ -305,6 +306,11 @@ export class TuiChatView implements ChatView {
         return code !== undefined && code > 0x1f && code !== 0x7f;
       })
       .join("");
+  }
+
+  setProgramStatus(state: ProgramStatus["state"]): void {
+    if (!process.stdout.isTTY) return;
+    this.ui.terminal.setProgramStatus({ state, app: "tau" });
   }
 
   sendTerminalNotification(title: string): void {

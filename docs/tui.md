@@ -279,6 +279,23 @@ See [`speech` configuration](config-reference.md#speech) for the default Maisie 
 - Escape stops playback without turning the mode off.
 - It uses the same voice, credentials, and rewriting as `/speak`. It never opens the microphone or submits dictation.
 
+## See session status in your terminal
+
+The TUI reports the session's status to the terminal through the [Program Status Protocol (OSC 7501)](https://www.superlogical.com/rex/docs/build/program-status). A terminal such as Rex can use these reports to show which of your sessions need attention. Local and attached sessions report in the same way, and the report always comes from the TUI on your machine.
+
+| Status    | Meaning                                                     |
+| --------- | ----------------------------------------------------------- |
+| `working` | A turn is running, including any tools it uses.             |
+| `done`    | The last turn finished successfully.                        |
+| `error`   | The last turn failed or was blocked.                        |
+| `idle`    | The session is waiting for input, or you canceled the turn. |
+
+`done` and `error` stay until the next turn starts. When you start the TUI, attach, or switch sessions, Tau reports only `working` or `idle`, so a turn that finished earlier appears as `idle`. Tau clears the status when you leave a session or exit.
+
+Each report contains only the status and `app=tau`. It never includes messages or other session content, and nothing is sent when the TUI's output is not a terminal. Tau reports only the main session, and it does not use the protocol's `blocked` state, even while a diff review waits for you.
+
+Terminals without support show nothing. Set `PI_PROGRAM_STATUS=0` on the TUI machine to turn reports off, or `PI_PROGRAM_STATUS=1` to send them without waiting for the terminal to confirm support.
+
 ## Reload the right component
 
 Run `/reload` while idle after changing configuration, personas, prompts, skills, or `AGENTS.md` content in the execution environment. The host reads them again from the session's working directory, keeps the current persona if it still exists, and otherwise selects the first available persona. Warnings appear in the transcript. This also refreshes the session's speech vocabulary. MCP server definitions do not change on reload; a warning tells you when they differ, and [the configuration reference](config-reference.md#mcpservers) explains how to apply them.

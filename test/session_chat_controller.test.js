@@ -649,6 +649,7 @@ class FakeView {
   selectedSubagentId;
   pendingUserMessages = [];
   terminalNotifications = [];
+  programStatuses = [];
   renderRequests = 0;
   workingIconStarts = 0;
   workingIconStops = 0;
@@ -746,6 +747,9 @@ class FakeView {
   }
   getSelectedSubagentId() {
     return this.selectedSubagentId;
+  }
+  setProgramStatus(state) {
+    this.programStatuses.push(state);
   }
   sendTerminalNotification(title) {
     this.terminalNotifications.push(title);
@@ -1026,6 +1030,168 @@ describe("HostDiagnosticRelay", () => {
 });
 
 describe("SessionChatController", () => {
+  it("reports turn status after lifecycle becomes idle and the receipt settles", async () => {
+    const { session, view, controller } = await createControllerHarness();
+    controller.start();
+    expect(view.programStatuses).toEqual(["idle"]);
+    const publish = (changes) => {
+      const delta = {
+        version: SESSION_PROTOCOL_VERSION,
+        type: "session.delta",
+        sessionId: session.id,
+        fromRevision: session.snapshotValue.revision,
+        toRevision: session.snapshotValue.revision + 1,
+        cause: { type: "notice" },
+        delta: { type: "snapshot.patch", changes },
+      };
+      session.snapshotValue = applySessionProtocolDelta(session.snapshotValue, delta);
+      for (const listener of session.listeners) listener(delta);
+    };
+    for (const [status, expected] of [
+      ["completed", "done"],
+      ["failed", "error"],
+      ["aborted", "idle"],
+      ["blocked", "error"],
+    ]) {
+      publish([
+        { type: "lifecycle.set", lifecycle: "running" },
+        { type: "turn.set", turn: { userHistoryEntryId: status, state: "running" } },
+      ]);
+      expect(view.programStatuses.at(-1)).toBe("working");
+      const runningReports = view.programStatuses.length;
+      publish([{ type: "lifecycle.set", lifecycle: "idle" }]);
+      expect(view.programStatuses).toHaveLength(runningReports);
+      publish([
+        {
+          type: "turn.set",
+          turn: {
+            userHistoryEntryId: status,
+            state: "settled",
+            outcome:
+              status === "blocked"
+                ? { status, reason: "auto-compaction-failed", message: "failed" }
+                : {
+                    status,
+                    stopReason:
+                      status === "completed" ? "stop" : status === "failed" ? "error" : "aborted",
+                  },
+          },
+        },
+      ]);
+      expect(view.programStatuses.at(-1)).toBe(expected);
+      const reports = view.programStatuses.length;
+      publish([{ type: "lifecycle.set", lifecycle: "idle" }]);
+      expect(view.programStatuses).toHaveLength(reports);
+    }
+    await controller.dispose();
+    expect(view.programStatuses.at(-1)).toBe("clear");
+  });
+
+  it.each(["idle", "running"])(
+    "reports current activity on %s attachment without replaying completion",
+    async (lifecycle) => {
+      const session = new FakeSession();
+      session.snapshotValue.lifecycle = lifecycle;
+      session.snapshotValue.turns = {
+        old: {
+          userHistoryEntryId: "old",
+          state: "settled",
+          outcome: { status: "completed", stopReason: "stop" },
+        },
+      };
+      const { view, controller } = await createControllerHarness({ session });
+      controller.start();
+      expect(view.programStatuses).toEqual([lifecycle === "running" ? "working" : "idle"]);
+      await controller.dispose();
+      expect(view.programStatuses.at(-1)).toBe("clear");
+    },
+  );
+
+  it.each(["tau.turn.failed", "tau.turn.blocked", "cancelled"])(
+    "does not reuse an earlier answer when a retry ends with %s",
+    async (kind) => {
+      const session = new FakeSession();
+      session.snapshotValue = createSnapshot([
+        { id: "old-answer", message: createAssistantMessage("earlier answer") },
+      ]);
+      const { controller, view } = await createControllerHarness({ session });
+      controller.start();
+      session.snapshotValue = updateSnapshot(session.snapshotValue, { lifecycle: "running" });
+      await controller.syncFromSessionSnapshot();
+      session.snapshotValue = updateSnapshot(session.snapshotValue, { lifecycle: "idle" });
+      if (kind !== "cancelled") {
+        session.snapshotValue.timeline.items.push({
+          type: "notice",
+          id: "retry-failure",
+          sequence: ++session.snapshotValue.timeline.sequence,
+          createdAt: 1,
+          notice: {
+            kind,
+            version: 1,
+            severity: "error",
+            subject: { type: "session" },
+            presentation: { title: "failed", content: [] },
+            data: {},
+          },
+        });
+      }
+      await controller.syncFromSessionSnapshot();
+      expect(view.programStatuses).toEqual([
+        "idle",
+        "working",
+        kind === "cancelled" ? "idle" : "error",
+      ]);
+      await controller.dispose();
+    },
+  );
+
+  it("reports settlement replayed during revision-gap recovery", async () => {
+    const { session, controller, view } = await createControllerHarness();
+    controller.start();
+    session.snapshotValue = updateSnapshot(session.snapshotValue, { lifecycle: "running" });
+    session.snapshotValue.turns = {
+      turn: { userHistoryEntryId: "turn", state: "running" },
+    };
+    await controller.syncFromSessionSnapshot();
+    const running = structuredClone(session.snapshotValue);
+    let resolveSnapshot;
+    session.snapshot = () =>
+      new Promise((resolve) => {
+        resolveSnapshot = resolve;
+      });
+    const recovery = controller.recoverFromRevisionGap();
+    const delta = {
+      version: SESSION_PROTOCOL_VERSION,
+      type: "session.delta",
+      sessionId: session.id,
+      fromRevision: running.revision,
+      toRevision: running.revision + 1,
+      cause: { type: "assistant-message" },
+      delta: {
+        type: "snapshot.patch",
+        changes: [
+          { type: "lifecycle.set", lifecycle: "idle" },
+          {
+            type: "turn.set",
+            turn: {
+              userHistoryEntryId: "turn",
+              state: "settled",
+              outcome: { status: "completed", stopReason: "stop" },
+            },
+          },
+        ],
+      },
+    };
+    for (const listener of session.listeners) listener(delta);
+    resolveSnapshot(running);
+    await recovery;
+    expect(view.programStatuses).toEqual(["idle", "working", "done"]);
+    session.snapshot = async () => controller.snapshot;
+    await controller.syncFromSessionSnapshotAfterRevisionGap();
+    expect(view.programStatuses).toEqual(["idle", "working", "done"]);
+    await controller.dispose();
+  });
+
   it("shows session configuration warnings as one nonfatal transcript notice", async () => {
     const { view, controller } = await createControllerHarness();
     controller.showSessionConfigWarnings({ cwd: "/srv/project", warnings: ["first", "second"] });
@@ -7163,8 +7329,8 @@ describe("SessionChatController", () => {
     },
   );
 
-  it.each(["retry", "error", "aborted"])(
-    "handles real host speech completion for %s",
+  it.each(["retry", "error", "aborted", "runtime-error"])(
+    "handles real host speech and status completion for %s",
     async (mode) => {
       const environment = {
         resolveRuntimeContext: async () => ({
@@ -7196,6 +7362,7 @@ describe("SessionChatController", () => {
         getRemoteModelCatalog: () => new Map(),
       });
       let controller;
+      const view = new FakeView();
       try {
         const hosted = await host.createSession({
           executionEnvironment: { kind: "local", cwd: "/repo" },
@@ -7205,14 +7372,14 @@ describe("SessionChatController", () => {
         session.id = hosted.sessionId;
         session.snapshot = () => hosted.snapshot();
         session.onDelta = (listener) => hosted.onDelta(listener);
-        ({ controller } = await createControllerHarness({ session, deps: createMockDeps() }));
+        ({ controller } = await createControllerHarness({ session, view, deps: createMockDeps() }));
         const speak = vi.spyOn(controller, "speakLastAssistantMessage").mockResolvedValue();
         controller.start();
         await controller.onUserInput("/auto-speak on");
         const responses = [
           fauxAssistantMessage("first"),
           fauxAssistantMessage("retry", {
-            stopReason: mode === "retry" ? "stop" : mode,
+            stopReason: mode === "retry" || mode === "runtime-error" ? "stop" : mode,
           }),
         ];
         hosted.runtime.agent.spec.model.stream = () => {
@@ -7227,8 +7394,19 @@ describe("SessionChatController", () => {
         const accepted = await hosted.acceptTurn({ text: "question" });
         await hosted.runAcceptedTurn(accepted.userHistoryEntryId);
         expect(speak).toHaveBeenCalledTimes(1);
+        expect(view.programStatuses.at(-1)).toBe("done");
+        await controller.syncFromSessionSnapshot();
+        expect(view.programStatuses.at(-1)).toBe("done");
+        if (mode === "runtime-error") {
+          vi.spyOn(hosted.runtime, "runTurn").mockRejectedValueOnce(new Error("runtime failed"));
+        }
+        const reports = view.programStatuses.length;
         await hosted.retryTurn();
         expect(speak).toHaveBeenCalledTimes(mode === "retry" ? 2 : 1);
+        expect(view.programStatuses.slice(reports)).toEqual([
+          "working",
+          mode === "retry" ? "done" : mode === "aborted" ? "idle" : "error",
+        ]);
       } finally {
         await controller?.dispose();
         await host.shutdown();
@@ -7724,6 +7902,7 @@ describe("SessionChatController", () => {
       reasoning: "none",
     });
     expect(session.unobserve).toHaveBeenCalledTimes(1);
+    expect(view.programStatuses).toEqual(["idle", "clear", "idle"]);
     expect(view.removed).not.toContain("history-1");
     expect(view.messages).toContainEqual({
       id: "history-1",

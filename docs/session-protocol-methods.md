@@ -181,7 +181,7 @@ result: {
 
 The connection does not need to observe the session. The host interrupts turns and subagents, stops background jobs, and waits for them to settle before it responds. Interrupted turns are saved as they settle. Subagents, pending messages, and retention are lost. `unloaded` is `false` when the session was not in memory, and the call never loads it. If the host is recovering the session, it waits for recovery to finish and then unloads it.
 
-Other observing connections are not notified. A later `session.observe` waits for the unload to finish, and then loads the saved session again, idle and without subagents. Most other requests from a connection that was observing the session load it the same way.
+Other observing connections are not notified. A later `session.observe` waits for the unload to finish, and then loads the saved session again, idle and without subagents. Most other requests from a connection that was observing the session load it the same way. `session.retain` returns `not_found` until the connection observes the session again.
 
 ## Add user input and run turns
 

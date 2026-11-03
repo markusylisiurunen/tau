@@ -5887,7 +5887,7 @@ describe("LocalSessionHost", () => {
       client = await createTauSdkWebSocketClient({ url });
       const resumed = await client.sessions.observe(facade.id);
       observer = await createTauSdkWebSocketClient({ url });
-      await observer.sessions.observe(facade.id);
+      const observed = await observer.sessions.observe(facade.id);
       const restored = await host.observeSession(resumed.id);
       expect(restored).toBe(parent);
       supervisor.sendInput({ id: child.id, mode: "queue", prompt: "second task" });
@@ -5920,20 +5920,230 @@ describe("LocalSessionHost", () => {
         retainedUntil: null,
       });
       expect(parent.isDisposed).toBe(false);
+      await expect(observed.retain(60_000)).rejects.toMatchObject({ code: "not_found" });
+      let observedAgain = false;
+      const observing = observer.sessions.observe(facade.id).then((session) => {
+        observedAgain = true;
+        return session;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(observedAgain).toBe(false);
       settling.resolve();
       expect(await unloading).toEqual({ unloaded: true });
       host.releaseSession(restored);
       expect(parent.isDisposed).toBe(true);
-      expect(await client.sessions.unload(facade.id)).toEqual({ unloaded: false });
-      expect(await client.sessions.runtimeState(facade.id)).toEqual({ loaded: false });
-      const recovered = await observer.sessions.observe(facade.id);
+      const recovered = await observing;
       expect(recovered.id).toBe(facade.id);
       expect(recovered.subagentActivities().agents).toEqual({});
+      expect(await client.sessions.unload(facade.id)).toEqual({ unloaded: true });
+      await expect(recovered.retain(60_000)).rejects.toMatchObject({ code: "not_found" });
+      expect(await client.sessions.unload(facade.id)).toEqual({ unloaded: false });
+      expect(await client.sessions.runtimeState(facade.id)).toEqual({ loaded: false });
     } finally {
       await observer?.close();
       await client?.close();
       controller.abort();
       await server;
+    }
+  });
+
+  it.each([false, true])(
+    "joins concurrent unloads and isolates disposal failure from observation (%s)",
+    async (fail) => {
+      const gate = deferred();
+      const started = deferred();
+      const environment = createTestExecutionEnvironment();
+      environment.dispose = async () => {
+        started.resolve();
+        await gate.promise;
+        if (fail) throw new Error("disposal failed");
+      };
+      const host = createHost(new MemorySessionStore(), {
+        executionEnvironmentResolver: {
+          resolve: async () => environment,
+          canRestore: () => true,
+          restore: async (snapshot) => createTestExecutionEnvironment(snapshot),
+        },
+      });
+      try {
+        const session = await host.createSession(localCreateInput);
+        await session.record({ text: "recover after unload" });
+        const outcomes = [];
+        const unload = () =>
+          host.unloadSession(session.sessionId).then(
+            (value) => outcomes.push(value),
+            (error) => outcomes.push(error),
+          );
+        const first = unload();
+        const second = unload();
+        await started.promise;
+        let observed = false;
+        const observation = host.observeSession(session.sessionId).then((value) => {
+          observed = true;
+          return value;
+        });
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(outcomes).toEqual([]);
+        expect(observed).toBe(false);
+        gate.resolve();
+        await Promise.all([first, second]);
+        expect(outcomes).toEqual(fail ? [expect.any(Error), expect.any(Error)] : [true, true]);
+        const recovered = await observation;
+        expect(recovered).not.toBe(session);
+        expect((await recovered.snapshot()).sessionId).toBe(session.sessionId);
+      } finally {
+        gate.resolve();
+        await host.shutdown();
+      }
+    },
+  );
+
+  it.each([false, true])(
+    "waits for recovery during unload without returning a stale observer (%s)",
+    async (fail) => {
+      const store = new MemorySessionStore();
+      const snapshot = createStoredSnapshot({
+        sessionId: "unload-recovery",
+        revision: 1,
+        historyEntries: [],
+      });
+      await store.commitSessionSnapshot(snapshot);
+      const gate = deferred();
+      const started = deferred();
+      const restore = vi.fn(async (saved) => {
+        started.resolve();
+        await gate.promise;
+        if (fail) throw new Error("recovery failed");
+        return createTestExecutionEnvironment(saved);
+      });
+      const host = createHost(store, {
+        executionEnvironmentResolver: {
+          resolve: async () => createTestExecutionEnvironment(),
+          canRestore: () => true,
+          restore,
+        },
+      });
+      try {
+        const first = host.observeSession(snapshot.sessionId).catch((error) => error);
+        await started.promise;
+        const unloading = host.unloadSession(snapshot.sessionId);
+        const observing = host.observeSession(snapshot.sessionId).catch((error) => error);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        gate.resolve();
+        await first;
+        expect(await unloading).toBe(!fail);
+        const observed = await observing;
+        if (fail) {
+          expect(observed).toBeInstanceOf(Error);
+          expect(host.sessionRuntimeState(snapshot.sessionId)).toEqual({ loaded: false });
+        } else {
+          expect((await observed.snapshot()).sessionId).toBe(snapshot.sessionId);
+          expect(restore).toHaveBeenCalledTimes(2);
+        }
+      } finally {
+        gate.resolve();
+        await host.shutdown();
+      }
+    },
+  );
+
+  it("keeps a turn that starts while eviction snapshots the session", async () => {
+    const host = createHost(new MemorySessionStore());
+    const gate = deferred();
+    const snapshotStarted = deferred();
+    const turnGate = deferred();
+    try {
+      const session = await host.createSession(localCreateInput);
+      const snapshot = session.snapshot.bind(session);
+      vi.spyOn(session, "snapshot").mockImplementationOnce(async () => {
+        snapshotStarted.resolve();
+        await gate.promise;
+        return await snapshot();
+      });
+      host.releaseSession(session);
+      await snapshotStarted.promise;
+      const observed = await host.observeSession(session.sessionId);
+      session.runtime.agent.spec.model.stream = () => ({
+        async *[Symbol.asyncIterator]() {
+          await turnGate.promise;
+          yield* [];
+        },
+        async result() {
+          return fauxAssistantMessage("finished");
+        },
+      });
+      await observed.record({ text: "keep running" });
+      const turn = observed.runTurn();
+      host.releaseSession(observed);
+      gate.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(session.isDisposing).toBe(false);
+      expect(session.isTurnRunning).toBe(true);
+      turnGate.resolve();
+      expect(await turn).toMatchObject({ status: "completed" });
+      await vi.waitFor(() => expect(session.isDisposed).toBe(true));
+    } finally {
+      gate.resolve();
+      turnGate.resolve();
+      await host.shutdown();
+    }
+  });
+
+  it("keeps a running child loaded after retention expires until it settles", async () => {
+    const host = createHost(new MemorySessionStore());
+    const gate = deferred();
+    const started = deferred();
+    try {
+      const parent = await host.createSession(localCreateInput);
+      const origin = await parent.record({ text: "delegate work" });
+      const supervisor = parent.runtime.supervisor;
+      const child = supervisor.spawn({
+        runtimeConfig: {
+          kind: "native",
+          systemPrompt: "child system",
+          autoCompactThresholdTokens: 80000,
+          workingDirectory: "/repo/child",
+          model: personas[0].model,
+          settings: { reasoning: "medium" },
+          tools: [],
+        },
+        prompt: "finish before eviction",
+        title: "child task",
+        originHistoryEntryId: origin.userHistoryEntryId,
+        config: {},
+        backend: createLocalToolExecutionBackend(),
+        jobs: parent.runtime.jobs,
+      });
+      const agent = supervisor.records.get(child.id).runtime.agent;
+      agent.spec.model.stream = () => ({
+        async *[Symbol.asyncIterator]() {
+          started.resolve();
+          await gate.promise;
+          yield* [];
+        },
+        async result() {
+          return fauxAssistantMessage("finished");
+        },
+      });
+      await started.promise;
+      vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+      host.retainSessionRuntime(parent, 1000);
+      host.releaseSession(parent);
+      await vi.advanceTimersByTimeAsync(1001);
+      expect(host.sessionRuntimeState(parent.sessionId)).toEqual({
+        loaded: true,
+        busy: true,
+        retainedUntil: null,
+      });
+      expect(parent.isDisposing).toBe(false);
+      vi.useRealTimers();
+      gate.resolve();
+      await supervisor.waitForAgents([child.id]);
+      await vi.waitFor(() => expect(parent.isDisposed).toBe(true));
+    } finally {
+      vi.useRealTimers();
+      gate.resolve();
+      await host.shutdown();
     }
   });
 

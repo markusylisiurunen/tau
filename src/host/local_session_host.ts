@@ -165,6 +165,7 @@ export class LocalSessionHost implements TauSessionHost {
   private readonly sessionReferences = new Map<LocalHostedSessionHandle, number>();
   private readonly sessionEvictions = new Set<Promise<void>>();
   private readonly sessionDisposals = new Map<string, Promise<void>>();
+  private readonly sessionUnloads = new Map<string, Promise<boolean>>();
   private readonly runtimeRetentions = new Map<
     LocalHostedSessionHandle,
     {
@@ -528,35 +529,41 @@ export class LocalSessionHost implements TauSessionHost {
   }
 
   async observeSession(sessionId: string): Promise<LocalHostedSession | undefined> {
-    this.assertHostActive();
-    await this.sessionDisposals.get(sessionId);
-    this.assertHostActive();
-    const liveSession = this.findLiveSession(sessionId);
-    if (liveSession) {
-      return this.retainSession(liveSession);
-    }
+    while (true) {
+      this.assertHostActive();
+      await this.sessionUnloads.get(sessionId)?.catch(() => undefined);
+      await this.sessionDisposals.get(sessionId)?.catch(() => undefined);
+      if (this.sessionUnloads.has(sessionId) || this.sessionDisposals.has(sessionId)) continue;
+      this.assertHostActive();
+      const liveSession = this.findLiveSession(sessionId);
+      if (liveSession) {
+        return this.retainSession(liveSession);
+      }
 
-    await this.refreshStore();
-    await this.sessionDisposals.get(sessionId);
-    const refreshedLiveSession = this.findLiveSession(sessionId);
-    if (refreshedLiveSession) {
-      return this.retainSession(refreshedLiveSession);
-    }
+      await this.refreshStore();
+      if (this.sessionUnloads.has(sessionId) || this.sessionDisposals.has(sessionId)) continue;
+      this.assertHostActive();
+      const refreshedLiveSession = this.findLiveSession(sessionId);
+      if (refreshedLiveSession) {
+        return this.retainSession(refreshedLiveSession);
+      }
 
-    const existingRecovery = this.sessionRecoveryPromises.get(sessionId);
-    if (existingRecovery) {
-      const recovered = await existingRecovery;
-      return recovered ? this.retainSession(recovered) : undefined;
-    }
-
-    const recovery = this.recoverSession(sessionId);
-    this.sessionRecoveryPromises.set(sessionId, recovery);
-    try {
-      const recovered = await recovery;
-      return recovered ? this.retainSession(recovered) : undefined;
-    } finally {
-      if (this.sessionRecoveryPromises.get(sessionId) === recovery) {
-        this.sessionRecoveryPromises.delete(sessionId);
+      let recovery = this.sessionRecoveryPromises.get(sessionId);
+      if (!recovery) {
+        recovery = this.recoverSession(sessionId);
+        this.sessionRecoveryPromises.set(sessionId, recovery);
+      }
+      let recovered: LocalHostedSessionHandle | undefined;
+      try {
+        recovered = await recovery;
+      } finally {
+        if (this.sessionRecoveryPromises.get(sessionId) === recovery) {
+          this.sessionRecoveryPromises.delete(sessionId);
+        }
+      }
+      if (!recovered) return undefined;
+      if (!this.sessionUnloads.has(sessionId) && this.sessions.has(recovered)) {
+        return this.retainSession(recovered);
       }
     }
   }
@@ -614,7 +621,7 @@ export class LocalSessionHost implements TauSessionHost {
     return session;
   }
 
-  retainSessionRuntime(session: TauHostedSession, durationMs: number): number {
+  retainSessionRuntime(session: TauHostedSession, durationMs: number): number | undefined {
     this.assertHostActive();
     if (
       !Number.isSafeInteger(durationMs) ||
@@ -625,7 +632,7 @@ export class LocalSessionHost implements TauSessionHost {
     }
     const live = [...this.sessions].find((candidate) => candidate === session);
     if (!live || live.isDisposed || this.sessionDisposals.has(live.sessionId)) {
-      throw new Error("session is not live");
+      return undefined;
     }
     this.clearRuntimeRetention(live);
     const until = Date.now() + durationMs;
@@ -655,12 +662,25 @@ export class LocalSessionHost implements TauSessionHost {
 
   async unloadSession(sessionId: string): Promise<boolean> {
     this.assertHostActive();
+    const existing = this.sessionUnloads.get(sessionId);
+    if (existing) return await existing;
+    const unloading = this.unloadSessionNow(sessionId);
+    this.sessionUnloads.set(sessionId, unloading);
+    try {
+      return await unloading;
+    } finally {
+      this.sessionUnloads.delete(sessionId);
+    }
+  }
+
+  private async unloadSessionNow(sessionId: string): Promise<boolean> {
+    const recovery = this.sessionRecoveryPromises.get(sessionId);
+    if (recovery) await recovery.catch(() => undefined);
     const disposing = this.sessionDisposals.get(sessionId);
     if (disposing) {
       await disposing;
       return true;
     }
-    await this.sessionRecoveryPromises.get(sessionId);
     const session = this.findLiveSession(sessionId);
     if (!session) return false;
     await this.disposeSession(session);
@@ -679,7 +699,7 @@ export class LocalSessionHost implements TauSessionHost {
     this.clearRuntimeRetention(session);
     this.sessions.delete(session);
     this.sessionReferences.delete(session);
-    const disposal = Promise.resolve().then(() => session.dispose());
+    const disposal = session.dispose();
     this.sessionDisposals.set(session.sessionId, disposal);
     try {
       await disposal;
@@ -723,7 +743,7 @@ export class LocalSessionHost implements TauSessionHost {
       await session.runtime.jobs.waitForIdle();
       await session.runtime.waitForSubagents();
       await session.waitForActiveWork().catch(() => undefined);
-    } while (session.runtime.jobs.hasRunning || session.runtime.hasActiveSubagents);
+    } while (session.hasActiveWork);
     if (
       this.shuttingDown ||
       session.isDisposed ||
@@ -740,8 +760,7 @@ export class LocalSessionHost implements TauSessionHost {
       (this.sessionReferences.get(session) ?? 0) > 0
     )
       return;
-    if (session.runtime.jobs.hasRunning || session.runtime.hasActiveSubagents)
-      return await this.evictReleasedSession(session);
+    if (session.hasActiveWork) return await this.evictReleasedSession(session);
 
     await this.disposeSession(session);
   }
@@ -818,6 +837,7 @@ export class LocalSessionHost implements TauSessionHost {
     const evictionResults = await Promise.allSettled([
       ...this.sessionEvictions,
       ...this.sessionDisposals.values(),
+      ...this.sessionUnloads.values(),
     ]);
     for (const result of evictionResults) {
       if (result.status === "rejected") {
@@ -975,6 +995,10 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
   get sessionId(): string {
     return this.session.sessionId;
+  }
+
+  get isDisposing(): boolean {
+    return this.disposing;
   }
 
   get isDisposed(): boolean {

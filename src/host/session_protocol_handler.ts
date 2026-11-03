@@ -239,6 +239,10 @@ export class SessionProtocolHandler {
             state.session,
             request.params.durationMs,
           );
+          if (retainedUntil === undefined) {
+            this.sendSessionNotFound(request.id, request.params.sessionId);
+            return;
+          }
           this.sendMessage(
             createSessionProtocolSuccessResponse(request.id, "session.retain", { retainedUntil }),
           );
@@ -1604,7 +1608,11 @@ export class SessionProtocolHandler {
   ): Promise<SessionProtocolHandlerSessionState | undefined> {
     const existing = this.sessionStates.get(sessionId);
     if (existing) {
-      if (existing.session.isDisposed || existing.session.sessionId !== sessionId) {
+      if (
+        existing.session.isDisposing ||
+        existing.session.isDisposed ||
+        existing.session.sessionId !== sessionId
+      ) {
         this.unsubscribeSessionListeners(existing);
         this.sessionStates.delete(sessionId);
       } else {

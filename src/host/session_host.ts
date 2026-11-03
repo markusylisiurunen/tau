@@ -56,6 +56,7 @@ export class SessionRetryUnavailableError extends Error {}
 export type TauHostedSession = {
   readonly sessionId: string;
   readonly isDisposed?: boolean;
+  readonly isDisposing: boolean;
   readonly isTurnRunning: boolean;
   readonly canAcceptSteering: boolean;
   onDelta(handler: (delta: SessionProtocolDeltaMessage) => void): () => void;
@@ -139,7 +140,7 @@ export type TauSessionHost = {
   createSession(input: SessionProtocolCreateParams): Promise<TauHostedSession>;
   observeSession(sessionId: string): Promise<TauHostedSession | undefined>;
   releaseSession(session: TauHostedSession): void;
-  retainSessionRuntime(session: TauHostedSession, durationMs: number): number;
+  retainSessionRuntime(session: TauHostedSession, durationMs: number): number | undefined;
   unloadSession(sessionId: string): Promise<boolean>;
   sessionRuntimeState(sessionId: string): SessionProtocolRuntimeStateResult;
   listSessions(): Promise<SessionProtocolSessionSummary[]>;

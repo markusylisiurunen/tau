@@ -58,6 +58,8 @@ function createFailingStream(partialText, error) {
 
 function createSpawnOptions(overrides = {}) {
   return {
+    parentId: "main",
+    launchEpoch: 0,
     runtimeConfig: {
       kind: "native",
       systemPrompt: "child system",
@@ -100,6 +102,17 @@ describe("AgentSupervisor", () => {
       registry.mockRestore();
       supervisor.reset();
     }
+  });
+
+  it("rejects delegation tools without their management dependencies before creating jobs", () => {
+    const supervisor = new AgentSupervisor({ mainAgentId: "main", onEvent: vi.fn() });
+    const options = createSpawnOptions();
+    options.runtimeConfig.tools = ["agents"];
+    const createJobs = vi.spyOn(options.jobs, "create");
+
+    expect(() => supervisor.spawn(options)).toThrow();
+    expect(createJobs).not.toHaveBeenCalled();
+    expect(supervisor.list()).toEqual([]);
   });
 
   it("binds the parent's MCP manager without resolving servers from the child workspace", async () => {
@@ -312,7 +325,7 @@ describe("AgentSupervisor", () => {
     const record = getRecord(supervisor, spawned.id);
     record.runtime.agent.spec.model.stream = vi.fn(() => createStream(createAssistant("done")));
 
-    const context = supervisor.getActiveCompactionContext();
+    const context = supervisor.getActiveCompactionContext(supervisor.mainAgentId);
 
     const states = JSON.parse(context.split("\n\n")[1].split("\n</active-subagents>")[0]);
     expect(states).toEqual([expect.objectContaining({ id: spawned.id, status: "working" })]);
@@ -548,6 +561,36 @@ describe("AgentSupervisor", () => {
       reason: "interrupted",
     });
     expect(stream).not.toHaveBeenCalled();
+  });
+
+  it("settles active waiters when disposal removes a child awaiting its startup event", async () => {
+    let releaseSpawn;
+    const spawnGate = new Promise((resolve) => {
+      releaseSpawn = resolve;
+    });
+    const events = [];
+    const supervisor = new AgentSupervisor({
+      mainAgentId: "main",
+      onEvent: async (event) => {
+        events.push(event);
+        if (event.type === "subagent_spawned") await spawnGate;
+      },
+    });
+    const spawned = supervisor.spawn(createSpawnOptions());
+    const record = getRecord(supervisor, spawned.id);
+    const submit = vi.spyOn(record.runtime, "submit");
+    const waiting = expect(supervisor.waitForAgents([spawned.id])).rejects.toMatchObject({
+      code: "unknown_agent",
+    });
+
+    supervisor.dispose();
+    releaseSpawn();
+
+    await waiting;
+    expect(record.run.status).toBe("interrupted");
+    expect(submit).not.toHaveBeenCalled();
+    expect(events.map((event) => event.type)).toEqual(["subagent_spawned"]);
+    expect(supervisor.list()).toEqual([]);
   });
 
   it("interrupts a child before publishing its interruption request", async () => {
@@ -1028,7 +1071,24 @@ describe("nested supervision", () => {
     const spawn = (parentId = "main", gate) => {
       const options = createSpawnOptions();
       options.runtimeConfig.tools = ["agents"];
-      const state = supervisor.spawn({ ...options, parentId });
+      options.agents = {
+        callerId: parentId,
+        supervisor,
+        backend: options.backend,
+        jobs: options.jobs,
+        config: options.config,
+        persona: { ...personas[0], tools: ["agents"] },
+        autoCompactThresholdTokens: options.runtimeConfig.autoCompactThresholdTokens,
+        modelResolver: () => undefined,
+        subagentSystemPrompt: options.runtimeConfig.systemPrompt,
+        history: {},
+        cwd: options.runtimeConfig.workingDirectory,
+      };
+      const state = supervisor.spawn({
+        ...options,
+        parentId,
+        launchEpoch: supervisor.prepareSpawn(parentId),
+      });
       getRecord(supervisor, state.id).runtime.agent.spec.model.stream = () =>
         createStream(createAssistant("done"), gate);
       return state;
@@ -1045,7 +1105,7 @@ describe("nested supervision", () => {
       const scope = supervisor.scope(a.id);
       expect(
         supervisor
-          .scope()
+          .scope(supervisor.mainAgentId)
           .list()
           .map((agent) => agent.id),
       ).toEqual([a.id, b.id, sibling.id]);
@@ -1117,7 +1177,7 @@ describe("nested supervision", () => {
 
   it("invalidates pending root launches on rewind and rejects launches after disposal", () => {
     const { supervisor } = pool();
-    const scope = supervisor.scope();
+    const scope = supervisor.scope(supervisor.mainAgentId);
     const epoch = scope.prepareSpawn();
     supervisor.retainOrigins(new Set());
     expect(() => scope.spawn({ ...createSpawnOptions(), launchEpoch: epoch })).toThrow(

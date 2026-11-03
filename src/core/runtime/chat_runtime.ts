@@ -154,7 +154,7 @@ export class ChatRuntime {
       clock: this.deps.clock,
       archiveAutoCompaction: createAutoCompactionArchiver(this.backend),
       getCompactionContinuationSystemMessages: () => {
-        const context = this.supervisor.getActiveCompactionContext();
+        const context = this.supervisor.getActiveCompactionContext(this.supervisor.mainAgentId);
         return context ? [context] : [];
       },
     });

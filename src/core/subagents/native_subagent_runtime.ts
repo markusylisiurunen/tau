@@ -47,6 +47,9 @@ export class NativeSubagentRuntime implements SubagentRuntime {
     private readonly config: NativeSubagentConfig,
     private readonly options: SubagentRuntimeOptions,
   ) {
+    if (config.tools.includes("agents") && !options.agents) {
+      throw new Error("Delegating agents require agent-management dependencies");
+    }
     this.jobs = options.jobs.create();
     const persona: Persona = {
       ...options.agents?.persona,

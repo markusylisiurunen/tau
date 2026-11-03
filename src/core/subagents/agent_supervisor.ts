@@ -123,7 +123,7 @@ export class AgentSupervisor {
     return false;
   }
 
-  scope(callerId = this.mainAgentId): ScopedAgentSupervisor {
+  scope(callerId: string): ScopedAgentSupervisor {
     return new ScopedAgentSupervisor(this, callerId);
   }
 
@@ -170,7 +170,7 @@ export class AgentSupervisor {
     return this.delegatedRecords().filter((record) => record.run.status === "running").length;
   }
 
-  getActiveCompactionContext(callerId = this.mainAgentId): string | undefined {
+  getActiveCompactionContext(callerId: string): string | undefined {
     const active = this.scope(callerId)
       .list()
       .filter((state) => state.status !== "idle");
@@ -180,8 +180,8 @@ export class AgentSupervisor {
   }
 
   spawn(options: {
-    parentId?: string;
-    launchEpoch?: number;
+    parentId: string;
+    launchEpoch: number;
     agents?: AgentsCapabilityOptions;
     runtimeConfig: SubagentRuntimeConfig;
     prompt: string;
@@ -201,9 +201,9 @@ export class AgentSupervisor {
       );
     }
 
-    const parentId = options.parentId ?? this.mainAgentId;
+    const parentId = options.parentId;
     const epoch = this.prepareSpawn(parentId);
-    if (options.launchEpoch !== undefined && options.launchEpoch !== epoch)
+    if (options.launchEpoch !== epoch)
       throw new AgentRequestError("operation_failed", "Delegation was interrupted");
     const parent = parentId === this.mainAgentId ? undefined : this.requireRecord(parentId);
     const depth = (parent?.depth ?? 0) + 1;
@@ -450,8 +450,7 @@ export class AgentSupervisor {
     record.completion = (async () => {
       try {
         await this.emit({ type: eventType, state: this.toSnapshot(record) });
-        if (this.records.get(record.id) !== record) return;
-        if (record.run.interruptRequested) {
+        if (this.records.get(record.id) !== record || record.run.interruptRequested) {
           this.finishInterrupted(record);
         } else {
           const { outcome, unconsumed } = await record.runtime.submit(prompt);
@@ -620,7 +619,7 @@ export class ScopedAgentSupervisor {
   prepareSpawn(): number {
     return this.supervisor.prepareSpawn(this.callerId);
   }
-  spawn(options: Parameters<AgentSupervisor["spawn"]>[0]) {
+  spawn(options: Omit<Parameters<AgentSupervisor["spawn"]>[0], "parentId">) {
     return this.supervisor.spawn({ ...options, parentId: this.callerId });
   }
   list() {

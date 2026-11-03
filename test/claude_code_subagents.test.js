@@ -61,6 +61,8 @@ function fixture(run) {
     .launchModel.model;
   const spawn = () =>
     supervisor.spawn({
+      parentId: supervisor.mainAgentId,
+      launchEpoch: supervisor.prepareSpawn(supervisor.mainAgentId),
       runtimeConfig: {
         kind: "claude-code",
         model,

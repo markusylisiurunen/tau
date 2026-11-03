@@ -21,6 +21,7 @@ function fixture(overrides = {}) {
     ...overrides.supervisor,
   };
   const options = {
+    callerId: "main",
     backend: {},
     jobs: {},
     config: {},

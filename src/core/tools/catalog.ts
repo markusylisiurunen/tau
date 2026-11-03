@@ -87,13 +87,17 @@ export const ToolCatalog = {
     resolveSubagentPrompt?: ResolveSubagentPrompt;
     clientTools?: () => AgentTool[];
   }): ToolRegistry {
-    const tools = [createWaitForAgentsToolDefinition(options.supervisor.scope())];
+    const tools = [
+      createWaitForAgentsToolDefinition(options.supervisor.scope(options.supervisor.mainAgentId)),
+    ];
     const enabledToolNames = new Set<string>(options.persona.tools);
     return new ToolRegistry([
       ...createCommonTools({
         ...options,
         allowedTools: options.persona.tools,
-        ...(enabledToolNames.has("agents") ? { agents: options } : {}),
+        ...(enabledToolNames.has("agents")
+          ? { agents: { ...options, callerId: options.supervisor.mainAgentId } }
+          : {}),
       }),
       ...(enabledToolNames.has("agents") ? tools : []),
       ...(options.clientTools?.() ?? []),

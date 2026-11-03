@@ -21,7 +21,7 @@ import type { Persona } from "../types.js";
 import type { CodeModeCapability } from "./capability.js";
 
 export type AgentsCapabilityOptions = {
-  callerId?: string;
+  callerId: string;
   backend: ToolExecutionBackend;
   jobs: AgentJobRegistry;
   supervisor: AgentSupervisor;

@@ -163,6 +163,8 @@ describe("bundled Claude Agent SDK runner", () => {
       try {
         const marker = fakeClaude(directory, true, "steering", outcome);
         const state = supervisor.spawn({
+          parentId: supervisor.mainAgentId,
+          launchEpoch: supervisor.prepareSpawn(supervisor.mainAgentId),
           runtimeConfig: options.config,
           backend: options.backend,
           config: {},
@@ -309,6 +311,8 @@ describe("bundled Claude Agent SDK runner", () => {
     try {
       fakeClaude(directory, true, "after-usage");
       const spawned = supervisor.spawn({
+        parentId: supervisor.mainAgentId,
+        launchEpoch: supervisor.prepareSpawn(supervisor.mainAgentId),
         runtimeConfig: options.config,
         backend: options.backend,
         config: {},

@@ -155,7 +155,7 @@ Each guide covers setup, input, examples, outputs, and failures. Run `tau tool -
 
 ## Subagent tools
 
-A subagent gets each of `bash`, `write`, `edit`, `view_image`, `web`, `history`, `mcp`, and `models` that the main persona also has, plus `tau_docs`. It never gets `agents` or client tools. Its Bash and file tools start in the subagent's working directory. [Subagents](subagents.md#tools) has the details.
+A subagent gets each of `bash`, `write`, `edit`, `view_image`, `web`, `history`, `mcp`, and `models` that its parent also has, plus `tau_docs`. A native Tau subagent at depth 1 also gets `agents` when its parent has it. Subagents at depth 2 and Claude Code subagents never get it, and no subagent gets client tools. Its Bash and file tools start in the subagent's working directory. [Subagents](subagents.md#tools) has the details.
 
 ## Client-owned tools
 

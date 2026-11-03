@@ -34,9 +34,11 @@ function stripTags(text) {
   return stripAnsi(text.replace(/<[^>]+>/g, ""));
 }
 
-function createSubagentState(id, title) {
+function createSubagentState(id, title, parentId = "session-1", depth = 1) {
   return {
     id,
+    parentId,
+    depth,
 
     title,
     availability: "running",
@@ -270,6 +272,93 @@ test("SubagentPanelComponent keeps resolved model settings with the selected wor
     state: { ...claude, model: { ...claude.model, provider: "anthropic", reasoning: "medium" } },
   });
   expect(status()).toContain("anthropic/claude-opus-5-5:medium · ");
+});
+
+test("SubagentPanelComponent cycles running workers branch by branch", () => {
+  const panel = new SubagentPanelComponent(createUiTheme("plain"));
+  const parentA = createSubagentState("a", "branch a");
+  const parentB = createSubagentState("b", "branch b");
+  const childA1 = createSubagentState("a1", "child a1", "a", 2);
+  const childB1 = createSubagentState("b1", "child b1", "b", 2);
+  const childA2 = createSubagentState("a2", "child a2", "a", 2);
+  panel.reconcile(
+    [parentA, parentB, childA1, childB1, childA2].map((state) => ({ state, activities: [] })),
+  );
+
+  expect(panel.getSelectedId()).toBe("a");
+  const order = Array.from({ length: 5 }, () => panel.cycleSelection(1));
+  expect(order).toEqual(["a1", "a2", "b", "b1", "a"]);
+
+  // A child launched later joins its branch instead of the end of the cycle.
+  const childA3 = createSubagentState("a3", "child a3", "a", 2);
+  panel.handleEvent({ type: "subagent_spawned", state: childA3 });
+  expect(panel.cycleSelection(1)).toBe("a1");
+  panel.cycleSelection(1);
+  expect(panel.cycleSelection(1)).toBe("a3");
+  expect(panel.cycleSelection(1)).toBe("b");
+
+  // An idle parent stays out of the cycle, but its running children keep their position.
+  panel.handleEvent({
+    type: "subagent_finished",
+    state: {
+      ...parentA,
+      availability: "idle",
+      run: { revision: 1, status: "succeeded", startedAt: 1, finishedAt: 2, response: "done" },
+    },
+  });
+  expect(panel.getSelectedId()).toBe("b");
+  expect(panel.cycleSelection(-1)).toBe("a3");
+  expect(panel.cycleSelection(1)).toBe("b");
+  expect(panel.cycleSelection(1)).toBe("b1");
+  expect(panel.cycleSelection(1)).toBe("a1");
+});
+
+test("SubagentPanelComponent shows each worker's place in its branch", () => {
+  const panel = new SubagentPanelComponent(createUiTheme("plain"));
+  const longParentTitle = "coordinate the migration of every remaining storage adapter";
+  const parent = createSubagentState("parent", longParentTitle);
+  const firstChild = createSubagentState("first", "run auth tests", "parent", 2);
+  const secondChild = createSubagentState("second", "run store tests", "parent", 2);
+  const header = (width) => stripAnsi(panel.render(width)[0]).trim();
+  panel.reconcile([parent, firstChild, secondChild].map((state) => ({ state, activities: [] })));
+
+  expect(header(160)).toContain(longParentTitle);
+  expect(header(160)).toContain("2");
+  expect(panel.render(160)).toHaveLength(9);
+
+  panel.cycleSelection(1);
+  expect(header(160).indexOf(longParentTitle)).toBeGreaterThanOrEqual(0);
+  expect(header(160).indexOf(longParentTitle)).toBeLessThan(header(160).indexOf("run auth tests"));
+  expect(panel.render(160)).toHaveLength(9);
+
+  // The selected worker's own title survives a narrow terminal; the parent's title shortens.
+  expect(header(40)).toContain("run auth tests");
+  expect(header(40)).toContain("coordinate");
+  expect(header(40)).not.toContain(longParentTitle);
+  for (const width of [1, 5, 20, 40, 80]) {
+    expect(panel.render(width).every((line) => visibleWidth(line) === width)).toBe(true);
+  }
+
+  // The parent stays in the header after it goes idle or finishes.
+  panel.reconcile([
+    {
+      state: {
+        ...parent,
+        availability: "idle",
+        run: { revision: 1, status: "succeeded", startedAt: 1, finishedAt: 2, response: "done" },
+      },
+      activities: [],
+    },
+    { state: firstChild, activities: [] },
+  ]);
+  expect(panel.getSelectedId()).toBe("first");
+  expect(header(160)).toContain(longParentTitle);
+
+  // A worker whose parent is unknown still renders and stays selectable.
+  panel.reconcile([{ state: firstChild, activities: [] }]);
+  expect(panel.getSelectedId()).toBe("first");
+  expect(header(160)).toContain("run auth tests");
+  expect(header(160)).not.toContain(longParentTitle);
 });
 
 test("SessionDividerComponent renders a muted divider line", () => {

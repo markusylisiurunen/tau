@@ -48,7 +48,7 @@ Queued and steering messages survive a client detaching only while the session s
 
 ## Interrupt and retry
 
-Interruption asks work to stop. It cancels the main session's running turn, direct commands, standalone model calls, and maintenance work. An interrupted turn records an interrupted assistant result where there is one. Interruption does not stop subagents: select one with Alt+Down and press Ctrl+G, or call `session.interruptSubagent` from a protocol client. Host shutdown or session disposal stops subagents. In the TUI, Escape first stops local work such as diff review, recording, or speech playback, and only then asks the host to interrupt the session.
+Interruption asks work to stop. It cancels the main session's running turn, direct commands, standalone model calls, and maintenance work. An interrupted turn records an interrupted assistant result where there is one. Interruption does not stop subagents: select one with Alt+Down and press Ctrl+G to stop it without its children, or call `session.interruptSubagent` from a protocol client. Host shutdown or session disposal stops subagents. In the TUI, Escape first stops local work such as diff review, recording, or speech playback, and only then asks the host to interrupt the session.
 
 Retry runs another assistant turn from the current history. It does not remove the interrupted or failed result, rewind context, or send the previous user text again. Tau can therefore continue from completed tool results without running those tools again. In the TUI, press Enter twice on an empty editor while idle.
 

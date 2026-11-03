@@ -88,7 +88,7 @@ function getRecord(supervisor, id) {
 describe("AgentSupervisor", () => {
   it("opens native history only after runtime construction succeeds", () => {
     const openHistory = vi.fn();
-    const supervisor = new AgentSupervisor({ onEvent: () => {}, openHistory });
+    const supervisor = new AgentSupervisor({ mainAgentId: "main", onEvent: () => {}, openHistory });
     const registry = vi.spyOn(ToolCatalog, "createSubagentRegistry").mockImplementationOnce(() => {
       throw new Error("registry unavailable");
     });
@@ -103,7 +103,7 @@ describe("AgentSupervisor", () => {
   });
 
   it("binds the parent's MCP manager without resolving servers from the child workspace", async () => {
-    const supervisor = new AgentSupervisor({ onEvent: () => {} });
+    const supervisor = new AgentSupervisor({ mainAgentId: "main", onEvent: () => {} });
     const mcp = { available: true, listServers: vi.fn(() => [{ name: "host" }]) };
     try {
       const spawned = supervisor.spawn(
@@ -150,7 +150,7 @@ describe("AgentSupervisor", () => {
   });
 
   it("binds configured history access into child runtimes", async () => {
-    const supervisor = new AgentSupervisor({ onEvent: () => {} });
+    const supervisor = new AgentSupervisor({ mainAgentId: "main", onEvent: () => {} });
     const history = {
       search: vi.fn(),
       read: vi.fn(),
@@ -189,7 +189,11 @@ describe("AgentSupervisor", () => {
       sendCancel: vi.fn(),
     });
     registration.attachSession("parent-session");
-    const supervisor = new AgentSupervisor({ onEvent: () => {}, recordUsage: () => {} });
+    const supervisor = new AgentSupervisor({
+      mainAgentId: "main",
+      onEvent: () => {},
+      recordUsage: () => {},
+    });
     const submit = vi.spyOn(AgentRuntime.prototype, "submit").mockImplementation(async function () {
       expect(this.spec.tools.get("prefill_input")).toBeUndefined();
       expect(this.spec.tools.get("spawn_agent")).toBeUndefined();
@@ -251,6 +255,7 @@ describe("AgentSupervisor", () => {
     const events = [];
     const recordUsage = vi.fn();
     const supervisor = new AgentSupervisor({
+      mainAgentId: "main",
       onEvent: async (event) => events.push(event),
       recordUsage,
     });
@@ -298,7 +303,11 @@ describe("AgentSupervisor", () => {
   });
 
   it("marks compacted subagent state as a potentially stale snapshot", async () => {
-    const supervisor = new AgentSupervisor({ onEvent: async () => {}, recordUsage: () => {} });
+    const supervisor = new AgentSupervisor({
+      mainAgentId: "main",
+      onEvent: async () => {},
+      recordUsage: () => {},
+    });
     const spawned = supervisor.spawn(createSpawnOptions());
     const record = getRecord(supervisor, spawned.id);
     record.runtime.agent.spec.model.stream = vi.fn(() => createStream(createAssistant("done")));
@@ -312,7 +321,11 @@ describe("AgentSupervisor", () => {
   });
 
   it("retains the latest response for repeated waits", async () => {
-    const supervisor = new AgentSupervisor({ onEvent: async () => {}, recordUsage: () => {} });
+    const supervisor = new AgentSupervisor({
+      mainAgentId: "main",
+      onEvent: async () => {},
+      recordUsage: () => {},
+    });
     const spawned = supervisor.spawn(createSpawnOptions());
     const record = getRecord(supervisor, spawned.id);
     record.runtime.agent.spec.model.stream = vi.fn(() => createStream(createAssistant("retained")));
@@ -331,7 +344,11 @@ describe("AgentSupervisor", () => {
   });
 
   it("distinguishes returned and streamed provider errors from successful empty responses", async () => {
-    const supervisor = new AgentSupervisor({ onEvent: async () => {}, recordUsage: () => {} });
+    const supervisor = new AgentSupervisor({
+      mainAgentId: "main",
+      onEvent: async () => {},
+      recordUsage: () => {},
+    });
     const failed = supervisor.spawn(createSpawnOptions());
     const failedRecord = getRecord(supervisor, failed.id);
     failedRecord.runtime.agent.spec.retryPolicy.delayMs = 0;
@@ -394,6 +411,7 @@ describe("AgentSupervisor", () => {
     const model = { ...personas[0].model, contextWindow: 100_000 };
     const events = [];
     const supervisor = new AgentSupervisor({
+      mainAgentId: "main",
       onEvent: async (event) => events.push(event),
       recordUsage: () => {},
     });
@@ -507,6 +525,7 @@ describe("AgentSupervisor", () => {
       releaseSpawn = resolve;
     });
     const supervisor = new AgentSupervisor({
+      mainAgentId: "main",
       onEvent: async (event) => {
         if (event.type === "subagent_spawned") {
           await spawnGate;
@@ -534,6 +553,7 @@ describe("AgentSupervisor", () => {
   it("interrupts a child before publishing its interruption request", async () => {
     const interruptProjection = new Error("interrupt projection failed");
     const supervisor = new AgentSupervisor({
+      mainAgentId: "main",
       onEvent: async (event) => {
         if (event.type === "subagent_interrupt_requested") throw interruptProjection;
       },
@@ -568,7 +588,11 @@ describe("AgentSupervisor", () => {
     const submitGate = new Promise((resolve) => {
       releaseSubmit = resolve;
     });
-    const supervisor = new AgentSupervisor({ onEvent: async () => {}, recordUsage: () => {} });
+    const supervisor = new AgentSupervisor({
+      mainAgentId: "main",
+      onEvent: async () => {},
+      recordUsage: () => {},
+    });
     const spawned = supervisor.spawn(createSpawnOptions());
     const record = getRecord(supervisor, spawned.id);
     record.runtime.agent.submit = vi.fn(async () => {
@@ -591,7 +615,11 @@ describe("AgentSupervisor", () => {
   });
 
   it("interrupts a running child and reports an interrupted result", async () => {
-    const supervisor = new AgentSupervisor({ onEvent: async () => {}, recordUsage: () => {} });
+    const supervisor = new AgentSupervisor({
+      mainAgentId: "main",
+      onEvent: async () => {},
+      recordUsage: () => {},
+    });
     const spawned = supervisor.spawn(createSpawnOptions());
     const record = getRecord(supervisor, spawned.id);
     record.runtime.agent.spec.model.stream = vi.fn((_context, options) => ({
@@ -621,6 +649,7 @@ describe("AgentSupervisor", () => {
     });
     let finishedEventSeen = false;
     const supervisor = new AgentSupervisor({
+      mainAgentId: "main",
       onEvent: async (event) => {
         if (event.type === "subagent_finished") {
           finishedEventSeen = true;
@@ -657,6 +686,7 @@ describe("AgentSupervisor", () => {
       releaseProgress = resolve;
     });
     const supervisor = new AgentSupervisor({
+      mainAgentId: "main",
       recordUsage: () => {},
       onEvent: async (event) => {
         if (event.type === "subagent_spawned") {
@@ -665,7 +695,7 @@ describe("AgentSupervisor", () => {
       },
     });
     const ids = [];
-    for (let index = 0; index < 8; index += 1) {
+    for (let index = 0; index < 16; index += 1) {
       const result = supervisor.spawn(
         createSpawnOptions({ originHistoryEntryId: `origin-${index}` }),
       );
@@ -686,7 +716,7 @@ describe("AgentSupervisor", () => {
 
 it("isolates main and sibling jobs while retaining child jobs across follow-ups", async () => {
   const jobs = new AgentJobRegistry();
-  const supervisor = new AgentSupervisor({ onEvent: () => {} });
+  const supervisor = new AgentSupervisor({ mainAgentId: "main", onEvent: () => {} });
   const submit = vi.spyOn(AgentRuntime.prototype, "submit").mockResolvedValue({
     finalMessage: createAssistant("done"),
     aborted: false,
@@ -804,7 +834,11 @@ describe("worker conversation scheduling", () => {
     const gate = new Promise((resolve) => {
       release = resolve;
     });
-    const supervisor = new AgentSupervisor({ onEvent: () => {}, recordUsage: () => {} });
+    const supervisor = new AgentSupervisor({
+      mainAgentId: "main",
+      onEvent: () => {},
+      recordUsage: () => {},
+    });
     const spawned = supervisor.spawn(createSpawnOptions());
     const record = getRecord(supervisor, spawned.id);
     const answers = ["first", "second", "third"];
@@ -836,7 +870,11 @@ describe("worker conversation scheduling", () => {
     const gate = new Promise((resolve) => {
       release = resolve;
     });
-    const supervisor = new AgentSupervisor({ onEvent: () => {}, recordUsage: () => {} });
+    const supervisor = new AgentSupervisor({
+      mainAgentId: "main",
+      onEvent: () => {},
+      recordUsage: () => {},
+    });
     const spawned = supervisor.spawn(createSpawnOptions());
     const record = getRecord(supervisor, spawned.id);
     const answers = ["preamble", "steered answer"];
@@ -858,7 +896,11 @@ describe("worker conversation scheduling", () => {
   });
 
   it("does not return an earlier turn's answer when a follow-up has no text", async () => {
-    const supervisor = new AgentSupervisor({ onEvent: () => {}, recordUsage: () => {} });
+    const supervisor = new AgentSupervisor({
+      mainAgentId: "main",
+      onEvent: () => {},
+      recordUsage: () => {},
+    });
     try {
       const spawned = supervisor.spawn(createSpawnOptions());
       const record = getRecord(supervisor, spawned.id);
@@ -883,7 +925,11 @@ describe("worker conversation scheduling", () => {
     const gate = new Promise((resolve) => {
       release = resolve;
     });
-    const supervisor = new AgentSupervisor({ onEvent: () => {}, recordUsage: () => {} });
+    const supervisor = new AgentSupervisor({
+      mainAgentId: "main",
+      onEvent: () => {},
+      recordUsage: () => {},
+    });
     const spawned = supervisor.spawn(createSpawnOptions());
     const record = getRecord(supervisor, spawned.id);
     record.runtime.agent.spec.model.stream = vi.fn(() =>
@@ -912,7 +958,11 @@ it("keeps background orchestration attribution and cancels only its wait", async
   const gate = new Promise((resolve) => {
     release = resolve;
   });
-  const supervisor = new AgentSupervisor({ onEvent: () => {}, recordUsage: () => {} });
+  const supervisor = new AgentSupervisor({
+    mainAgentId: "main",
+    onEvent: () => {},
+    recordUsage: () => {},
+  });
   const jobs = new AgentJobRegistry();
   const codeJobs = new CodeJobRegistry();
   const submit = vi.spyOn(AgentRuntime.prototype, "submit").mockImplementation(async () => {
@@ -966,4 +1016,145 @@ it("keeps background orchestration attribution and cancels only its wait", async
     supervisor.reset();
     await codeJobs.dispose();
   }
+});
+
+describe("nested supervision", () => {
+  function pool() {
+    const supervisor = new AgentSupervisor({
+      mainAgentId: "main",
+      onEvent: () => {},
+      recordUsage: () => {},
+    });
+    const spawn = (parentId = "main", gate) => {
+      const options = createSpawnOptions();
+      options.runtimeConfig.tools = ["agents"];
+      const state = supervisor.spawn({ ...options, parentId });
+      getRecord(supervisor, state.id).runtime.agent.spec.model.stream = () =>
+        createStream(createAssistant("done"), gate);
+      return state;
+    };
+    return { supervisor, spawn };
+  }
+
+  it("scopes every operation to descendants and enforces leaf policy", async () => {
+    const { supervisor, spawn } = pool();
+    try {
+      const a = spawn();
+      const b = spawn(a.id);
+      const sibling = spawn();
+      const scope = supervisor.scope(a.id);
+      expect(
+        supervisor
+          .scope()
+          .list()
+          .map((agent) => agent.id),
+      ).toEqual([a.id, b.id, sibling.id]);
+      expect(scope.list()).toMatchObject([{ id: b.id, parentId: a.id, depth: 2 }]);
+      expect(scope.read(b.id).depth).toBe(2);
+      expect(() => spawn(b.id)).toThrow(expect.objectContaining({ code: "operation_failed" }));
+      expect(
+        getRecord(supervisor, b.id).runtime.agent.spec.tools.get("wait_for_agents"),
+      ).toBeUndefined();
+      expect(getRecord(supervisor, b.id).runtime.agent.spec.tools.get("code")).toBeUndefined();
+      for (const id of [a.id, sibling.id, "main"]) {
+        for (const call of [
+          () => scope.read(id),
+          () => scope.getTrace(id),
+          () => scope.getSnapshot(id),
+          () => scope.getLastResponse(id),
+          () => scope.sendInput({ id, mode: "queue", prompt: "no" }),
+          () => scope.waitForAgents([id]),
+          () => scope.interrupt(id),
+        ]) {
+          expect(call).toThrow(expect.objectContaining({ code: "unknown_agent" }));
+        }
+      }
+      await Promise.all([a, b, sibling].map(({ id }) => supervisor.waitForAgents([id])));
+      supervisor.retainOrigins(new Set());
+      expect(supervisor.list()).toEqual([]);
+      expect(() => scope.spawn(createSpawnOptions())).toThrow(
+        expect.objectContaining({ code: "unknown_agent" }),
+      );
+    } finally {
+      supervisor.reset();
+    }
+  });
+
+  it("keeps single-agent interruption separate from subtree interruption and fences in-flight launches", async () => {
+    const { supervisor, spawn } = pool();
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    try {
+      const a = spawn();
+      await supervisor.waitForAgents([a.id]);
+      const b = spawn(a.id, gate);
+      await vi.waitFor(() =>
+        expect(getRecord(supervisor, b.id).runtime.agent.status).toBe("running"),
+      );
+      await supervisor.interrupt(a.id);
+      expect(supervisor.read(b.id).status).toBe("working");
+      const epoch = supervisor.scope(a.id).prepareSpawn();
+      await supervisor.interrupt(a.id, undefined, false, "subtree");
+      expect(supervisor.read(b.id).status).toBe("stopping");
+      expect(() => spawn(a.id)).toThrow(expect.objectContaining({ code: "operation_failed" }));
+      expect(() => supervisor.sendInput({ id: a.id, mode: "queue", prompt: "retry" })).toThrow();
+      release();
+      await supervisor.interrupt(a.id, undefined, true, "subtree");
+      expect(supervisor.read(b.id)).toMatchObject({ status: "idle", reason: "interrupted" });
+      expect(() =>
+        supervisor.scope(a.id).spawn({ ...createSpawnOptions(), launchEpoch: epoch }),
+      ).toThrow();
+      supervisor.sendInput({ id: a.id, mode: "queue", prompt: "retry" });
+      await supervisor.waitForAgents([a.id]);
+      expect(spawn(a.id).depth).toBe(2);
+    } finally {
+      release();
+      supervisor.reset();
+    }
+  });
+
+  it("invalidates pending root launches on rewind and rejects launches after disposal", () => {
+    const { supervisor } = pool();
+    const scope = supervisor.scope();
+    const epoch = scope.prepareSpawn();
+    supervisor.retainOrigins(new Set());
+    expect(() => scope.spawn({ ...createSpawnOptions(), launchEpoch: epoch })).toThrow(
+      expect.objectContaining({ code: "operation_failed" }),
+    );
+    supervisor.dispose();
+    expect(() => scope.prepareSpawn()).toThrow(
+      expect.objectContaining({ code: "operation_failed" }),
+    );
+  });
+
+  it("shares admission across levels, including follow-up turns", async () => {
+    const { supervisor, spawn } = pool();
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    try {
+      const idle = spawn();
+      await supervisor.waitForAgents([idle.id]);
+      const parent = spawn("main", gate);
+      const results = await Promise.allSettled(
+        Array.from({ length: 20 }, () => Promise.resolve().then(() => spawn(parent.id, gate))),
+      );
+      expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(15);
+      expect(supervisor.scope(parent.id).getCapacity()).toEqual({ running: 16, limit: 16 });
+      expect(() => supervisor.sendInput({ id: idle.id, mode: "queue", prompt: "more" })).toThrow(
+        expect.objectContaining({ code: "operation_failed" }),
+      );
+      release();
+      await Promise.all(supervisor.list().map(({ id }) => supervisor.waitForAgents([id])));
+      expect(supervisor.sendInput({ id: idle.id, mode: "queue", prompt: "more" }).status).toBe(
+        "working",
+      );
+    } finally {
+      release();
+      supervisor.reset();
+    }
+  });
 });

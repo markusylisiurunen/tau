@@ -397,7 +397,7 @@ export class LocalSessionHost implements TauSessionHost {
           this.history.openSession(
             {
               sessionId: child.sessionId,
-              parentSessionId: sessionId,
+              parentSessionId: child.parentSessionId,
               attributes: { ...attributes, cwd: child.workingDirectory },
               createdAt: child.createdAt,
             },

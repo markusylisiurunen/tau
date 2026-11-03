@@ -1,7 +1,7 @@
 import type { Tool, ToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { z } from "zod";
-import type { AgentSupervisor } from "../subagents/agent_supervisor.js";
+import type { ScopedAgentSupervisor } from "../subagents/agent_supervisor.js";
 import type { SubagentStateSnapshot } from "../subagents/types.js";
 import { truncateForTokens } from "../utils/truncate.js";
 import { parseToolArgs } from "../utils/zod.js";
@@ -92,7 +92,7 @@ function getWaitForAgentsSubject(raw: unknown): string {
   return parsedArgs.ok ? formatAgentIdsSubject(parsedArgs.data.ids) : "(invalid arguments)";
 }
 
-export function createWaitForAgentsToolDefinition(supervisor: AgentSupervisor): AgentTool {
+export function createWaitForAgentsToolDefinition(supervisor: ScopedAgentSupervisor): AgentTool {
   return {
     schema: WAIT_FOR_AGENTS_TOOL,
     describe: (toolCall) => {

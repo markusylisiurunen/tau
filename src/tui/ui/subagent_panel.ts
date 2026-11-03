@@ -6,11 +6,16 @@ import type {
 } from "../../core/subagents/types.js";
 import { formatUsageSnapshot, formatUsdCost } from "../../core/utils/format.js";
 import type { SessionProtocolSubagentActivity } from "../../protocol/session_protocol.js";
-import { truncateFromEndByWidthPreserveAnsi } from "./components/one_line_segments.js";
+import {
+  truncateFromEndByWidth,
+  truncateFromEndByWidthPreserveAnsi,
+} from "./components/one_line_segments.js";
 import type { Theme } from "./theme/index.js";
 
 type SubagentPanelEntry = {
   id: string;
+  parentId: string;
+  depth: number;
   title: string;
   model: SubagentStateSnapshot["model"];
   runRevision: number;
@@ -21,6 +26,9 @@ type SubagentPanelEntry = {
 };
 
 const MAX_PANEL_LINES = 6;
+const MARKER_PREFIX = "⏵ ";
+const ANCESTRY_SEPARATOR = " › ";
+const MIN_PARENT_TITLE_SHARE = 0.4;
 
 export type SubagentPanelSnapshot = {
   state: SubagentStateSnapshot;
@@ -138,11 +146,11 @@ export class SubagentPanelComponent implements Component {
     const { entry, index } = this.resolveSelectedEntry(runningEntries);
     const lines: string[] = [];
 
-    lines.push(this.buildHeaderLine(entry));
+    lines.push(this.buildHeaderLine(entry, width));
     const outputLines = this.buildOutputLines(entry);
     lines.push(...outputLines);
     lines.push(this.buildStatusLine(entry));
-    lines.push(this.buildFooterLine(index + 1, runningEntries.length));
+    lines.push(this.buildFooterLine(entry, index + 1, runningEntries.length));
 
     return lines.map((line) => this.fitLine(line, width));
   }
@@ -163,10 +171,31 @@ export class SubagentPanelComponent implements Component {
     return { entry: runningEntries[index]!, index };
   }
 
-  private buildHeaderLine(entry: SubagentPanelEntry): string {
+  private buildHeaderLine(entry: SubagentPanelEntry, width: number): string {
     const { palette } = this.theme;
-    const title = entry.title.trim();
-    return `${palette.brandAccent("⏵")} ${palette.brandAccent(title || "(subagent)")}`;
+    const title = displayTitle(entry);
+    const selected = palette.brandAccent(`${MARKER_PREFIX}${title}`);
+
+    const parent = this.entries.get(entry.parentId);
+    if (parent) {
+      return `${palette.brandAccent(MARKER_PREFIX)}${this.buildAncestry(parent, title, width)}${palette.brandAccent(title)}`;
+    }
+
+    const runningChildren = this.countRunningChildren(entry);
+    if (runningChildren === 0) return selected;
+    const noun = runningChildren === 1 ? "child" : "children";
+    return `${selected}${palette.textMuted(` · ${runningChildren} ${noun} running`)}`;
+  }
+
+  // The selected worker's title identifies the panel, so a long parent title gives way to it.
+  private buildAncestry(parent: SubagentPanelEntry, title: string, width: number): string {
+    const available = width - visibleWidth(MARKER_PREFIX) - visibleWidth(ANCESTRY_SEPARATOR);
+    const budget = Math.max(
+      Math.floor(available * MIN_PARENT_TITLE_SHARE),
+      available - visibleWidth(title),
+    );
+    const parentTitle = truncateFromEndByWidth(displayTitle(parent), budget);
+    return this.theme.palette.textMuted(`${parentTitle}${ANCESTRY_SEPARATOR}`);
   }
 
   private buildOutputLines(entry: SubagentPanelEntry): string[] {
@@ -196,13 +225,17 @@ export class SubagentPanelComponent implements Component {
     return palette.textMuted(`${model} · ${contextUsage} · ${cost}`);
   }
 
-  private buildFooterLine(index: number, total: number): string {
+  private buildFooterLine(entry: SubagentPanelEntry, index: number, total: number): string {
     const { palette } = this.theme;
     const parts = [`(${index}/${total})`];
     if (total > 1) {
       parts.push("alt+down to cycle");
     }
-    parts.push("ctrl+g to interrupt");
+    parts.push(
+      this.countRunningChildren(entry) > 0
+        ? "ctrl+g to interrupt this subagent only"
+        : "ctrl+g to interrupt",
+    );
     return palette.textMuted(parts.join(" · "));
   }
 
@@ -212,20 +245,30 @@ export class SubagentPanelComponent implements Component {
     return `${truncated}${" ".repeat(pad)}`;
   }
 
+  private countRunningChildren(entry: SubagentPanelEntry): number {
+    return this.getRunningEntries().filter((candidate) => candidate.parentId === entry.id).length;
+  }
+
+  // Branch order keeps a worker next to its parent, so cycling walks one branch at a time. A
+  // child with an idle parent keeps that parent's place, and spawn order decides the rest.
   private getRunningEntries(): SubagentPanelEntry[] {
-    return [...this.entries.values()].filter((entry) => entry.status === "running");
+    const spawnOrder = new Map([...this.entries.keys()].map((id, index) => [id, index]));
+    const branchOrder = (entry: SubagentPanelEntry) =>
+      spawnOrder.get(entry.parentId) ?? spawnOrder.get(entry.id) ?? 0;
+    return [...this.entries.values()]
+      .filter((entry) => entry.status === "running")
+      .sort((a, b) => branchOrder(a) - branchOrder(b) || a.depth - b.depth);
   }
 
   private getFirstRunningId(): string | undefined {
-    for (const entry of this.entries.values()) {
-      if (entry.status === "running") return entry.id;
-    }
-    return undefined;
+    return this.getRunningEntries()[0]?.id;
   }
 
   private buildEntry(state: SubagentStateSnapshot): SubagentPanelEntry {
     return {
       id: state.id,
+      parentId: state.parentId,
+      depth: state.depth,
       title: state.title,
       model: state.model,
       runRevision: state.run.revision,
@@ -247,6 +290,10 @@ export class SubagentPanelComponent implements Component {
     entry.title = state.title;
     entry.model = state.model;
   }
+}
+
+function displayTitle(entry: SubagentPanelEntry): string {
+  return entry.title.trim() || "(subagent)";
 }
 
 function formatSubagentActivity(activity: SessionProtocolSubagentActivity): string | undefined {

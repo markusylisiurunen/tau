@@ -21,6 +21,7 @@ import type { Persona } from "../types.js";
 import type { CodeModeCapability } from "./capability.js";
 
 export type AgentsCapabilityOptions = {
+  callerId?: string;
   backend: ToolExecutionBackend;
   jobs: AgentJobRegistry;
   supervisor: AgentSupervisor;
@@ -70,7 +71,7 @@ const traceOptions = z.strictObject({
 export const agentsCapabilityMetadata = {
   name: "agents",
   description:
-    "Start delegated workers, send them queued or steering input, interrupt and wait for them, and read selected parts of their conversations. Follow the delegation policy in your instructions. Workers keep running when a program ends or is cancelled.",
+    "Start delegated workers, send them queued or steering input, interrupt and wait for them, and read selected parts of their conversations. Access covers the workers you started and the workers they started. Follow the delegation policy in your instructions. Workers keep running when a program ends or is cancelled.",
   documentation: `# tau.agents
 
 Start general-purpose workers, send them more input, and read what they did. Start workers only when the user or active instructions explicitly ask for delegation.
@@ -78,6 +79,22 @@ Start general-purpose workers, send them more input, and read what they did. Sta
 A worker has one conversation that grows with every input you send. Workers belong to the current session. They keep running when the program that started them ends or is cancelled, and they are lost when the session ends or Tau restarts. Results you need later must reach your conversation or a file before then.
 
 Reading data into the program does not add it to your conversation. Only what you print does, so select and print the parts you need.
+
+## Worker levels and access
+
+Workers can go two levels below the main agent. A worker that the main agent starts has depth 1, and a worker started by a depth 1 worker has depth 2. Depth 2 workers and Claude Code workers cannot start workers, so they have no \`tau.agents\`.
+
+\`\`\`text
+main
+├── A (depth 1)
+│   ├── B (depth 2)
+│   └── C (depth 2)
+└── D (depth 1)
+\`\`\`
+
+Every method covers your descendants: the workers you started and the workers they started. Here the main agent can reach all four workers, A can reach B and C, and D can reach none of them. Any other ID fails with \`unknown_agent\`. That includes your own ID and the IDs of siblings and ancestors.
+
+A worker's tools let it delegate, but it should start workers only when it is asked to. If you want a worker to delegate, say so in its prompt.
 
 ## Interface
 
@@ -100,6 +117,8 @@ type AgentsApi = {
 \`\`\`ts
 type AgentState = {
   id: string;
+  parentId: string; // the agent that started this worker
+  depth: number; // 1 or 2, counted from the main agent whoever reads it
   title: string;
   model: string; // provider/model:effort
   workingDirectory: string;
@@ -140,7 +159,9 @@ type SpawnOptions = {
 - \`model\`: omit it to use your own model and settings. Set it only when the user or active instructions ask for a specific model; it must exactly match an allowed override from your instructions.
 - \`workingDirectory\`: absolute, or relative to your working directory. Defaults to your working directory.
 
-Returns as soon as the worker starts. At most 8 workers can be working at once.
+You become the new worker's parent; the options cannot choose another parent or depth. Returns as soon as the worker starts.
+
+At most 16 workers can be working at once across the whole session, at both levels. A parent waiting for its own workers counts if its turn is still active. Idle workers and the main agent do not count. When the limit is reached, the call fails right away instead of queueing, so wait for existing work or do the task yourself.
 
 ## \`tau.agents.list()\`
 
@@ -151,7 +172,7 @@ type ListResult = {
 };
 \`\`\`
 
-Lists every worker in this session, including idle ones.
+Lists all your descendants as a flat list, including idle ones. Use \`parentId\` and \`depth\` to see how they relate. \`capacity\` covers the whole session, so \`running\` can include workers you cannot reach.
 
 ## \`tau.agents.read(options)\`
 
@@ -174,21 +195,26 @@ type SendInputOptions = {
 
 Either mode starts a new turn right away when the worker is idle. A steering message that arrives too late for the current turn is handled in a later turn. The worker keeps its conversation, model, tools, and working directory.
 
-The call returns when the input is accepted, before the worker reads it. It fails while the worker is stopping, when 64 inputs are already pending, or when the worker is idle and 8 workers are already working.
+The call returns when the input is accepted, before the worker reads it. It fails while the worker is stopping, when 64 inputs are already pending, or when the worker is idle and 16 workers are already working.
 
 ## \`tau.agents.interrupt(options)\`
 
 \`\`\`ts
-type InterruptOptions = { id: string; wait?: boolean };
+type InterruptOptions = { id: string; wait?: boolean; scope?: "agent" | "subtree" };
 \`\`\`
 
-Stops the current turn and discards all pending input, so the worker does not continue with queued work. With the default \`wait: true\`, the call returns after the turn has ended. With \`wait: false\`, it returns right away, and the status may still be \`stopping\`. If the program's deadline passes first, the worker still stops, but the call does not confirm it. Interrupting an idle worker only returns its state.
+Stops the current turn and discards all pending input, so the worker does not continue with queued work.
 
-Background Bash and code jobs that the worker started keep running. The worker stays available for more input.
+- \`scope: "agent"\` (default): stops only the selected worker. Its descendants keep running. Interrupting an idle worker only returns its state.
+- \`scope: "subtree"\`: stops the selected worker and all its descendants, even when the selected worker is already idle. Until they have all stopped, those workers refuse new input, and any worker they were starting fails to launch.
+
+With the default \`wait: true\`, the call returns after every targeted turn has ended. With \`wait: false\`, it returns right away, and the status may still be \`stopping\`. If the program's deadline passes first, the workers still stop, but the call does not confirm it. The result is the selected worker's state only; read or list the others to see theirs.
+
+Background Bash and code jobs that the workers started keep running. The workers stay available for more input.
 
 ## \`tau.agents.waitUntilIdle(options)\`
 
-Waits until the worker has no active turn and no pending input, then returns its state. This includes queued messages. It returns immediately for an idle worker. A failed or interrupted worker returns idle state; the call does not throw for it. The wait does not include background jobs the worker started.
+Waits until the worker has no active turn and no pending input, then returns its state. This includes queued messages. It returns immediately for an idle worker. A failed or interrupted worker returns idle state; the call does not throw for it. The wait does not include background jobs the worker started or the worker's descendants, so a parent can be idle while its own workers are still working. Wait for those by ID if you need them.
 
 Cancelling the wait, for example when the program stops, leaves the worker running. Wait for several workers with \`Promise.all\`. The call returns state only; read the answer with \`trace\` and \`readText\`. Outside a program, use the \`wait_for_agents\` tool, which also returns each idle worker's latest answer.
 
@@ -254,7 +280,7 @@ The first page holds the newest matching entries, in chronological order. \`next
 
 The trace contains:
 
-- \`input\`: each message you sent, recorded when it was accepted.
+- \`input\`: each message the worker was sent, recorded when it was accepted.
 - \`assistant\`: the worker's message text. Reasoning is not included.
 - \`tool_call\`: the tool and its arguments as one JSON block.
 - \`tool_result\`: the result exactly as the worker received it. Output that the tool itself shortened stays shortened.
@@ -296,11 +322,11 @@ A failed call throws an error with a \`code\` and a \`message\`:
 | \`code\` | Meaning |
 | --- | --- |
 | \`invalid_arguments\` | The options do not match the interface. |
-| \`unknown_agent\` | No worker in this session has the ID. |
+| \`unknown_agent\` | The ID does not belong to one of your descendants. |
 | \`invalid_cursor\` | The cursor is malformed, belongs to another query or reference, or comes from another worker. |
 | \`expired_content\` | The entry or reference was removed by retention, or never existed. |
 | \`content_type\` | \`readText\` was used on an entry of another kind, or on content with JSON or images. |
-| \`operation_failed\` | The request was refused, for example at the capacity or pending-input limit. |
+| \`operation_failed\` | The request was refused, for example at the capacity or pending-input limit, or because you are being interrupted. |
 | \`cancelled\` | The program was cancelled during the call. |
 
 A worker's failure is part of its state and trace, not an error from these calls. No call is retried automatically.
@@ -332,6 +358,16 @@ await tau.agents.sendInput({ id, mode: "steer", message: "Focus on expired sessi
 await tau.agents.sendInput({ id, mode: "queue", message: "Then review the logout flow." });
 \`\`\`
 
+List the main agent's whole tree, then stop one branch:
+
+\`\`\`js
+const { agents, capacity } = await tau.agents.list();
+for (const agent of agents)
+  printText(\`\${agent.depth} \${agent.id} parent=\${agent.parentId} \${agent.status}\`);
+printText(\`\${capacity.running}/\${capacity.limit} working\`);
+await tau.agents.interrupt({ id, scope: "subtree" });
+\`\`\`
+
 Print the beginning of each recent failed Bash result:
 
 \`\`\`js
@@ -349,11 +385,12 @@ export function createAgentsCapability(
   options: AgentsCapabilityOptions,
   originHistoryEntryId: string,
 ): CodeModeCapability {
-  const supervisor = options.supervisor;
+  const supervisor = options.supervisor.scope(options.callerId);
   const api: Record<string, TauCodeModeHandler> = {
     spawn: async (args, context) => {
       const [input] = z.tuple([spawnOptions]).parse(args);
       context.signal.throwIfAborted();
+      const launchEpoch = supervisor.prepareSpawn();
       let launchModel: SubagentLaunchModel | undefined;
       if (input.model) {
         const parsed = parseSubagentLaunchModel(input.model, {
@@ -398,6 +435,8 @@ export function createAgentsCapability(
       return supervisor.spawn({
         ...options,
         runtimeConfig,
+        launchEpoch,
+        agents: options,
         prompt: input.prompt,
         title: input.title,
         originHistoryEntryId,
@@ -427,9 +466,22 @@ export function createAgentsCapability(
       });
     },
     interrupt: async (args, context) => {
-      const [input] = z.tuple([z.strictObject({ id, wait: z.boolean().optional() })]).parse(args);
+      const [input] = z
+        .tuple([
+          z.strictObject({
+            id,
+            wait: z.boolean().optional(),
+            scope: z.enum(["agent", "subtree"]).optional(),
+          }),
+        ])
+        .parse(args);
       context.signal.throwIfAborted();
-      return await supervisor.interrupt(input.id, context.signal, input.wait ?? true);
+      return await supervisor.interrupt(
+        input.id,
+        context.signal,
+        input.wait ?? true,
+        input.scope ?? "agent",
+      );
     },
     waitUntilIdle: async (args, context) => {
       const [input] = z.tuple([idOptions]).parse(args);

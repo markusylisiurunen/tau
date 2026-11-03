@@ -1,10 +1,12 @@
 import type { AgentEventSink } from "../agent/events.js";
+import type { AgentsCapabilityOptions } from "../code_mode/agents.js";
 import type { SessionRuntimeSettings } from "../config/index.js";
 import type { HistoryQuery } from "../history/types.js";
 import type { McpManager } from "../mcp/manager.js";
 import type { CoreDeps } from "../runtime/deps.js";
 import type { AgentJobRegistry } from "../tools/agent_jobs.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
+import type { AgentSupervisor } from "./agent_supervisor.js";
 import { ClaudeCodeRuntime } from "./claude_code_runtime.js";
 import type { SubagentRuntimeEvent } from "./events.js";
 import { NativeSubagentRuntime } from "./native_subagent_runtime.js";
@@ -33,6 +35,9 @@ export interface SubagentRuntime {
 
 export type SubagentRuntimeOptions = {
   id: string;
+  parentId: string;
+  supervisor: AgentSupervisor;
+  agents?: AgentsCapabilityOptions;
   config: SessionRuntimeSettings;
   backend: ToolExecutionBackend;
   jobs: AgentJobRegistry;

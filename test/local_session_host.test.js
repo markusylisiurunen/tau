@@ -171,6 +171,8 @@ function createRunningSubagentState(id = "child-1") {
     id,
 
     title: "long task",
+    parentId: "main",
+    depth: 1,
     availability: "running",
     model: {
       provider: personas[0].model.provider,
@@ -3685,6 +3687,115 @@ describe("LocalSessionHost", () => {
     );
   });
 
+  it("runs two delegation levels through agent tools and preserves ancestry in observers and history", async () => {
+    const store = new MemorySessionStore();
+    const historyStore = new LocalHistoryStore(":memory:");
+    const environment = createTestExecutionEnvironment();
+    const resolveContext = environment.resolveRuntimeContext;
+    environment.resolveRuntimeContext = async (options) => {
+      const context = await resolveContext(options);
+      context.promptBootstrap.promptContext.projectContextBlock = `directory-context:${options.cwd}:end`;
+      return context;
+    };
+    const host = createHostForEnvironment(store, environment, {
+      history: new HistoryManager(historyStore),
+      recordUsage: () => {},
+    });
+    const requests = [];
+    const stream = vi
+      .spyOn(ModelRuntime.prototype, "streamModel")
+      .mockImplementation((_model, context) => {
+        requests.push(context);
+        const last = context.messages.at(-1);
+        const text = JSON.stringify(last.content);
+        const code = text.includes("start delegation")
+          ? 'const parent = await tau.agents.spawn({ title: "parent", prompt: "coordinate", workingDirectory: "parent" }); await tau.agents.waitUntilIdle({ id: parent.id }); printText(JSON.stringify(await tau.agents.list()));'
+          : text.includes("coordinate")
+            ? 'const child = await tau.agents.spawn({ title: "leaf", prompt: "leaf work", workingDirectory: "../leaf" }); await tau.agents.waitUntilIdle({ id: child.id }); printText(child.id);'
+            : undefined;
+        const response =
+          last.role === "user" && code
+            ? fauxAssistantMessage([fauxToolCall("code", { code })], { stopReason: "toolUse" })
+            : fauxAssistantMessage("done");
+        return {
+          async *[Symbol.asyncIterator]() {
+            if (response.stopReason === "toolUse") {
+              yield { type: "toolcall_start", contentIndex: 0, partial: response };
+              yield {
+                type: "toolcall_end",
+                contentIndex: 0,
+                toolCall: response.content[0],
+                partial: response,
+              };
+            }
+          },
+          async result() {
+            return response;
+          },
+        };
+      });
+    try {
+      const session = await host.createSession(localCreateInput);
+      let projected = await session.snapshot();
+      session.onDelta((delta) => {
+        projected = applySessionProtocolDelta(projected, delta);
+      });
+      const supervisor = session.runtime.supervisor;
+      expect(supervisor.records.get(session.sessionId).runtime).toBe(session.runtime.agent);
+      const origin = await session.record({ text: "start delegation" });
+      expect(await session.runTurn()).toMatchObject({ status: "completed" });
+      const [parent, leaf] = supervisor.list();
+      expect(parent).toMatchObject({
+        parentId: session.sessionId,
+        depth: 1,
+        status: "idle",
+        reason: "completed",
+      });
+      expect(leaf).toMatchObject({
+        parentId: parent.id,
+        depth: 2,
+        status: "idle",
+        reason: "completed",
+      });
+      const parentRuntime = supervisor.records.get(parent.id).runtime.agent;
+      const leafRuntime = supervisor.records.get(leaf.id).runtime.agent;
+      expect(parentRuntime.spec.tools.get("wait_for_agents")).toBeDefined();
+      expect(leafRuntime.spec.tools.get("wait_for_agents")).toBeUndefined();
+      expect(leafRuntime.spec.tools.get("code").schema.description).not.toContain(
+        '"name":"agents"',
+      );
+      expect(leafRuntime.spec.attribution).toEqual(parentRuntime.spec.attribution);
+      expect(parent.workingDirectory).toBe("/repo/parent");
+      expect(leaf.workingDirectory).toBe("/repo/leaf");
+      expect(parentRuntime.spec.systemPrompt).toContain("directory-context:/repo/parent:end");
+      expect(leafRuntime.spec.systemPrompt).toContain("directory-context:/repo/leaf:end");
+      expect(leafRuntime.spec.systemPrompt).not.toContain("directory-context:/repo/parent:end");
+      expect(leafRuntime.spec.systemPrompt).not.toContain("directory-context:/repo:end");
+      expect(leafRuntime.spec.systemPrompt.split("<environment>")).toHaveLength(2);
+      expect(
+        (await historyStore.read({ sessionId: parent.id, limit: 10 })).session.parentSessionId,
+      ).toBe(session.sessionId);
+      expect(
+        (await historyStore.read({ sessionId: leaf.id, limit: 10 })).session.parentSessionId,
+      ).toBe(parent.id);
+      const snapshot = await session.snapshot();
+      expect(projected).toEqual(snapshot);
+      expect(snapshot.agents[leaf.id]).toMatchObject({ parentId: parent.id, depth: 2 });
+      expect(Object.keys(snapshot.agents)).toHaveLength(2);
+      expect(requests.length).toBeGreaterThanOrEqual(3);
+      await session.rewindToHistoryEntryId(origin.userHistoryEntryId);
+      expect((await session.snapshot()).agents).toEqual({});
+      expect(projected).toEqual(await session.snapshot());
+      expect(supervisor.list()).toEqual([]);
+      expect(
+        (await historyStore.read({ sessionId: leaf.id, limit: 10 })).entries.length,
+      ).toBeGreaterThan(0);
+    } finally {
+      stream.mockRestore();
+      await host.shutdown();
+    }
+  });
+
   it("persists subagent events without reading an unprojected parent transition", async () => {
     const store = new MemorySessionStore();
     const host = createHost(store);
@@ -3724,6 +3835,8 @@ describe("LocalSessionHost", () => {
           id: "child-1",
 
           title: "long task",
+          parentId: "main",
+          depth: 1,
           availability: "running",
           model: {
             provider: personas[0].model.provider,
@@ -4926,6 +5039,44 @@ describe("LocalSessionHost", () => {
     }
   });
 
+  it("loads version 14 worker ancestry and prompt context before recovering live-only workers", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "tau-nested-recovery-"));
+    const host = createHost(new FileSessionStore({ directory }));
+    let recoveredHost;
+    try {
+      const session = await host.createSession(localCreateInput);
+      await session.record({ text: "saved conversation" });
+      const snapshot = await session.snapshot();
+      await host.shutdown();
+      const legacy = structuredClone(snapshot);
+      const agent = createRunningSubagentState("old-worker");
+      delete agent.parentId;
+      delete agent.depth;
+      legacy.agents = { [agent.id]: agent };
+      const prompt = legacy.bootstrap.prompt;
+      const basePrompt = prompt.subagentSystemPrompt;
+      prompt.subagentSystemPrompt = `<subagent-role>old role</subagent-role>\n\n${basePrompt}`;
+      writeFileSync(
+        join(directory, `${Buffer.from(snapshot.sessionId).toString("base64url")}.json`),
+        JSON.stringify({ format: STORED_SESSION_DOCUMENT_FORMAT, version: 14, snapshot: legacy }),
+      );
+      const store = new FileSessionStore({ directory });
+      const loaded = await store.loadSession(snapshot.sessionId);
+      expect(loaded.agents[agent.id]).toMatchObject({ parentId: snapshot.sessionId, depth: 1 });
+      expect(loaded.bootstrap.prompt.subagentSystemPrompt).toBe(basePrompt);
+      recoveredHost = createHost(store);
+      const recovered = await recoveredHost.observeSession(snapshot.sessionId);
+      expect(recovered.runtime.supervisor.list()).toEqual([]);
+      expect((await recovered.snapshot()).agents).toEqual({});
+      expect(recovered.runtime.promptComposition.subagentSystemPrompt).toBe(basePrompt);
+      expect((await recovered.snapshot()).messages).toEqual(snapshot.messages);
+    } finally {
+      await recoveredHost?.shutdown();
+      await host.shutdown();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("discards and persists unrecoverable subagent presentation on every recovery", async () => {
     const store = new MemorySessionStore();
     const storedSnapshot = createStoredSnapshot({
@@ -4937,6 +5088,8 @@ describe("LocalSessionHost", () => {
           id: "agent-1",
 
           title: "stale child",
+          parentId: "main",
+          depth: 1,
           availability: "idle",
           model: {
             provider: personas[0].model.provider,

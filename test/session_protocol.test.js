@@ -1923,6 +1923,8 @@ describe("session_protocol", () => {
       id: "agent-1",
 
       title: "research",
+      parentId: "main",
+      depth: 1,
       availability: "idle",
       model: { provider: "anthropic", id: "claude-opus-4-8", reasoning: "medium" },
       workingDirectory: "/repo",
@@ -1995,6 +1997,22 @@ describe("session_protocol", () => {
         }),
       }),
     );
+
+    for (const ancestry of [
+      { parentId: undefined },
+      { parentId: "" },
+      { depth: undefined },
+      { depth: 0 },
+      { depth: 3 },
+      { depth: 1.5 },
+    ]) {
+      expect(
+        validateSessionProtocolResult("session.snapshot", {
+          ...streamingResult.value,
+          agents: { "agent-1": { ...agent, ...ancestry } },
+        }).ok,
+      ).toBe(false);
+    }
 
     for (const [overrides, message] of [
       [

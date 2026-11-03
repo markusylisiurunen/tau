@@ -47,7 +47,7 @@ These rules differ from how the session itself behaves. Use [sessions](sessions.
 
 Each native Tau [subagent](subagents.md) has its own history session for its whole lifetime, including its assignment, later input, and all its work. The session ID is the subagent's ID from `tau.agents`. Recording happens even when no agent has the `history` tool. Claude Code subagents are not recorded.
 
-A subagent's session is a child of the session that started it:
+A subagent's session is a child of the session of the agent that started it, so a subagent started by another subagent is a child of that subagent's session:
 
 - `parentSessionId` names the parent. Tau sets it when it creates the child, and it never changes. Sessions without a parent do not have this field.
 - `childCount` is the number of direct children, and every session has it.

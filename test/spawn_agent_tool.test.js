@@ -9,6 +9,10 @@ import { createWaitForAgentsToolDefinition } from "../dist/core/tools/wait_for_a
 const context = () => ({ signal: new AbortController().signal });
 function fixture(overrides = {}) {
   const supervisor = {
+    scope() {
+      return this;
+    },
+    prepareSpawn: vi.fn(() => 0),
     spawn: vi.fn(() => ({ id: "worker", status: "working" })),
     read: vi.fn(() => ({ id: "worker", status: "working" })),
     sendInput: vi.fn(() => ({ id: "worker", status: "working" })),
@@ -46,7 +50,7 @@ describe("agents capability", () => {
           model: options.persona.model,
           systemPrompt: "child instructions",
           workingDirectory: "/repo",
-          tools: ["bash"],
+          tools: ["bash", "agents"],
         }),
       }),
     );
@@ -111,7 +115,7 @@ describe("agents capability", () => {
     expect(supervisor.waitForAgents).toHaveBeenCalledWith(["worker"], waitContext.signal);
     expect(supervisor.interrupt).not.toHaveBeenCalled();
     await api.interrupt([{ id: "worker", wait: false }], waitContext);
-    expect(supervisor.interrupt).toHaveBeenCalledWith("worker", waitContext.signal, false);
+    expect(supervisor.interrupt).toHaveBeenCalledWith("worker", waitContext.signal, false, "agent");
   });
 
   it("rejects cancelled launches before side effects", async () => {

@@ -145,6 +145,7 @@ describe("bundled Claude Agent SDK runner", () => {
       const options = createRuntimeOptions(directory, []);
       let sent = false;
       const supervisor = new AgentSupervisor({
+        mainAgentId: "main",
         recordUsage: vi.fn(),
         onEvent: (event) => {
           if (event.type === "subagent_activity" && event.activity.type === "assistant" && !sent) {
@@ -298,7 +299,11 @@ describe("bundled Claude Agent SDK runner", () => {
     const directory = mkdtempSync(join(tmpdir(), "tau-claude-usage-"));
     const recordUsage = vi.fn();
     const events = [];
-    const supervisor = new AgentSupervisor({ recordUsage, onEvent: (event) => events.push(event) });
+    const supervisor = new AgentSupervisor({
+      mainAgentId: "main",
+      recordUsage,
+      onEvent: (event) => events.push(event),
+    });
     const options = createRuntimeOptions(directory, []);
     let id;
     try {

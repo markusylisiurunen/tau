@@ -244,6 +244,18 @@ export class ChatRuntime {
     this.supervisor.dispose();
   }
 
+  get hasActiveSubagents(): boolean {
+    return this.supervisor.getActiveCount() > 0;
+  }
+
+  async waitForSubagents(): Promise<void> {
+    await this.supervisor.waitForIdle();
+  }
+
+  async closeSubagents(): Promise<void> {
+    await this.supervisor.close();
+  }
+
   hasSubagent(id: string): boolean {
     return this.supervisor.getSnapshot(id) !== undefined;
   }

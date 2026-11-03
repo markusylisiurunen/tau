@@ -229,6 +229,40 @@ export class SessionProtocolHandler {
         case "session.observe":
           await this.handleAttach(request);
           return;
+        case "session.retain": {
+          const state = this.sessionStates.get(request.params.sessionId);
+          if (!state?.observed) {
+            this.sendSessionNotFound(request.id, request.params.sessionId);
+            return;
+          }
+          const retainedUntil = this.host.retainSessionRuntime(
+            state.session,
+            request.params.durationMs,
+          );
+          this.sendMessage(
+            createSessionProtocolSuccessResponse(request.id, "session.retain", { retainedUntil }),
+          );
+          return;
+        }
+        case "session.runtimeState": {
+          const result = this.host.sessionRuntimeState(request.params.sessionId);
+          this.sendMessage(
+            createSessionProtocolSuccessResponse(request.id, "session.runtimeState", result),
+          );
+          return;
+        }
+        case "session.unload": {
+          const unloaded = await this.host.unloadSession(request.params.sessionId);
+          const state = this.sessionStates.get(request.params.sessionId);
+          if (state?.session.isDisposed) {
+            this.unsubscribeSessionListeners(state);
+            this.sessionStates.delete(request.params.sessionId);
+          }
+          this.sendMessage(
+            createSessionProtocolSuccessResponse(request.id, "session.unload", { unloaded }),
+          );
+          return;
+        }
         case "session.unobserve":
           await this.handleUnobserve(request);
           return;
@@ -1573,9 +1607,9 @@ export class SessionProtocolHandler {
       if (existing.session.isDisposed || existing.session.sessionId !== sessionId) {
         this.unsubscribeSessionListeners(existing);
         this.sessionStates.delete(sessionId);
-        return undefined;
+      } else {
+        return existing;
       }
-      return existing;
     }
 
     const session = await this.host.observeSession(sessionId);

@@ -75,6 +75,7 @@ export class AgentSupervisor {
     string,
     SubagentRecord | { kind: "main"; id: string; parentId: null; depth: 0; runtime: AgentRuntime }
   >();
+  private closed = false;
   private readonly deps: CoreDeps;
   private mainLaunchEpoch = 0;
   private disposed = false;
@@ -148,6 +149,25 @@ export class AgentSupervisor {
     this.records.delete(this.mainAgentId);
   }
 
+  async waitForIdle(): Promise<void> {
+    do {
+      await Promise.allSettled(this.delegatedRecords().map((record) => record.completion));
+    } while (this.getActiveCount() > 0);
+  }
+
+  async close(): Promise<void> {
+    this.closed = true;
+    const results = await Promise.allSettled(
+      this.delegatedRecords().map((record) => this.interrupt(record.id, undefined, false)),
+    );
+    await this.waitForIdle();
+    this.reset();
+    const errors = results.flatMap((result) =>
+      result.status === "rejected" ? [result.reason] : [],
+    );
+    if (errors.length) throw new AggregateError(errors, "failed to interrupt subagents");
+  }
+
   reset(): void {
     this.retainOrigins(new Set());
   }
@@ -194,6 +214,7 @@ export class AgentSupervisor {
     mcp?: McpManager;
     personaId?: string;
   }): SubagentConversationState {
+    if (this.closed) throw new AgentRequestError("operation_failed", "Subagents are closed");
     if (this.getActiveCount() >= MAX_ACTIVE_SUBAGENTS) {
       throw new AgentRequestError(
         "operation_failed",
@@ -294,6 +315,7 @@ export class AgentSupervisor {
     prompt: string;
     mode: "queue" | "steer";
   }): SubagentConversationState {
+    if (this.closed) throw new AgentRequestError("operation_failed", "Subagents are closed");
     const record = this.requireRecord(options.id);
     if (
       record.subtreeStops > 0 ||

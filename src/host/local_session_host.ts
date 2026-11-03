@@ -72,6 +72,7 @@ import type {
   SessionProtocolResolvePromptParams,
   SessionProtocolResolvePromptResult,
   SessionProtocolRewindResult,
+  SessionProtocolRuntimeStateResult,
   SessionProtocolSampleParams,
   SessionProtocolSampleResult,
   SessionProtocolSessionSummary,
@@ -96,6 +97,7 @@ import {
   parseSessionAttributes,
   projectSessionProtocolNoticePresentation,
   projectSessionProtocolSubagentActivity,
+  SESSION_PROTOCOL_MAX_RETENTION_MS,
   SESSION_PROTOCOL_MAX_SUBAGENT_ACTIVITIES,
 } from "../protocol/session_protocol.js";
 import {
@@ -162,6 +164,14 @@ export class LocalSessionHost implements TauSessionHost {
   private readonly sessions = new Set<LocalHostedSessionHandle>();
   private readonly sessionReferences = new Map<LocalHostedSessionHandle, number>();
   private readonly sessionEvictions = new Set<Promise<void>>();
+  private readonly sessionDisposals = new Map<string, Promise<void>>();
+  private readonly runtimeRetentions = new Map<
+    LocalHostedSessionHandle,
+    {
+      until: number;
+      timer: ReturnType<typeof setTimeout>;
+    }
+  >();
   private readonly sessionRecoveryPromises = new Map<
     string,
     Promise<LocalHostedSessionHandle | undefined>
@@ -448,6 +458,7 @@ export class LocalSessionHost implements TauSessionHost {
       forceNextSnapshotRevision,
       this.sessionOptions.recordUsage ?? appendUsageLogEntry,
       (session) => {
+        this.clearRuntimeRetention(session);
         this.sessions.delete(session);
         this.sessionReferences.delete(session);
       },
@@ -518,12 +529,15 @@ export class LocalSessionHost implements TauSessionHost {
 
   async observeSession(sessionId: string): Promise<LocalHostedSession | undefined> {
     this.assertHostActive();
+    await this.sessionDisposals.get(sessionId);
+    this.assertHostActive();
     const liveSession = this.findLiveSession(sessionId);
     if (liveSession) {
       return this.retainSession(liveSession);
     }
 
     await this.refreshStore();
+    await this.sessionDisposals.get(sessionId);
     const refreshedLiveSession = this.findLiveSession(sessionId);
     if (refreshedLiveSession) {
       return this.retainSession(refreshedLiveSession);
@@ -600,6 +614,84 @@ export class LocalSessionHost implements TauSessionHost {
     return session;
   }
 
+  retainSessionRuntime(session: TauHostedSession, durationMs: number): number {
+    this.assertHostActive();
+    if (
+      !Number.isSafeInteger(durationMs) ||
+      durationMs < 1 ||
+      durationMs > SESSION_PROTOCOL_MAX_RETENTION_MS
+    ) {
+      throw new Error("invalid runtime retention duration");
+    }
+    const live = [...this.sessions].find((candidate) => candidate === session);
+    if (!live || live.isDisposed || this.sessionDisposals.has(live.sessionId)) {
+      throw new Error("session is not live");
+    }
+    this.clearRuntimeRetention(live);
+    const until = Date.now() + durationMs;
+    const timer = setTimeout(() => {
+      if (this.runtimeRetentions.get(live)?.until !== until) return;
+      this.runtimeRetentions.delete(live);
+      this.scheduleSessionEviction(live);
+    }, durationMs);
+    timer.unref();
+    this.runtimeRetentions.set(live, { until, timer });
+    return until;
+  }
+
+  sessionRuntimeState(sessionId: string): SessionProtocolRuntimeStateResult {
+    this.assertHostActive();
+    if (this.sessionDisposals.has(sessionId))
+      return { loaded: true, busy: true, retainedUntil: null };
+    const session = this.findLiveSession(sessionId);
+    return session
+      ? {
+          loaded: true,
+          busy: session.hasActiveWork,
+          retainedUntil: this.runtimeRetentions.get(session)?.until ?? null,
+        }
+      : { loaded: false };
+  }
+
+  async unloadSession(sessionId: string): Promise<boolean> {
+    this.assertHostActive();
+    const disposing = this.sessionDisposals.get(sessionId);
+    if (disposing) {
+      await disposing;
+      return true;
+    }
+    await this.sessionRecoveryPromises.get(sessionId);
+    const session = this.findLiveSession(sessionId);
+    if (!session) return false;
+    await this.disposeSession(session);
+    return true;
+  }
+
+  private clearRuntimeRetention(session: LocalHostedSessionHandle): void {
+    const retention = this.runtimeRetentions.get(session);
+    if (retention) clearTimeout(retention.timer);
+    this.runtimeRetentions.delete(session);
+  }
+
+  private async disposeSession(session: LocalHostedSessionHandle): Promise<void> {
+    const existing = this.sessionDisposals.get(session.sessionId);
+    if (existing) return await existing;
+    this.clearRuntimeRetention(session);
+    this.sessions.delete(session);
+    this.sessionReferences.delete(session);
+    const disposal = Promise.resolve().then(() => session.dispose());
+    this.sessionDisposals.set(session.sessionId, disposal);
+    try {
+      await disposal;
+    } finally {
+      this.sessionDisposals.delete(session.sessionId);
+    }
+  }
+
+  private isRuntimeRetained(session: LocalHostedSessionHandle): boolean {
+    return (this.runtimeRetentions.get(session)?.until ?? 0) > Date.now();
+  }
+
   releaseSession(session: TauHostedSession): void {
     const hostedSession = [...this.sessions].find((candidate) => candidate === session);
     if (!hostedSession) return;
@@ -612,7 +704,11 @@ export class LocalSessionHost implements TauSessionHost {
     }
 
     this.sessionReferences.delete(hostedSession);
-    const eviction = this.evictReleasedSession(hostedSession);
+    this.scheduleSessionEviction(hostedSession);
+  }
+
+  private scheduleSessionEviction(session: LocalHostedSessionHandle): void {
+    const eviction = this.evictReleasedSession(session);
     this.sessionEvictions.add(eviction);
     void eviction.then(
       () => this.sessionEvictions.delete(eviction),
@@ -621,22 +717,33 @@ export class LocalSessionHost implements TauSessionHost {
   }
 
   private async evictReleasedSession(session: LocalHostedSessionHandle): Promise<void> {
+    if (this.isRuntimeRetained(session)) return;
     do {
       await session.waitForActiveWork().catch(() => undefined);
       await session.runtime.jobs.waitForIdle();
+      await session.runtime.waitForSubagents();
       await session.waitForActiveWork().catch(() => undefined);
-    } while (session.runtime.jobs.hasRunning);
-    if (this.shuttingDown || session.isDisposed || (this.sessionReferences.get(session) ?? 0) > 0) {
+    } while (session.runtime.jobs.hasRunning || session.runtime.hasActiveSubagents);
+    if (
+      this.shuttingDown ||
+      session.isDisposed ||
+      this.isRuntimeRetained(session) ||
+      (this.sessionReferences.get(session) ?? 0) > 0
+    ) {
       return;
     }
 
     await session.snapshot();
-    if (this.shuttingDown || (this.sessionReferences.get(session) ?? 0) > 0) return;
-    if (session.runtime.jobs.hasRunning) return await this.evictReleasedSession(session);
+    if (
+      this.shuttingDown ||
+      this.isRuntimeRetained(session) ||
+      (this.sessionReferences.get(session) ?? 0) > 0
+    )
+      return;
+    if (session.runtime.jobs.hasRunning || session.runtime.hasActiveSubagents)
+      return await this.evictReleasedSession(session);
 
-    this.sessions.delete(session);
-    this.sessionReferences.delete(session);
-    await session.dispose();
+    await this.disposeSession(session);
   }
 
   async listSessions(): Promise<SessionProtocolSessionSummary[]> {
@@ -657,6 +764,7 @@ export class LocalSessionHost implements TauSessionHost {
     }
 
     this.shuttingDown = true;
+    for (const session of this.runtimeRetentions.keys()) this.clearRuntimeRetention(session);
     this.shutdownPromise = this.shutdownNow();
     return await this.shutdownPromise;
   }
@@ -707,7 +815,10 @@ export class LocalSessionHost implements TauSessionHost {
     this.sessions.clear();
     this.sessionReferences.clear();
 
-    const evictionResults = await Promise.allSettled(this.sessionEvictions);
+    const evictionResults = await Promise.allSettled([
+      ...this.sessionEvictions,
+      ...this.sessionDisposals.values(),
+    ]);
     for (const result of evictionResults) {
       if (result.status === "rejected") {
         errors.push(result.reason);
@@ -1089,6 +1200,16 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       }
     }
     return interrupted;
+  }
+
+  get hasActiveWork(): boolean {
+    return (
+      Boolean(this.activeTurnPromise) ||
+      this.runtime.isTurnRunning ||
+      this.activeWorkPromises.size > 0 ||
+      this.runtime.hasActiveSubagents ||
+      this.runtime.jobs.hasRunning
+    );
   }
 
   async waitForActiveWork(): Promise<void> {
@@ -1620,6 +1741,9 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
     const errors: unknown[] = [];
     this.interruptActiveWork();
+    const subagentsClosed = this.runtime.closeSubagents().catch((error) => {
+      errors.push(error);
+    });
     try {
       await this.runtime.jobs.dispose();
     } catch (error) {
@@ -1630,6 +1754,8 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     } catch (error) {
       errors.push(error);
     }
+
+    await subagentsClosed;
 
     this.disposed = true;
     for (const session of this.ephemeralAgentSessions.values()) {

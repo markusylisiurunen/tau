@@ -51,6 +51,9 @@ export const SESSION_PROTOCOL_METHODS = [
   "session.list",
   "session.observe",
   "session.unobserve",
+  "session.retain",
+  "session.unload",
+  "session.runtimeState",
   "session.record",
   "session.submit",
   "session.queue",
@@ -161,6 +164,15 @@ export type SessionProtocolSessionIdParams = {
   sessionId: string;
 };
 export type SessionProtocolUnobserveParams = SessionProtocolSessionIdParams;
+export type SessionProtocolRetainParams = SessionProtocolSessionIdParams & {
+  durationMs: number;
+};
+export type SessionProtocolRetainResult = { retainedUntil: number };
+export type SessionProtocolUnloadResult = { unloaded: boolean };
+export type SessionProtocolRuntimeStateResult =
+  | { loaded: false }
+  | { loaded: true; busy: boolean; retainedUntil: number | null };
+export const SESSION_PROTOCOL_MAX_RETENTION_MS = 2_147_483_647;
 export type SessionProtocolUserMessageParams = {
   sessionId: string;
   text: string;
@@ -291,6 +303,9 @@ export type SessionProtocolParamsByMethod = {
   "session.list": SessionProtocolListParams;
   "session.observe": SessionProtocolSessionIdParams;
   "session.unobserve": SessionProtocolUnobserveParams;
+  "session.retain": SessionProtocolRetainParams;
+  "session.unload": SessionProtocolSessionIdParams;
+  "session.runtimeState": SessionProtocolSessionIdParams;
   "session.record": SessionProtocolRecordParams;
   "session.submit": SessionProtocolSubmitParams;
   "session.queue": SessionProtocolQueueParams;
@@ -1129,6 +1144,9 @@ export type SessionProtocolResultByMethod = {
   "session.list": SessionProtocolListResult;
   "session.observe": SessionProtocolObserveResult;
   "session.unobserve": SessionProtocolUnobserveResult;
+  "session.retain": SessionProtocolRetainResult;
+  "session.unload": SessionProtocolUnloadResult;
+  "session.runtimeState": SessionProtocolRuntimeStateResult;
   "session.record": SessionProtocolRecordResult;
   "session.submit": SessionProtocolSubmitResult;
   "session.queue": SessionProtocolQueueResult;
@@ -3513,6 +3531,29 @@ const sessionProtocolAutocompletePathsResultSchema = z
   })
   .strip();
 
+const sessionProtocolRetainParamsSchema = z
+  .object({
+    sessionId: nonEmptyStringSchema,
+    durationMs: z.number().int().min(1).max(SESSION_PROTOCOL_MAX_RETENTION_MS),
+  })
+  .strict();
+const sessionProtocolRetainResultSchema = z
+  .object({
+    retainedUntil: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  })
+  .strip();
+const sessionProtocolRuntimeStateResultSchema = z.discriminatedUnion("loaded", [
+  z.object({ loaded: z.literal(false) }).strip(),
+  z
+    .object({
+      loaded: z.literal(true),
+      busy: z.boolean(),
+      retainedUntil: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).nullable(),
+    })
+    .strip(),
+]);
+const sessionProtocolUnloadResultSchema = z.object({ unloaded: z.boolean() }).strip();
+
 const sessionProtocolUnobserveResultSchema = z
   .object({
     unobserved: z.literal(true),
@@ -4667,7 +4708,15 @@ export function validateSessionProtocolParams(
     case "session.observe":
       return validateSessionIdParams("session.observe", params);
     case "session.unobserve":
-      return validateSessionIdParams("session.unobserve", params);
+    case "session.unload":
+    case "session.runtimeState":
+      return validateSessionIdParams(method, params);
+    case "session.retain": {
+      const parsed = sessionProtocolRetainParamsSchema.safeParse(params);
+      return parsed.success
+        ? { ok: true, value: parsed.data }
+        : invalidParams(`session.retain params are invalid: ${formatZodError(parsed.error)}`);
+    }
     case "session.record":
       return validateRecordParams(params);
     case "session.submit":
@@ -4745,6 +4794,12 @@ export function validateSessionProtocolResult(
       return validateResult(method, result, sessionProtocolAutocompletePathsResultSchema);
     case "session.unobserve":
       return validateResult(method, result, sessionProtocolUnobserveResultSchema);
+    case "session.retain":
+      return validateResult(method, result, sessionProtocolRetainResultSchema);
+    case "session.unload":
+      return validateResult(method, result, sessionProtocolUnloadResultSchema);
+    case "session.runtimeState":
+      return validateResult(method, result, sessionProtocolRuntimeStateResultSchema);
     case "session.reload":
       return validateResult(method, result, sessionProtocolReloadResultSchema);
     case "session.compact":
@@ -4790,6 +4845,8 @@ function validateSessionIdParams<
   T extends
     | "session.observe"
     | "session.unobserve"
+    | "session.unload"
+    | "session.runtimeState"
     | "session.cancelPendingMessages"
     | "session.retry"
     | "session.interrupt"

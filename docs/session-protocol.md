@@ -88,7 +88,7 @@ A request can remain open while the host emits state messages or handles later r
 
 Install all three before processing later messages for that session. The host holds back updates while preparing the response, and afterward sends only updates newer than the returned revisions.
 
-Observing controls which updates you receive; it does not make you the owner. `session.unobserve` stops this connection's updates without deleting the session or interrupting work. Several connections can observe one session, and each can change it. Client tool names must be unique among observing clients.
+Observing controls which updates you receive; it does not make you the owner. `session.unobserve` stops this connection's updates without deleting the session or interrupting work. To keep a session in host memory without an observer, use `session.retain`. Several connections can observe one session, and each can change it. Client tool names must be unique among observing clients.
 
 ## Treat the snapshot as the source of truth
 

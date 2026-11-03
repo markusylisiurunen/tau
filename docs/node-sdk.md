@@ -147,15 +147,13 @@ try {
 }
 ```
 
-`client.sessions.create(input)` sends `session.create`. `client.sessions.list()` returns `{ sessionId, lifecycle }` for each session.
-
 Creating a session requires the full execution environment and the creation attributes, which never change afterward. Tau sets the `machine` and `cwd` attributes itself and replaces any values you send for them. The `cwd` of the execution environment must be absolute and is a path in the chosen environment, which may not be where the SDK runs. A Fly Sprite session refers to an existing Sprite that the host is configured to reach. See [sessions](sessions.md) for creation attributes and [ownership and scope](ownership-and-scope.md) for which machine owns which paths.
 
 To set the main conversation's automatic-compaction threshold at creation, pass `autoCompactThresholdTokens` as a safe integer of at least 50,000. Omit it or pass `null` to use the persona default, falling back to the model's context window minus 16,384 tokens. Applying a persona resets the threshold to `null`, even when reapplying the same persona, unless the call supplies a new threshold. The effective threshold cannot exceed this model-based limit.
 
 Use `session.setAutoCompactThreshold(50000)` to change the threshold from the next logical turn, or `session.setAutoCompactThreshold(null)` to restore the default. Snapshot `settings` contain both `autoCompactThresholdTokens` (the configured value) and `effectiveAutoCompactThresholdTokens` (the trigger for the selected model). See [automatic compaction](sessions.md#automatic-compaction) for timing, limits, and costs.
 
-`session.unobserve()` stops observing, and that `TauSdkSession` object can no longer be used. The session itself is not deleted. `client.close()` closes the whole client and is safe to call more than once.
+Unobserving does not delete the session. `client.close()` is safe to repeat.
 
 The connected `TauSdkClient` exposes:
 
@@ -163,8 +161,10 @@ The connected `TauSdkClient` exposes:
 | --- | --- |
 | `ready` | The validated server `ready` message and advertised methods. |
 | `sessions.create(input)` | Create and observe a session, and return its object. |
-| `sessions.list()` | List hosted session summaries. |
+| `sessions.list()` | List `{ sessionId, lifecycle }` for each session. |
 | `sessions.observe(sessionId)` | Observe an existing session and return its object. |
+| `sessions.runtimeState(sessionId)` | Read a session's in-memory state without loading it. |
+| `sessions.unload(sessionId)` | Stop live work and remove the session from host memory. |
 | `subscribe(listener)` | Receive deltas for every observed session on this connection. |
 | `subscribePendingUserMessages(listener)` | Receive pending-state replacements across observed sessions. |
 | `subscribeSubagentActivities(listener)` | Receive subagent-activity changes across observed sessions. |
@@ -201,6 +201,7 @@ Each subscription returns an unsubscribe function.
 | `createEphemeralContext(options)` | Create an agent context on the host that is not saved. |
 | `submitEphemeralThread(options)` | Run or continue one ephemeral thread. |
 | `closeEphemeralContext(contextId)` | Close an ephemeral context and its threads. |
+| `retain(durationMs)` | [Keep the session loaded](remote-sessions.md#keep-a-session-loaded) until a deadline. |
 | `unobserve()` | Stop observing; this object can no longer be used. |
 
 `submit`, `queue`, and `record` accept `{ historyEntryId?: string }`; without it, Tau generates the ID. Use `getTauSdkSessionTurnRecord(snapshot, id)` to tell whether an accepted turn is unknown, running, or finished, or `getTauSdkSessionTurnOutcome(snapshot, id)` when you only need the final outcome.
@@ -395,7 +396,7 @@ Most turn and session-changing methods do not accept an `AbortSignal`. Call `ses
 
 `client.close()` ends the connection: it rejects open requests, aborts client tool handlers, waits for them to finish, and closes the transport. For the default in-process client, it also saves sessions and shuts down the host. Over WebSocket, the remote host and its sessions keep running.
 
-Always close clients in `finally`. Never use a session object after `unobserve()`, or a client after `close()`.
+Always close clients in `finally`. Never use a client after `close()`.
 
 ## Handle errors
 

@@ -131,6 +131,58 @@ result: {
 
 The session must currently be observed by this connection.
 
+### `session.retain`
+
+Keeps the session's runtime in host memory until a deadline, even when no client observes it.
+
+```ts
+params: {
+  sessionId: string;
+  durationMs: number;
+}
+result: {
+  retainedUntil: number;
+}
+```
+
+The session must currently be observed by this connection. `durationMs` is an integer from 1 to 2,147,483,647, which is about 24.8 days. `retainedUntil` is the deadline in milliseconds since the Unix epoch.
+
+Each call replaces the previous deadline, so a shorter duration moves it closer. After the deadline, the normal unload rules apply. The host does not save retention, and a host restart ends it. See [keep a session loaded](remote-sessions.md#keep-a-session-loaded).
+
+### `session.runtimeState`
+
+Reports the session's state in host memory. It never loads the session.
+
+```ts
+params: {
+  sessionId: string;
+}
+result:
+  | { loaded: false }
+  | { loaded: true; busy: boolean; retainedUntil: number | null };
+```
+
+The connection does not need to observe the session. `loaded: false` is also the result for an unknown ID, so it does not show whether a saved session exists.
+
+`busy` is true while a turn, other session work, a subagent turn, or a background job is running, and while the session is being unloaded. An idle subagent does not make the session busy. `retainedUntil` is the current deadline in milliseconds since the Unix epoch, or `null` when no retention is active.
+
+### `session.unload`
+
+Stops all of the session's live work and removes its runtime from host memory. The saved session stays.
+
+```ts
+params: {
+  sessionId: string;
+}
+result: {
+  unloaded: boolean;
+}
+```
+
+The connection does not need to observe the session. The host interrupts turns and subagents, stops background jobs, and waits for them to settle before it responds. Interrupted turns are saved as they settle. Subagents, pending messages, and retention are lost. `unloaded` is `false` when the session was not in memory, and the call never loads it. If the host is recovering the session, it waits for recovery to finish and then unloads it.
+
+Other observing connections are not notified. A later `session.observe` waits for the unload to finish, and then loads the saved session again, idle and without subagents. Most other requests from a connection that was observing the session load it the same way.
+
 ## Add user input and run turns
 
 ### `session.record`

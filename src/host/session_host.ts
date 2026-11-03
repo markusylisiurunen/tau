@@ -29,6 +29,7 @@ import type {
   SessionProtocolResolvePromptResult,
   SessionProtocolRewindParams,
   SessionProtocolRewindResult,
+  SessionProtocolRuntimeStateResult,
   SessionProtocolSampleParams,
   SessionProtocolSampleResult,
   SessionProtocolSessionSummary,
@@ -138,6 +139,9 @@ export type TauSessionHost = {
   createSession(input: SessionProtocolCreateParams): Promise<TauHostedSession>;
   observeSession(sessionId: string): Promise<TauHostedSession | undefined>;
   releaseSession(session: TauHostedSession): void;
+  retainSessionRuntime(session: TauHostedSession, durationMs: number): number;
+  unloadSession(sessionId: string): Promise<boolean>;
+  sessionRuntimeState(sessionId: string): SessionProtocolRuntimeStateResult;
   listSessions(): Promise<SessionProtocolSessionSummary[]>;
   registerClientTools?(options: {
     tools: SessionProtocolClientToolDefinition[];

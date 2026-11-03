@@ -41,6 +41,27 @@ const bootstrap = createProtocolBootstrap();
 const catalog = createProtocolCatalog();
 
 describe("session_protocol", () => {
+  it("bounds live runtime retention and validates unload without observing", () => {
+    expect(
+      validateSessionProtocolParams("session.retain", { sessionId: "s", durationMs: 259200000 }).ok,
+    ).toBe(true);
+    for (const durationMs of [0, -1, 1.5, 2147483648, NaN, Infinity, "1000"]) {
+      expect(
+        validateSessionProtocolParams("session.retain", { sessionId: "s", durationMs }).ok,
+      ).toBe(false);
+    }
+    expect(
+      validateSessionProtocolParams("session.retain", {
+        sessionId: "s",
+        durationMs: 100,
+        extra: true,
+      }).ok,
+    ).toBe(false);
+    expect(validateSessionProtocolParams("session.unload", { sessionId: "s" }).ok).toBe(true);
+    expect(validateSessionProtocolResult("session.retain", { retainedUntil: 1234 }).ok).toBe(true);
+    expect(validateSessionProtocolResult("session.unload", { unloaded: false }).ok).toBe(true);
+  });
+
   it("validates atomic persona applications and workspace selection", () => {
     for (const selection of [
       { personaId: null },

@@ -89,6 +89,30 @@ function getRecord(supervisor, id) {
 }
 
 describe("AgentSupervisor", () => {
+  it("waits for child settlement before closing even if interruption notification fails", async () => {
+    const supervisor = new AgentSupervisor({
+      onEvent: (event) => {
+        if (event.type === "subagent_interrupt_requested") throw new Error("event sink failed");
+      },
+    });
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const child = supervisor.spawn(createSpawnOptions());
+    const record = getRecord(supervisor, child.id);
+    record.runtime.agent.spec.model.stream = () => createStream(createAssistant("done"), gate);
+    await vi.waitFor(() => expect(record.runtime.agent.status).toBe("running"));
+    const closing = supervisor.close();
+    const rejected = expect(closing).rejects.toThrow("failed to interrupt subagents");
+    await Promise.resolve();
+    expect(supervisor.records.size).toBe(1);
+    expect(() => supervisor.spawn(createSpawnOptions())).toThrow();
+    release();
+    await rejected;
+    expect(supervisor.list()).toEqual([]);
+  });
+
   it("opens native history only after runtime construction succeeds", () => {
     const openHistory = vi.fn();
     const supervisor = new AgentSupervisor({ mainAgentId: "main", onEvent: () => {}, openHistory });

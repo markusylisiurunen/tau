@@ -5832,6 +5832,130 @@ describe("LocalSessionHost", () => {
     expect(executionEnvironment.dispose).toHaveBeenCalledTimes(1);
   });
 
+  it("retains child conversations across SDK disconnects and unloads without recovery", async () => {
+    const host = createHost(new MemorySessionStore());
+    const listening = deferred();
+    const controller = new AbortController();
+    const server = runWebSocketSessionServer({
+      host,
+      hostname: "127.0.0.1",
+      port: 0,
+      signal: controller.signal,
+      onListening: listening.resolve,
+    });
+    let client;
+    let observer;
+    try {
+      const address = await listening.promise;
+      const url = `ws://127.0.0.1:${address.port}`;
+      client = await createTauSdkWebSocketClient({ url });
+      const facade = await client.sessions.create(localCreateInput);
+      const parent = await host.observeSession(facade.id);
+      const origin = await parent.record({ text: "delegate work" });
+      const supervisor = parent.runtime.supervisor;
+      const child = supervisor.spawn({
+        runtimeConfig: {
+          kind: "native",
+          systemPrompt: "child system",
+          autoCompactThresholdTokens: 80000,
+          workingDirectory: "/repo/child",
+          model: personas[0].model,
+          settings: { reasoning: "medium" },
+          tools: [],
+        },
+        prompt: "first task",
+        title: "child task",
+        originHistoryEntryId: origin.userHistoryEntryId,
+        config: {},
+        backend: createLocalToolExecutionBackend(),
+        jobs: parent.runtime.jobs,
+      });
+      const agent = supervisor.records.get(child.id).runtime.agent;
+      agent.spec.model.stream = () => ({
+        async *[Symbol.asyncIterator]() {
+          yield* [];
+        },
+        async result() {
+          return fauxAssistantMessage("answer");
+        },
+      });
+      await supervisor.waitForAgents([child.id]);
+      const retained = await facade.retain(60_000);
+      expect(retained.retainedUntil).toBeGreaterThan(Date.now());
+      host.releaseSession(parent);
+      await client.close();
+      client = await createTauSdkWebSocketClient({ url });
+      const resumed = await client.sessions.observe(facade.id);
+      observer = await createTauSdkWebSocketClient({ url });
+      await observer.sessions.observe(facade.id);
+      const restored = await host.observeSession(resumed.id);
+      expect(restored).toBe(parent);
+      supervisor.sendInput({ id: child.id, mode: "queue", prompt: "second task" });
+      await supervisor.waitForAgents([child.id]);
+      expect(supervisor.read(child.id).status).toBe("idle");
+      expect(await client.sessions.runtimeState(facade.id)).toEqual({
+        loaded: true,
+        busy: false,
+        retainedUntil: retained.retainedUntil,
+      });
+      const settling = deferred();
+      const started = deferred();
+      agent.spec.model.stream = () => ({
+        async *[Symbol.asyncIterator]() {
+          started.resolve();
+          await settling.promise;
+          yield* [];
+        },
+        async result() {
+          return fauxAssistantMessage("stopped");
+        },
+      });
+      supervisor.sendInput({ id: child.id, mode: "queue", prompt: "slow task" });
+      await started.promise;
+      const unloading = client.sessions.unload(facade.id);
+      await vi.waitFor(() => expect(parent.disposing).toBe(true));
+      expect(await client.sessions.runtimeState(facade.id)).toEqual({
+        loaded: true,
+        busy: true,
+        retainedUntil: null,
+      });
+      expect(parent.isDisposed).toBe(false);
+      settling.resolve();
+      expect(await unloading).toEqual({ unloaded: true });
+      host.releaseSession(restored);
+      expect(parent.isDisposed).toBe(true);
+      expect(await client.sessions.unload(facade.id)).toEqual({ unloaded: false });
+      expect(await client.sessions.runtimeState(facade.id)).toEqual({ loaded: false });
+      const recovered = await observer.sessions.observe(facade.id);
+      expect(recovered.id).toBe(facade.id);
+      expect(recovered.subagentActivities().agents).toEqual({});
+    } finally {
+      await observer?.close();
+      await client?.close();
+      controller.abort();
+      await server;
+    }
+  });
+
+  it("renews runtime retention and evicts after its deadline", async () => {
+    const host = createHost(new MemorySessionStore());
+    const session = await host.createSession(localCreateInput);
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    try {
+      host.retainSessionRuntime(session, 1000);
+      host.releaseSession(session);
+      await vi.advanceTimersByTimeAsync(500);
+      host.retainSessionRuntime(session, 2000);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(session.isDisposed).toBe(false);
+      await vi.advanceTimersByTimeAsync(1500);
+      expect(session.isDisposed).toBe(true);
+    } finally {
+      vi.useRealTimers();
+      await host.shutdown();
+    }
+  });
+
   it("evicts an idle live session after its final observer releases it", async () => {
     const store = new MemorySessionStore();
     const host = createHost(store);
@@ -5960,10 +6084,16 @@ describe("LocalSessionHost", () => {
       host.releaseSession(session);
       await disposalStarted.promise;
 
-      const reopened = await host.observeSession(session.sessionId);
+      const reopening = host.observeSession(session.sessionId);
+      expect(host.sessionRuntimeState(session.sessionId)).toEqual({
+        loaded: true,
+        busy: true,
+        retainedUntil: null,
+      });
+      finishDisposal.resolve();
+      const reopened = await reopening;
       expect(reopened).toBeDefined();
       expect(reopened).not.toBe(session);
-      finishDisposal.resolve();
       await session.dispose();
 
       const removed = await reopened.record({ text: "after disposal" });

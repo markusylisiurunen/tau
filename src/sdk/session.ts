@@ -128,6 +128,18 @@ class TauSdkClientImpl implements TauSdkClient {
     return this.transport.request("session.unobserve", { sessionId });
   }
 
+  retainSession(sessionId: string, durationMs: number) {
+    return this.transport.request("session.retain", { sessionId, durationMs });
+  }
+
+  runtimeState(sessionId: string) {
+    return this.transport.request("session.runtimeState", { sessionId });
+  }
+
+  unloadSession(sessionId: string) {
+    return this.transport.request("session.unload", { sessionId });
+  }
+
   close(): Promise<void> {
     this.closePromise ??= this.closeClient();
     return this.closePromise;
@@ -587,6 +599,14 @@ class TauSdkSessionClientImpl implements TauSdkSessionClient {
     return result.sessions;
   }
 
+  async runtimeState(sessionId: string) {
+    return await this.client.runtimeState(sessionId);
+  }
+
+  async unload(sessionId: string) {
+    return await this.client.unloadSession(sessionId);
+  }
+
   async observe(sessionId: string): Promise<TauSdkSession> {
     const session = this.client.createObservedSession(sessionId);
     try {
@@ -884,6 +904,10 @@ class TauSdkSessionImpl implements TauSdkSession {
     contextId: string,
   ): Promise<SessionProtocolResultByMethod["session.ephemeral.close"]> {
     return await this.client.sendEphemeralClose(this.activeSessionId(), contextId);
+  }
+
+  async retain(durationMs: number) {
+    return await this.client.retainSession(this.activeSessionId(), durationMs);
   }
 
   async unobserve(): Promise<SessionProtocolResultByMethod["session.unobserve"]> {

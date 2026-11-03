@@ -26,8 +26,10 @@ import type {
   SessionProtocolReloadResult,
   SessionProtocolRequestId,
   SessionProtocolResolvePromptResult,
+  SessionProtocolRetainResult,
   SessionProtocolRetryResult,
   SessionProtocolRewindResult,
+  SessionProtocolRuntimeStateResult,
   SessionProtocolSampleParams,
   SessionProtocolSampleResult,
   SessionProtocolSessionSummary,
@@ -39,6 +41,7 @@ import type {
   SessionProtocolSubmitResult,
   SessionProtocolTurnOutcome,
   SessionProtocolTurnRecord,
+  SessionProtocolUnloadResult,
   SessionProtocolUnobserveResult,
 } from "../protocol/session_protocol.js";
 import type { WebSocketSessionProtocolTransportOptions } from "../transport/index.js";
@@ -79,6 +82,9 @@ export type TauSdkSessionSampleInput = Omit<SessionProtocolSampleParams, "sessio
 export type TauSdkSessionSampleResult = SessionProtocolSampleResult;
 export type TauSdkSessionInterruptSubagentResult = SessionProtocolInterruptSubagentResult;
 export type TauSdkSessionUnobserveResult = SessionProtocolUnobserveResult;
+export type TauSdkSessionRetainResult = SessionProtocolRetainResult;
+export type TauSdkSessionUnloadResult = SessionProtocolUnloadResult;
+export type TauSdkSessionRuntimeStateResult = SessionProtocolRuntimeStateResult;
 export type TauSdkEphemeralAgentTool = SessionProtocolEphemeralAgentTool;
 export type TauSdkReasoningEffort = SessionProtocolReasoningEffort;
 export type TauSdkEphemeralCreateResult = SessionProtocolEphemeralCreateResult;
@@ -248,12 +254,15 @@ export type TauSdkSession = {
   }): Promise<TauSdkEphemeralSubmitResult>;
   closeEphemeralContext(contextId: string): Promise<TauSdkEphemeralCloseResult>;
   unobserve(): Promise<TauSdkSessionUnobserveResult>;
+  retain(durationMs: number): Promise<TauSdkSessionRetainResult>;
 };
 
 export type TauSdkSessionClient = {
   create(input: TauSdkCreateSessionInput): Promise<TauSdkSession>;
   list(): Promise<TauSdkSessionSummary[]>;
   observe(sessionId: string): Promise<TauSdkSession>;
+  unload(sessionId: string): Promise<TauSdkSessionUnloadResult>;
+  runtimeState(sessionId: string): Promise<TauSdkSessionRuntimeStateResult>;
 };
 
 export type TauSdkClient = {

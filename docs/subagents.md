@@ -260,7 +260,7 @@ A failed call throws an error with a `code` and a `message`. The codes are `inva
 
 ## Detach, rewind, and recovery
 
-Subagents belong to the running session on the host, not to an attached TUI. Detaching a client, or losing the connection, does not stop them while the session stays alive. Another client can attach and see their current state.
+Subagents belong to the running session on the host, not to an attached TUI. Detaching or losing a connection does not stop them. A running subagent keeps the session loaded, and another client can attach and see its state. An idle subagent lasts only as long as a loaded session; see [retention](remote-sessions.md#keep-a-session-loaded).
 
 Subagents do not survive the end of a session on the host or a host restart. Recovery removes any saved records of them, so a recovered session cannot send input to an old subagent ID.
 

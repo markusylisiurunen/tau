@@ -170,9 +170,32 @@ Each kind of change belongs to a different process:
 
 ## Reconnect and observe safely
 
-A WebSocket connection observes a hosted session. It does not own the saved session and cannot delete it. After the last client disconnects, the host unloads an idle session from memory and keeps it saved. If a client disconnects while work is running, the host keeps working and unloads the session only after the work finishes. Reattach with the same session ID to get the current state and continue receiving updates.
+A WebSocket connection observes a hosted session. It does not own the saved session and cannot delete it. After the last client disconnects, the host unloads an idle session from memory and keeps it saved. If a client disconnects while a turn, subagent turn, or background job is running, the host keeps working and unloads the session only after the work finishes. Reattach with the same session ID to get the current state and continue receiving updates.
 
 A clean `tau serve` shutdown interrupts running work, saves live sessions, and closes clients. After a restart, the host lists the sessions whose execution environments it can reconnect. Recovered sessions come back idle, without queued or steering messages, and without subagents.
+
+### Keep a session loaded
+
+Unloading removes subagents that have finished their work, even though they could otherwise take follow-up input. A client that returns to a session over separate connections can keep the runtime in host memory with retention:
+
+```ts
+const session = await client.sessions.observe(sessionId);
+await session.retain(3 * 24 * 60 * 60_000); // Three days from now.
+
+// Later, on any connection:
+const state = await client.sessions.runtimeState(sessionId);
+await client.sessions.unload(sessionId);
+```
+
+The session then stays loaded after its last client leaves. When the deadline passes, the host unloads the session once it has no clients and no running work. To extend retention, observe the session and call `retain` again before the deadline.
+
+Retention only applies to the live runtime:
+
+- It costs host memory and keeps the session's execution environment and MCP connections open, so use a duration that matches how long you expect to return.
+- It does not survive a host restart or crash, and the host does not recover subagents or jobs from it. Treat live workers as something that can disappear at any time.
+- It does not start or resume work. An idle retained session stays idle.
+
+`unload` interrupts running work immediately and does not wait for it to finish on its own. Call it before removing a session's working directory, so that no agent keeps running there. Use `runtimeState` to check for running work without loading the session.
 
 ## Use multiple observers carefully
 

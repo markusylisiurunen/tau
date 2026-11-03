@@ -44,6 +44,25 @@ When the service enables them, eligible non-draft PRs can also receive automatic
 
 To opt a single PR out of these automatic workflows, put the exact marker `<!-- cowork:skip-auto -->` in its description. Cowork checks the description on each opened, ready-for-review, and synchronize event, so an automated PR should include the marker when it is created, and an existing PR needs it before the next push. Explicit commands still work on a marked PR. Adding the marker does not cancel work that Cowork already accepted, and removing it does not replay skipped events.
 
+## Finding sessions in Tau history
+
+Every new Tau session that Cowork creates records why it was created, and you can filter Tau history by these attributes. For example, a hosted diff review of pull request 680 has:
+
+```text
+source=cowork
+repository=github.com/owner/repository
+cowork_workflow=pull-request-diff
+github_pr=680
+```
+
+- `repository` is the lowercase `host/owner/repository` form.
+- `cowork_workflow` is a workflow ID from [the configuration reference](references/configuration.md), `pull-request-command` for a repository-defined command, or `recurring` for a schedule.
+- Each session also has one target attribute: `github_issue` or `github_pr` with the issue or PR number, or `cowork_schedule` with the schedule file's name without `.md`.
+
+Cowork records no run ID because a persistent session can span many runs. Submitted diff feedback runs in the persistent PR conversation, so look for it under `pull-request-fix`.
+
+Attributes never change after a session is created. A persistent session created before Cowork recorded the workflow and target keeps its original attributes, even while it stays in use, so filters on `cowork_workflow` or a target attribute miss it. Filter by `source` and `repository` to find these sessions.
+
 ## Verify the change
 
 Check exact workflow IDs, supported fields, JSON or YAML syntax, prompt content, and hook executable permissions. Prefer append guidance over replacing built-in workflow instructions. Validate the change with the owning repository's existing checks. Do not run lifecycle scripts against a real workspace just to test them.

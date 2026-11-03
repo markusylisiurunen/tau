@@ -14,7 +14,7 @@ Whether the agent can start subagents depends on the main persona's tool list. T
 
 The main agent starts subagents only when the user or active instructions explicitly ask for delegation. Ask in ordinary language; no special tag is needed. The request itself does not create a subagent: the main agent still has to call `tau.agents.spawn`.
 
-The agent follows this rule itself. Tau checks that a launch is valid, but it does not judge whether the request really asked for delegation.
+The agent follows this rule itself. Tau checks that a launch is valid, but it does not judge whether the request asked for delegation.
 
 ## Tools
 
@@ -31,7 +31,7 @@ A native Tau subagent can receive these tools. [Claude Code subagents](#claude-c
 
 A subagent gets each of these that the main persona also has. For example, a main persona with `bash`, `edit`, `history`, and `agents` gives its subagents `bash`, `edit`, and `history`. Names such as `web` and `history` enable the matching capability in the subagent's `code` tool. MCP uses the parent session's servers and connections, whatever the subagent's working directory. There is no separate tool list for subagents.
 
-Every native Tau subagent also gets the built-in `tau_docs` tool, and a persona's `tools` list cannot remove it. Subagents never get `agents`: their `code` tool has no `tau.agents`, and they have no `wait_for_agents`. A subagent cannot start or manage other agents.
+Every native Tau subagent also gets the built-in `tau_docs` tool, and a persona's `tools` list cannot remove it. Subagents never get `agents`: their `code` tool has no `tau.agents`, and they have no `wait_for_agents`.
 
 Subagents also never get [client tools](client-tools.md), such as the TUI's tools or a Telegram runner's file delivery tools. Only the main agent uses tools that attached clients offer. See [tools](tools.md) for how tool availability works in general.
 
@@ -130,9 +130,7 @@ Claude workers share the eight-worker limit and the usual subagent lifetime. Int
 
 `tau.agents.spawn` normally runs the subagent in the main session's `cwd`. The optional `workingDirectory` may be absolute or relative to that `cwd`. Tau resolves it to an absolute path on the execution environment.
 
-For native Tau subagents, when that path differs from the parent's `cwd`, Tau rebuilds the subagent's context for the new directory. It detects the platform and repository there, reads the applicable `AGENTS.md` files, and discovers that directory's skills.
-
-For native Tau subagents, the new directory does not change the persona, model catalog, runtime configuration, credentials, or tool policy. Those come from the parent session. Configuration in the new directory is read only where context needs it, such as for skill discovery.
+For native Tau subagents, when that path differs from the parent's `cwd`, Tau rebuilds the subagent's context for the new directory. It detects the platform and repository there, reads the applicable `AGENTS.md` files, and discovers that directory's skills. The new directory does not change the persona, model catalog, runtime configuration, credentials, or tool policy. Those come from the parent session. Configuration in the new directory is read only where context needs it, such as for skill discovery.
 
 `workingDirectory` is always a path on the execution environment, which matters in monorepos and hosted environments. The host and attached clients never resolve it against their own filesystems.
 
@@ -201,7 +199,7 @@ The response text of all requested subagents shares a budget of 8,192 estimated 
 
 Inside a program, `waitUntilIdle` waits for one subagent with the same meaning of idle and returns its state without the response. Neither wait returns until queued input has been handled too. Cancelling a wait, or stopping the program that waits, does not interrupt the subagent.
 
-The host also sends live subagent activity to attached clients for display. It is a summary for display. The subagent's messages and tool results are in its trace.
+The host also sends attached clients a live summary of subagent activity for display. The subagent's messages and tool results are in its trace.
 
 ### Send more input
 
@@ -245,15 +243,15 @@ A failed call throws an error with a `code` and a `message`. The codes are `inva
 
 ## Detach, rewind, and recovery
 
-Subagents belong to the running session on the host, not to an attached TUI. Detaching a client, or losing the connection, does not stop them while the session stays alive. Another client can attach to the session and see their current state.
+Subagents belong to the running session on the host, not to an attached TUI. Detaching a client, or losing the connection, does not stop them while the session stays alive. Another client can attach and see their current state.
 
 Subagents do not survive the end of a session on the host or a host restart. Their status may be saved while the session is live, but recovery removes those records, because their runtimes no longer exist. A recovered session cannot send input to an old subagent ID.
 
 Rewind also removes subagents that were started by an assistant message the rewind removed. A subagent started from a `code` program belongs to the assistant message that ran the program, including a program running as a background job. Host shutdown or session disposal interrupts and removes all subagents.
 
-Tau records native subagents as child sessions in [history](history.md#native-subagent-sessions), even without the `history` tool. History cannot restore them. Claude Code is excluded.
+Tau records native subagents as child sessions in [history](history.md#native-subagent-sessions), even without the `history` tool. These sessions stay after a rewind, but history cannot restore the subagents. Claude Code is excluded.
 
-Plan long work with this in mind. Important results should reach the main agent and end up in the session history or in project files before the session on the host goes away. [Sessions](sessions.md) covers saving and recovery in general.
+Important results should reach the main agent and end up in the session history or in project files before the session on the host goes away. [Sessions](sessions.md) covers saving and recovery in general.
 
 ## Reloading and validation
 
@@ -261,6 +259,6 @@ Changes to persona tools or to the launch allowlist apply after `/reload` in an 
 
 `subagents.launchModels` must be an array of valid `<provider>/<model>:<effort>` strings. Unknown providers, invalid efforts, and malformed entries produce configuration warnings.
 
-A launch can fail because of invalid arguments, a model outside the allowlist, the concurrency limit, a prompt that cannot be built, or a working directory whose context cannot be built. Calls with an unknown subagent ID fail. Sending input also fails under the conditions in [send more input](#send-more-input).
+A launch can fail because of invalid arguments, a model outside the allowlist, the concurrency limit, a prompt that cannot be built, or a working directory whose context cannot be built. Calls with an unknown subagent ID fail.
 
 Before starting a local TUI, `tau --debug --persona <id>` shows which tools are available, the model and settings subagents inherit, and the subagents' tool list. In a running session, `/reload` reports file warnings and `tau.agents.list()` shows live subagent state.

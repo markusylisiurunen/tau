@@ -540,7 +540,7 @@ params: {
   instructions: string;
   workingDirectory?: string;
   tools: Array<"bash" | "write" | "edit" | "view_image" | "web">;
-  reasoning?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+  reasoning?: Reasoning;
 }
 result: {
   contextId: string;
@@ -560,7 +560,7 @@ params: {
   threadId: string;
   forkFromThreadId?: string;
   message: string;
-  reasoning?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+  reasoning?: Reasoning;
 }
 result: { threadId: string; response: string }
 ```

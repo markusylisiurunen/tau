@@ -6241,6 +6241,8 @@ describe("LocalSessionHost", () => {
       const origin = await parent.record({ text: "delegate work" });
       const supervisor = parent.runtime.supervisor;
       const child = supervisor.spawn({
+        parentId: supervisor.mainAgentId,
+        launchEpoch: supervisor.prepareSpawn(supervisor.mainAgentId),
         runtimeConfig: {
           kind: "native",
           systemPrompt: "child system",
@@ -6485,6 +6487,8 @@ describe("LocalSessionHost", () => {
       const origin = await parent.record({ text: "delegate work" });
       const supervisor = parent.runtime.supervisor;
       const child = supervisor.spawn({
+        parentId: supervisor.mainAgentId,
+        launchEpoch: supervisor.prepareSpawn(supervisor.mainAgentId),
         runtimeConfig: {
           kind: "native",
           systemPrompt: "child system",

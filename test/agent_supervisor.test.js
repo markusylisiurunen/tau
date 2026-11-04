@@ -91,6 +91,7 @@ function getRecord(supervisor, id) {
 describe("AgentSupervisor", () => {
   it("waits for child settlement before closing even if interruption notification fails", async () => {
     const supervisor = new AgentSupervisor({
+      mainAgentId: "main",
       onEvent: (event) => {
         if (event.type === "subagent_interrupt_requested") throw new Error("event sink failed");
       },

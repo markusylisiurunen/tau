@@ -64,7 +64,7 @@ A model override uses this exact form:
 
 The provider is lowercased. The model ID is kept exactly as written and is case-sensitive. Effort is one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`.
 
-The configured list of launch models is an allowlist. It does not choose a default. An agent should normally omit the `model` option of `tau.agents.spawn`, and the subagent then uses its parent's model and reasoning. When `model` is given, it must exactly match an allowlist entry after normalization. For native Tau subagents, the override changes the provider, model, and reasoning, and keeps the other settings.
+The configured list of launch models is an allowlist. It does not choose a default. An agent should normally omit the `model` option of `tau.agents.spawn`. When `model` is given, it must exactly match an allowlist entry after normalization. For native Tau subagents, the override changes the provider, model, and reasoning, and keeps the other settings.
 
 A model ID may be missing from the catalog if its provider is known (see [models](models.md)). An entry with an invalid provider, model, effort, or format makes the configuration field invalid. Duplicate entries are removed.
 
@@ -276,6 +276,6 @@ Changes to persona tools or to the launch allowlist apply after `/reload` in an 
 
 `subagents.launchModels` must be an array of valid `<provider>/<model>:<effort>` strings. Unknown providers, invalid efforts, and malformed entries produce configuration warnings.
 
-A launch can fail because of invalid arguments, a model outside the allowlist, the concurrency limit, an interrupted caller, or a prompt or working-directory context that cannot be built. Calls with an ID outside the caller's descendants fail.
+A launch can fail because of invalid arguments, a model outside the allowlist, the concurrency limit, an interrupted caller, or a prompt or working-directory context that cannot be built.
 
 Before starting a local TUI, `tau --debug --persona <id>` shows which tools are available, the model and settings subagents inherit, and the subagents' tool list. In a running session, `/reload` reports file warnings and `tau.agents.list()` shows live subagent state.

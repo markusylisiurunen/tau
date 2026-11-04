@@ -161,7 +161,7 @@ After editing personas, skills, or project context, run `/reload` while the sess
 
 If the current persona ID still exists, Tau applies its newly loaded definition and keeps the session's current settings, including reasoning and service tier. Selecting the persona again applies its declared defaults. If the ID is gone, Tau selects the first available persona. Existing messages stay as they are; a persona change never rewrites earlier history.
 
-The TUI refuses to reload while a turn is running. Subagents that are already running keep the setup they started with. Subagents started after the reload use the reloaded persona. See [subagents](subagents.md).
+The TUI refuses to reload while a turn is running. Existing subagents keep the setup they started with, and children they launch later inherit that setup. Subagents that the main agent starts after the reload use the reloaded persona. See [subagents](subagents.md).
 
 ## Validation and common mistakes
 

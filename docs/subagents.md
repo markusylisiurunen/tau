@@ -64,7 +64,7 @@ A model override uses this exact form:
 
 The provider is lowercased. The model ID is kept exactly as written and is case-sensitive. Effort is one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`.
 
-The configured list of launch models is an allowlist. It does not choose a default. An agent should normally omit the `model` option of `tau.agents.spawn`, and the subagent then uses its parent's model and reasoning. When `model` is given, it must exactly match an allowlist entry after normalization. The same allowlist applies at both levels. For native Tau subagents, the override changes the provider, model, and reasoning, and keeps the other settings.
+The configured list of launch models is an allowlist. It does not choose a default. An agent should normally omit the `model` option of `tau.agents.spawn`, and the subagent then uses its parent's model and reasoning. When `model` is given, it must exactly match an allowlist entry after normalization. For native Tau subagents, the override changes the provider, model, and reasoning, and keeps the other settings.
 
 A model ID may be missing from the catalog if its provider is known (see [models](models.md)). An entry with an invalid provider, model, effort, or format makes the configuration field invalid. Duplicate entries are removed.
 
@@ -272,7 +272,7 @@ Important results should reach the main agent and end up in the session history 
 
 ## Reloading and validation
 
-Changes to persona tools or to the launch allowlist apply after `/reload` in an idle session, or in a new session. Reload affects only new launches. Running subagents, and follow-ups to them, keep their existing setup.
+Changes to persona tools or to the launch allowlist apply after `/reload` in an idle session, or in a new session. Reload updates the main agent, so only the subagents it launches later, and their children, use the new setup. Existing subagents keep the setup they started with, including its tools and launch allowlist, and pass it on to children they launch later. For example, an existing subagent can still launch a child with a model you removed from `subagents.launchModels`.
 
 `subagents.launchModels` must be an array of valid `<provider>/<model>:<effort>` strings. Unknown providers, invalid efforts, and malformed entries produce configuration warnings.
 

@@ -106,6 +106,19 @@ Observing controls which updates you receive; it does not make you the owner. To
 
 Every session update and client tool call carries the `observationId` it belongs to. Send the same ID with later requests for that session. A connection has at most one observation of a session at a time. `session.runtimeState` and `session.unload` work without an observation, and the [method reference](session-protocol-methods.md) lists every method that takes no `observationId`.
 
+### Creation holds
+
+`session.create` keeps the new session in host memory for the connection that created it, so the session stays loaded until that connection observes it. This creation hold is not an observation. It has no `observationId`, delivers no updates, and does not allow session requests.
+
+The hold has no time limit. It ends when:
+
+- This connection sends `session.observe` for the session.
+- This connection sends `session.unobserve` for the session, with any `observationId`.
+- Any client unloads the session.
+- The connection closes.
+
+The host does not send `session.observationEnded` for a hold. If nothing else keeps the session loaded, the host then unloads it from memory and keeps it saved. To leave a session you created without observing it, send `session.unobserve` with any new ID.
+
 ### When an observation ends
 
 An observation ends when:
@@ -130,7 +143,7 @@ No more updates arrive for that ID, and the host cancels the client tool calls t
 
 A request with an ended or unknown `observationId` returns `not_found` and never loads the session. There are two exceptions:
 
-- `session.unobserve` succeeds and changes nothing, so cleanup is safe to repeat and cannot end a newer observation.
+- `session.unobserve` succeeds and ends no observation, so cleanup is safe to repeat and cannot end a newer observation. It still releases a [creation hold](#creation-holds).
 - `session.cancelExec` can still cancel a command, as described below.
 
 A command from `session.exec` keeps running after `session.unobserve` or a replacing `session.observe`. To stop it, send `session.cancelExec` on the same connection with the `observationId` and `execId` that started it. If no running command matches all of these, the result is `cancelled: false`. `session.cancelExec` never loads the session and cannot cancel a command started under a newer observation.

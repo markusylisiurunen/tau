@@ -39,6 +39,10 @@ export class HostedSessionInput {
     return Boolean(this.active) || this.session.isTurnRunning;
   }
 
+  get hasActiveWork(): boolean {
+    return this.busy || this.hasPending || this.pendingMutations > 0;
+  }
+
   get hasPending(): boolean {
     return this.pending.length > 0;
   }

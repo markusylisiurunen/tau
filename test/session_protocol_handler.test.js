@@ -566,6 +566,11 @@ function createHarness(options = {}) {
       }));
     },
     async shutdown() {
+      for (const session of sessions.values()) {
+        session.input.close();
+        session.interruptActiveWork();
+      }
+      await Promise.all([...sessions.values()].map((session) => session.waitForActiveWork()));
       hostShutdown();
     },
   };
@@ -702,6 +707,26 @@ describe("SessionProtocolHandler", () => {
     expect(harness.releaseSession).toHaveBeenCalledTimes(1);
     expect(harness.releaseSession).toHaveBeenCalledWith(session);
   });
+
+  it.each(["session.observe", "session.unobserve"])(
+    "releases creation holds on %s without emitting an unknown observation ID",
+    async (method) => {
+      const harness = createHarness({ precreate: false });
+      await harness.connection.handleRequest(
+        request("create", "session.create", localCreateParams),
+      );
+      const response = harness.lines.find((line) => line.id === "create");
+      const sessionId = response.result.sessionId;
+      const session = await harness.host.observeSession(sessionId);
+      await session.record({ text: "before observation" });
+      expect(harness.lines.filter((line) => line.type.startsWith("session."))).toEqual([]);
+      await harness.connection.handleRequest(request("release", method, { sessionId }));
+      expect(harness.releaseSession).toHaveBeenCalledTimes(1);
+      expect(harness.releaseSession).toHaveBeenCalledWith(session);
+      expect(harness.lines.filter((line) => line.type === "session.observationEnded")).toEqual([]);
+      await harness.connection.close();
+    },
+  );
 
   it("rejects unobserved requests without recovering a runtime", async () => {
     const harness = createHarness();

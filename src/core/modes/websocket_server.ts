@@ -101,13 +101,15 @@ export class WebSocketSessionServer {
     this.closed = true;
     const states = [...this.clients];
     this.clients.clear();
-    await Promise.allSettled(
+    const closing = Promise.allSettled(
       states.map(async (state) => {
         state.socket.terminate();
-        await this.closeClient(state, { mode: "interrupt" });
+        await this.closeClient(state, { waitForInFlight: false });
       }),
     );
     await this.host.shutdown();
+    await closing;
+    await Promise.allSettled(states.flatMap((state) => [...state.inFlightHandlers]));
   }
 
   private async handleSocketMessage(state: ClientState, payload: string): Promise<void> {
@@ -122,9 +124,9 @@ export class WebSocketSessionServer {
 
   private async closeClient(
     state: ClientState,
-    options: { mode?: "detach" | "interrupt"; waitForInFlight?: boolean } = {},
+    options: { waitForInFlight?: boolean } = {},
   ): Promise<void> {
-    await state.handler.close(options.mode ?? (this.closed ? "interrupt" : "detach"));
+    await state.handler.close("detach");
     if (options.waitForInFlight !== false && state.inFlightHandlers.size > 0) {
       await Promise.allSettled([...state.inFlightHandlers]);
     }

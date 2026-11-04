@@ -810,6 +810,7 @@ export class LocalSessionHost implements TauSessionHost {
     }
 
     for (const session of this.sessions) {
+      session.input.close();
       session.interruptActiveWork();
     }
 
@@ -1244,8 +1245,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
   get hasActiveWork(): boolean {
     return (
-      this.input.hasPending ||
-      this.input.busy ||
+      this.input.hasActiveWork ||
       this.activeWorkPromises.size > 0 ||
       this.runtime.hasActiveSubagents ||
       this.runtime.jobs.hasRunning

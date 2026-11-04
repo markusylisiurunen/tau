@@ -131,7 +131,7 @@ result: {
 }
 ```
 
-A stale or unknown `observationId` succeeds and changes nothing.
+A stale or unknown `observationId` succeeds and only releases any [creation hold](session-protocol.md#creation-holds).
 
 ### `session.retain`
 

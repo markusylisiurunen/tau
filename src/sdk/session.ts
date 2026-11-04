@@ -868,11 +868,11 @@ class TauSdkSessionImpl implements TauSdkSession {
     };
   }
 
-  submit(
+  async submit(
     text: string,
     options: TauSdkSessionUserMessageOptions = {},
   ): Promise<SessionProtocolResultByMethod["session.submit"]> {
-    return this.client.sendSubmit(this.activeObservation(), text, options);
+    return await this.client.sendSubmit(this.activeObservation(), text, options);
   }
 
   async record(
@@ -882,19 +882,21 @@ class TauSdkSessionImpl implements TauSdkSession {
     return await this.client.sendRecord(this.activeObservation(), text, options);
   }
 
-  queue(
+  async queue(
     text: string,
     options: TauSdkSessionUserMessageOptions = {},
   ): Promise<SessionProtocolResultByMethod["session.queue"]> {
-    return this.client.sendQueue(this.activeObservation(), text, options);
+    return await this.client.sendQueue(this.activeObservation(), text, options);
   }
 
-  steer(text: string): Promise<SessionProtocolResultByMethod["session.steer"]> {
-    return this.client.sendSteer(this.activeObservation(), text);
+  async steer(text: string): Promise<SessionProtocolResultByMethod["session.steer"]> {
+    return await this.client.sendSteer(this.activeObservation(), text);
   }
 
-  cancelPendingMessages(): Promise<SessionProtocolResultByMethod["session.cancelPendingMessages"]> {
-    return this.client.sendCancelPendingMessages(this.activeObservation());
+  async cancelPendingMessages(): Promise<
+    SessionProtocolResultByMethod["session.cancelPendingMessages"]
+  > {
+    return await this.client.sendCancelPendingMessages(this.activeObservation());
   }
 
   async retry(): Promise<SessionProtocolResultByMethod["session.retry"]> {

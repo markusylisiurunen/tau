@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { PersonaSelectionError } from "../core/persona_selection.js";
 import {
   createSessionProtocolErrorResponse,
@@ -35,7 +34,7 @@ export type SessionProtocolHandlerOptions = {
   send: (message: SessionProtocolOutgoingMessage) => void;
 };
 
-type SessionProtocolHandlerCloseMode = "detach" | "interrupt" | "shutdown-host";
+type SessionProtocolHandlerCloseMode = "detach" | "shutdown-host";
 
 type SessionProtocolUserSubmissionRequest = Extract<
   SessionProtocolRequestMessage,
@@ -79,6 +78,10 @@ export class SessionProtocolHandler {
   private readonly host: TauSessionHost;
   private readonly send: (message: SessionProtocolOutgoingMessage) => void;
   private readonly sessionStates = new Map<string, SessionProtocolHandlerSessionState>();
+  private readonly createdSessionHolds = new Map<
+    string,
+    { session: TauHostedSession; unsubscribeClosing: () => void }
+  >();
   private readonly sessionObservationQueues = new Map<string, Promise<void>>();
   private readonly connectionAbortController = new AbortController();
   private readonly activeSideChannels = new Set<Promise<void>>();
@@ -293,7 +296,6 @@ export class SessionProtocolHandler {
 
     this.closed = true;
     const shutdownHost = mode === "shutdown-host";
-    const interruptActiveTurns = mode === "interrupt" || shutdownHost;
 
     const states = [...this.sessionStates.values()];
     const activeSideChannels = [...this.activeSideChannels];
@@ -301,25 +303,17 @@ export class SessionProtocolHandler {
 
     for (const state of states) {
       this.unsubscribeSessionListeners(state);
-      if (interruptActiveTurns) {
-        state.session.interruptActiveWork();
-      }
     }
 
-    if (interruptActiveTurns) {
-      await Promise.allSettled(states.map((state) => state.session.waitForActiveWork()));
-      await Promise.allSettled(states.map((state) => state.live.waitForIdle()));
-      await Promise.allSettled(states.map((state) => state.live.waitForMutations()));
-    }
-    await Promise.allSettled(activeSideChannels);
-
+    for (const sessionId of this.createdSessionHolds.keys()) this.releaseCreatedSession(sessionId);
     this.sessionStates.clear();
     this.clientToolRegistration?.unregister();
     this.clientToolRegistration = undefined;
 
-    if (shutdownHost) {
-      await this.host.shutdown();
-    }
+    await Promise.all([
+      Promise.allSettled(activeSideChannels),
+      shutdownHost ? this.host.shutdown() : undefined,
+    ]);
   }
 
   private emitReady(): void {
@@ -414,7 +408,7 @@ export class SessionProtocolHandler {
   }
 
   private async handleUserSubmission(request: SessionProtocolUserSubmissionRequest): Promise<void> {
-    const state = await this.getSessionState(request.params.sessionId);
+    const state = this.getSessionState(request);
     if (!state) {
       this.sendSessionNotFound(request.id, request.params.sessionId);
       return;
@@ -434,7 +428,7 @@ export class SessionProtocolHandler {
   private async handleCancelPendingMessages(
     request: Extract<SessionProtocolRequestMessage, { method: "session.cancelPendingMessages" }>,
   ): Promise<void> {
-    const state = await this.getSessionState(request.params.sessionId);
+    const state = this.getSessionState(request);
     if (!state) {
       this.sendSessionNotFound(request.id, request.params.sessionId);
       return;
@@ -465,7 +459,7 @@ export class SessionProtocolHandler {
     const abortController = new AbortController();
     this.activeExecs.set(key, { observationId: request.observationId, abortController });
     try {
-      const state = await this.getSessionState(request.params.sessionId);
+      const state = this.getSessionState(request);
       if (!state) {
         this.sendSessionNotFound(request.id, request.params.sessionId);
         return;
@@ -505,7 +499,7 @@ export class SessionProtocolHandler {
   private async handleSample(
     request: Extract<SessionProtocolRequestMessage, { method: "session.sample" }>,
   ): Promise<void> {
-    const state = await this.getSessionState(request.params.sessionId);
+    const state = this.getSessionState(request);
     if (!state) {
       this.sendSessionNotFound(request.id, request.params.sessionId);
       return;
@@ -520,7 +514,7 @@ export class SessionProtocolHandler {
   private async handleRetry(
     request: Extract<SessionProtocolRequestMessage, { method: "session.retry" }>,
   ): Promise<void> {
-    const state = await this.getSessionState(request.params.sessionId);
+    const state = this.getSessionState(request);
     if (!state) {
       this.sendSessionNotFound(request.id, request.params.sessionId);
       return;
@@ -537,10 +531,13 @@ export class SessionProtocolHandler {
   ): Promise<void> {
     const session = await this.host.createSession(request.params);
     if (this.closed) {
-      await session.dispose();
+      await this.host.unloadSession(session.sessionId);
       return;
     }
-    this.registerSession(session, randomUUID());
+    this.createdSessionHolds.set(session.sessionId, {
+      session,
+      unsubscribeClosing: session.onClosing(() => this.releaseCreatedSession(session.sessionId)),
+    });
     this.sendMessage(
       createSessionProtocolSuccessResponse(request.id, "session.create", {
         sessionId: session.sessionId,
@@ -586,6 +583,7 @@ export class SessionProtocolHandler {
       this.host.releaseSession(session);
       return;
     }
+    this.releaseCreatedSession(request.params.sessionId);
     const previous = this.sessionStates.get(request.params.sessionId);
     if (previous) this.endObservation(previous);
     const state = this.registerSession(session, request.observationId);
@@ -627,6 +625,7 @@ export class SessionProtocolHandler {
   private async handleUnobserve(
     request: Extract<SessionProtocolRequestMessage, { method: "session.unobserve" }>,
   ): Promise<void> {
+    this.releaseCreatedSession(request.params.sessionId);
     const state = this.sessionStates.get(request.params.sessionId);
     if (state && state.observationId === request.observationId) this.endObservation(state);
 
@@ -639,7 +638,7 @@ export class SessionProtocolHandler {
   private async handleRecord(
     request: Extract<SessionProtocolRequestMessage, { method: "session.record" }>,
   ): Promise<void> {
-    const state = await this.getSessionState(request.params.sessionId);
+    const state = this.getSessionState(request);
     if (!state) {
       this.sendSessionNotFound(request.id, request.params.sessionId);
       return;
@@ -740,7 +739,7 @@ export class SessionProtocolHandler {
   private async handleInterrupt(
     request: Extract<SessionProtocolRequestMessage, { method: "session.interrupt" }>,
   ): Promise<void> {
-    const state = await this.getSessionState(request.params.sessionId);
+    const state = this.getSessionState(request);
     if (!state) {
       this.sendSessionNotFound(request.id, request.params.sessionId);
       return;
@@ -774,7 +773,7 @@ export class SessionProtocolHandler {
   private async handleSnapshot(
     request: Extract<SessionProtocolRequestMessage, { method: "session.snapshot" }>,
   ): Promise<void> {
-    const state = await this.getSessionState(request.params.sessionId);
+    const state = this.getSessionState(request);
     if (!state) {
       this.sendSessionNotFound(request.id, request.params.sessionId);
       return;
@@ -792,17 +791,13 @@ export class SessionProtocolHandler {
   private async handleSetAutoCompactThreshold(
     request: Extract<SessionProtocolRequestMessage, { method: "session.setAutoCompactThreshold" }>,
   ): Promise<void> {
-    const state = await this.getSessionState(request.params.sessionId);
+    const state = this.getSessionState(request);
     if (!state) {
       this.sendSessionNotFound(request.id, request.params.sessionId);
       return;
     }
 
     await state.live.mutate(async () => {
-      if (state.session.sessionId !== request.params.sessionId) {
-        this.sendSessionNotFound(request.id, request.params.sessionId);
-        return;
-      }
       const result = await state.session.setAutoCompactThreshold(request.params.thresholdTokens);
       this.sendMessage(
         createSessionProtocolSuccessResponse(request.id, "session.setAutoCompactThreshold", result),
@@ -813,17 +808,13 @@ export class SessionProtocolHandler {
   private async handleSetReasoning(
     request: Extract<SessionProtocolRequestMessage, { method: "session.setReasoning" }>,
   ): Promise<void> {
-    const state = await this.getSessionState(request.params.sessionId);
+    const state = this.getSessionState(request);
     if (!state) {
       this.sendSessionNotFound(request.id, request.params.sessionId);
       return;
     }
 
     await state.live.mutate(async () => {
-      if (state.session.sessionId !== request.params.sessionId) {
-        this.sendSessionNotFound(request.id, request.params.sessionId);
-        return;
-      }
       const result = await state.session.setReasoning(request.params.reasoning);
       this.sendMessage(
         createSessionProtocolSuccessResponse(request.id, "session.setReasoning", result),
@@ -848,7 +839,7 @@ export class SessionProtocolHandler {
   private async handleResolvePrompt(
     request: Extract<SessionProtocolRequestMessage, { method: "session.resolvePrompt" }>,
   ): Promise<void> {
-    const state = await this.getSessionState(request.params.sessionId);
+    const state = this.getSessionState(request);
     if (!state) {
       this.sendSessionNotFound(request.id, request.params.sessionId);
       return;
@@ -862,7 +853,7 @@ export class SessionProtocolHandler {
   private async handleAutocompletePaths(
     request: Extract<SessionProtocolRequestMessage, { method: "session.autocompletePaths" }>,
   ): Promise<void> {
-    const state = await this.getSessionState(request.params.sessionId);
+    const state = this.getSessionState(request);
     if (!state) {
       this.sendSessionNotFound(request.id, request.params.sessionId);
       return;
@@ -933,7 +924,7 @@ export class SessionProtocolHandler {
   private async handleEphemeralCreate(
     request: Extract<SessionProtocolRequestMessage, { method: "session.ephemeral.create" }>,
   ): Promise<void> {
-    const state = await this.getSessionState(request.params.sessionId);
+    const state = this.getSessionState(request);
     if (!state) {
       this.sendSessionNotFound(request.id, request.params.sessionId);
       return;
@@ -958,7 +949,7 @@ export class SessionProtocolHandler {
   private async handleEphemeralSubmit(
     request: Extract<SessionProtocolRequestMessage, { method: "session.ephemeral.submit" }>,
   ): Promise<void> {
-    const state = await this.getSessionState(request.params.sessionId);
+    const state = this.getSessionState(request);
     if (!state) {
       this.sendSessionNotFound(request.id, request.params.sessionId);
       return;
@@ -993,7 +984,7 @@ export class SessionProtocolHandler {
   private async handleEphemeralClose(
     request: Extract<SessionProtocolRequestMessage, { method: "session.ephemeral.close" }>,
   ): Promise<void> {
-    const state = await this.getSessionState(request.params.sessionId);
+    const state = this.getSessionState(request);
     if (!state) {
       this.sendSessionNotFound(request.id, request.params.sessionId);
       return;
@@ -1010,7 +1001,7 @@ export class SessionProtocolHandler {
     queuedSteeringRejectionMessage: string,
     handler: (state: SessionProtocolHandlerSessionState) => Promise<void>,
   ): Promise<void> {
-    const state = await this.getSessionState(request.params.sessionId);
+    const state = this.getSessionState(request);
     if (!state) {
       this.sendSessionNotFound(request.id, request.params.sessionId);
       return;
@@ -1018,10 +1009,6 @@ export class SessionProtocolHandler {
 
     await state.live.mutate(async () => {
       if (this.closed) {
-        return;
-      }
-      if (state.session.sessionId !== request.params.sessionId) {
-        this.sendSessionNotFound(request.id, request.params.sessionId);
         return;
       }
       await this.interruptAndWaitForActiveSubmit(state);
@@ -1034,7 +1021,7 @@ export class SessionProtocolHandler {
     request: SessionProtocolMutationRequest,
     handler: (state: SessionProtocolHandlerSessionState) => Promise<void>,
   ): Promise<void> {
-    const state = await this.getSessionState(request.params.sessionId);
+    const state = this.getSessionState(request);
     if (!state) {
       this.sendSessionNotFound(request.id, request.params.sessionId);
       return;
@@ -1044,12 +1031,16 @@ export class SessionProtocolHandler {
       if (this.closed) {
         return;
       }
-      if (state.session.sessionId !== request.params.sessionId) {
-        this.sendSessionNotFound(request.id, request.params.sessionId);
-        return;
-      }
       await handler(state);
     });
+  }
+
+  private releaseCreatedSession(sessionId: string): void {
+    const hold = this.createdSessionHolds.get(sessionId);
+    if (!hold) return;
+    this.createdSessionHolds.delete(sessionId);
+    hold.unsubscribeClosing();
+    this.host.releaseSession(hold.session);
   }
 
   private registerSession(
@@ -1060,12 +1051,6 @@ export class SessionProtocolHandler {
       this.host.releaseSession(session);
       throw new Error("session observation ended");
     }
-    const existing = this.sessionStates.get(session.sessionId);
-    if (existing) {
-      this.host.releaseSession(session);
-      return existing;
-    }
-
     const state: SessionProtocolHandlerSessionState = {
       observationId,
       session,
@@ -1124,11 +1109,12 @@ export class SessionProtocolHandler {
     return state;
   }
 
-  private async getSessionState(
-    sessionId: string,
-  ): Promise<SessionProtocolHandlerSessionState | undefined> {
-    const state = this.sessionStates.get(sessionId);
-    return state && !state.released && !state.session.isDisposing && !state.session.isDisposed
+  private getSessionState(request: {
+    params: { sessionId: string };
+    observationId: string;
+  }): SessionProtocolHandlerSessionState | undefined {
+    const state = this.sessionStates.get(request.params.sessionId);
+    return state && !state.released && state.observationId === request.observationId
       ? state
       : undefined;
   }

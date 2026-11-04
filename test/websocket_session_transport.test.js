@@ -214,6 +214,11 @@ function createHost(options = {}) {
         }));
       },
       async shutdown() {
+        for (const session of sessions.values()) {
+          session.input.close();
+          session.interruptActiveWork();
+        }
+        await Promise.all([...sessions.values()].map((session) => session.input.waitForIdle()));
         sessions.clear();
       },
     },

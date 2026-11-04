@@ -5907,6 +5907,84 @@ describe("LocalSessionHost", () => {
     },
   );
 
+  it.each(["host", "connection"])("%s shutdown never starts queued input", async (mode) => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const transport = new InProcessSessionProtocolTransport({ host, closeMode: "shutdown-host" });
+    const client = await createTauSdkClientFromTransport(transport);
+    const facade = await client.sessions.create(localCreateInput);
+    const session = await host.observeSession(facade.id);
+    host.releaseSession(session);
+    const started = deferred();
+    const stream = vi.fn((_context, options) => ({
+      async *[Symbol.asyncIterator]() {
+        started.resolve();
+        await new Promise((resolve) =>
+          options.signal.addEventListener("abort", resolve, { once: true }),
+        );
+      },
+      async result() {
+        return fauxAssistantMessage("", { stopReason: "aborted" });
+      },
+    }));
+    session.runtime.agent.spec.model.stream = stream;
+    try {
+      const submitted = session.input.submit("submit", { text: "run", historyEntryId: "running" });
+      await started.promise;
+      const queued = session.input
+        .submit("queue", { text: "never run", historyEntryId: "queued" })
+        .catch((error) => error);
+      await (mode === "host" ? host.shutdown() : client.close());
+      expect((await submitted).turn.status).toBe("aborted");
+      expect(await queued).toBeInstanceOf(Error);
+      expect(stream).toHaveBeenCalledTimes(1);
+      const saved = await store.loadSession(facade.id);
+      expect(saved.turns.running.state).toBe("settled");
+      expect(saved.turns.queued).toBeUndefined();
+    } finally {
+      await client.close();
+      await host.shutdown();
+    }
+  });
+
+  it("reports runtime busy while reload resolves session configuration", async () => {
+    const store = new MemorySessionStore();
+    const environment = createTestExecutionEnvironment();
+    const host = createHostForEnvironment(store, environment);
+    const client = await createTauSdkClientFromTransport(
+      new InProcessSessionProtocolTransport({ host }),
+    );
+    const gate = deferred();
+    const started = deferred();
+    try {
+      const session = await client.sessions.create(localCreateInput);
+      const resolve = environment.resolveRuntimeConfig;
+      environment.resolveRuntimeConfig = async (...args) => {
+        started.resolve();
+        await gate.promise;
+        return await resolve(...args);
+      };
+      const reload = session.reload();
+      await started.promise;
+      expect(await client.sessions.runtimeState(session.id)).toMatchObject({
+        loaded: true,
+        busy: true,
+      });
+      gate.resolve();
+      await reload;
+      await vi.waitFor(async () => {
+        expect(await client.sessions.runtimeState(session.id)).toMatchObject({
+          loaded: true,
+          busy: false,
+        });
+      });
+    } finally {
+      gate.resolve();
+      await client.close();
+      await host.shutdown();
+    }
+  });
+
   it("cancels retained pending input without any observing connection", async () => {
     const store = new MemorySessionStore();
     const host = createHost(store);
@@ -6184,6 +6262,18 @@ describe("LocalSessionHost", () => {
       await second.sessions.unload(old.id);
       expect(host.clientToolBroker.getToolDefinitions(old.id)).toHaveLength(0);
       await expect(old.snapshot()).rejects.toThrow();
+      for (const operation of [
+        () => old.submit("ended"),
+        () => old.queue("ended"),
+        () => old.steer("ended"),
+        () => old.cancelPendingMessages(),
+      ]) {
+        let result;
+        expect(() => {
+          result = operation();
+        }).not.toThrow();
+        await expect(result).rejects.toThrow();
+      }
       await expect(other.snapshot()).rejects.toThrow();
       expect(await first.sessions.runtimeState(old.id)).toEqual({ loaded: false });
       const replacement = await third.sessions.observe(old.id);

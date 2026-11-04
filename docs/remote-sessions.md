@@ -203,6 +203,8 @@ An SDK session object belongs to one observation. The observation ends when you 
 
 After that, calls on the object fail with `TauSessionClientError` and do not reach the host. The exception is `unobserve()`, which succeeds, so cleanup is safe to repeat and cannot affect a newer object. The object has no event for this, so a long-running application learns that its observation ended when a call fails.
 
+A running `exec()` keeps running after `unobserve()` or a replacing `sessions.observe()`. Aborting its signal still cancels it.
+
 To continue, observe the session again:
 
 ```ts

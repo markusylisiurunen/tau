@@ -3427,13 +3427,13 @@ describe("LocalSessionHost", () => {
     await expect(host.listSessions()).resolves.toEqual([
       { sessionId: hostedSession.session.sessionId, lifecycle: "idle" },
     ]);
-    expect(store.commitSessionSnapshot).toHaveBeenCalledTimes(1);
+    expect(store.commitSessionSnapshot).toHaveBeenCalledTimes(2);
 
     await hostedSession.session.commitUserText("next");
     await expect(hostedSession.snapshot()).resolves.toEqual(
       expect.objectContaining({ revision: 3 }),
     );
-    expect(store.commitSessionSnapshot).toHaveBeenCalledTimes(2);
+    expect(store.commitSessionSnapshot).toHaveBeenCalledTimes(3);
   });
 
   it("does not let delta listener failures fail hosted runtime events", async () => {
@@ -6028,6 +6028,132 @@ describe("LocalSessionHost", () => {
     },
   );
 
+  it.each(["unobserve", "reobserve"])(
+    "cancels application and client-tool execs after %s",
+    async (ending) => {
+      const executions = new Map();
+      const backend = createLocalToolExecutionBackend();
+      backend.runBash = (command, { signal }) =>
+        new Promise((_resolve, reject) => {
+          executions.set(command, signal);
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        });
+      const host = createHostForEnvironment(
+        new MemorySessionStore(),
+        createTestExecutionEnvironment(undefined, backend),
+      );
+      const client = await createTauSdkClientFromTransport(
+        new InProcessSessionProtocolTransport({ host }),
+        {
+          clientTools: [
+            {
+              schema: {
+                name: "local_exec",
+                description: "execute",
+                parameters: { type: "object", properties: {} },
+              },
+              execute: async (_args, context) => {
+                await context.executionEnvironment.exec("tool");
+                return "done";
+              },
+            },
+          ],
+        },
+      );
+      try {
+        const session = await client.sessions.create(localCreateInput);
+        await session.retain(60_000);
+        const abortController = new AbortController();
+        const application = session.exec("application", { signal: abortController.signal });
+        const applicationCancelled = expect(application).rejects.toMatchObject({
+          name: "AbortError",
+        });
+        const tool = host.clientToolBroker.getToolDefinitions(session.id)[0];
+        const toolResult = tool.execute(
+          { id: "call", type: "toolCall", name: "local_exec", arguments: {} },
+          {
+            agentId: "main",
+            turnId: "turn",
+            assistantMessageId: "assistant",
+            signal: new AbortController().signal,
+            emitActivity: async () => {},
+          },
+        );
+        await vi.waitFor(() => expect(executions.size).toBe(2));
+        if (ending === "unobserve") await session.unobserve();
+        else await client.sessions.observe(session.id);
+        await vi.waitFor(() => expect(executions.get("tool").aborted).toBe(true));
+        expect(executions.get("application").aborted).toBe(false);
+        abortController.abort();
+        await applicationCancelled;
+        await toolResult;
+        await vi.waitFor(() => {
+          expect(executions.get("application").aborted).toBe(true);
+          expect(host.sessionRuntimeState(session.id).busy).toBe(false);
+        });
+      } finally {
+        await client.close();
+        await host.shutdown();
+      }
+    },
+  );
+
+  it("persists raw creation before acknowledgement and preserves it through unload", async () => {
+    const store = new BlockingCommitStore();
+    const host = createHost(store);
+    const transport = new InProcessSessionProtocolTransport({ host });
+    await transport.connect({ client: { name: "test", version: "1" } }, 1000);
+    const gate = store.blockNextCommit();
+    try {
+      const acknowledged = vi.fn();
+      const creation = transport
+        .request("session.create", {
+          ...localCreateInput,
+          attributes: { source: "raw", custom: "preserved" },
+        })
+        .then((result) => {
+          acknowledged();
+          return result;
+        });
+      await gate.started;
+      expect(acknowledged).not.toHaveBeenCalled();
+      gate.release();
+      const { sessionId } = await creation;
+      const saved = await store.loadSession(sessionId);
+      expect(saved.attributes).toEqual({
+        source: "raw",
+        custom: "preserved",
+        machine: "execution-machine",
+        cwd: "/repo",
+      });
+      await expect(transport.request("session.unload", { sessionId })).resolves.toEqual({
+        unloaded: true,
+      });
+      const { snapshot } = await transport.request("session.observe", { sessionId }, "recovered");
+      expect(snapshot.attributes).toEqual(saved.attributes);
+      expect(snapshot.executionEnvironment).toEqual(saved.executionEnvironment);
+    } finally {
+      gate.release();
+      await transport.close();
+      await host.shutdown();
+    }
+  });
+
+  it("disposes a new runtime when its initial persistence fails", async () => {
+    const store = new MemorySessionStore();
+    const environment = createTestExecutionEnvironment();
+    environment.dispose = vi.fn();
+    const host = createHostForEnvironment(store, environment);
+    vi.spyOn(store, "commitSessionSnapshot").mockRejectedValueOnce(new Error("store failed"));
+    try {
+      await expect(host.createSession(localCreateInput)).rejects.toThrow();
+      expect(environment.dispose).toHaveBeenCalledOnce();
+      expect(await host.listSessions()).toEqual([]);
+    } finally {
+      await host.shutdown();
+    }
+  });
+
   it("ends every observation and tool attachment without allowing stale cleanup to detach a replacement", async () => {
     const host = createHost(new MemorySessionStore());
     const tools = [
@@ -6843,9 +6969,6 @@ describe("LocalSessionHost", () => {
 
   it("disposes every live execution environment when shutdown snapshotting fails", async () => {
     const store = new MemorySessionStore();
-    store.commitSessionSnapshot = vi.fn(async () => {
-      throw new Error("commit failed");
-    });
     const firstEnvironment = createTestExecutionEnvironment();
     const secondEnvironment = createTestExecutionEnvironment();
     firstEnvironment.dispose = vi.fn(async () => {});
@@ -6862,8 +6985,10 @@ describe("LocalSessionHost", () => {
       },
     });
 
-    await host.createSession(localCreateInput);
-    await host.createSession(localCreateInput);
+    const first = await host.createSession(localCreateInput);
+    const second = await host.createSession(localCreateInput);
+    vi.spyOn(first, "snapshot").mockRejectedValue(new Error("snapshot failed"));
+    vi.spyOn(second, "snapshot").mockRejectedValue(new Error("snapshot failed"));
 
     await expect(host.shutdown()).rejects.toThrow("failed to shut down local session host");
     expect(firstEnvironment.dispose).toHaveBeenCalledTimes(1);

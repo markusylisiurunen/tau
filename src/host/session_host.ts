@@ -95,7 +95,6 @@ export type TauHostedSession = {
       signal?: AbortSignal;
     },
   ): Promise<SessionProtocolExecResult>;
-  cancelExec(execId: string): boolean;
   sample(
     options: Omit<SessionProtocolSampleParams, "sessionId"> & {
       signal?: AbortSignal;

@@ -173,7 +173,6 @@ function createHarness(options = {}) {
     const ephemeralContexts = new Set();
     const activeWorkAbortControllers = new Set();
     const activeWorkPromises = new Set();
-    const activeExecAbortControllers = new Map();
 
     const runActiveWork = async (operation, externalSignal) => {
       const abortController = new AbortController();
@@ -405,28 +404,13 @@ function createHarness(options = {}) {
         return cancelled.map(({ id, text }) => ({ id, text }));
       }),
       async exec(runOptions) {
-        const abortController = new AbortController();
-        activeExecAbortControllers.set(runOptions.execId, abortController);
-        try {
-          return await runActiveWork(
-            async (signal) => {
-              const result = options.exec
-                ? await options.exec({ ...runOptions, signal })
-                : createProtocolExecResult({ command: runOptions.command });
-              signal.throwIfAborted();
-              return result;
-            },
-            AbortSignal.any([runOptions.signal, abortController.signal]),
-          );
-        } finally {
-          activeExecAbortControllers.delete(runOptions.execId);
-        }
-      },
-      cancelExec(execId) {
-        const controller = activeExecAbortControllers.get(execId);
-        if (!controller || controller.signal.aborted) return false;
-        controller.abort();
-        return true;
+        return await runActiveWork(async (signal) => {
+          const result = options.exec
+            ? await options.exec({ ...runOptions, signal })
+            : createProtocolExecResult({ command: runOptions.command });
+          signal.throwIfAborted();
+          return result;
+        }, runOptions.signal);
       },
       async sample(sampleOptions) {
         return await runActiveWork(
@@ -2338,6 +2322,60 @@ describe("SessionProtocolHandler", () => {
     expect(harness.lines.find((line) => line.id === "exec-second")).toEqual(
       expect.objectContaining({ ok: true }),
     );
+  });
+
+  it("keeps exec cancellation authority with its originating observation", async () => {
+    const signals = new Map();
+    const harness = createHarness({
+      exec: ({ command, signal }) =>
+        new Promise((resolve) => {
+          signals.set(command, signal);
+          signal.addEventListener("abort", () => resolve(createProtocolExecResult({ command })), {
+            once: true,
+          });
+        }),
+    });
+    const send = (id, method, params, observationId) =>
+      harness.connection.handleRequest({
+        ...request(id, method, params),
+        observationId,
+      });
+    const params = { sessionId: "session-1", execId: "reused-exec" };
+    await send("observe-old", "session.observe", { sessionId: "session-1" }, "old");
+    const old = send("exec-old", "session.exec", { ...params, command: "old" }, "old");
+    await waitFor(() => signals.has("old"));
+    const otherLines = [];
+    const other = new TestSessionProtocolConnection({
+      host: harness.host,
+      send: (message) => otherLines.push(message),
+    });
+    await other.handleRequest({
+      ...request("foreign-cancel", "session.cancelExec", params),
+      observationId: "old",
+    });
+    expect(otherLines.find((line) => line.id === "foreign-cancel").result).toEqual({
+      cancelled: false,
+    });
+    expect(signals.get("old").aborted).toBe(false);
+    await send("observe-new", "session.observe", { sessionId: "session-1" }, "new");
+    await send("cancel-wrong-owner", "session.cancelExec", params, "new");
+    expect(signals.get("old").aborted).toBe(false);
+    expect(harness.lines.find((line) => line.id === "cancel-wrong-owner").result).toEqual({
+      cancelled: false,
+    });
+    await send("cancel-old", "session.cancelExec", params, "old");
+    await old;
+    expect(signals.get("old").aborted).toBe(true);
+    const fresh = send("exec-new", "session.exec", { ...params, command: "new" }, "new");
+    await waitFor(() => signals.has("new"));
+    await send("cancel-stale", "session.cancelExec", params, "old");
+    expect(signals.get("new").aborted).toBe(false);
+    expect(harness.lines.find((line) => line.id === "cancel-stale").result).toEqual({
+      cancelled: false,
+    });
+    await send("cancel-new", "session.cancelExec", params, "new");
+    await fresh;
+    expect(signals.get("new").aborted).toBe(true);
   });
 
   it("cancels active model samples through session.interrupt", async () => {

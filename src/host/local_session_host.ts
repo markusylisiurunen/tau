@@ -227,7 +227,7 @@ export class LocalSessionHost implements TauSessionHost {
       throw new Error("local session host is shut down");
     }
 
-    let hostedSession: LocalHostedSessionHandle;
+    let hostedSession: LocalHostedSessionHandle | undefined;
     try {
       const result = await executionEnvironment
         .getToolExecutionBackend()
@@ -265,8 +265,11 @@ export class LocalSessionHost implements TauSessionHost {
         ...input,
         attributes,
       });
+      await hostedSession.snapshot();
     } catch (error) {
-      if (!this.sessionsHasExecutionEnvironment(executionEnvironment)) {
+      if (hostedSession) {
+        await hostedSession.dispose();
+      } else if (!this.sessionsHasExecutionEnvironment(executionEnvironment)) {
         await executionEnvironment.dispose();
       }
       throw error;
@@ -944,7 +947,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   private mutationQueue: Promise<void> = Promise.resolve();
   private readonly activeWorkAbortControllers = new Set<AbortController>();
   private readonly activeWorkPromises = new Set<Promise<unknown>>();
-  private readonly activeExecAbortControllers = new Map<string, AbortController>();
+  private readonly activeExecIds = new Set<string>();
   private activeTurnPromise?: Promise<unknown>;
   private activeLogicalTurn?: ActiveLogicalTurn;
   private disposePromise?: Promise<void>;
@@ -1339,15 +1342,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     });
   }
 
-  cancelExec(execId: string): boolean {
-    const controller = this.activeExecAbortControllers.get(execId);
-    if (!controller || controller.signal.aborted) {
-      return false;
-    }
-    controller.abort();
-    return true;
-  }
-
   async sample(
     options: Omit<SessionProtocolSampleParams, "sessionId"> & {
       signal?: AbortSignal;
@@ -1606,20 +1600,14 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     operation: (signal: AbortSignal) => Promise<T>,
   ): Promise<T> {
     this.assertActive();
-    if (this.activeExecAbortControllers.has(execId)) {
+    if (this.activeExecIds.has(execId)) {
       throw new SessionExecBusyError(execId);
     }
-    const abortController = new AbortController();
-    this.activeExecAbortControllers.set(execId, abortController);
-    const signal = externalSignal
-      ? AbortSignal.any([externalSignal, abortController.signal])
-      : abortController.signal;
+    this.activeExecIds.add(execId);
     try {
-      return await this.runActiveWork(operation, signal);
+      return await this.runActiveWork(operation, externalSignal);
     } finally {
-      if (this.activeExecAbortControllers.get(execId) === abortController) {
-        this.activeExecAbortControllers.delete(execId);
-      }
+      this.activeExecIds.delete(execId);
     }
   }
 

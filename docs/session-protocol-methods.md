@@ -322,7 +322,7 @@ Commands can run at the same time as turns, samples, session changes, and other 
 
 ### `session.cancelExec`
 
-Cancels one active execution without interrupting other work.
+Cancels only the execution that this connection started with this `observationId`, which may have ended.
 
 ```ts
 params: {

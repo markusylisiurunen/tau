@@ -77,7 +77,7 @@ A request can remain open while the host emits state messages or handles later r
 
 ## Observe before consuming session state
 
-`session.create` creates a session but does not observe it. To observe it, choose an `observationId` and send it in the `session.observe` envelope:
+`session.create` saves the new session before it responds. If saving fails, the request fails and no session exists. Creating a session does not observe it. To observe it, choose an `observationId` and send it in the `session.observe` envelope:
 
 ```json
 {
@@ -128,7 +128,12 @@ Unless the connection has closed, the host then sends:
 
 No more updates arrive for that ID, and the host cancels the client tool calls that belong to it. Requests that were already open still get their responses.
 
-A request with an ended or unknown `observationId` returns `not_found` and never loads the session. The exception is `session.unobserve`, which succeeds and changes nothing, so cleanup is safe to repeat and cannot end a newer observation.
+A request with an ended or unknown `observationId` returns `not_found` and never loads the session. There are two exceptions:
+
+- `session.unobserve` succeeds and changes nothing, so cleanup is safe to repeat and cannot end a newer observation.
+- `session.cancelExec` can still cancel a command, as described below.
+
+A command from `session.exec` keeps running after `session.unobserve` or a replacing `session.observe`. To stop it, send `session.cancelExec` on the same connection with the `observationId` and `execId` that started it. If no running command matches all of these, the result is `cancelled: false`. `session.cancelExec` never loads the session and cannot cancel a command started under a newer observation.
 
 To continue after an observation ends, send `session.observe` with a new ID and install the new starting states. If the session was unloaded, this waits for the unload to finish and then loads the saved session.
 

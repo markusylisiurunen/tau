@@ -82,7 +82,10 @@ export class SessionProtocolHandler {
   private readonly sessionObservationQueues = new Map<string, Promise<void>>();
   private readonly connectionAbortController = new AbortController();
   private readonly activeSideChannels = new Set<Promise<void>>();
-  private readonly activeExecAbortControllers = new Map<string, AbortController>();
+  private readonly activeExecs = new Map<
+    string,
+    { observationId: string; abortController: AbortController }
+  >();
   private initialized = false;
   private clientToolRegistration?: {
     attachSession: (sessionId: string, observationId: string) => void;
@@ -107,6 +110,7 @@ export class SessionProtocolHandler {
         isSessionProtocolObservationMethod(request.method) &&
         request.method !== "session.observe" &&
         request.method !== "session.unobserve" &&
+        request.method !== "session.cancelExec" &&
         "sessionId" in request.params
       ) {
         const state = this.sessionStates.get(request.params.sessionId);
@@ -447,7 +451,7 @@ export class SessionProtocolHandler {
     request: Extract<SessionProtocolRequestMessage, { method: "session.exec" }>,
   ): Promise<void> {
     const key = this.execKey(request.params.sessionId, request.params.execId);
-    if (this.activeExecAbortControllers.has(key)) {
+    if (this.activeExecs.has(key)) {
       this.sendMessage(
         createSessionProtocolErrorResponse(
           request.id,
@@ -459,7 +463,7 @@ export class SessionProtocolHandler {
     }
 
     const abortController = new AbortController();
-    this.activeExecAbortControllers.set(key, abortController);
+    this.activeExecs.set(key, { observationId: request.observationId, abortController });
     try {
       const state = await this.getSessionState(request.params.sessionId);
       if (!state) {
@@ -474,8 +478,8 @@ export class SessionProtocolHandler {
         this.executeExec(state, request, AbortSignal.any([signal, abortController.signal])),
       );
     } finally {
-      if (this.activeExecAbortControllers.get(key) === abortController) {
-        this.activeExecAbortControllers.delete(key);
+      if (this.activeExecs.get(key)?.abortController === abortController) {
+        this.activeExecs.delete(key);
       }
     }
   }
@@ -484,19 +488,15 @@ export class SessionProtocolHandler {
     request: Extract<SessionProtocolRequestMessage, { method: "session.cancelExec" }>,
   ): Promise<void> {
     const key = this.execKey(request.params.sessionId, request.params.execId);
-    const localController = this.activeExecAbortControllers.get(key);
+    const execution = this.activeExecs.get(key);
     let cancelled = false;
-    if (localController && !localController.signal.aborted) {
-      localController.abort();
+    if (
+      execution?.observationId === request.observationId &&
+      !execution.abortController.signal.aborted
+    ) {
+      execution.abortController.abort();
       cancelled = true;
     }
-
-    const state = await this.getSessionState(request.params.sessionId);
-    if (!state) {
-      this.sendSessionNotFound(request.id, request.params.sessionId);
-      return;
-    }
-    cancelled = state.session.cancelExec(request.params.execId) || cancelled;
     this.sendMessage(
       createSessionProtocolSuccessResponse(request.id, "session.cancelExec", { cancelled }),
     );

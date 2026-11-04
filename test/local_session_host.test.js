@@ -6087,6 +6087,25 @@ describe("LocalSessionHost", () => {
     await expect(host.shutdown()).rejects.toThrow();
   });
 
+  it("reports each disposal failure once during shutdown", async () => {
+    const environment = createTestExecutionEnvironment();
+    const failure = new Error("disposal failed");
+    environment.dispose = async () => {
+      throw failure;
+    };
+    const host = createHost(new MemorySessionStore(), {
+      executionEnvironmentResolver: {
+        resolve: async () => environment,
+        canRestore: () => true,
+        restore: async () => environment,
+      },
+    });
+    await host.createSession(localCreateInput);
+    await expect(host.shutdown()).rejects.toMatchObject({
+      errors: [{ errors: [failure] }],
+    });
+  });
+
   it("waits for execution environment disposal before reporting collection", async () => {
     const started = deferred();
     const finish = deferred();

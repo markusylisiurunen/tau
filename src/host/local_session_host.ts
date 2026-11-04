@@ -704,19 +704,17 @@ export class LocalSessionHost implements TauSessionHost {
   }
 
   private async evictReleasedSession(session: LocalHostedSessionHandle): Promise<void> {
-    do {
-      await session.waitForActiveWork().catch(() => undefined);
+    while (true) {
       await session.runtime.jobs.waitForIdle();
       await session.runtime.supervisor.waitForIdle();
       await session.waitForActiveWork().catch(() => undefined);
-    } while (session.hasActiveWork);
-    if (this.shuttingDown || session.isDisposed || this.isHeld(session)) {
-      return;
-    }
+      if (this.shuttingDown || session.isDisposed || this.isHeld(session)) return;
+      if (session.hasActiveWork) continue;
 
-    await session.snapshot();
-    if (this.shuttingDown || this.isHeld(session)) return;
-    if (session.hasActiveWork) return await this.evictReleasedSession(session);
+      await session.snapshot();
+      if (this.shuttingDown || session.isDisposed || this.isHeld(session)) return;
+      if (!session.hasActiveWork) break;
+    }
 
     this.sessions.delete(session);
     this.sessionReferences.delete(session);
@@ -818,7 +816,7 @@ export class LocalSessionHost implements TauSessionHost {
     await resourceShutdown;
 
     if (errors.length > 0) {
-      throw new AggregateError(errors, "failed to shut down local session host");
+      throw new AggregateError([...new Set(errors)], "failed to shut down local session host");
     }
   }
 
@@ -931,7 +929,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     private readonly removeFromHost: (
       session: LocalHostedSessionHandle,
       error?: AggregateError,
-    ) => void = () => {},
+    ) => void,
   ) {
     this.session = runtime;
     this.boundMcpServers = structuredClone(

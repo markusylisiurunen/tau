@@ -5644,6 +5644,7 @@ describe("LocalSessionHost", () => {
 
     const firstRecovery = host.observeSession(storedSnapshot.sessionId);
     await restoreStarted.promise;
+    expect(await host.collectSession(storedSnapshot.sessionId)).toEqual({ disposed: false });
     const secondRecovery = host.observeSession(storedSnapshot.sessionId);
     restoreReleased.resolve();
 
@@ -5654,6 +5655,78 @@ describe("LocalSessionHost", () => {
     expect(restore).toHaveBeenCalledTimes(1);
     await expect(host.observeSession(storedSnapshot.sessionId)).resolves.toBe(firstSession);
   });
+
+  it("blocks collection throughout recovery, including the initial store refresh", async () => {
+    const store = new MemorySessionStore();
+    const storedSnapshot = createStoredSnapshot({
+      sessionId: "refresh-recovery",
+      revision: 1,
+      historyEntries: [],
+    });
+    await store.commitSessionSnapshot(storedSnapshot);
+    const host = createHost(store);
+    const finish = deferred();
+    try {
+      const other = await host.createSession(localCreateInput);
+      const snapshot = other.snapshot.bind(other);
+      vi.spyOn(other, "snapshot").mockImplementationOnce(async () => {
+        await finish.promise;
+        return await snapshot();
+      });
+      const recovery = host.observeSession(storedSnapshot.sessionId);
+      expect(await host.collectSession(storedSnapshot.sessionId)).toEqual({ disposed: false });
+      finish.resolve();
+      const session = await recovery;
+      expect(session).toBeDefined();
+      host.releaseSession(session);
+      expect(await host.collectSession(session.sessionId)).toEqual({ disposed: true });
+    } finally {
+      finish.resolve();
+      await host.shutdown();
+    }
+  });
+
+  it.each([false, true])(
+    "remembers failed recovery cleanup with a handle: %s",
+    async (hasHandle) => {
+      const store = new MemorySessionStore();
+      const storedSnapshot = createStoredSnapshot({
+        sessionId: "failed-recovery-cleanup",
+        revision: 1,
+        historyEntries: [],
+      });
+      await store.commitSessionSnapshot(storedSnapshot);
+      const environment = createTestExecutionEnvironment();
+      environment.dispose = async () => {
+        throw new Error("disposal failed");
+      };
+      const host = createHost(store, {
+        executionEnvironmentResolver: {
+          resolve: async () => environment,
+          canRestore: () => true,
+          restore: async () => environment,
+        },
+      });
+      if (hasHandle) {
+        const createHandle = host.createLocalSessionHandle.bind(host);
+        vi.spyOn(host, "createLocalSessionHandle").mockImplementation(async (...args) => {
+          const session = await createHandle(...args);
+          session.reconcileRecoveredState = async () => {
+            throw new Error("reconcile failed");
+          };
+          return session;
+        });
+      } else {
+        environment.resolveRuntimeContext = async () => {
+          throw new Error("context failed");
+        };
+      }
+      await expect(host.observeSession(storedSnapshot.sessionId)).rejects.toThrow();
+      await expect(host.collectSession(storedSnapshot.sessionId)).rejects.toThrow();
+      await expect(host.collectSession(storedSnapshot.sessionId)).rejects.toThrow();
+      await expect(host.shutdown()).rejects.toThrow();
+    },
+  );
 
   it("does not create a recovered live session after shutdown starts", async () => {
     const store = new MemorySessionStore();
@@ -5830,6 +5903,340 @@ describe("LocalSessionHost", () => {
       ),
     ).toBe(false);
     expect(executionEnvironment.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("retains a runtime across WebSocket disconnection and collects from a new client", async () => {
+    const host = createHost(new MemorySessionStore());
+    const listening = deferred();
+    const controller = new AbortController();
+    const server = runWebSocketSessionServer({
+      host,
+      hostname: "127.0.0.1",
+      port: 0,
+      signal: controller.signal,
+      onListening: listening.resolve,
+    });
+    let client;
+    try {
+      const address = await listening.promise;
+      const url = `ws://127.0.0.1:${address.port}`;
+      client = await createTauSdkWebSocketClient({ url });
+      const session = await client.sessions.create(localCreateInput);
+      const live = await host.observeSession(session.id);
+      host.releaseSession(live);
+      await client.sessions.setRetention(session.id, 60_000);
+      await client.close();
+      client = await createTauSdkWebSocketClient({ url });
+      const observed = await client.sessions.observe(session.id);
+      const same = await host.observeSession(session.id);
+      expect(same).toBe(live);
+      host.releaseSession(same);
+      await client.sessions.setRetention(session.id, null);
+      await observed.unobserve();
+      await vi.waitFor(async () =>
+        expect(await client.sessions.collect(session.id)).toEqual({ disposed: true }),
+      );
+      expect(live.isDisposed).toBe(true);
+    } finally {
+      await client?.close();
+      controller.abort();
+      await server;
+    }
+  });
+
+  it("renews retention, preserves the live runtime, and collects without recovery", async () => {
+    const host = createHost(new MemorySessionStore());
+    try {
+      const session = await host.createSession(localCreateInput);
+      const before = await session.snapshot();
+      const first = host.setRetention(session.sessionId, 20);
+      const renewed = host.setRetention(session.sessionId, 60_000);
+      expect(renewed.retainedUntil).toBeGreaterThan(first.retainedUntil);
+      host.releaseSession(session);
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      expect(session.isDisposed).toBe(false);
+      expect(await host.collectSession(session.sessionId)).toEqual({ disposed: false });
+      const observed = await host.observeSession(session.sessionId);
+      expect(observed).toBe(session);
+      expect(await observed.snapshot()).toEqual(before);
+      host.setRetention(session.sessionId, null);
+      expect(await host.collectSession(session.sessionId)).toEqual({ disposed: false });
+      host.releaseSession(observed);
+      expect(await host.collectSession(session.sessionId)).toEqual({ disposed: true });
+      expect(session.isDisposed).toBe(true);
+      expect(host.setRetention(session.sessionId, null)).toEqual({ retainedUntil: null });
+      expect(() => host.setRetention(session.sessionId, 1000)).toThrow();
+      expect(await host.collectSession(session.sessionId)).toEqual({ disposed: true });
+      expect(await host.collectSession("absent")).toEqual({ disposed: true });
+    } finally {
+      await host.shutdown();
+    }
+  });
+
+  it("expires retention without releasing attached clients", async () => {
+    const host = createHost(new MemorySessionStore());
+    try {
+      const detached = await host.createSession(localCreateInput);
+      const attached = await host.createSession(localCreateInput);
+      host.setRetention(detached.sessionId, 20);
+      host.setRetention(attached.sessionId, 20);
+      host.releaseSession(detached);
+      await vi.waitFor(() => expect(detached.isDisposed).toBe(true));
+      expect(attached.isDisposed).toBe(false);
+      expect(await host.collectSession(attached.sessionId)).toEqual({ disposed: false });
+      host.releaseSession(attached);
+      expect(await host.collectSession(attached.sessionId)).toEqual({ disposed: true });
+    } finally {
+      await host.shutdown();
+    }
+  });
+
+  it("retries collection after a snapshot fails before disposal", async () => {
+    const host = createHost(new MemorySessionStore());
+    try {
+      const session = await host.createSession(localCreateInput);
+      const snapshot = vi.spyOn(session, "snapshot");
+      snapshot.mockRejectedValueOnce(new Error("save failed"));
+      host.releaseSession(session);
+      await expect(host.collectSession(session.sessionId)).rejects.toThrow();
+      expect(session.isDisposed).toBe(false);
+      expect(await host.observeSession(session.sessionId)).toBe(session);
+      host.releaseSession(session);
+      expect(await host.collectSession(session.sessionId)).toEqual({ disposed: true });
+    } finally {
+      await host.shutdown();
+    }
+  });
+
+  it.each(["reload", "setPersona", "resolvePrompt", "autocompletePaths"])(
+    "keeps workspace access alive through %s after detachment",
+    async (method) => {
+      const environment = createTestExecutionEnvironment();
+      const host = createHost(new MemorySessionStore(), {
+        executionEnvironmentResolver: {
+          resolve: async () => environment,
+          canRestore: () => true,
+          restore: async () => environment,
+        },
+      });
+      const started = deferred();
+      const finish = deferred();
+      let operation;
+      try {
+        const session = await host.createSession(localCreateInput);
+        if (method === "reload" || method === "setPersona") {
+          const resolveConfig = environment.resolveRuntimeConfig;
+          environment.resolveRuntimeConfig = async (...args) => {
+            started.resolve();
+            await finish.promise;
+            return await resolveConfig(...args);
+          };
+        } else {
+          const backend = environment.getToolExecutionBackend();
+          const runNodeScript = backend.runNodeScript.bind(backend);
+          backend.runNodeScript = async (...args) => {
+            started.resolve();
+            await finish.promise;
+            return await runNodeScript(...args);
+          };
+        }
+        operation = (
+          method === "setPersona"
+            ? session.setPersona(null)
+            : method === "resolvePrompt"
+              ? session.resolvePrompt("missing")
+              : method === "autocompletePaths"
+                ? session.autocompletePaths({ query: "", limit: 10 })
+                : session.reload()
+        ).catch(() => undefined);
+        await started.promise;
+        expect(session.interruptActiveWork()).toBe(false);
+        expect(session.hasActiveWork).toBe(true);
+        host.releaseSession(session);
+        expect(await host.collectSession(session.sessionId)).toEqual({ disposed: false });
+        expect(session.isDisposed).toBe(false);
+        finish.resolve();
+        await operation;
+        expect(await host.collectSession(session.sessionId)).toEqual({ disposed: true });
+      } finally {
+        finish.resolve();
+        await operation;
+        await host.shutdown();
+      }
+    },
+  );
+
+  it("never reports safe collection after disposal fails", async () => {
+    const environment = createTestExecutionEnvironment();
+    environment.dispose = async () => {
+      throw new Error("disposal failed");
+    };
+    const host = createHost(new MemorySessionStore(), {
+      executionEnvironmentResolver: {
+        resolve: async () => environment,
+        canRestore: () => true,
+        restore: async () => {
+          throw new Error("must not recover");
+        },
+      },
+    });
+    const session = await host.createSession(localCreateInput);
+    host.releaseSession(session);
+    await expect(host.collectSession(session.sessionId)).rejects.toThrow();
+    await expect(host.collectSession(session.sessionId)).rejects.toThrow();
+    await expect(host.shutdown()).rejects.toThrow();
+  });
+
+  it("reports each disposal failure once during shutdown", async () => {
+    const environment = createTestExecutionEnvironment();
+    const failure = new Error("disposal failed");
+    environment.dispose = async () => {
+      throw failure;
+    };
+    const host = createHost(new MemorySessionStore(), {
+      executionEnvironmentResolver: {
+        resolve: async () => environment,
+        canRestore: () => true,
+        restore: async () => environment,
+      },
+    });
+    await host.createSession(localCreateInput);
+    await expect(host.shutdown()).rejects.toMatchObject({
+      errors: [{ errors: [failure] }],
+    });
+  });
+
+  it("waits for execution environment disposal before reporting collection", async () => {
+    const started = deferred();
+    const finish = deferred();
+    const environment = createTestExecutionEnvironment();
+    environment.dispose = async () => {
+      started.resolve();
+      await finish.promise;
+    };
+    const host = createHost(new MemorySessionStore(), {
+      executionEnvironmentResolver: {
+        resolve: async () => environment,
+        canRestore: () => true,
+        restore: async () => {
+          throw new Error("must not recover");
+        },
+      },
+    });
+    try {
+      const session = await host.createSession(localCreateInput);
+      host.releaseSession(session);
+      await started.promise;
+      let collected = false;
+      const collecting = host.collectSession(session.sessionId).then((result) => {
+        collected = true;
+        return result;
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(collected).toBe(false);
+      finish.resolve();
+      expect(await collecting).toEqual({ disposed: true });
+    } finally {
+      finish.resolve();
+      await host.shutdown();
+    }
+  });
+
+  it("waits for disposal generations that start while collection is pending", async () => {
+    const started = [deferred(), deferred()];
+    const finish = [deferred(), deferred()];
+    const environments = started.map((gate, index) => {
+      const environment = createTestExecutionEnvironment();
+      environment.dispose = async () => {
+        gate.resolve();
+        await finish[index].promise;
+      };
+      return environment;
+    });
+    const host = createHost(new MemorySessionStore(), {
+      executionEnvironmentResolver: {
+        resolve: async () => environments[0],
+        canRestore: () => true,
+        restore: async () => environments[1],
+      },
+    });
+    try {
+      const session = await host.createSession(localCreateInput);
+      host.releaseSession(session);
+      await started[0].promise;
+      let collected = false;
+      const collecting = host.collectSession(session.sessionId).then((result) => {
+        collected = true;
+        return result;
+      });
+      const reopened = await host.observeSession(session.sessionId);
+      host.releaseSession(reopened);
+      await started[1].promise;
+      finish[0].resolve();
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(collected).toBe(false);
+      finish[1].resolve();
+      expect(await collecting).toEqual({ disposed: true });
+    } finally {
+      for (const gate of finish) gate.resolve();
+      await host.shutdown();
+    }
+  });
+
+  it("keeps running subagents alive after release and preserves idle workers under retention", async () => {
+    const host = createHost(new MemorySessionStore());
+    const gate = deferred();
+    try {
+      const session = await host.createSession(localCreateInput);
+      const origin = await session.record({ text: "delegate" });
+      const supervisor = session.runtime.supervisor;
+      const child = supervisor.spawn({
+        parentId: supervisor.mainAgentId,
+        launchEpoch: supervisor.prepareSpawn(supervisor.mainAgentId),
+        runtimeConfig: {
+          kind: "native",
+          systemPrompt: "child system",
+          autoCompactThresholdTokens: 80000,
+          workingDirectory: "/repo",
+          model: personas[0].model,
+          settings: {},
+          tools: [],
+        },
+        prompt: "task",
+        title: "child",
+        originHistoryEntryId: origin.userHistoryEntryId,
+        config: {},
+        backend: createLocalToolExecutionBackend(),
+        jobs: session.runtime.jobs,
+      });
+      const agent = supervisor.records.get(child.id).runtime.agent;
+      agent.spec.model.stream = () => ({
+        async *[Symbol.asyncIterator]() {
+          await gate.promise;
+          yield* [];
+        },
+        async result() {
+          return fauxAssistantMessage("done");
+        },
+      });
+      await vi.waitFor(() => expect(agent.status).toBe("running"));
+      host.setRetention(session.sessionId, 60_000);
+      host.releaseSession(session);
+      host.setRetention(session.sessionId, null);
+      expect(await host.collectSession(session.sessionId)).toEqual({ disposed: false });
+      expect(session.isDisposed).toBe(false);
+      host.setRetention(session.sessionId, 60_000);
+      gate.resolve();
+      await supervisor.waitForIdle();
+      expect(await host.observeSession(session.sessionId)).toBe(session);
+      expect(supervisor.read(child.id).status).toBe("idle");
+      host.setRetention(session.sessionId, null);
+      host.releaseSession(session);
+      expect(await host.collectSession(session.sessionId)).toEqual({ disposed: true });
+    } finally {
+      gate.resolve();
+      await host.shutdown();
+    }
   });
 
   it("evicts an idle live session after its final observer releases it", async () => {

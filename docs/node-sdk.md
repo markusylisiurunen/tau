@@ -147,8 +147,6 @@ try {
 }
 ```
 
-`client.sessions.create(input)` sends `session.create`. `client.sessions.list()` returns `{ sessionId, lifecycle }` for each session.
-
 Creating a session requires the full execution environment and the creation attributes, which never change afterward. Tau sets the `machine` and `cwd` attributes itself and replaces any values you send for them. The `cwd` of the execution environment must be absolute and is a path in the chosen environment, which may not be where the SDK runs. A Fly Sprite session refers to an existing Sprite that the host is configured to reach. See [sessions](sessions.md) for creation attributes and [ownership and scope](ownership-and-scope.md) for which machine owns which paths.
 
 To set the main conversation's automatic-compaction threshold at creation, pass `autoCompactThresholdTokens` as a safe integer of at least 50,000. Omit it or pass `null` to use the persona default, falling back to the model's context window minus 16,384 tokens. Applying a persona resets the threshold to `null`, even when reapplying the same persona, unless the call supplies a new threshold. The effective threshold cannot exceed this model-based limit.
@@ -163,7 +161,9 @@ The connected `TauSdkClient` exposes:
 | --- | --- |
 | `ready` | The validated server `ready` message and advertised methods. |
 | `sessions.create(input)` | Create and observe a session, and return its object. |
-| `sessions.list()` | List hosted session summaries. |
+| `sessions.list()` | List each session's `{ sessionId, lifecycle }`. |
+| `sessions.setRetention(id, durationMs)` | [Keep a session loaded without clients](session-protocol.md#keep-a-session-loaded-without-clients), or clear with `null`. |
+| `sessions.collect(id)` | Unload a session if nothing holds it, and return `{ disposed }`. |
 | `sessions.observe(sessionId)` | Observe an existing session and return its object. |
 | `subscribe(listener)` | Receive deltas for every observed session on this connection. |
 | `subscribePendingUserMessages(listener)` | Receive pending-state replacements across observed sessions. |
@@ -201,7 +201,7 @@ Each subscription returns an unsubscribe function.
 | `createEphemeralContext(options)` | Create an agent context on the host that is not saved. |
 | `submitEphemeralThread(options)` | Run or continue one ephemeral thread. |
 | `closeEphemeralContext(contextId)` | Close an ephemeral context and its threads. |
-| `unobserve()` | Stop observing; this object can no longer be used. |
+| `unobserve()` | Stop observing. |
 
 `submit`, `queue`, and `record` accept `{ historyEntryId?: string }`; without it, Tau generates the ID. Use `getTauSdkSessionTurnRecord(snapshot, id)` to tell whether an accepted turn is unknown, running, or finished, or `getTauSdkSessionTurnOutcome(snapshot, id)` when you only need the final outcome.
 
@@ -393,9 +393,9 @@ The SDK also exports `executeTauCodeMode` for standalone runs. The separate `@ma
 
 Most turn and session-changing methods do not accept an `AbortSignal`. Call `session.interrupt()` to stop running work on the host. `session.exec()` is the exception: its optional signal cancels only that command.
 
-`client.close()` ends the connection: it rejects open requests, aborts client tool handlers, waits for them to finish, and closes the transport. For the default in-process client, it also saves sessions and shuts down the host. Over WebSocket, the remote host and its sessions keep running.
+`client.close()` ends the connection: it rejects open requests, aborts client tool handlers, waits for them to finish, and closes the transport. For the default in-process client, it also saves sessions and shuts down the host.
 
-Always close clients in `finally`. Never use a session object after `unobserve()`, or a client after `close()`.
+Always close clients in `finally`. Never use a client after `close()`.
 
 ## Handle errors
 

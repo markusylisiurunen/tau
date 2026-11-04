@@ -170,7 +170,7 @@ Each kind of change belongs to a different process:
 
 ## Reconnect and observe safely
 
-A WebSocket connection observes a hosted session. It does not own the saved session and cannot delete it. After the last client disconnects, the host unloads an idle session from memory and keeps it saved. If a client disconnects while work is running, the host keeps working and unloads the session only after the work finishes. Reattach with the same session ID to get the current state and continue receiving updates.
+A WebSocket connection observes a hosted session. It does not own the saved session and cannot delete it. After the last client disconnects, the host unloads an idle session from memory and keeps it saved. If a client disconnects while work is running, the host keeps working and unloads the session only after the work finishes. Protocol and SDK clients can also keep an unattached session and its idle subagents loaded for a limited time with [retention](session-protocol.md#keep-a-session-loaded-without-clients). Reattach with the same session ID to get the current state and continue receiving updates.
 
 A clean `tau serve` shutdown interrupts running work, saves live sessions, and closes clients. After a restart, the host lists the sessions whose execution environments it can reconnect. Recovered sessions come back idle, without queued or steering messages, and without subagents.
 

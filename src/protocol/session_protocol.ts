@@ -45,10 +45,14 @@ const SESSION_PROTOCOL_NOTICE_CONTENT_MAX_ENTRIES = 16;
 const SESSION_PROTOCOL_NOTICE_CONTENT_ENTRY_MAX_CHARS = 4_096;
 const UTF8_ENCODER = new TextEncoder();
 
+export const SESSION_PROTOCOL_MAX_RETENTION_MS = 2_147_483_647;
+
 export const SESSION_PROTOCOL_METHODS = [
   "initialize",
   "session.create",
   "session.list",
+  "session.setRetention",
+  "session.collect",
   "session.observe",
   "session.unobserve",
   "session.record",
@@ -156,6 +160,11 @@ export type SessionProtocolCreateParams = {
   autoCompactThresholdTokens?: number | null;
   reasoning?: SessionProtocolReasoningEffort;
 };
+export type SessionProtocolSetRetentionParams = {
+  sessionId: string;
+  durationMs: number | null;
+};
+
 export type SessionProtocolListParams = Record<string, never>;
 export type SessionProtocolSessionIdParams = {
   sessionId: string;
@@ -289,6 +298,8 @@ export type SessionProtocolParamsByMethod = {
   initialize: SessionProtocolInitializeParams;
   "session.create": SessionProtocolCreateParams;
   "session.list": SessionProtocolListParams;
+  "session.setRetention": SessionProtocolSetRetentionParams;
+  "session.collect": SessionProtocolSessionIdParams;
   "session.observe": SessionProtocolSessionIdParams;
   "session.unobserve": SessionProtocolUnobserveParams;
   "session.record": SessionProtocolRecordParams;
@@ -1127,6 +1138,8 @@ export type SessionProtocolResultByMethod = {
   initialize: SessionProtocolInitializeResult;
   "session.create": SessionProtocolCreateResult;
   "session.list": SessionProtocolListResult;
+  "session.setRetention": { retainedUntil: number | null };
+  "session.collect": { disposed: boolean };
   "session.observe": SessionProtocolObserveResult;
   "session.unobserve": SessionProtocolUnobserveResult;
   "session.record": SessionProtocolRecordResult;
@@ -3395,6 +3408,19 @@ const sessionProtocolObserveResultSchema = z
   })
   .strip();
 
+const sessionProtocolSetRetentionResultSchema = z
+  .object({ retainedUntil: z.number().int().nonnegative().nullable() })
+  .strip();
+
+const sessionProtocolCollectResultSchema = z.object({ disposed: z.boolean() }).strip();
+
+const sessionProtocolSetRetentionParamsSchema = z
+  .object({
+    sessionId: nonEmptyStringSchema,
+    durationMs: z.number().int().min(1).max(SESSION_PROTOCOL_MAX_RETENTION_MS).nullable(),
+  })
+  .strip();
+
 const sessionProtocolListResultSchema = z
   .object({
     sessions: z.array(sessionProtocolSessionSummarySchema),
@@ -4540,6 +4566,14 @@ export function validateSessionProtocolParams(
   params: unknown,
 ): SessionProtocolParamsValidationResult<SessionProtocolCreateParams>;
 export function validateSessionProtocolParams(
+  method: "session.setRetention",
+  params: unknown,
+): SessionProtocolParamsValidationResult<SessionProtocolSetRetentionParams>;
+export function validateSessionProtocolParams(
+  method: "session.collect",
+  params: unknown,
+): SessionProtocolParamsValidationResult<SessionProtocolSessionIdParams>;
+export function validateSessionProtocolParams(
   method: "session.list",
   params: unknown,
 ): SessionProtocolParamsValidationResult<SessionProtocolListParams>;
@@ -4664,6 +4698,14 @@ export function validateSessionProtocolParams(
       return validateInitializeParams(params);
     case "session.create":
       return validateCreateParams(params);
+    case "session.collect":
+      return validateSessionIdParams(method, params);
+    case "session.setRetention": {
+      const parsed = sessionProtocolSetRetentionParamsSchema.safeParse(params);
+      return parsed.success
+        ? { ok: true, value: parsed.data }
+        : invalidParams(formatZodError(parsed.error));
+    }
     case "session.observe":
       return validateSessionIdParams("session.observe", params);
     case "session.unobserve":
@@ -4731,6 +4773,10 @@ export function validateSessionProtocolResult(
       return validateResult(method, result, sessionProtocolInitializeResultSchema);
     case "session.create":
       return validateResult(method, result, sessionProtocolCreateResultSchema);
+    case "session.setRetention":
+      return validateResult(method, result, sessionProtocolSetRetentionResultSchema);
+    case "session.collect":
+      return validateResult(method, result, sessionProtocolCollectResultSchema);
     case "session.observe":
       return validateResult(method, result, sessionProtocolObserveResultSchema);
     case "session.snapshot":
@@ -4788,6 +4834,7 @@ export function validateSessionProtocolResult(
 
 function validateSessionIdParams<
   T extends
+    | "session.collect"
     | "session.observe"
     | "session.unobserve"
     | "session.cancelPendingMessages"

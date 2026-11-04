@@ -3,6 +3,7 @@ import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { createTauSdkClient } from "@markusylisiurunen/tau/sdk";
 import { describe, expect, it, vi } from "vitest";
+import { LocalExecutionEnvironment } from "../dist/execution/local_execution_environment.js";
 import { createTauSdkClientWithHostConfig } from "../dist/sdk/local_client.js";
 
 const localCreateInput = {
@@ -27,6 +28,55 @@ async function withTempHome(test) {
 }
 
 describe("sdk client integration", () => {
+  it("unloads after a rapid release, reattach, and final release", async () => {
+    await withTempHome(async (home) => {
+      const client = await createTauSdkClient({ cwd: home, refreshModelCatalog: false });
+      const dispose = vi.spyOn(LocalExecutionEnvironment.prototype, "dispose");
+      try {
+        const session = await client.sessions.create({
+          ...localCreateInput,
+          executionEnvironment: { kind: "local", cwd: home },
+        });
+        await session.unobserve();
+        const reopened = await client.sessions.observe(session.id);
+        await reopened.unobserve();
+        await vi.waitFor(() => expect(dispose).toHaveBeenCalledTimes(1));
+      } finally {
+        await client.close();
+        dispose.mockRestore();
+      }
+    });
+  });
+
+  it("retains and collects sessions through the SDK without observing for cleanup", async () => {
+    await withTempHome(async (home) => {
+      const client = await createTauSdkClient({ cwd: home, refreshModelCatalog: false });
+      try {
+        const session = await client.sessions.create({
+          ...localCreateInput,
+          executionEnvironment: { kind: "local", cwd: home },
+        });
+        const before = await session.snapshot();
+        expect(
+          (await client.sessions.setRetention(session.id, 259_200_000)).retainedUntil,
+        ).toBeGreaterThan(Date.now());
+        await session.unobserve();
+        expect(await client.sessions.collect(session.id)).toEqual({ disposed: false });
+        const observed = await client.sessions.observe(session.id);
+        expect(await observed.snapshot()).toEqual(before);
+        await client.sessions.setRetention(session.id, null);
+        expect(await client.sessions.collect(session.id)).toEqual({ disposed: false });
+        await observed.unobserve();
+        expect(await client.sessions.collect(session.id)).toEqual({ disposed: true });
+        await expect(client.sessions.setRetention(session.id, 1000)).rejects.toMatchObject({
+          code: "not_found",
+        });
+        expect(await client.sessions.collect(session.id)).toEqual({ disposed: true });
+      } finally {
+        await client.close();
+      }
+    });
+  });
   it("resolves integrations per project and refreshes vocabulary on reload and recovery", async () => {
     await withTempHome(async (home) => {
       const writeConfig = async (cwd, name) => {

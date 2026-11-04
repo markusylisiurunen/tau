@@ -23,6 +23,7 @@ import {
   EphemeralThreadBusyError,
   SessionExecBusyError,
   SessionRetryUnavailableError,
+  SessionRuntimeNotLoadedError,
   type TauHostedSession,
   type TauSessionHost,
 } from "./session_host.js";
@@ -223,6 +224,24 @@ export class SessionProtocolHandler {
         case "session.create":
           await this.handleCreate(request);
           return;
+        case "session.setRetention":
+          this.sendMessage(
+            createSessionProtocolSuccessResponse(
+              request.id,
+              request.method,
+              this.host.setRetention(request.params.sessionId, request.params.durationMs),
+            ),
+          );
+          return;
+        case "session.collect":
+          this.sendMessage(
+            createSessionProtocolSuccessResponse(
+              request.id,
+              request.method,
+              await this.host.collectSession(request.params.sessionId),
+            ),
+          );
+          return;
         case "session.list":
           await this.handleList(request);
           return;
@@ -309,6 +328,16 @@ export class SessionProtocolHandler {
           return;
       }
     } catch (error) {
+      if (error instanceof SessionRuntimeNotLoadedError) {
+        this.sendMessage(
+          createSessionProtocolErrorResponse(
+            request.id,
+            SESSION_PROTOCOL_ERROR_CODES.notFound,
+            error.message,
+          ),
+        );
+        return;
+      }
       if (error instanceof PersonaSelectionError) {
         this.sendMessage(
           createSessionProtocolErrorResponse(

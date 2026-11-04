@@ -131,6 +131,54 @@ result: {
 
 The session must currently be observed by this connection.
 
+## Keep sessions loaded and unload them
+
+[Keep a session loaded without clients](session-protocol.md#keep-a-session-loaded-without-clients) explains how these methods fit together. The connection does not need to observe the session to call them.
+
+### `session.setRetention`
+
+Sets, renews, or clears the session's retention period.
+
+```ts
+params: {
+  sessionId: string;
+  durationMs: number | null;
+}
+result: {
+  retainedUntil: number | null;
+}
+```
+
+`durationMs` is required. A number must be an integer from 1 to 2,147,483,647 (about 24.8 days). The period starts when the host handles the request, and `retainedUntil` is its end in milliseconds since the Unix epoch, according to the host's clock. Each call replaces the previous period, so a call can shorten it as well as extend it.
+
+`null` clears retention and returns `retainedUntil: null`. Clearing does not detach clients or interrupt work.
+
+Setting a period requires a loaded session and fails with `not_found` otherwise, even when the session is saved. To retain an unloaded session, call `session.observe` first. Clearing always succeeds for a session that is not loaded, including an unknown ID.
+
+### `session.collect`
+
+Unloads a session if nothing keeps it loaded, and reports whether it is unloaded. This method never loads a session and never deletes the saved one.
+
+```ts
+params: {
+  sessionId: string;
+}
+result: {
+  disposed: boolean;
+}
+```
+
+The result is `disposed: false`, without waiting, while any of these is true:
+
+- A client observes the session, including this connection.
+- A retention period is active.
+- Work is running.
+- The host is loading the session from storage.
+
+Otherwise the host unloads the session, and the response waits until any unloading in progress has finished, including the release of the execution environment. The result is then `disposed: true`, which is also the result for a session that is not loaded and for an unknown ID. If unloading fails, the request fails with `internal_error`.
+
+If saving the session before disposal fails, retry `session.collect`. A failed disposal, including cleanup of a recovery attempt, means the host can no longer establish that the session's files are safe to remove. No later `session.collect` for that ID returns `disposed: true` until the host restarts, even when the session is no longer loaded. Each later call returns `disposed: false` or fails. The host keeps this record only in memory, so after a restart the session counts as not loaded, and `disposed: true` no longer tells you whether the earlier release finished.
+
 ## Add user input and run turns
 
 ### `session.record`

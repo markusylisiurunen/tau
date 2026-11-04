@@ -221,7 +221,7 @@ Each session on a local execution environment uses the servers from the global c
 - The global level applies only when the session's working directory is inside the home directory. See [configuration](configuration.md).
 - Each session has its own servers and connections. Subagents use their parent's, even in another working directory.
 - A session on a remote execution environment, such as a Fly Sprite, has no MCP servers. Tau does not use definitions from that environment or from the host. Servers would run on the host, and Tau cannot tell which of them expose the host's files. [Security](security.md#trust-mcp-servers) explains the trade-off.
-- The host reads definitions when it creates or recovers a session, and they stay fixed while the session is loaded. `/reload` does not change them, but it warns if the definitions on disk differ. To apply a change, start a new session, or reopen the session after the host has unloaded it. The host unloads a session when its last client has detached and its work has finished, and when the host shuts down.
+- The host reads definitions when it creates or recovers a session, and they stay fixed while the session is loaded. `/reload` does not change them, but it warns if the definitions on disk differ. To apply a change, start a new session, or reopen the session after the host has unloaded it. The host unloads a session when no client is attached, its work has finished, and no [retention](session-protocol.md#keep-a-session-loaded-without-clients) period is active, and when the host shuts down.
 - Restart the host after changing the environment variables that servers use. OAuth credentials updated through `tau mcp login` take effect without restarting.
 
 ```json

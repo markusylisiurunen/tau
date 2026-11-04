@@ -52,6 +52,8 @@ export class SessionExecBusyError extends Error {
 
 export class SessionRetryUnavailableError extends Error {}
 
+export class SessionRuntimeNotLoadedError extends Error {}
+
 export type TauHostedSession = {
   readonly sessionId: string;
   readonly isDisposed?: boolean;
@@ -139,6 +141,8 @@ export type TauSessionHost = {
   observeSession(sessionId: string): Promise<TauHostedSession | undefined>;
   releaseSession(session: TauHostedSession): void;
   listSessions(): Promise<SessionProtocolSessionSummary[]>;
+  setRetention(sessionId: string, durationMs: number | null): { retainedUntil: number | null };
+  collectSession(sessionId: string): Promise<{ disposed: boolean }>;
   registerClientTools?(options: {
     tools: SessionProtocolClientToolDefinition[];
     sendCall: (message: SessionProtocolClientToolCallMessage) => void;

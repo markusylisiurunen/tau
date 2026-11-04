@@ -41,6 +41,35 @@ const bootstrap = createProtocolBootstrap();
 const catalog = createProtocolCatalog();
 
 describe("session_protocol", () => {
+  it("validates bounded retention and non-loading collection", () => {
+    for (const durationMs of [null, 1, 259_200_000, 2_147_483_647]) {
+      expect(
+        validateSessionProtocolParams("session.setRetention", { sessionId: "s", durationMs }).ok,
+      ).toBe(true);
+    }
+    for (const durationMs of [undefined, 0, -1, 1.5, 2_147_483_648, Infinity, "1000"]) {
+      expect(
+        validateSessionProtocolParams("session.setRetention", { sessionId: "s", durationMs }).ok,
+      ).toBe(false);
+    }
+    expect(
+      validateSessionProtocolParams("session.setRetention", {
+        sessionId: "s",
+        durationMs: null,
+        extra: true,
+      }).ok,
+    ).toBe(true);
+    expect(validateSessionProtocolParams("session.collect", { sessionId: "s" }).ok).toBe(true);
+    expect(validateSessionProtocolParams("session.collect", { sessionId: "" }).ok).toBe(false);
+    expect(validateSessionProtocolResult("session.collect", { disposed: true }).ok).toBe(true);
+    expect(validateSessionProtocolResult("session.collect", { disposed: "true" }).ok).toBe(false);
+    expect(validateSessionProtocolResult("session.setRetention", { retainedUntil: null }).ok).toBe(
+      true,
+    );
+    expect(validateSessionProtocolResult("session.setRetention", { retainedUntil: -1 }).ok).toBe(
+      false,
+    );
+  });
   it("validates atomic persona applications and workspace selection", () => {
     for (const selection of [
       { personaId: null },

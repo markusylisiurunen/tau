@@ -260,11 +260,11 @@ A failed call throws an error with a `code` and a `message`. The codes are `inva
 
 ## Detach, rewind, and recovery
 
-Subagents belong to the running session on the host, not to an attached TUI. Detaching a client, or losing the connection, does not stop them while the session stays alive. Another client can attach and see their current state.
+Subagents belong to the running session on the host, not to an attached TUI. Detaching a client or losing the connection does not stop them while the session stays alive, which [retention](sessions.md#detach-reattach-and-recover) can extend. Another client can attach and see their state.
 
-Subagents do not survive the end of a session on the host or a host restart. Recovery removes any saved records of them, so a recovered session cannot send input to an old subagent ID.
+Host shutdown or session disposal interrupts and removes all subagents, and none survive a host restart. Recovery removes any saved records, so a recovered session cannot send input to an old subagent ID.
 
-Rewind also removes subagents that the main agent started from an assistant message the rewind removed, together with all their descendants. A subagent started from a `code` program belongs to the assistant message that ran the program, including a program running as a background job. Rewind is refused while any subagent is running. Host shutdown or session disposal interrupts and removes all subagents.
+Rewind also removes subagents that the main agent started from an assistant message the rewind removed, with all their descendants. A subagent started from a `code` program belongs to the assistant message that ran the program, including a program running as a background job. Rewind is refused while any subagent is running.
 
 Tau records native subagents in [history](history.md#native-subagent-sessions) as child sessions of their immediate parents, even without the `history` tool. These sessions stay after a rewind, but history cannot restore the subagents. Claude Code is excluded.
 

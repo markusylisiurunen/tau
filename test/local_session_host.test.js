@@ -6050,6 +6050,8 @@ describe("LocalSessionHost", () => {
                 : session.reload()
         ).catch(() => undefined);
         await started.promise;
+        expect(session.interruptActiveWork()).toBe(false);
+        expect(session.hasActiveWork).toBe(true);
         host.releaseSession(session);
         expect(await host.collectSession(session.sessionId)).toEqual({ disposed: false });
         expect(session.isDisposed).toBe(false);
@@ -6117,6 +6119,47 @@ describe("LocalSessionHost", () => {
       expect(await collecting).toEqual({ disposed: true });
     } finally {
       finish.resolve();
+      await host.shutdown();
+    }
+  });
+
+  it("waits for disposal generations that start while collection is pending", async () => {
+    const started = [deferred(), deferred()];
+    const finish = [deferred(), deferred()];
+    const environments = started.map((gate, index) => {
+      const environment = createTestExecutionEnvironment();
+      environment.dispose = async () => {
+        gate.resolve();
+        await finish[index].promise;
+      };
+      return environment;
+    });
+    const host = createHost(new MemorySessionStore(), {
+      executionEnvironmentResolver: {
+        resolve: async () => environments[0],
+        canRestore: () => true,
+        restore: async () => environments[1],
+      },
+    });
+    try {
+      const session = await host.createSession(localCreateInput);
+      host.releaseSession(session);
+      await started[0].promise;
+      let collected = false;
+      const collecting = host.collectSession(session.sessionId).then((result) => {
+        collected = true;
+        return result;
+      });
+      const reopened = await host.observeSession(session.sessionId);
+      host.releaseSession(reopened);
+      await started[1].promise;
+      finish[0].resolve();
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(collected).toBe(false);
+      finish[1].resolve();
+      expect(await collecting).toEqual({ disposed: true });
+    } finally {
+      for (const gate of finish) gate.resolve();
       await host.shutdown();
     }
   });

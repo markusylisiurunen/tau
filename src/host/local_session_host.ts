@@ -670,11 +670,13 @@ export class LocalSessionHost implements TauSessionHost {
       if (this.isHeld(session) || session.hasActiveWork) return { disposed: false };
       this.scheduleEviction(session);
     }
-    await Promise.all(
-      [...this.sessionEvictions]
+    while (true) {
+      const evictions = [...this.sessionEvictions]
         .filter(([candidate]) => candidate.sessionId === sessionId)
-        .map(([, promise]) => promise),
-    );
+        .map(([, promise]) => promise);
+      if (evictions.length === 0) break;
+      await Promise.all(evictions);
+    }
     if (this.disposalFailures.has(sessionId)) throw this.disposalFailures.get(sessionId);
     return {
       disposed: !this.findLiveSession(sessionId) && !this.sessionRecoveryPromises.has(sessionId),
@@ -693,7 +695,10 @@ export class LocalSessionHost implements TauSessionHost {
     const eviction = this.evictReleasedSession(session);
     this.sessionEvictions.set(session, eviction);
     void eviction.then(
-      () => this.sessionEvictions.delete(session),
+      () => {
+        this.sessionEvictions.delete(session);
+        if (this.sessions.has(session) && !session.isDisposed) this.scheduleEviction(session);
+      },
       () => this.sessionEvictions.delete(session),
     );
   }
@@ -1352,7 +1357,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     overrides?: SessionProtocolPersonaOverrides,
   ): Promise<SessionProtocolSnapshot> {
     this.assertActive();
-    return await this.runActiveWork(async () => {
+    return await this.trackActiveWork(async () => {
       const runtimeConfig = await this.executionEnvironment.resolveRuntimeConfig(
         this.executionEnvironment.snapshot().cwd,
         { remoteCatalog: this.remoteCatalog },
@@ -1395,7 +1400,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
   async reload(): Promise<SessionProtocolReloadResult> {
     this.assertActive();
-    return await this.runActiveWork(async () => {
+    return await this.trackActiveWork(async () => {
       const remoteCatalog = this.getLatestRemoteModelCatalog();
       const runtimeConfig = await this.executionEnvironment.resolveRuntimeConfig(
         this.executionEnvironment.snapshot().cwd,
@@ -1465,7 +1470,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     promptId: SessionProtocolResolvePromptParams["promptId"],
   ): Promise<SessionProtocolResolvePromptResult> {
     this.assertActive();
-    return await this.runActiveWork(async () => {
+    return await this.trackActiveWork(async () => {
       const executionSnapshot = this.executionEnvironment.snapshot();
       const prompt = await resolvePromptTemplateWithBackend({
         backend: this.executionEnvironment.getToolExecutionBackend(),
@@ -1484,7 +1489,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     options: Omit<SessionProtocolAutocompletePathsParams, "sessionId">,
   ): Promise<SessionProtocolAutocompletePathsResult> {
     this.assertActive();
-    return await this.runActiveWork(async () => {
+    return await this.trackActiveWork(async () => {
       const entries = await this.getPathAutocompleteEntries();
       return {
         paths: filterProjectPathAutocompleteEntries(entries, options),
@@ -1573,12 +1578,19 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       ? AbortSignal.any([externalSignal, abortController.signal])
       : abortController.signal;
     this.activeWorkAbortControllers.add(abortController);
-    const promise = operation(signal);
+    try {
+      return await this.trackActiveWork(() => operation(signal));
+    } finally {
+      this.activeWorkAbortControllers.delete(abortController);
+    }
+  }
+
+  private async trackActiveWork<T>(operation: () => Promise<T>): Promise<T> {
+    const promise = operation();
     this.activeWorkPromises.add(promise);
     try {
       return await promise;
     } finally {
-      this.activeWorkAbortControllers.delete(abortController);
       this.activeWorkPromises.delete(promise);
     }
   }

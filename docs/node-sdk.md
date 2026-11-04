@@ -2,7 +2,7 @@
 
 Tau's Node SDK is a typed client for creating, observing, and controlling sessions without handling the wire protocol yourself. Use the in-process client when your application should run the host itself, the WebSocket client to connect to a long-running `tau serve` host, or the transport adapter to bring your own connection.
 
-The SDK speaks the same [session protocol](session-protocol.md) as the TUI, so sessions behave the same in local applications, remote integrations, and the terminal.
+The SDK speaks the same [session protocol](session-protocol.md) as the TUI, so sessions behave the same in applications and the terminal.
 
 ## Install and import
 
@@ -12,7 +12,7 @@ Tau requires Node.js 24 or later.
 npm install @markusylisiurunen/tau
 ```
 
-Import the SDK from its package entry point:
+Import the SDK:
 
 ```ts
 import { createTauSdkClient } from "@markusylisiurunen/tau/sdk";
@@ -106,7 +106,7 @@ When the transport fails for good, it must call the `onFailure` listeners, so th
 
 ## Create and run a session
 
-A typical integration creates a session (which also observes it), listens for updates, submits work, and closes cleanly:
+A typical integration creates a session, listens for updates, submits work, and closes cleanly:
 
 ```ts
 import {
@@ -171,7 +171,7 @@ The connected `TauSdkClient` exposes:
 | `subscribe(listener)` | Receive deltas for every observed session on this connection. |
 | `subscribePendingUserMessages(listener)` | Receive pending-state replacements across observed sessions. |
 | `subscribeSubagentActivities(listener)` | Receive subagent-activity changes across observed sessions. |
-| `subscribeEphemeral(listener)` | Receive ephemeral events, which are not guaranteed, across observed sessions. |
+| `subscribeEphemeral(listener)` | Receive ephemeral events across observed sessions. |
 | `close()` | Close the client and everything it owns. |
 
 Each subscription returns an unsubscribe function.
@@ -205,6 +205,7 @@ Each subscription returns an unsubscribe function.
 | `submitEphemeralThread(options)` | Run or continue one ephemeral thread. |
 | `closeEphemeralContext(contextId)` | Close an ephemeral context and its threads. |
 | `retain(durationMs)` | [Keep the session loaded](remote-sessions.md#keep-a-session-loaded) until a deadline. |
+| `onObservationEnded(listener)` | Run `listener` when [the observation ends](remote-sessions.md#end-an-observation). |
 | `unobserve()` | Stop observing; this object can no longer be used. |
 
 `submit`, `queue`, and `record` accept `{ historyEntryId?: string }`; without it, Tau generates the ID. Use `getTauSdkSessionTurnRecord(snapshot, id)` to tell whether an accepted turn is unknown, running, or finished, or `getTauSdkSessionTurnOutcome(snapshot, id)` when you only need the final outcome.
@@ -258,7 +259,7 @@ You can reuse the returned assistant message in a later sample's context. If you
 
 ## Consume streamed state
 
-`TauSdkClient` has subscriptions for all sessions on the connection, and `TauSdkSession` has subscriptions for one session. Prefer the session's own unless one component handles several sessions.
+`TauSdkClient` has subscriptions for all sessions on the connection, and `TauSdkSession` for one session. Prefer the session's own unless one component handles several sessions.
 
 ### Snapshot deltas
 

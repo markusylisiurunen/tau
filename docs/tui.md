@@ -31,6 +31,8 @@ The startup summary lists discovered skills, project context files, configured c
 
 In a local TUI, configuration problems found when the host loads a session appear in the transcript. An attached TUI shows them when you run `/reload`.
 
+If another client unloads the session, the TUI [detaches from it](remote-sessions.md#when-the-tui-detaches) and keeps your draft.
+
 ## Work in the editor
 
 Enter submits. Shift+Enter or Ctrl+J inserts a newline. Up and Down move within the editor, and recall earlier submissions when the editor is empty.

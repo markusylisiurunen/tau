@@ -741,6 +741,7 @@ class TauSdkSessionClientImpl implements TauSdkSessionClient {
 
 class TauSdkSessionImpl implements TauSdkSession {
   private isUnobserved = false;
+  private readonly observationEndedListeners = new Set<() => void>();
   private readonly deltaListeners = new Set<TauSdkDeltaListener>();
   private readonly ephemeralListeners = new Set<TauSdkEphemeralListener>();
   private readonly pendingUserMessagesListeners = new Set<TauSdkPendingUserMessagesListener>();
@@ -796,6 +797,21 @@ class TauSdkSessionImpl implements TauSdkSession {
       throw new TauSessionClientError("tau sdk subagent activities are not initialized");
     }
     return structuredClone(this.subagentActivitiesValue);
+  }
+
+  onObservationEnded(listener: () => void): () => void {
+    if (this.isUnobserved) {
+      try {
+        listener();
+      } catch {
+        // SDK observation-ended listeners must not break session cleanup.
+      }
+      return () => undefined;
+    }
+    this.observationEndedListeners.add(listener);
+    return () => {
+      this.observationEndedListeners.delete(listener);
+    };
   }
 
   onDelta(listener: TauSdkDeltaListener): () => void {
@@ -1194,6 +1210,15 @@ class TauSdkSessionImpl implements TauSdkSession {
     this.subagentActivitiesListeners.clear();
     this.bufferedDeltas.splice(0);
     this.bufferedSubagentActivities.splice(0);
+    const listeners = [...this.observationEndedListeners];
+    this.observationEndedListeners.clear();
+    for (const listener of listeners) {
+      try {
+        listener();
+      } catch {
+        // SDK observation-ended listeners must not break session cleanup.
+      }
+    }
   }
 
   private activeObservation(): SessionObservation {

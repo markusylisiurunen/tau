@@ -202,6 +202,7 @@ export type TauSdkSession = {
   readonly id: string;
   pendingUserMessages(): TauSdkPendingUserMessagesState;
   subagentActivities(): TauSdkSubagentActivitiesState;
+  onObservationEnded(listener: () => void): () => void;
   onDelta(listener: TauSdkDeltaListener): () => void;
   onEphemeral(listener: TauSdkEphemeralListener): () => void;
   onPendingUserMessages(listener: TauSdkPendingUserMessagesListener): () => void;

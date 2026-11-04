@@ -650,6 +650,29 @@ test("FooterComponent renders dense session status", () => {
   );
 });
 
+test("FooterComponent renders an ended session without activity", () => {
+  vi.useFakeTimers();
+  const theme = createTagTheme();
+  const ui = { requestRender() {} };
+  const footer = new FooterComponent(theme, ui, { random: () => 0 });
+
+  try {
+    footer.startWorkingIcon();
+    footer.setStatus({ type: "activity", label: "compacting context" });
+    footer.stop();
+    footer.setStatus({ type: "ended", label: "session ended" });
+
+    const text = renderText(footer, 120);
+    expect(text).toContain("<feedback>○</feedback>");
+    expect(text).toContain("<feedback>session ended</feedback>");
+    expect(vi.getTimerCount()).toBe(0);
+    expect(renderText(footer, 7).length).toBeGreaterThan(0);
+  } finally {
+    footer.dispose();
+    vi.useRealTimers();
+  }
+});
+
 test("feedback tones have matching prominence", () => {
   const overrides = deriveBuiltinPaletteOverrides(
     { brandAccent: "#d0b28e" },

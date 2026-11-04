@@ -6258,6 +6258,13 @@ describe("LocalSessionHost", () => {
       const other = await second.sessions.observe(old.id);
       const ended = [];
       transport.onObservationEnded((message) => ended.push(message));
+      const notified = vi.fn(() => old.snapshot().catch((error) => error));
+      const removed = vi.fn();
+      old.onObservationEnded(() => {
+        throw new Error("listener failed");
+      });
+      old.onObservationEnded(notified);
+      old.onObservationEnded(removed)();
       expect(host.clientToolBroker.getToolDefinitions(old.id)).toHaveLength(1);
       await second.sessions.unload(old.id);
       expect(host.clientToolBroker.getToolDefinitions(old.id)).toHaveLength(0);
@@ -6277,13 +6284,24 @@ describe("LocalSessionHost", () => {
       await expect(other.snapshot()).rejects.toThrow();
       expect(await first.sessions.runtimeState(old.id)).toEqual({ loaded: false });
       const replacement = await third.sessions.observe(old.id);
+      const replacementEnded = vi.fn();
+      replacement.onObservationEnded(replacementEnded);
       expect(replacement.pendingUserMessages()).toEqual({ revision: 1, messages: [] });
       expect(replacement.subagentActivities()).toEqual({ revision: 1, agents: {} });
       await old.unobserve();
       await old.unobserve();
       await other.unobserve();
+      expect(notified).toHaveBeenCalledTimes(1);
+      expect(await notified.mock.results[0].value).toBeInstanceOf(Error);
+      expect(removed).not.toHaveBeenCalled();
+      const late = vi.fn();
+      old.onObservationEnded(late);
+      expect(late).toHaveBeenCalledTimes(1);
       expect(host.clientToolBroker.getToolDefinitions(old.id)).toHaveLength(1);
+      expect(replacementEnded).not.toHaveBeenCalled();
       await replacement.unobserve();
+      await replacement.unobserve();
+      expect(replacementEnded).toHaveBeenCalledTimes(1);
       const fresh = await first.sessions.observe(old.id);
       await transport.request("session.unobserve", { sessionId: old.id }, ended[0].observationId);
       await expect(

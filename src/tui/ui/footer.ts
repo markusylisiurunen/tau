@@ -14,6 +14,10 @@ export type FooterStatus =
   | {
       type: "activity";
       label: string;
+    }
+  | {
+      type: "ended";
+      label: string;
     };
 
 const WORKING_ANIMATIONS = [
@@ -162,6 +166,13 @@ export class FooterComponent implements Component {
       const text = truncateFromEndByWidth(this.status.label.trim(), availableWidth);
       const padding = " ".repeat(Math.max(0, availableWidth - visibleWidth(text)));
       return [` ${icon} ${palette.feedback(text)}${padding} `];
+    }
+
+    if (this.status?.type === "ended") {
+      const availableWidth = Math.max(0, width - visibleWidth(IDLE_ICON) - 3);
+      const text = truncateFromEndByWidth(this.status.label.trim(), availableWidth);
+      const padding = " ".repeat(Math.max(0, availableWidth - visibleWidth(text)));
+      return [` ${palette.feedback(IDLE_ICON)} ${palette.feedback(text)}${padding} `];
     }
 
     const isCompleting = this.completionTimeoutId !== null;

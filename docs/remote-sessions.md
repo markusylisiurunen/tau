@@ -201,7 +201,19 @@ Retention only applies to the live runtime:
 
 An SDK session object belongs to one observation. The observation ends when you call `unobserve()`, when `sessions.observe()` replaces it on the same client, or when any client unloads the session. An unload therefore affects every connected client, including clients that did not ask for it.
 
-After that, calls on the object fail with `TauSessionClientError` and do not reach the host. The exception is `unobserve()`, which succeeds, so cleanup is safe to repeat and cannot affect a newer object. The object has no event for this, so a long-running application learns that its observation ended when a call fails.
+After that, session operations fail with `TauSessionClientError` and do not reach the host. The exception is `unobserve()`, which succeeds, so cleanup is safe to repeat and cannot affect a newer object.
+
+To learn when this happens, for example because another client unloaded the session, add a listener:
+
+```ts
+const stop = session.onObservationEnded(() => {
+  // This object no longer works. Observe the session again to continue.
+});
+```
+
+The listener runs once, after the object has stopped working. This includes the case where your own `unobserve()` ended the observation. It receives no arguments, so it does not tell you why the observation ended. A listener added after the observation ended runs immediately. Errors thrown by a listener are ignored, and other listeners still run. Call `stop` to remove the listener. The SDK never observes the session again on its own.
+
+The listener is not guaranteed to run when the connection closes or fails, so do not use it to detect connection loss.
 
 A running `exec()` keeps running after `unobserve()` or a replacing `sessions.observe()`. Aborting its signal still cancels it.
 
@@ -214,6 +226,19 @@ const recovered = await client.sessions.observe(session.id);
 ```
 
 After an unload, the session stays out of memory until a client observes it again. The new object starts from the saved session, idle and without subagents. Raw protocol clients receive `session.observationEnded`; see [when an observation ends](session-protocol.md#when-an-observation-ends).
+
+### When the TUI detaches
+
+The TUI detaches from a session when its observation ends, for example because another client unloaded the session. It adds a notice to the transcript, sends a terminal notification, and shows a static message in the footer.
+
+While detached:
+
+- The transcript and tool cards show only what the TUI last received. They do not tell you how a running turn ended, and a tool card can still show a running tool.
+- Working indicators, pending messages, and the subagent panel are cleared.
+- Messages, `!` commands, and commands that use the session are blocked. Your draft stays in the editor.
+- These local commands still work: `/help`, `/new`, `/exit`, `/listen`, `/speak`, `/auto-speak`, `/export-response`, `/copy-text`, `/copy-code`, and `/theme`.
+
+The TUI does not reconnect or send anything again on its own. To continue the session from `tau attach`, quit and attach again with `--session` and the ID shown in the notice. In any TUI, `/new` starts a new session instead.
 
 ## Use multiple observers carefully
 

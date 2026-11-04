@@ -6,6 +6,7 @@ import {
 } from "../core/commands/auto_compact.js";
 import {
   type CommandDispatchContext,
+  type CommandId,
   type CommandRegistry,
   createCommandRegistry,
 } from "../core/commands/index.js";
@@ -150,6 +151,19 @@ const MCP_UNAVAILABLE_EXPLANATIONS: Record<
 };
 
 const LISTEN_CAPTURE_START_CANCELLED = Symbol("listen capture start cancelled");
+const OBSERVATION_ENDED_STATUS = "detached from session · reopen it to continue, or use /new";
+const COMMANDS_AFTER_OBSERVATION_ENDED: ReadonlySet<CommandId> = new Set([
+  "help",
+  "copyText",
+  "copyCode",
+  "exportResponse",
+  "exit",
+  "new",
+  "listen",
+  "speak",
+  "autoSpeak",
+  "theme",
+]);
 
 export class SessionChatController {
   private readonly view: ChatView;
@@ -179,6 +193,8 @@ export class SessionChatController {
   private ephemeralUnsubscribe?: () => void;
   private pendingUserMessagesUnsubscribe?: () => void;
   private subagentActivitiesUnsubscribe?: () => void;
+  private observationEndedUnsubscribe?: () => void;
+  private observationEnded = false;
   private subagentActivities: SessionProtocolSubagentActivitiesState;
   private snapshotRecovery?: Promise<void>;
   private readonly snapshotRecoveryDeltas: SessionProtocolDeltaMessage[] = [];
@@ -277,6 +293,13 @@ export class SessionChatController {
     this.renderSnapshot(this.snapshot);
     this.hydrateRunningSnapshotState();
     this.syncProgramStatus();
+    // The SDK rejects other subscriptions once an observation has ended, and reports a late
+    // registration here synchronously.
+    this.subscribeObservationEnded();
+    if (this.observationEnded) {
+      this.refreshStatus();
+      return;
+    }
     this.eventUnsubscribe = this.session.onDelta((delta) => this.onSdkDelta(delta));
     this.ephemeralUnsubscribe = this.session.onEphemeral((message) => this.onSdkEphemeral(message));
     this.pendingUserMessagesUnsubscribe = this.session.onPendingUserMessages((message) =>
@@ -290,6 +313,7 @@ export class SessionChatController {
 
   async dispose(): Promise<void> {
     this.disposed = true;
+    this.observationEndedUnsubscribe?.();
     this.setProgramStatus("clear");
     this.markdownExportAbortController?.abort();
     this.endListenPreview();
@@ -388,6 +412,11 @@ export class SessionChatController {
   }
 
   private beforeSubmit(text: string): boolean {
+    if (this.observationEnded && !this.allowsInputAfterObservationEnded(text)) {
+      if (text.trim()) this.showObservationEndedNotice();
+      return false;
+    }
+
     if (!this.isSessionOperationActive()) {
       return true;
     }
@@ -430,6 +459,11 @@ export class SessionChatController {
     mode: EditorSubmissionMode = "steer",
   ): Promise<void> {
     const trimmed = text.trim();
+    if (this.observationEnded && !this.allowsInputAfterObservationEnded(text)) {
+      if (trimmed) this.showObservationEndedNotice();
+      return;
+    }
+
     if (!trimmed) {
       if (this.isStreaming || this.submittedTurnInProgress) {
         return;
@@ -581,7 +615,7 @@ export class SessionChatController {
         })),
       themes: () => this.themeIds.map((id) => ({ id })),
       autocompletePaths: async (query, limit) =>
-        (await this.session.autocompletePaths({ query, limit })).paths,
+        this.observationEnded ? [] : (await this.session.autocompletePaths({ query, limit })).paths,
       skills: () => this.snapshot.catalog.skills.map((skill) => skill.name),
     };
   }
@@ -671,6 +705,7 @@ export class SessionChatController {
       return;
     }
 
+    const session = this.session;
     const toolCallId = `bash-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const workingDirectory = this.snapshot.executionEnvironment.cwd;
 
@@ -690,7 +725,7 @@ export class SessionChatController {
 
     try {
       const backend = createSdkToolExecutionBackend({
-        executionEnvironment: this.session,
+        executionEnvironment: session,
         cwd: this.snapshot.executionEnvironment.cwd,
       });
       const result = await runDirectBashCommand({
@@ -700,12 +735,13 @@ export class SessionChatController {
         actionLabel: options.labelOverride,
         addToContext: options.addToContext,
         addUserText: async (text) => {
-          const recorded = await this.session.record(text, {
+          const recorded = await session.record(text, {
             historyEntryId: toolCallId,
           });
           return recorded.userHistoryEntryId;
         },
       });
+      if (this.session !== session) return;
       if (result.userHistoryEntryId) {
         this.hiddenHistoryEntryIds.add(result.userHistoryEntryId);
         this.renderedMessageIds.push(this.getViewMessageId(result.userHistoryEntryId));
@@ -717,6 +753,7 @@ export class SessionChatController {
       });
       await this.syncFromSessionSnapshot();
     } catch (error) {
+      if (this.session !== session) return;
       const reason = (error as Error).message || "bash failed";
       this.view.updateLocalToolUi({
         toolCallId,
@@ -730,11 +767,13 @@ export class SessionChatController {
       });
       await this.syncFromSessionSnapshot();
     } finally {
-      this.isStreaming = false;
-      this.view.stopWorkingIcon();
-      this.stopTurnTimer();
-      this.refreshStatus();
-      this.view.requestRender();
+      if (this.session === session) {
+        this.isStreaming = false;
+        this.view.stopWorkingIcon();
+        this.stopTurnTimer();
+        this.refreshStatus();
+        this.view.requestRender();
+      }
     }
   }
 
@@ -759,6 +798,10 @@ export class SessionChatController {
   }
 
   private async cancelPendingMessagesIntoEditor(): Promise<void> {
+    if (this.observationEnded) {
+      this.showObservationEndedNotice();
+      return;
+    }
     this.pendingEditorMutations++;
     try {
       const { cancelled } = await this.session.cancelPendingMessages();
@@ -807,6 +850,7 @@ export class SessionChatController {
       return;
     }
 
+    const session = this.session;
     this.isStreaming = true;
     this.assistantInterruptRequested = false;
     this.submittedTurnInProgress = true;
@@ -816,18 +860,22 @@ export class SessionChatController {
 
     try {
       const result = await task();
+      if (!this.isObservationLive(session)) return;
       await this.syncFromSessionSnapshot();
       if (result.turn.status === "completed") this.queueAutoSpeak();
     } catch (error) {
+      if (!this.isObservationLive(session)) return;
       this.view.addTranscriptNotice("failed to run assistant turn", "error", [
         formatSessionError(error),
       ]);
       this.stopVisibleSessionTurn();
       await this.syncFromSessionSnapshot();
     } finally {
-      this.submittedTurnInProgress = false;
-      this.stopVisibleSessionTurn();
-      this.refreshStatus();
+      if (this.session === session) {
+        this.submittedTurnInProgress = false;
+        this.stopVisibleSessionTurn();
+        this.refreshStatus();
+      }
     }
   }
 
@@ -1473,6 +1521,8 @@ export class SessionChatController {
       this.ephemeralUnsubscribe?.();
       this.pendingUserMessagesUnsubscribe?.();
       this.subagentActivitiesUnsubscribe?.();
+      this.observationEndedUnsubscribe?.();
+      this.observationEnded = false;
       this.autoSpeak = false;
       this.pendingAutoSpeak = undefined;
       this.lastAutoSpeakMessageId = undefined;
@@ -1506,6 +1556,7 @@ export class SessionChatController {
       }
       this.syncSnapshotToolAndAgentUi(this.snapshot);
       forwardEvents = true;
+      this.subscribeObservationEnded();
 
       try {
         await previousSession.unobserve();
@@ -1543,6 +1594,56 @@ export class SessionChatController {
           cwd: snapshot.cwd,
         };
     }
+  }
+
+  private subscribeObservationEnded(): void {
+    const session = this.session;
+    this.observationEndedUnsubscribe = session.onObservationEnded(() => {
+      this.onSdkObservationEnded(session);
+    });
+  }
+
+  private onSdkObservationEnded(session: TauSdkSession): void {
+    if (this.disposed || this.session !== session || this.observationEnded) {
+      return;
+    }
+
+    this.observationEnded = true;
+    this.pendingAutoSpeak = undefined;
+    this.pendingIdleNotification = false;
+    this.submittedTurnInProgress = false;
+    this.manualCompactionInProgress = false;
+    this.snapshotRecoveryDeltas.length = 0;
+    this.stopVisibleSessionTurn();
+
+    this.hasPendingUserMessages = false;
+    this.view.setPendingUserMessages([]);
+    this.syncSnapshotToolAndAgentUi(this.snapshot);
+    this.setProgramStatus("idle");
+    this.view.addTranscriptNotice("detached from session", "default", [
+      "this terminal no longer receives updates or sends input for this session, so the transcript above may be out of date.",
+      this.targetLabel === "in-process"
+        ? "use /new to start a new session."
+        : `to reopen it, quit and run tau attach with --session ${this.snapshot.sessionId}. use /new to start a new session instead.`,
+    ]);
+    this.view.sendTerminalNotification("tau detached from session");
+    this.refreshStatus();
+  }
+
+  private isObservationLive(session: TauSdkSession): boolean {
+    return this.session === session && !this.observationEnded;
+  }
+
+  private allowsInputAfterObservationEnded(text: string): boolean {
+    const trimmed = text.trim();
+    if (!trimmed.startsWith("/") || !this.isSingleLineInput(text)) {
+      return false;
+    }
+    return COMMANDS_AFTER_OBSERVATION_ENDED.has(this.commandRegistry.parse(trimmed).type);
+  }
+
+  private showObservationEndedNotice(): void {
+    this.view.showFooterNotice(OBSERVATION_ENDED_STATUS, "default");
   }
 
   private onSdkPendingUserMessages(message: SessionProtocolPendingUserMessagesMessage): void {
@@ -2147,7 +2248,7 @@ export class SessionChatController {
   }
 
   private syncProgramStatus(previous?: SessionProtocolSnapshot): void {
-    if (this.disposed) return;
+    if (this.disposed || this.observationEnded) return;
     const turns = Object.values(this.snapshot.turns);
     if (this.snapshot.lifecycle === "running" || turns.some((turn) => turn.state === "running")) {
       if (this.programStatus !== "working") this.programStatusTurnStart = previous ?? this.snapshot;
@@ -2208,7 +2309,7 @@ export class SessionChatController {
 
   private syncSnapshotToolAndAgentUi(snapshot: SessionProtocolSnapshot): void {
     this.view.reconcileSubagentUiSession(
-      Object.values(snapshot.agents).map((agent) => {
+      (this.observationEnded ? [] : Object.values(snapshot.agents)).map((agent) => {
         const activityState = this.subagentActivities.agents[agent.id];
         return {
           state: structuredClone(agent),
@@ -2224,8 +2325,15 @@ export class SessionChatController {
   private async syncFromSessionSnapshot(
     ephemeralTimelineItemIdsToDiscard?: ReadonlySet<string>,
   ): Promise<boolean> {
+    const session = this.session;
+    if (this.observationEnded) {
+      return false;
+    }
     try {
-      const snapshot = await this.session.snapshot();
+      const snapshot = await session.snapshot();
+      if (!this.isObservationLive(session)) {
+        return false;
+      }
       const previousSnapshot = this.snapshot;
       for (const id of ephemeralTimelineItemIdsToDiscard ?? []) {
         this.ephemeralTimelineItems.delete(id);
@@ -2239,6 +2347,9 @@ export class SessionChatController {
       this.refreshStatus();
       return true;
     } catch (error) {
+      if (!this.isObservationLive(session)) {
+        return false;
+      }
       this.view.addTranscriptNotice("failed to refresh session", "error", [
         (error as Error).message,
       ]);
@@ -2277,7 +2388,7 @@ export class SessionChatController {
   }
 
   private startObservedSessionTurn(): void {
-    if (this.isStreaming) {
+    if (this.isStreaming || this.observationEnded) {
       return;
     }
 
@@ -2392,6 +2503,10 @@ export class SessionChatController {
   }
 
   private async cyclePersonality(): Promise<void> {
+    if (this.observationEnded) {
+      this.showObservationEndedNotice();
+      return;
+    }
     const personas = this.snapshot.catalog.personas;
     if (personas.length === 0) {
       this.view.showFooterNotice("no personas available.", "default");
@@ -2427,6 +2542,10 @@ export class SessionChatController {
   }
 
   private async cycleReasoningLevel(): Promise<void> {
+    if (this.observationEnded) {
+      this.showObservationEndedNotice();
+      return;
+    }
     const allowed = this.getAllowedReasoningLevels(this.getCurrentPersonaSnapshot());
     const current = (this.snapshot.settings.reasoning ?? allowed[0]!) as ReasoningEffort;
     const index = allowed.indexOf(current);
@@ -2570,23 +2689,27 @@ export class SessionChatController {
     }
 
     const guidance = guidanceText?.trim() ?? "";
+    const session = this.session;
     this.manualCompactionInProgress = true;
     this.refreshStatus();
 
     try {
-      const result = await this.session.compact(mode, {
+      const result = await session.compact(mode, {
         ...(guidance ? { guidance } : {}),
       });
-      if (result.snapshot.revision > this.snapshot.revision) {
+      if (this.isObservationLive(session) && result.snapshot.revision > this.snapshot.revision) {
         this.renderCompactedSnapshot(result.snapshot);
       }
     } catch (error) {
+      if (!this.isObservationLive(session)) return;
       const message = (error as Error).message || "compaction failed";
       this.view.addTranscriptNotice("failed to compact session", "error", [message]);
     } finally {
-      this.manualCompactionInProgress = false;
-      this.assistantInterruptRequested = false;
-      this.refreshStatus();
+      if (this.session === session) {
+        this.manualCompactionInProgress = false;
+        this.assistantInterruptRequested = false;
+        this.refreshStatus();
+      }
     }
   }
 
@@ -2735,13 +2858,15 @@ export class SessionChatController {
     this.view.updateStatus({
       footer: activityLabel
         ? { type: "activity", label: activityLabel }
-        : {
-            type: "regular",
-            cwdLabel: this.getFooterCwdLabel(),
-            contextUsage: this.getContextUsageString(),
-            sessionCost: this.getSessionCostString(),
-            duration: this.getTurnDurationString(),
-          },
+        : this.observationEnded
+          ? { type: "ended", label: OBSERVATION_ENDED_STATUS }
+          : {
+              type: "regular",
+              cwdLabel: this.getFooterCwdLabel(),
+              contextUsage: this.getContextUsageString(),
+              sessionCost: this.getSessionCostString(),
+              duration: this.getTurnDurationString(),
+            },
       editor: {
         mode: this.getInputMode(),
         personaName: this.getCurrentPersonaSnapshot()?.label ?? this.snapshot.settings.personaId,
@@ -2763,7 +2888,10 @@ export class SessionChatController {
   }
 
   private getActivityLabel(): string | undefined {
-    if (this.manualCompactionInProgress || this.hasRunningCompactionOperation(this.snapshot)) {
+    if (
+      this.manualCompactionInProgress ||
+      (!this.observationEnded && this.hasRunningCompactionOperation(this.snapshot))
+    ) {
       return "compacting context";
     }
     if (this.listenActivityLabel) {

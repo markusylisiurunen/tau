@@ -259,6 +259,8 @@ class FakeSession {
   pendingUserMessagesValue = { revision: 1, messages: [] };
   subagentActivitiesListeners = new Set();
   subagentActivitiesValue = { revision: 1, agents: {} };
+  observationEnded = false;
+  observationEndedListeners = new Set();
   operationLog = [];
   emitSubmitEvents = true;
   rejectSubmit = false;
@@ -507,11 +509,13 @@ class FakeSession {
   }
 
   onDelta(listener) {
+    this.assertActive();
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
 
   onEphemeral(listener) {
+    this.assertActive();
     this.ephemeralListeners.add(listener);
     return () => this.ephemeralListeners.delete(listener);
   }
@@ -521,6 +525,7 @@ class FakeSession {
   }
 
   onPendingUserMessages(listener) {
+    this.assertActive();
     this.pendingUserMessagesListeners.add(listener);
     listener({
       version: SESSION_PROTOCOL_VERSION,
@@ -536,6 +541,7 @@ class FakeSession {
   }
 
   onSubagentActivities(listener) {
+    this.assertActive();
     this.subagentActivitiesListeners.add(listener);
     listener({
       version: SESSION_PROTOCOL_VERSION,
@@ -549,6 +555,26 @@ class FakeSession {
       })),
     });
     return () => this.subagentActivitiesListeners.delete(listener);
+  }
+
+  assertActive() {
+    if (this.observationEnded) throw new Error("tau sdk session is unobserved");
+  }
+
+  onObservationEnded(listener) {
+    if (this.observationEnded) {
+      listener();
+      return () => undefined;
+    }
+    this.observationEndedListeners.add(listener);
+    return () => this.observationEndedListeners.delete(listener);
+  }
+
+  endObservation() {
+    this.observationEnded = true;
+    const listeners = [...this.observationEndedListeners];
+    this.observationEndedListeners.clear();
+    for (const listener of listeners) listener();
   }
 
   async snapshot() {
@@ -8192,5 +8218,275 @@ describe("SessionChatController", () => {
       text: "no user messages available to rewind.",
       tone: "default",
     });
+  });
+});
+
+describe("SessionChatController ended observations", () => {
+  const isEndedNotification = (title) => title === "tau detached from session";
+  const runningSnapshot = () => {
+    const agent = createAgentRun();
+    return updateSnapshot(createSnapshot(), {
+      revision: 3,
+      lifecycle: "running",
+      historyEntries: [
+        {
+          id: "assistant-tools",
+          message: createAssistantToolCallMessage([
+            { type: "toolCall", id: "tool-a", name: "bash", arguments: { command: "echo a" } },
+          ]),
+        },
+      ],
+      tools: {
+        "tool-a": {
+          id: "tool-a",
+          toolCallId: "tool-a",
+          toolName: "bash",
+          call: { messageId: "assistant-tools", contentIndex: 0 },
+          status: "running",
+          facetIds: [],
+        },
+      },
+      operations: {
+        compaction: { id: "compaction", kind: "auto-compaction", status: "running", startedAt: 1 },
+      },
+      timeline: [
+        { type: "tool", id: "tool-a", toolId: "tool-a" },
+        { type: "operation", id: "compaction", operationId: "compaction" },
+      ],
+      agents: { [agent.id]: agent },
+    });
+  };
+
+  it("stops live indicators, keeps state and input, and never observes again", async () => {
+    const session = new FakeSession(runningSnapshot());
+    session.pendingUserMessagesValue = {
+      revision: 2,
+      messages: [{ id: "queued", mode: "queue", text: "queued follow-up" }],
+    };
+    const view = new FakeView();
+    const createSession = vi.fn();
+    const { controller } = await createControllerHarness({ session, view, createSession });
+    controller.start();
+    view.editorText = "my draft";
+    expect(view.programStatuses.at(-1)).toBe("working");
+    expect(view.subagentSnapshots).toHaveLength(1);
+    expect(view.pendingUserMessages).toHaveLength(1);
+    expect(view.status.footer).toEqual({ type: "activity", label: "compacting context" });
+    expect(view.toolModels).toEqual([expect.objectContaining({ status: "running" })]);
+    const lastSnapshot = structuredClone(session.snapshotValue);
+    const toolModels = structuredClone(view.toolModels);
+    const snapshotSpy = vi.spyOn(session, "snapshot");
+
+    session.endObservation();
+    await flush();
+
+    expect(view.workingIconStops).toBe(view.workingIconStarts);
+    expect(view.programStatuses.at(-1)).toBe("idle");
+    expect(view.status.footer.type).toBe("ended");
+    expect(view.subagentSnapshots).toEqual([]);
+    expect(view.toolModels).toEqual(toolModels);
+    expect(controller.snapshot).toEqual(lastSnapshot);
+    expect(view.pendingUserMessages).toEqual([]);
+    expect(view.editorText).toBe("my draft");
+    expect(view.terminalNotifications).toHaveLength(1);
+
+    const notice = view.transcriptNotices.at(-1);
+    expect(notice.tone).toBe("default");
+    expect(notice.content.join("\n")).toContain(session.snapshotValue.sessionId);
+    expect(view.transcriptNotices).toHaveLength(1);
+
+    const handlers = controller.getInputHandlers();
+    for (const input of ["hello", "!pwd", "/reload", "/compact-all", "/rewind"]) {
+      expect(handlers.beforeSubmit(input)).toBe(false);
+      await controller.onUserInput(input);
+    }
+    expect(handlers.beforeSubmit("/help")).toBe(true);
+    handlers.onShiftTab();
+    handlers.onCtrlP();
+    handlers.onAltUp();
+    expect(await controller.getAutocompleteSources().autocompletePaths("src", 5)).toEqual([]);
+    await flush();
+
+    expect(session.submit).not.toHaveBeenCalled();
+    expect(snapshotSpy).not.toHaveBeenCalled();
+    expect(createSession).not.toHaveBeenCalled();
+    expect(view.transcriptNotices).toHaveLength(1);
+    expect(view.status.footer.type).toBe("ended");
+    await controller.dispose();
+  });
+
+  it("reports an observation that ended before the controller started", async () => {
+    const session = new FakeSession();
+    const view = new FakeView();
+    const { controller } = await createControllerHarness({ session, view });
+    session.endObservation();
+
+    controller.start();
+
+    expect(view.status.footer.type).toBe("ended");
+    expect(view.transcriptNotices).toHaveLength(1);
+    expect(session.listeners.size).toBe(0);
+    expect(session.ephemeralListeners.size).toBe(0);
+    expect(session.pendingUserMessagesListeners.size).toBe(0);
+    expect(session.subagentActivitiesListeners.size).toBe(0);
+    await controller.dispose();
+  });
+
+  it("keeps the current session when a replacement has already ended", async () => {
+    const session = new FakeSession();
+    const nextSession = new FakeSession();
+    nextSession.id = "session-2";
+    nextSession.endObservation();
+    const view = new FakeView();
+    const { controller } = await createControllerHarness({
+      session,
+      view,
+      createSession: vi.fn(async () => nextSession),
+    });
+    controller.start();
+
+    await controller.onUserInput("/new");
+
+    expect(nextSession.unobserve).toHaveBeenCalledOnce();
+    expect(view.status.footer.type).toBe("regular");
+    expect(view.transcriptNotices.at(-1).tone).toBe("error");
+    await controller.onUserInput("hello");
+    expect(session.submit).toHaveBeenCalledOnce();
+    await controller.dispose();
+  });
+
+  it("settles an in-flight turn silently and keeps it away from the next session", async () => {
+    const session = new FakeSession();
+    const pendingSubmit = deferred();
+    session.submit = vi.fn(() => pendingSubmit.promise);
+    session.snapshot = vi.fn(session.snapshot.bind(session));
+    const nextSession = new FakeSession(updateSnapshot(createSnapshot(), { lifecycle: "running" }));
+    nextSession.id = "session-2";
+    const view = new FakeView();
+    const { controller } = await createControllerHarness({
+      session,
+      view,
+      createSession: vi.fn(async () => nextSession),
+    });
+    controller.start();
+
+    const turn = controller.onUserInput("hello");
+    await flush();
+    session.snapshot.mockClear();
+    session.endObservation();
+    expect(view.workingIconStops).toBe(view.workingIconStarts);
+
+    await controller.onUserInput("/new");
+    expect(view.status.footer.type).not.toBe("ended");
+    const stopsBeforeSettlement = view.workingIconStops;
+
+    pendingSubmit.reject(new Error("tau sdk session is unobserved"));
+    await turn;
+
+    expect(session.snapshot).not.toHaveBeenCalled();
+    expect(view.workingIconStops).toBe(stopsBeforeSettlement);
+    expect(view.transcriptNotices.filter((notice) => notice.tone === "error")).toEqual([]);
+    await controller.dispose();
+  });
+
+  it("scopes in-flight bash card updates to the session that started them", async () => {
+    const execResult = {
+      stdout: "done",
+      stderr: "",
+      output: "done",
+      exitCode: 0,
+      timedOut: false,
+      aborted: false,
+    };
+    const startBash = async (session, view, options) => {
+      const pendingExec = deferred();
+      session.exec = vi.fn(() => pendingExec.promise);
+      const { controller } = await createControllerHarness({ session, view, ...options });
+      controller.start();
+      const command = controller.onUserInput("!!pwd");
+      await flush();
+      return { controller, command, pendingExec };
+    };
+
+    const continuing = new FakeSession();
+    const continuingView = new FakeView();
+    const same = await startBash(continuing, continuingView);
+    continuing.endObservation();
+    same.pendingExec.resolve(execResult);
+    await same.command;
+    expect(continuingView.localToolModels.at(-1).status).toBe("succeeded");
+    expect(continuingView.status.footer.type).toBe("ended");
+    await same.controller.dispose();
+
+    const replaced = new FakeSession();
+    const nextSession = new FakeSession();
+    nextSession.id = "session-2";
+    const replacedView = new FakeView();
+    const next = await startBash(replaced, replacedView, {
+      createSession: vi.fn(async () => nextSession),
+    });
+    replaced.endObservation();
+    await next.controller.onUserInput("/new");
+    const cardUpdates = replacedView.localToolModels.length;
+    const stops = replacedView.workingIconStops;
+
+    next.pendingExec.resolve(execResult);
+    await next.command;
+
+    expect(replacedView.localToolModels).toHaveLength(cardUpdates);
+    expect(replacedView.workingIconStops).toBe(stops);
+    await next.controller.dispose();
+  });
+
+  it("restores input after /new and watches only the new session", async () => {
+    const session = new FakeSession();
+    const nextSession = new FakeSession();
+    nextSession.id = "session-2";
+    nextSession.snapshotValue = { ...nextSession.snapshotValue, sessionId: nextSession.id };
+    const view = new FakeView();
+    const { controller } = await createControllerHarness({
+      session,
+      view,
+      createSession: vi.fn(async () => nextSession),
+    });
+    controller.start();
+
+    session.endObservation();
+    expect(controller.getInputHandlers().beforeSubmit("/new")).toBe(true);
+    await controller.onUserInput("/new");
+
+    expect(view.status.footer.type).toBe("regular");
+    await controller.onUserInput("hello");
+    expect(nextSession.submit).toHaveBeenCalledOnce();
+    expect(view.terminalNotifications.filter(isEndedNotification)).toHaveLength(1);
+
+    nextSession.endObservation();
+    expect(view.status.footer.type).toBe("ended");
+    expect(view.terminalNotifications.filter(isEndedNotification)).toHaveLength(2);
+    await controller.dispose();
+  });
+
+  it("stays quiet when this client replaces or leaves the session", async () => {
+    const session = new FakeSession();
+    session.unobserve = vi.fn(async () => session.endObservation());
+    const nextSession = new FakeSession();
+    nextSession.id = "session-2";
+    nextSession.unobserve = vi.fn(async () => nextSession.endObservation());
+    const view = new FakeView();
+    const { controller } = await createControllerHarness({
+      session,
+      view,
+      createSession: vi.fn(async () => nextSession),
+    });
+    controller.start();
+
+    await controller.onUserInput("/new");
+    expect(session.unobserve).toHaveBeenCalledOnce();
+    expect(view.status.footer.type).toBe("regular");
+
+    await controller.dispose();
+    expect(nextSession.unobserve).toHaveBeenCalledOnce();
+    expect(view.terminalNotifications.filter(isEndedNotification)).toEqual([]);
+    expect(view.status.footer.type).toBe("regular");
   });
 });

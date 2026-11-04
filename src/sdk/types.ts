@@ -16,6 +16,7 @@ import type {
   SessionProtocolInterruptResult,
   SessionProtocolInterruptSubagentResult,
   SessionProtocolMethod,
+  SessionProtocolObservedMessage,
   SessionProtocolPendingUserMessagesMessage,
   SessionProtocolPendingUserMessagesState,
   SessionProtocolPersonaOverrides,
@@ -50,12 +51,14 @@ import type { TauClientToolPresentation } from "./client_tool_presentation.js";
 export type TauSdkRequestId = SessionProtocolRequestId;
 export type TauSdkSessionProtocolMethod = SessionProtocolMethod;
 export type TauSdkInitializeParams = SessionProtocolInitializeParams;
-export type TauSdkDelta = SessionProtocolDeltaMessage;
-export type TauSdkEphemeral = SessionProtocolEphemeralMessage;
+export type TauSdkDelta = SessionProtocolObservedMessage<SessionProtocolDeltaMessage>;
+export type TauSdkEphemeral = SessionProtocolObservedMessage<SessionProtocolEphemeralMessage>;
 export type TauSdkPendingUserMessagesState = SessionProtocolPendingUserMessagesState;
-export type TauSdkPendingUserMessagesMessage = SessionProtocolPendingUserMessagesMessage;
+export type TauSdkPendingUserMessagesMessage =
+  SessionProtocolObservedMessage<SessionProtocolPendingUserMessagesMessage>;
 export type TauSdkSubagentActivitiesState = SessionProtocolSubagentActivitiesState;
-export type TauSdkSubagentActivitiesMessage = SessionProtocolSubagentActivitiesMessage;
+export type TauSdkSubagentActivitiesMessage =
+  SessionProtocolObservedMessage<SessionProtocolSubagentActivitiesMessage>;
 export type TauSdkReadyMessage = SessionProtocolReadyMessage;
 export type TauSdkCreateSessionInput = SessionProtocolCreateParams;
 export type TauSdkSessionSummary = SessionProtocolSessionSummary;

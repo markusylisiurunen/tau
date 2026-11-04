@@ -42,6 +42,7 @@ import type {
   SessionProtocolTurnOutcome,
   SessionProtocolUserMessageTurnResult,
 } from "../protocol/session_protocol.js";
+import type { HostedSessionInput } from "./hosted_session_input.js";
 
 export class EphemeralThreadBusyError extends Error {}
 
@@ -54,11 +55,13 @@ export class SessionExecBusyError extends Error {
 export class SessionRetryUnavailableError extends Error {}
 
 export type TauHostedSession = {
+  readonly input: HostedSessionInput;
   readonly sessionId: string;
   readonly isDisposed?: boolean;
   readonly isDisposing: boolean;
   readonly isTurnRunning: boolean;
   readonly canAcceptSteering: boolean;
+  onClosing(handler: () => void): () => void;
   onDelta(handler: (delta: SessionProtocolDeltaMessage) => void): () => void;
   onEphemeral(handler: (message: SessionProtocolEphemeralMessage) => void): () => void;
   subagentActivities(): SessionProtocolSubagentActivitiesState;
@@ -68,10 +71,9 @@ export type TauHostedSession = {
   record(
     options: Omit<SessionProtocolRecordParams, "sessionId">,
   ): Promise<SessionProtocolRecordResult>;
-  acceptTurn(
+  submitTurn(
     options: Omit<SessionProtocolRecordParams, "sessionId">,
-  ): Promise<SessionProtocolRecordResult>;
-  runAcceptedTurn(userHistoryEntryId: string): Promise<SessionProtocolUserMessageTurnResult>;
+  ): Promise<SessionProtocolUserMessageTurnResult>;
   runTurn(): Promise<SessionProtocolTurnOutcome>;
   retryTurn(): Promise<SessionProtocolTurnOutcome>;
   interruptTurn(): boolean;
@@ -150,8 +152,8 @@ export type TauSessionHost = {
     sendCancel: (message: SessionProtocolClientToolCancelMessage) => void;
   }): {
     clientId: string;
-    attachSession: (sessionId: string) => void;
-    detachSession: (sessionId: string) => void;
+    attachSession: (sessionId: string, observationId: string) => void;
+    detachSession: (sessionId: string, observationId: string) => void;
     unregister: () => void;
   };
   acknowledgeClientToolCall?(

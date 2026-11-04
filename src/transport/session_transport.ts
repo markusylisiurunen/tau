@@ -4,6 +4,8 @@ import type {
   SessionProtocolEphemeralMessage,
   SessionProtocolInitializeParams,
   SessionProtocolMethod,
+  SessionProtocolObservationEndedMessage,
+  SessionProtocolObservedMessage,
   SessionProtocolParamsByMethod,
   SessionProtocolPendingUserMessagesMessage,
   SessionProtocolReadyMessage,
@@ -11,15 +13,22 @@ import type {
   SessionProtocolSubagentActivitiesMessage,
 } from "../protocol/session_protocol.js";
 
-export type SessionProtocolDeltaListener = (delta: SessionProtocolDeltaMessage) => void;
-export type SessionProtocolEphemeralListener = (message: SessionProtocolEphemeralMessage) => void;
+export type SessionProtocolDeltaListener = (
+  delta: SessionProtocolObservedMessage<SessionProtocolDeltaMessage>,
+) => void;
+export type SessionProtocolEphemeralListener = (
+  message: SessionProtocolObservedMessage<SessionProtocolEphemeralMessage>,
+) => void;
 export type SessionProtocolPendingUserMessagesListener = (
-  message: SessionProtocolPendingUserMessagesMessage,
+  message: SessionProtocolObservedMessage<SessionProtocolPendingUserMessagesMessage>,
 ) => void;
 export type SessionProtocolSubagentActivitiesListener = (
-  message: SessionProtocolSubagentActivitiesMessage,
+  message: SessionProtocolObservedMessage<SessionProtocolSubagentActivitiesMessage>,
 ) => void;
 export type SessionProtocolClientToolListener = (message: SessionProtocolClientToolMessage) => void;
+export type SessionProtocolObservationEndedListener = (
+  message: SessionProtocolObservationEndedMessage,
+) => void;
 export type SessionProtocolFailureListener = (error: Error) => void;
 
 export type SessionProtocolTransport = {
@@ -28,12 +37,14 @@ export type SessionProtocolTransport = {
   request<M extends SessionProtocolMethod>(
     method: M,
     params: SessionProtocolParamsByMethod[M],
+    observationId?: string,
   ): Promise<SessionProtocolResultByMethod[M]>;
   onDelta(listener: SessionProtocolDeltaListener): () => void;
   onEphemeral(listener: SessionProtocolEphemeralListener): () => void;
   onPendingUserMessages(listener: SessionProtocolPendingUserMessagesListener): () => void;
   onSubagentActivities(listener: SessionProtocolSubagentActivitiesListener): () => void;
   onClientTool(listener: SessionProtocolClientToolListener): () => void;
+  onObservationEnded(listener: SessionProtocolObservationEndedListener): () => void;
   onFailure(listener: SessionProtocolFailureListener): () => void;
   close(): Promise<void>;
 };

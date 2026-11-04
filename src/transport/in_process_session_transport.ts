@@ -18,6 +18,7 @@ import {
   notifySessionProtocolClientToolListeners,
   notifySessionProtocolDeltaListeners,
   notifySessionProtocolEphemeralListeners,
+  notifySessionProtocolObservationEndedListeners,
   notifySessionProtocolPendingUserMessagesListeners,
   notifySessionProtocolSubagentActivitiesListeners,
 } from "./session_protocol_transport_helpers.js";
@@ -26,6 +27,7 @@ import type {
   SessionProtocolDeltaListener,
   SessionProtocolEphemeralListener,
   SessionProtocolFailureListener,
+  SessionProtocolObservationEndedListener,
   SessionProtocolPendingUserMessagesListener,
   SessionProtocolSubagentActivitiesListener,
   SessionProtocolTransport,
@@ -45,6 +47,7 @@ export class InProcessSessionProtocolTransport implements SessionProtocolTranspo
     new Set<SessionProtocolPendingUserMessagesListener>();
   private readonly subagentActivitiesListeners =
     new Set<SessionProtocolSubagentActivitiesListener>();
+  private readonly observationEndedListeners = new Set<SessionProtocolObservationEndedListener>();
   private readonly clientToolListeners = new Set<SessionProtocolClientToolListener>();
   private readonly pendingRequests = new PendingSessionProtocolRequests();
 
@@ -97,6 +100,7 @@ export class InProcessSessionProtocolTransport implements SessionProtocolTranspo
   request<M extends SessionProtocolMethod>(
     method: M,
     params: SessionProtocolParamsByMethod[M],
+    observationId?: string,
   ): Promise<SessionProtocolResultByMethod[M]> {
     if (this.isClosed) {
       return Promise.reject(new TauTransportError("tau in-process transport is closed"));
@@ -104,7 +108,7 @@ export class InProcessSessionProtocolTransport implements SessionProtocolTranspo
 
     let pending: PendingSessionProtocolRequest<M>;
     try {
-      pending = this.pendingRequests.create(method, params);
+      pending = this.pendingRequests.create(method, params, observationId);
     } catch (error) {
       return Promise.reject(error);
     }
@@ -114,6 +118,13 @@ export class InProcessSessionProtocolTransport implements SessionProtocolTranspo
     });
 
     return pending.promise;
+  }
+
+  onObservationEnded(listener: SessionProtocolObservationEndedListener): () => void {
+    this.observationEndedListeners.add(listener);
+    return () => {
+      this.observationEndedListeners.delete(listener);
+    };
   }
 
   onDelta(listener: SessionProtocolDeltaListener): () => void {
@@ -163,6 +174,7 @@ export class InProcessSessionProtocolTransport implements SessionProtocolTranspo
     this.isClosed = true;
     const closeError = new TauTransportError("tau in-process transport was closed");
     this.pendingRequests.rejectAll(closeError);
+    this.observationEndedListeners.clear();
     this.deltaListeners.clear();
     this.ephemeralListeners.clear();
     this.pendingUserMessagesListeners.clear();
@@ -174,6 +186,13 @@ export class InProcessSessionProtocolTransport implements SessionProtocolTranspo
   private handleMessage(message: SessionProtocolOutgoingMessage): void {
     if (message.type === "ready") {
       this.readyValue = message;
+      return;
+    }
+
+    if (message.type === "session.observationEnded") {
+      notifySessionProtocolObservationEndedListeners(this.observationEndedListeners, message, {
+        ignoreListenerErrors: true,
+      });
       return;
     }
 

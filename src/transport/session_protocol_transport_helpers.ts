@@ -2,6 +2,8 @@ import type {
   SessionProtocolClientToolMessage,
   SessionProtocolDeltaMessage,
   SessionProtocolEphemeralMessage,
+  SessionProtocolObservationEndedMessage,
+  SessionProtocolObservedMessage,
   SessionProtocolOutgoingParseFailure,
   SessionProtocolParsedResponseMessage,
   SessionProtocolPendingUserMessagesMessage,
@@ -14,6 +16,7 @@ import type {
   SessionProtocolDeltaListener,
   SessionProtocolEphemeralListener,
   SessionProtocolFailureListener,
+  SessionProtocolObservationEndedListener,
   SessionProtocolPendingUserMessagesListener,
   SessionProtocolSubagentActivitiesListener,
 } from "./session_transport.js";
@@ -68,7 +71,7 @@ export async function waitForPromiseOrTimeout(
 
 export function notifySessionProtocolDeltaListeners(
   listeners: ReadonlySet<SessionProtocolDeltaListener>,
-  message: SessionProtocolDeltaMessage,
+  message: SessionProtocolObservedMessage<SessionProtocolDeltaMessage>,
   options: { ignoreListenerErrors?: boolean } = {},
 ): void {
   for (const listener of [...listeners]) {
@@ -114,9 +117,28 @@ export function notifySessionProtocolFailureListeners(
   }
 }
 
+export function notifySessionProtocolObservationEndedListeners(
+  listeners: ReadonlySet<SessionProtocolObservationEndedListener>,
+  message: SessionProtocolObservationEndedMessage,
+  options: { ignoreListenerErrors?: boolean } = {},
+): void {
+  for (const listener of [...listeners]) {
+    if (!options.ignoreListenerErrors) {
+      listener(message);
+      continue;
+    }
+
+    try {
+      listener(message);
+    } catch {
+      // listener failures must not break transport processing
+    }
+  }
+}
+
 export function notifySessionProtocolEphemeralListeners(
   listeners: ReadonlySet<SessionProtocolEphemeralListener>,
-  message: SessionProtocolEphemeralMessage,
+  message: SessionProtocolObservedMessage<SessionProtocolEphemeralMessage>,
   options: { ignoreListenerErrors?: boolean } = {},
 ): void {
   for (const listener of [...listeners]) {
@@ -135,7 +157,7 @@ export function notifySessionProtocolEphemeralListeners(
 
 export function notifySessionProtocolPendingUserMessagesListeners(
   listeners: ReadonlySet<SessionProtocolPendingUserMessagesListener>,
-  message: SessionProtocolPendingUserMessagesMessage,
+  message: SessionProtocolObservedMessage<SessionProtocolPendingUserMessagesMessage>,
   options: { ignoreListenerErrors?: boolean } = {},
 ): void {
   for (const listener of [...listeners]) {
@@ -154,7 +176,7 @@ export function notifySessionProtocolPendingUserMessagesListeners(
 
 export function notifySessionProtocolSubagentActivitiesListeners(
   listeners: ReadonlySet<SessionProtocolSubagentActivitiesListener>,
-  message: SessionProtocolSubagentActivitiesMessage,
+  message: SessionProtocolObservedMessage<SessionProtocolSubagentActivitiesMessage>,
   options: { ignoreListenerErrors?: boolean } = {},
 ): void {
   for (const listener of [...listeners]) {

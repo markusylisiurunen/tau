@@ -1,6 +1,7 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import { formatSteeringUserMessage } from "../dist/core/runtime/steering.js";
+import { HostedSessionInput } from "../dist/host/hosted_session_input.js";
 import {
   EphemeralThreadBusyError,
   SessionExecBusyError,
@@ -128,6 +129,7 @@ function request(id, method, params) {
     type: "request",
     id,
     method,
+    observationId: "test-observation",
     ...(params !== undefined ? { params } : {}),
   };
 }
@@ -216,6 +218,9 @@ function createHarness(options = {}) {
       get sessionId() {
         return sessionId;
       },
+      onClosing() {
+        return () => {};
+      },
       onDelta(handler) {
         deltaHandlers.add(handler);
         return () => deltaHandlers.delete(handler);
@@ -295,6 +300,10 @@ function createHarness(options = {}) {
         }
         return await record(recordOptions);
       },
+      async submitTurn(options) {
+        const accepted = await hostedSession.acceptTurn(options);
+        return await hostedSession.runAcceptedTurn(accepted.userHistoryEntryId);
+      },
       async acceptTurn(recordOptions) {
         if (options.record) {
           return await options.record(recordOptions, record);
@@ -302,9 +311,11 @@ function createHarness(options = {}) {
         return await record(recordOptions);
       },
       async runAcceptedTurn(userHistoryEntryId) {
-        const turn = await hostedSession.runTurn();
-        await hostedSession.snapshot();
-        return { userHistoryEntryId, turn };
+        try {
+          return { userHistoryEntryId, turn: await hostedSession.runTurn() };
+        } finally {
+          await hostedSession.snapshot();
+        }
       },
       async runTurn() {
         running = true;
@@ -546,6 +557,7 @@ function createHarness(options = {}) {
       },
     };
 
+    hostedSession.input = new HostedSessionInput(hostedSession);
     sessions.set(sessionId, hostedSession);
     return hostedSession;
   };
@@ -653,6 +665,9 @@ function snapshotHasUserText(snapshot, text) {
 describe("SessionProtocolHandler", () => {
   it("forwards successful image output to the owning host", async () => {
     const harness = createHarness();
+    await harness.connection.handleRequest(
+      request("baseline", "session.observe", { sessionId: "session-1" }),
+    );
     harness.host.completeClientToolCall = vi.fn(() => true);
     const result = {
       ok: true,
@@ -704,43 +719,23 @@ describe("SessionProtocolHandler", () => {
     expect(harness.releaseSession).toHaveBeenCalledWith(session);
   });
 
-  it("releases redundant handles acquired by concurrent session lookups", async () => {
+  it("rejects unobserved requests without recovering a runtime", async () => {
     const harness = createHarness();
-    let started = 0;
-    let markLookupsStarted;
-    const lookupsStarted = new Promise((resolve) => {
-      markLookupsStarted = resolve;
-    });
-    let releaseLookups;
-    const lookupBlocker = new Promise((resolve) => {
-      releaseLookups = resolve;
-    });
-    const observeSession = vi.fn(async (sessionId) => {
-      started += 1;
-      if (started === 2) markLookupsStarted();
-      await lookupBlocker;
-      return await harness.host.observeSession(sessionId);
-    });
+    await harness.connection.handleRequest(
+      request("baseline", "session.observe", { sessionId: "session-1" }),
+    );
+    const observeSession = vi.fn(harness.host.observeSession);
+    const lines = [];
     const connection = new TestSessionProtocolConnection({
       host: { ...harness.host, observeSession },
-      send: () => {},
+      send: (message) => lines.push(message),
     });
-
-    const first = connection.handleRequest(
-      request("snapshot-1", "session.snapshot", { sessionId: "session-1" }),
+    await connection.handleRequest(
+      request("snapshot", "session.snapshot", { sessionId: "session-1" }),
     );
-    const second = connection.handleRequest(
-      request("snapshot-2", "session.snapshot", { sessionId: "session-1" }),
-    );
-    await lookupsStarted;
-    releaseLookups();
-    await Promise.all([first, second]);
-
-    expect(observeSession).toHaveBeenCalledTimes(2);
-    expect(harness.releaseSession).toHaveBeenCalledTimes(1);
-
+    expect(observeSession).not.toHaveBeenCalled();
+    expect(lines.at(-1)).toMatchObject({ ok: false, error: { code: "not_found" } });
     await connection.close();
-    expect(harness.releaseSession).toHaveBeenCalledTimes(2);
   });
 
   it("returns busy for concurrent ephemeral thread submissions", async () => {
@@ -749,6 +744,9 @@ describe("SessionProtocolHandler", () => {
         throw new EphemeralThreadBusyError(`thread '${threadId}' already has an active request`);
       },
     });
+    await harness.connection.handleRequest(
+      request("baseline", "session.observe", { sessionId: "session-1" }),
+    );
 
     await harness.connection.handleRequest(
       request("ephemeral-busy", "session.ephemeral.submit", {
@@ -774,6 +772,9 @@ describe("SessionProtocolHandler", () => {
 
   it("does not create ephemeral contexts after closing during session recovery", async () => {
     const harness = createHarness();
+    await harness.connection.handleRequest(
+      request("baseline", "session.observe", { sessionId: "session-1" }),
+    );
     let markObserveStarted;
     let releaseObserve;
     const observeStarted = new Promise((resolve) => {
@@ -797,7 +798,7 @@ describe("SessionProtocolHandler", () => {
     });
 
     const create = connection.handleRequest(
-      request("ephemeral-create", "session.ephemeral.create", {
+      request("ephemeral-create", "session.observe", {
         sessionId: "session-1",
         workingDirectory: "../review",
         instructions: "review this",
@@ -823,6 +824,9 @@ describe("SessionProtocolHandler", () => {
         return { threadId: options.threadId, response: "done" };
       },
     });
+    await harness.connection.handleRequest(
+      request("baseline", "session.observe", { sessionId: "session-1" }),
+    );
     const submit = harness.connection.handleRequest(
       request("submit", "session.submit", {
         sessionId: "session-1",
@@ -890,6 +894,9 @@ describe("SessionProtocolHandler", () => {
 
   it("creates additional sessions and routes requests by session id", async () => {
     const harness = createHarness();
+    await harness.connection.handleRequest(
+      request("baseline", "session.observe", { sessionId: "session-1" }),
+    );
 
     await harness.connection.handleRequest(request("create", "session.create", localCreateParams));
     const created = harness.lines.find((line) => line.type === "response" && line.id === "create");
@@ -909,6 +916,9 @@ describe("SessionProtocolHandler", () => {
       ],
     });
 
+    await harness.connection.handleRequest(
+      request("observe-created", "session.observe", { sessionId: "session-2" }),
+    );
     await harness.connection.handleRequest(
       request("bash-created", "session.exec", {
         sessionId: "session-2",
@@ -1003,12 +1013,7 @@ describe("SessionProtocolHandler", () => {
     const unobservedSnapshot = harness.lines.find(
       (line) => line.type === "response" && line.id === "snapshot-created",
     );
-    expect(unobservedSnapshot).toEqual(
-      expect.objectContaining({
-        ok: true,
-        result: expect.objectContaining({ sessionId: "session-2" }),
-      }),
-    );
+    expect(unobservedSnapshot).toMatchObject({ ok: false, error: { code: "not_found" } });
   });
 
   it("serializes idle steering startup through user-message recording", async () => {
@@ -1027,6 +1032,9 @@ describe("SessionProtocolHandler", () => {
         return await record(options);
       },
     });
+    await harness.connection.handleRequest(
+      request("baseline", "session.observe", { sessionId: "session-1" }),
+    );
 
     const steering = harness.connection.handleRequest(
       request("steer-1", "session.steer", {
@@ -1074,12 +1082,16 @@ describe("SessionProtocolHandler", () => {
     const harness = createHarness({
       snapshotDelays: [
         0,
+        0,
         async () => {
           markFinalSnapshot();
           await finalSnapshotGate;
         },
       ],
     });
+    await harness.connection.handleRequest(
+      request("baseline", "session.observe", { sessionId: "session-1" }),
+    );
 
     const firstSubmit = harness.connection.handleRequest(
       request("submit-1", "session.submit", {
@@ -1128,6 +1140,9 @@ describe("SessionProtocolHandler", () => {
       },
     });
     await harness.connection.handleRequest(
+      request("baseline", "session.observe", { sessionId: "session-1" }),
+    );
+    await harness.connection.handleRequest(
       request("retry-empty", "session.retry", { sessionId: "session-1" }),
     );
     expect(harness.lines.find((line) => line.id === "retry-empty")).toMatchObject({
@@ -1138,6 +1153,9 @@ describe("SessionProtocolHandler", () => {
 
   it("streams submit events, forwards subagent events, and rejects overlapping submit with busy", async () => {
     const harness = createHarness();
+    await harness.connection.handleRequest(
+      request("baseline", "session.observe", { sessionId: "session-1" }),
+    );
 
     const firstSubmit = harness.connection.handleRequest(
       request("submit-1", "session.submit", {
@@ -1233,6 +1251,9 @@ describe("SessionProtocolHandler", () => {
 
   it("broadcasts session updates across handlers and stops after detach", async () => {
     const harness = createHarness();
+    await harness.connection.handleRequest(
+      request("baseline", "session.observe", { sessionId: "session-1" }),
+    );
     const observerLines = [];
     const observer = new TestSessionProtocolConnection({
       host: harness.host,
@@ -1456,7 +1477,7 @@ describe("SessionProtocolHandler", () => {
     await observer.close();
   });
 
-  it("continues forwarding deltas after a repeated observe snapshot failure", async () => {
+  it("ends the previous observation when its replacement fails", async () => {
     let harness;
     harness = createHarness({
       snapshotDelays: [
@@ -1492,7 +1513,7 @@ describe("SessionProtocolHandler", () => {
     );
     expect(
       observerLines.some((line) => deltaHasNotice(line, "during failed repeated observe")),
-    ).toBe(true);
+    ).toBe(false);
 
     await observer.close();
   });
@@ -1509,6 +1530,9 @@ describe("SessionProtocolHandler", () => {
         throw new Error("model failed before streaming");
       },
     });
+    await harness.connection.handleRequest(
+      request("baseline", "session.observe", { sessionId: "session-1" }),
+    );
 
     await harness.connection.handleRequest(
       request("submit", "session.submit", {
@@ -1526,7 +1550,6 @@ describe("SessionProtocolHandler", () => {
         ok: false,
         error: expect.objectContaining({
           code: SESSION_PROTOCOL_ERROR_CODES.internalError,
-          message: "failed to run session turn",
         }),
       }),
     );
@@ -1534,6 +1557,9 @@ describe("SessionProtocolHandler", () => {
 
   it("preserves event order across async snapshot commits", async () => {
     const harness = createHarness({ snapshotDelays: [50, 0] });
+    await harness.connection.handleRequest(
+      request("baseline", "session.observe", { sessionId: "session-1" }),
+    );
 
     const submit = harness.connection.handleRequest(
       request("submit", "session.submit", {
@@ -1564,6 +1590,9 @@ describe("SessionProtocolHandler", () => {
         releaseSubmit = resolve;
       });
     const harness = createHarness({ afterTurnRelease: submitBlocker });
+    await harness.connection.handleRequest(
+      request("baseline", "session.observe", { sessionId: "session-1" }),
+    );
 
     const submitPromise = harness.connection.handleRequest(
       request("submit", "session.submit", {
@@ -1588,6 +1617,9 @@ describe("SessionProtocolHandler", () => {
 
   it("does not emit protocol output after close", async () => {
     const harness = createHarness();
+    await harness.connection.handleRequest(
+      request("baseline", "session.observe", { sessionId: "session-1" }),
+    );
     await harness.connection.close();
     const lineCount = harness.lines.length;
 
@@ -1610,12 +1642,16 @@ describe("SessionProtocolHandler", () => {
     const harness = createHarness({
       snapshotDelays: [
         0,
+        0,
         async () => {
           markFinalSnapshotStarted();
           await finalSnapshotGate;
         },
       ],
     });
+    await harness.connection.handleRequest(
+      request("baseline", "session.observe", { sessionId: "session-1" }),
+    );
 
     const submit = harness.connection.handleRequest(
       request("submit", "session.submit", {
@@ -1648,6 +1684,9 @@ describe("SessionProtocolHandler", () => {
 
   it("interrupts a subagent run without interrupting an active foreground turn", async () => {
     const harness = createHarness();
+    await harness.connection.handleRequest(
+      request("baseline", "session.observe", { sessionId: "session-1" }),
+    );
 
     const submit = harness.connection.handleRequest(
       request("submit-1", "session.submit", {
@@ -1676,6 +1715,9 @@ describe("SessionProtocolHandler", () => {
 
   it("changes reasoning during an active turn without interrupting or rejecting queued submits", async () => {
     const harness = createHarness();
+    await harness.connection.handleRequest(
+      request("baseline", "session.observe", { sessionId: "session-1" }),
+    );
 
     const firstSubmit = harness.connection.handleRequest(
       request("submit-1", "session.submit", {
@@ -1741,6 +1783,9 @@ describe("SessionProtocolHandler", () => {
 
   it("batches steering submits while a turn is running", async () => {
     const harness = createHarness();
+    await harness.connection.handleRequest(
+      request("baseline", "session.observe", { sessionId: "session-1" }),
+    );
 
     const firstSubmit = harness.connection.handleRequest(
       request("submit-1", "session.submit", {
@@ -1822,6 +1867,9 @@ describe("SessionProtocolHandler", () => {
 
   it("publishes and cancels pending queue and steering state", async () => {
     const harness = createHarness();
+    await harness.connection.handleRequest(
+      request("baseline", "session.observe", { sessionId: "session-1" }),
+    );
     const observerLines = [];
     const observer = new TestSessionProtocolConnection({
       host: harness.host,
@@ -1920,6 +1968,9 @@ describe("SessionProtocolHandler", () => {
 
   it("isolates pending-message observer failures from shared session work", async () => {
     const harness = createHarness();
+    await harness.connection.handleRequest(
+      request("baseline", "session.observe", { sessionId: "session-1" }),
+    );
     let rejectPendingMessages = false;
     const observer = new TestSessionProtocolConnection({
       host: harness.host,
@@ -1967,6 +2018,9 @@ describe("SessionProtocolHandler", () => {
 
   it("starts recovered sessions without pending user messages", async () => {
     const harness = createHarness();
+    await harness.connection.handleRequest(
+      request("baseline", "session.observe", { sessionId: "session-1" }),
+    );
     const firstSubmit = harness.connection.handleRequest(
       request("submit-1", "session.submit", {
         sessionId: "session-1",
@@ -2016,6 +2070,9 @@ describe("SessionProtocolHandler", () => {
       releaseUnwind = resolve;
     });
     const harness = createHarness({ afterTurnRelease: async () => await unwindGate });
+    await harness.connection.handleRequest(
+      request("baseline", "session.observe", { sessionId: "session-1" }),
+    );
     const firstSubmit = harness.connection.handleRequest(
       request("submit-1", "session.submit", {
         sessionId: "session-1",
@@ -2046,6 +2103,9 @@ describe("SessionProtocolHandler", () => {
 
   it("drops pending steering submits when a turn is interrupted", async () => {
     const harness = createHarness();
+    await harness.connection.handleRequest(
+      request("baseline", "session.observe", { sessionId: "session-1" }),
+    );
 
     const firstSubmit = harness.connection.handleRequest(
       request("submit-1", "session.submit", {
@@ -2083,7 +2143,7 @@ describe("SessionProtocolHandler", () => {
         id: "steer-1",
         ok: false,
         error: {
-          code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+          code: SESSION_PROTOCOL_ERROR_CODES.cancelled,
           message: "session was interrupted",
         },
       },
@@ -2092,6 +2152,9 @@ describe("SessionProtocolHandler", () => {
 
   it("broadcasts late subagent events during later submits", async () => {
     const harness = createHarness();
+    await harness.connection.handleRequest(
+      request("baseline", "session.observe", { sessionId: "session-1" }),
+    );
 
     const firstSubmit = harness.connection.handleRequest(
       request("submit-1", "session.submit", {
@@ -2157,6 +2220,9 @@ describe("SessionProtocolHandler", () => {
           });
         }),
     });
+    await harness.connection.handleRequest(
+      request("baseline", "session.observe", { sessionId: "session-1" }),
+    );
 
     const execution = harness.connection.handleRequest(
       request("exec", "session.exec", {
@@ -2195,6 +2261,9 @@ describe("SessionProtocolHandler", () => {
         throw new SessionExecBusyError(execId);
       },
     });
+    await harness.connection.handleRequest(
+      request("baseline", "session.observe", { sessionId: "session-1" }),
+    );
 
     await harness.connection.handleRequest(
       request("exec", "session.exec", {
@@ -2225,6 +2294,9 @@ describe("SessionProtocolHandler", () => {
           signal.addEventListener("abort", finish, { once: true });
         }),
     });
+    await harness.connection.handleRequest(
+      request("baseline", "session.observe", { sessionId: "session-1" }),
+    );
 
     const first = harness.connection.handleRequest(
       request("exec-first", "session.exec", {
@@ -2277,6 +2349,9 @@ describe("SessionProtocolHandler", () => {
           signal.addEventListener("abort", () => reject(signal.reason), { once: true });
         }),
     });
+    await harness.connection.handleRequest(
+      request("baseline", "session.observe", { sessionId: "session-1" }),
+    );
 
     const sample = harness.connection.handleRequest(
       request("sample", "session.sample", {
@@ -2327,6 +2402,9 @@ describe("SessionProtocolHandler", () => {
           signal.addEventListener("abort", () => reject(signal.reason), { once: true });
         }),
     });
+    await harness.connection.handleRequest(
+      request("baseline", "session.observe", { sessionId: "session-1" }),
+    );
     const compact = harness.connection.handleRequest(
       request("compact", "session.compact", {
         sessionId: "session-1",
@@ -2361,6 +2439,9 @@ describe("SessionProtocolHandler", () => {
 
   it("handles interrupt and snapshot requests", async () => {
     const harness = createHarness();
+    await harness.connection.handleRequest(
+      request("baseline", "session.observe", { sessionId: "session-1" }),
+    );
 
     const runningSubmit = harness.connection.handleRequest(
       request("submit", "session.submit", {
@@ -2474,9 +2555,12 @@ describe("SessionProtocolHandler", () => {
         releaseSnapshot = resolve;
       });
     const harness = createHarness({
-      snapshotDelays: [snapshotBlocker],
+      snapshotDelays: [0, snapshotBlocker],
       runTurn: async () => ({ status: "completed", stopReason: "stop" }),
     });
+    await harness.connection.handleRequest(
+      request("baseline", "session.observe", { sessionId: "session-1" }),
+    );
 
     const submitPromise = harness.connection.handleRequest(
       request("submit", "session.submit", {
@@ -2507,6 +2591,9 @@ describe("SessionProtocolHandler", () => {
 
   it("queues user messages behind an active turn without requesting a turn-boundary stop", async () => {
     const harness = createHarness();
+    await harness.connection.handleRequest(
+      request("baseline", "session.observe", { sessionId: "session-1" }),
+    );
 
     const firstSubmit = harness.connection.handleRequest(
       request("submit-1", "session.submit", {
@@ -2516,7 +2603,7 @@ describe("SessionProtocolHandler", () => {
     );
 
     await waitFor(() => harness.lines.some((line) => deltaHasNotice(line, "streaming")));
-    await harness.connection.handleRequest(
+    const queued = harness.connection.handleRequest(
       request("queue-1", "session.queue", {
         sessionId: "session-1",
         text: "second turn",
@@ -2544,6 +2631,7 @@ describe("SessionProtocolHandler", () => {
       harness.lines.some((line) => line.type === "response" && line.id === "queue-1"),
     );
 
+    await queued;
     const queueResponse = harness.lines.find(
       (line) => line.type === "response" && line.id === "queue-1",
     );
@@ -2566,6 +2654,9 @@ describe("SessionProtocolHandler", () => {
           releaseExecutions.set(command, () => resolve(createProtocolExecResult({ command })));
         }),
     });
+    await harness.connection.handleRequest(
+      request("baseline", "session.observe", { sessionId: "session-1" }),
+    );
     const submit = harness.connection.handleRequest(
       request("submit", "session.submit", {
         sessionId: "session-1",
@@ -2617,6 +2708,9 @@ describe("SessionProtocolHandler", () => {
         return await defaultRecord(recordOptions);
       },
     });
+    await harness.connection.handleRequest(
+      request("baseline", "session.observe", { sessionId: "session-1" }),
+    );
 
     const firstSubmit = harness.connection.handleRequest(
       request("submit-1", "session.submit", {
@@ -2625,7 +2719,7 @@ describe("SessionProtocolHandler", () => {
       }),
     );
     await waitFor(() => harness.lines.some((line) => deltaHasNotice(line, "streaming")));
-    await Promise.all([
+    const queued = Promise.all([
       harness.connection.handleRequest(
         request("queue-1", "session.queue", {
           sessionId: "session-1",
@@ -2646,12 +2740,12 @@ describe("SessionProtocolHandler", () => {
       ["queue-1", "queue-2"].every((id) => harness.lines.some((line) => line.id === id)),
     );
 
+    await queued;
     for (const id of ["queue-1", "queue-2"]) {
       expect(harness.lines.find((line) => line.id === id)).toMatchObject({
         ok: false,
         error: {
           code: SESSION_PROTOCOL_ERROR_CODES.internalError,
-          message: "failed to drain pending user message",
           data: { cause: "first queued commit failed" },
         },
       });

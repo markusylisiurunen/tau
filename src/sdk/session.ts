@@ -66,6 +66,8 @@ export async function createTauSdkClientFromTransport(
   }
 }
 
+type SessionObservation = { sessionId: string; observationId: string };
+
 class TauSdkClientImpl implements TauSdkClient {
   readonly sessions: TauSdkSessionClient;
 
@@ -106,8 +108,14 @@ class TauSdkClientImpl implements TauSdkClient {
     return this.transport.onSubagentActivities(listener);
   }
 
-  createObservedSession(sessionId: string): TauSdkSessionImpl {
-    return new TauSdkSessionImpl(this, sessionId);
+  subscribeObservationEnded(
+    listener: Parameters<SessionProtocolTransport["onObservationEnded"]>[0],
+  ): () => void {
+    return this.transport.onObservationEnded(listener);
+  }
+
+  createObservedSession(observation: SessionObservation): TauSdkSessionImpl {
+    return new TauSdkSessionImpl(this, observation.sessionId, observation.observationId);
   }
 
   createSession(
@@ -120,16 +128,22 @@ class TauSdkClientImpl implements TauSdkClient {
     return this.transport.request("session.list", {});
   }
 
-  observeSession(sessionId: string): Promise<SessionProtocolResultByMethod["session.observe"]> {
-    return this.transport.request("session.observe", { sessionId });
+  observeSession({
+    sessionId,
+    observationId,
+  }: SessionObservation): Promise<SessionProtocolResultByMethod["session.observe"]> {
+    return this.transport.request("session.observe", { sessionId }, observationId);
   }
 
-  unobserveSession(sessionId: string): Promise<SessionProtocolResultByMethod["session.unobserve"]> {
-    return this.transport.request("session.unobserve", { sessionId });
+  unobserveSession({
+    sessionId,
+    observationId,
+  }: SessionObservation): Promise<SessionProtocolResultByMethod["session.unobserve"]> {
+    return this.transport.request("session.unobserve", { sessionId }, observationId);
   }
 
-  retainSession(sessionId: string, durationMs: number) {
-    return this.transport.request("session.retain", { sessionId, durationMs });
+  retainSession({ sessionId, observationId }: SessionObservation, durationMs: number) {
+    return this.transport.request("session.retain", { sessionId, durationMs }, observationId);
   }
 
   runtimeState(sessionId: string) {
@@ -216,7 +230,7 @@ class TauSdkClientImpl implements TauSdkClient {
       const context: TauSdkClientToolContext = {
         ...describeContext,
         executionEnvironment: this.createClientToolExecutionEnvironment(
-          message.sessionId,
+          { sessionId: message.sessionId, observationId: message.observationId },
           abortController.signal,
         ),
       };
@@ -257,12 +271,12 @@ class TauSdkClientImpl implements TauSdkClient {
   }
 
   createClientToolExecutionEnvironment(
-    sessionId: string,
+    observation: SessionObservation,
     toolSignal: AbortSignal,
   ): TauSdkClientToolExecutionEnvironment {
     return {
       exec: (command, options = {}) =>
-        this.executeInSession(sessionId, command, {
+        this.executeInSession(observation, command, {
           ...options,
           signal: options.signal ? AbortSignal.any([toolSignal, options.signal]) : toolSignal,
         }),
@@ -270,14 +284,14 @@ class TauSdkClientImpl implements TauSdkClient {
   }
 
   async executeInSession(
-    sessionId: string,
+    observation: SessionObservation,
     command: string,
     options: TauSdkSessionExecOptions = {},
   ): Promise<SessionProtocolResultByMethod["session.exec"]> {
     const { signal, stdin, ...execOptions } = options;
     const execId = randomUUID();
-    return await this.runExecRequest(sessionId, execId, signal, () =>
-      this.sendExec(sessionId, execId, command, {
+    return await this.runExecRequest(observation, execId, signal, () =>
+      this.sendExec(observation, execId, command, {
         ...execOptions,
         ...(stdin !== undefined ? { stdinBase64: stdin.toString("base64") } : {}),
       }),
@@ -285,60 +299,86 @@ class TauSdkClientImpl implements TauSdkClient {
   }
 
   sendSubmit(
-    sessionId: string,
+    observation: SessionObservation,
     text: string,
     options: TauSdkSessionUserMessageOptions,
   ): Promise<SessionProtocolResultByMethod["session.submit"]> {
-    return this.transport.request("session.submit", {
-      sessionId,
-      text,
-      ...(options.historyEntryId === undefined ? {} : { historyEntryId: options.historyEntryId }),
-    });
+    return this.transport.request(
+      "session.submit",
+      {
+        sessionId: observation.sessionId,
+        text,
+        ...(options.historyEntryId === undefined ? {} : { historyEntryId: options.historyEntryId }),
+      },
+      observation.observationId,
+    );
   }
 
   sendQueue(
-    sessionId: string,
+    observation: SessionObservation,
     text: string,
     options: TauSdkSessionUserMessageOptions,
   ): Promise<SessionProtocolResultByMethod["session.queue"]> {
-    return this.transport.request("session.queue", {
-      sessionId,
-      text,
-      ...(options.historyEntryId === undefined ? {} : { historyEntryId: options.historyEntryId }),
-    });
+    return this.transport.request(
+      "session.queue",
+      {
+        sessionId: observation.sessionId,
+        text,
+        ...(options.historyEntryId === undefined ? {} : { historyEntryId: options.historyEntryId }),
+      },
+      observation.observationId,
+    );
   }
 
   sendSteer(
-    sessionId: string,
+    observation: SessionObservation,
     text: string,
   ): Promise<SessionProtocolResultByMethod["session.steer"]> {
-    return this.transport.request("session.steer", { sessionId, text });
+    return this.transport.request(
+      "session.steer",
+      { sessionId: observation.sessionId, text },
+      observation.observationId,
+    );
   }
 
   sendCancelPendingMessages(
-    sessionId: string,
+    observation: SessionObservation,
   ): Promise<SessionProtocolResultByMethod["session.cancelPendingMessages"]> {
-    return this.transport.request("session.cancelPendingMessages", { sessionId });
+    return this.transport.request(
+      "session.cancelPendingMessages",
+      { sessionId: observation.sessionId },
+      observation.observationId,
+    );
   }
 
   sendRecord(
-    sessionId: string,
+    observation: SessionObservation,
     text: string,
     options: TauSdkSessionUserMessageOptions,
   ): Promise<SessionProtocolResultByMethod["session.record"]> {
-    return this.transport.request("session.record", {
-      sessionId,
-      text,
-      ...(options.historyEntryId === undefined ? {} : { historyEntryId: options.historyEntryId }),
-    });
+    return this.transport.request(
+      "session.record",
+      {
+        sessionId: observation.sessionId,
+        text,
+        ...(options.historyEntryId === undefined ? {} : { historyEntryId: options.historyEntryId }),
+      },
+      observation.observationId,
+    );
   }
 
-  sendRetry(sessionId: string): Promise<SessionProtocolResultByMethod["session.retry"]> {
-    return this.transport.request("session.retry", { sessionId });
+  sendRetry(
+    observation: SessionObservation,
+  ): Promise<SessionProtocolResultByMethod["session.retry"]> {
+    return this.transport.request(
+      "session.retry",
+      { sessionId: observation.sessionId },
+      observation.observationId,
+    );
   }
 
   sendExec(
-    sessionId: string,
+    observation: SessionObservation,
     execId: string,
     command: string,
     options: {
@@ -350,30 +390,38 @@ class TauSdkClientImpl implements TauSdkClient {
       maxCaptureBytes?: number;
     } = {},
   ): Promise<SessionProtocolResultByMethod["session.exec"]> {
-    return this.transport.request("session.exec", {
-      sessionId,
-      execId,
-      command,
-      ...(options.args !== undefined ? { args: options.args } : {}),
-      ...(options.env !== undefined ? { env: options.env } : {}),
-      ...(options.stdinBase64 !== undefined ? { stdinBase64: options.stdinBase64 } : {}),
-      ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
-      ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
-      ...(options.maxCaptureBytes !== undefined
-        ? { maxCaptureBytes: options.maxCaptureBytes }
-        : {}),
-    });
+    return this.transport.request(
+      "session.exec",
+      {
+        sessionId: observation.sessionId,
+        execId,
+        command,
+        ...(options.args !== undefined ? { args: options.args } : {}),
+        ...(options.env !== undefined ? { env: options.env } : {}),
+        ...(options.stdinBase64 !== undefined ? { stdinBase64: options.stdinBase64 } : {}),
+        ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
+        ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+        ...(options.maxCaptureBytes !== undefined
+          ? { maxCaptureBytes: options.maxCaptureBytes }
+          : {}),
+      },
+      observation.observationId,
+    );
   }
 
   sendCancelExec(
-    sessionId: string,
+    observation: SessionObservation,
     execId: string,
   ): Promise<SessionProtocolResultByMethod["session.cancelExec"]> {
-    return this.transport.request("session.cancelExec", { sessionId, execId });
+    return this.transport.request(
+      "session.cancelExec",
+      { sessionId: observation.sessionId, execId },
+      observation.observationId,
+    );
   }
 
   private async runExecRequest<T>(
-    sessionId: string,
+    observation: SessionObservation,
     execId: string,
     signal: AbortSignal | undefined,
     request: () => Promise<T>,
@@ -392,7 +440,7 @@ class TauSdkClientImpl implements TauSdkClient {
         callback();
       };
       const onAbort = () => {
-        void this.sendCancelExec(sessionId, execId).catch(() => {});
+        void this.sendCancelExec(observation, execId).catch(() => {});
         finish(() => reject(signal.reason));
       };
       signal.addEventListener("abort", onAbort, { once: true });
@@ -414,127 +462,185 @@ class TauSdkClientImpl implements TauSdkClient {
   }
 
   sendSample(
-    sessionId: string,
+    observation: SessionObservation,
     input: Omit<SessionProtocolSampleParams, "sessionId">,
   ): Promise<SessionProtocolResultByMethod["session.sample"]> {
-    return this.transport.request("session.sample", { sessionId, ...input });
+    return this.transport.request(
+      "session.sample",
+      { sessionId: observation.sessionId, ...input },
+      observation.observationId,
+    );
   }
 
-  sendInterrupt(sessionId: string): Promise<SessionProtocolResultByMethod["session.interrupt"]> {
-    return this.transport.request("session.interrupt", { sessionId });
+  sendInterrupt(
+    observation: SessionObservation,
+  ): Promise<SessionProtocolResultByMethod["session.interrupt"]> {
+    return this.transport.request(
+      "session.interrupt",
+      { sessionId: observation.sessionId },
+      observation.observationId,
+    );
   }
 
-  sendSnapshot(sessionId: string): Promise<SessionProtocolResultByMethod["session.snapshot"]> {
-    return this.transport.request("session.snapshot", { sessionId });
+  sendSnapshot(
+    observation: SessionObservation,
+  ): Promise<SessionProtocolResultByMethod["session.snapshot"]> {
+    return this.transport.request(
+      "session.snapshot",
+      { sessionId: observation.sessionId },
+      observation.observationId,
+    );
   }
 
   sendSetAutoCompactThreshold(
-    sessionId: string,
+    observation: SessionObservation,
     thresholdTokens: number | null,
   ): Promise<SessionProtocolResultByMethod["session.setAutoCompactThreshold"]> {
-    return this.transport.request("session.setAutoCompactThreshold", {
-      sessionId,
-      thresholdTokens,
-    });
+    return this.transport.request(
+      "session.setAutoCompactThreshold",
+      {
+        sessionId: observation.sessionId,
+        thresholdTokens,
+      },
+      observation.observationId,
+    );
   }
 
   sendSetReasoning(
-    sessionId: string,
+    observation: SessionObservation,
     reasoning: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max",
   ): Promise<SessionProtocolResultByMethod["session.setReasoning"]> {
-    return this.transport.request("session.setReasoning", {
-      sessionId,
-      reasoning,
-    });
+    return this.transport.request(
+      "session.setReasoning",
+      {
+        sessionId: observation.sessionId,
+        reasoning,
+      },
+      observation.observationId,
+    );
   }
 
   sendSetPersona(
-    sessionId: string,
+    observation: SessionObservation,
     personaId: string | null,
     overrides?: SessionProtocolPersonaOverrides,
   ): Promise<SessionProtocolResultByMethod["session.setPersona"]> {
-    return this.transport.request("session.setPersona", {
-      sessionId,
-      personaId,
-      ...overrides,
-    });
+    return this.transport.request(
+      "session.setPersona",
+      {
+        sessionId: observation.sessionId,
+        personaId,
+        ...overrides,
+      },
+      observation.observationId,
+    );
   }
 
   sendResolvePrompt(
-    sessionId: string,
+    observation: SessionObservation,
     promptId: string,
   ): Promise<SessionProtocolResultByMethod["session.resolvePrompt"]> {
-    return this.transport.request("session.resolvePrompt", {
-      sessionId,
-      promptId,
-    });
+    return this.transport.request(
+      "session.resolvePrompt",
+      {
+        sessionId: observation.sessionId,
+        promptId,
+      },
+      observation.observationId,
+    );
   }
 
   sendAutocompletePaths(
-    sessionId: string,
+    observation: SessionObservation,
     options: { query: string; limit: number },
   ): Promise<SessionProtocolResultByMethod["session.autocompletePaths"]> {
-    return this.transport.request("session.autocompletePaths", {
-      sessionId,
-      query: options.query,
-      limit: options.limit,
-    });
+    return this.transport.request(
+      "session.autocompletePaths",
+      {
+        sessionId: observation.sessionId,
+        query: options.query,
+        limit: options.limit,
+      },
+      observation.observationId,
+    );
   }
 
-  sendReload(sessionId: string): Promise<SessionProtocolResultByMethod["session.reload"]> {
-    return this.transport.request("session.reload", { sessionId });
+  sendReload(
+    observation: SessionObservation,
+  ): Promise<SessionProtocolResultByMethod["session.reload"]> {
+    return this.transport.request(
+      "session.reload",
+      { sessionId: observation.sessionId },
+      observation.observationId,
+    );
   }
 
   sendCompact(
-    sessionId: string,
+    observation: SessionObservation,
     mode: "summary-only" | "summary-and-last",
     options: { guidance?: string },
   ): Promise<SessionProtocolResultByMethod["session.compact"]> {
-    return this.transport.request("session.compact", {
-      sessionId,
-      mode,
-      ...(options.guidance !== undefined ? { guidance: options.guidance } : {}),
-    });
+    return this.transport.request(
+      "session.compact",
+      {
+        sessionId: observation.sessionId,
+        mode,
+        ...(options.guidance !== undefined ? { guidance: options.guidance } : {}),
+      },
+      observation.observationId,
+    );
   }
 
   sendRewind(
-    sessionId: string,
+    observation: SessionObservation,
     historyEntryId: string,
   ): Promise<SessionProtocolResultByMethod["session.rewind"]> {
-    return this.transport.request("session.rewind", {
-      sessionId,
-      historyEntryId,
-    });
+    return this.transport.request(
+      "session.rewind",
+      {
+        sessionId: observation.sessionId,
+        historyEntryId,
+      },
+      observation.observationId,
+    );
   }
 
   sendInterruptSubagent(
-    sessionId: string,
+    observation: SessionObservation,
     subagentId: string,
   ): Promise<SessionProtocolResultByMethod["session.interruptSubagent"]> {
-    return this.transport.request("session.interruptSubagent", {
-      sessionId,
-      subagentId,
-    });
+    return this.transport.request(
+      "session.interruptSubagent",
+      {
+        sessionId: observation.sessionId,
+        subagentId,
+      },
+      observation.observationId,
+    );
   }
 
   sendEphemeralCreate(
-    sessionId: string,
+    observation: SessionObservation,
     options: {
       instructions: string;
       tools: SessionProtocolEphemeralAgentTool[];
       reasoning?: SessionProtocolReasoningEffort;
     },
   ): Promise<SessionProtocolResultByMethod["session.ephemeral.create"]> {
-    return this.transport.request("session.ephemeral.create", {
-      sessionId,
-      instructions: options.instructions,
-      tools: options.tools,
-      ...(options.reasoning !== undefined ? { reasoning: options.reasoning } : {}),
-    });
+    return this.transport.request(
+      "session.ephemeral.create",
+      {
+        sessionId: observation.sessionId,
+        instructions: options.instructions,
+        tools: options.tools,
+        ...(options.reasoning !== undefined ? { reasoning: options.reasoning } : {}),
+      },
+      observation.observationId,
+    );
   }
 
   sendEphemeralSubmit(
-    sessionId: string,
+    observation: SessionObservation,
     options: {
       contextId: string;
       threadId: string;
@@ -543,26 +649,34 @@ class TauSdkClientImpl implements TauSdkClient {
       reasoning?: SessionProtocolReasoningEffort;
     },
   ): Promise<SessionProtocolResultByMethod["session.ephemeral.submit"]> {
-    return this.transport.request("session.ephemeral.submit", {
-      sessionId,
-      contextId: options.contextId,
-      threadId: options.threadId,
-      ...(options.forkFromThreadId !== undefined
-        ? { forkFromThreadId: options.forkFromThreadId }
-        : {}),
-      message: options.message,
-      ...(options.reasoning !== undefined ? { reasoning: options.reasoning } : {}),
-    });
+    return this.transport.request(
+      "session.ephemeral.submit",
+      {
+        sessionId: observation.sessionId,
+        contextId: options.contextId,
+        threadId: options.threadId,
+        ...(options.forkFromThreadId !== undefined
+          ? { forkFromThreadId: options.forkFromThreadId }
+          : {}),
+        message: options.message,
+        ...(options.reasoning !== undefined ? { reasoning: options.reasoning } : {}),
+      },
+      observation.observationId,
+    );
   }
 
   sendEphemeralClose(
-    sessionId: string,
+    observation: SessionObservation,
     contextId: string,
   ): Promise<SessionProtocolResultByMethod["session.ephemeral.close"]> {
-    return this.transport.request("session.ephemeral.close", {
-      sessionId,
-      contextId,
-    });
+    return this.transport.request(
+      "session.ephemeral.close",
+      {
+        sessionId: observation.sessionId,
+        contextId,
+      },
+      observation.observationId,
+    );
   }
 }
 
@@ -608,9 +722,10 @@ class TauSdkSessionClientImpl implements TauSdkSessionClient {
   }
 
   async observe(sessionId: string): Promise<TauSdkSession> {
-    const session = this.client.createObservedSession(sessionId);
+    const observation = { sessionId, observationId: randomUUID() };
+    const session = this.client.createObservedSession(observation);
     try {
-      const initialState = await this.client.observeSession(sessionId);
+      const initialState = await this.client.observeSession(observation);
       session.assertSessionId(initialState.snapshot.sessionId);
       session.setInitialSnapshot(initialState.snapshot);
       session.setInitialPendingUserMessages(initialState.pendingUserMessages);
@@ -633,6 +748,7 @@ class TauSdkSessionImpl implements TauSdkSession {
   private readonly bufferedDeltas: Parameters<TauSdkDeltaListener>[0][] = [];
   private readonly bufferedSubagentActivities: Parameters<TauSdkSubagentActivitiesListener>[0][] =
     [];
+  private readonly unsubscribeObservationEnded: () => void;
   private readonly unsubscribeClientDeltas: () => void;
   private readonly unsubscribeClientEphemeral: () => void;
   private readonly unsubscribeClientPendingUserMessages: () => void;
@@ -644,7 +760,12 @@ class TauSdkSessionImpl implements TauSdkSession {
   constructor(
     private readonly client: TauSdkClientImpl,
     private sessionId: string,
+    private readonly observationId: string,
   ) {
+    this.unsubscribeObservationEnded = this.client.subscribeObservationEnded((message) => {
+      if (message.sessionId === this.sessionId && message.observationId === this.observationId)
+        this.disposeLocal();
+    });
     this.unsubscribeClientDeltas = this.client.subscribe((delta) => this.handleDelta(delta));
     this.unsubscribeClientEphemeral = this.client.subscribeEphemeral((message) =>
       this.handleEphemeral(message),
@@ -708,6 +829,7 @@ class TauSdkSessionImpl implements TauSdkSession {
         listener({
           version: SESSION_PROTOCOL_VERSION,
           type: "session.pendingUserMessages",
+          observationId: this.observationId,
           sessionId: this.sessionId,
           state: structuredClone(this.pendingUserMessagesValue),
         });
@@ -728,6 +850,7 @@ class TauSdkSessionImpl implements TauSdkSession {
         listener({
           version: SESSION_PROTOCOL_VERSION,
           type: "session.subagentActivities",
+          observationId: this.observationId,
           sessionId: this.sessionId,
           revision: this.subagentActivitiesValue.revision,
           changes: Object.entries(this.subagentActivitiesValue.agents).map(([agentId, state]) => ({
@@ -749,50 +872,50 @@ class TauSdkSessionImpl implements TauSdkSession {
     text: string,
     options: TauSdkSessionUserMessageOptions = {},
   ): Promise<SessionProtocolResultByMethod["session.submit"]> {
-    return this.client.sendSubmit(this.activeSessionId(), text, options);
+    return this.client.sendSubmit(this.activeObservation(), text, options);
   }
 
   async record(
     text: string,
     options: TauSdkSessionUserMessageOptions = {},
   ): Promise<SessionProtocolResultByMethod["session.record"]> {
-    return await this.client.sendRecord(this.activeSessionId(), text, options);
+    return await this.client.sendRecord(this.activeObservation(), text, options);
   }
 
   queue(
     text: string,
     options: TauSdkSessionUserMessageOptions = {},
   ): Promise<SessionProtocolResultByMethod["session.queue"]> {
-    return this.client.sendQueue(this.activeSessionId(), text, options);
+    return this.client.sendQueue(this.activeObservation(), text, options);
   }
 
   steer(text: string): Promise<SessionProtocolResultByMethod["session.steer"]> {
-    return this.client.sendSteer(this.activeSessionId(), text);
+    return this.client.sendSteer(this.activeObservation(), text);
   }
 
   cancelPendingMessages(): Promise<SessionProtocolResultByMethod["session.cancelPendingMessages"]> {
-    return this.client.sendCancelPendingMessages(this.activeSessionId());
+    return this.client.sendCancelPendingMessages(this.activeObservation());
   }
 
   async retry(): Promise<SessionProtocolResultByMethod["session.retry"]> {
-    return await this.client.sendRetry(this.activeSessionId());
+    return await this.client.sendRetry(this.activeObservation());
   }
 
   async exec(
     command: string,
     options: TauSdkSessionExecOptions = {},
   ): Promise<SessionProtocolResultByMethod["session.exec"]> {
-    return await this.client.executeInSession(this.activeSessionId(), command, options);
+    return await this.client.executeInSession(this.activeObservation(), command, options);
   }
 
   async sample(
     input: Omit<SessionProtocolSampleParams, "sessionId">,
   ): Promise<SessionProtocolResultByMethod["session.sample"]> {
-    return await this.client.sendSample(this.activeSessionId(), input);
+    return await this.client.sendSample(this.activeObservation(), input);
   }
 
   async interrupt(): Promise<SessionProtocolResultByMethod["session.interrupt"]> {
-    return await this.client.sendInterrupt(this.activeSessionId());
+    return await this.client.sendInterrupt(this.activeObservation());
   }
 
   async snapshot(): Promise<SessionProtocolResultByMethod["session.snapshot"]> {
@@ -806,7 +929,7 @@ class TauSdkSessionImpl implements TauSdkSession {
       }
     }
 
-    const snapshot = await this.client.sendSnapshot(this.sessionId);
+    const snapshot = await this.client.sendSnapshot(this.activeObservation());
     this.discardBufferedDeltasThrough(snapshot.revision);
     return snapshot;
   }
@@ -815,7 +938,7 @@ class TauSdkSessionImpl implements TauSdkSession {
     thresholdTokens: number | null,
   ): Promise<SessionProtocolResultByMethod["session.setAutoCompactThreshold"]> {
     const snapshot = await this.client.sendSetAutoCompactThreshold(
-      this.activeSessionId(),
+      this.activeObservation(),
       thresholdTokens,
     );
     this.discardBufferedDeltasThrough(snapshot.revision);
@@ -825,7 +948,7 @@ class TauSdkSessionImpl implements TauSdkSession {
   async setReasoning(
     reasoning: SessionProtocolReasoningEffort,
   ): Promise<SessionProtocolResultByMethod["session.setReasoning"]> {
-    const snapshot = await this.client.sendSetReasoning(this.activeSessionId(), reasoning);
+    const snapshot = await this.client.sendSetReasoning(this.activeObservation(), reasoning);
     this.discardBufferedDeltasThrough(snapshot.revision);
     return snapshot;
   }
@@ -834,7 +957,11 @@ class TauSdkSessionImpl implements TauSdkSession {
     personaId: string | null,
     overrides?: SessionProtocolPersonaOverrides,
   ): Promise<SessionProtocolResultByMethod["session.setPersona"]> {
-    const snapshot = await this.client.sendSetPersona(this.activeSessionId(), personaId, overrides);
+    const snapshot = await this.client.sendSetPersona(
+      this.activeObservation(),
+      personaId,
+      overrides,
+    );
     this.discardBufferedDeltasThrough(snapshot.revision);
     return snapshot;
   }
@@ -842,18 +969,18 @@ class TauSdkSessionImpl implements TauSdkSession {
   async resolvePrompt(
     promptId: string,
   ): Promise<SessionProtocolResultByMethod["session.resolvePrompt"]> {
-    return await this.client.sendResolvePrompt(this.activeSessionId(), promptId);
+    return await this.client.sendResolvePrompt(this.activeObservation(), promptId);
   }
 
   async autocompletePaths(options: {
     query: string;
     limit: number;
   }): Promise<SessionProtocolResultByMethod["session.autocompletePaths"]> {
-    return await this.client.sendAutocompletePaths(this.activeSessionId(), options);
+    return await this.client.sendAutocompletePaths(this.activeObservation(), options);
   }
 
   async reload(): Promise<SessionProtocolResultByMethod["session.reload"]> {
-    const result = await this.client.sendReload(this.activeSessionId());
+    const result = await this.client.sendReload(this.activeObservation());
     this.discardBufferedDeltasThrough(result.snapshot.revision);
     return result;
   }
@@ -862,7 +989,7 @@ class TauSdkSessionImpl implements TauSdkSession {
     mode: "summary-only" | "summary-and-last",
     options: { guidance?: string } = {},
   ): Promise<SessionProtocolResultByMethod["session.compact"]> {
-    const result = await this.client.sendCompact(this.activeSessionId(), mode, options);
+    const result = await this.client.sendCompact(this.activeObservation(), mode, options);
     this.discardBufferedDeltasThrough(result.snapshot.revision);
     return result;
   }
@@ -870,7 +997,7 @@ class TauSdkSessionImpl implements TauSdkSession {
   async rewindToHistoryEntryId(
     historyEntryId: string,
   ): Promise<SessionProtocolResultByMethod["session.rewind"]> {
-    const result = await this.client.sendRewind(this.activeSessionId(), historyEntryId);
+    const result = await this.client.sendRewind(this.activeObservation(), historyEntryId);
     this.discardBufferedDeltasThrough(result.snapshot.revision);
     return result;
   }
@@ -878,7 +1005,7 @@ class TauSdkSessionImpl implements TauSdkSession {
   async interruptSubagent(
     subagentId: string,
   ): Promise<SessionProtocolResultByMethod["session.interruptSubagent"]> {
-    return await this.client.sendInterruptSubagent(this.activeSessionId(), subagentId);
+    return await this.client.sendInterruptSubagent(this.activeObservation(), subagentId);
   }
 
   async createEphemeralContext(options: {
@@ -887,7 +1014,7 @@ class TauSdkSessionImpl implements TauSdkSession {
     tools: SessionProtocolEphemeralAgentTool[];
     reasoning?: SessionProtocolReasoningEffort;
   }): Promise<SessionProtocolResultByMethod["session.ephemeral.create"]> {
-    return await this.client.sendEphemeralCreate(this.activeSessionId(), options);
+    return await this.client.sendEphemeralCreate(this.activeObservation(), options);
   }
 
   async submitEphemeralThread(options: {
@@ -897,27 +1024,34 @@ class TauSdkSessionImpl implements TauSdkSession {
     message: string;
     reasoning?: SessionProtocolReasoningEffort;
   }): Promise<SessionProtocolResultByMethod["session.ephemeral.submit"]> {
-    return await this.client.sendEphemeralSubmit(this.activeSessionId(), options);
+    return await this.client.sendEphemeralSubmit(this.activeObservation(), options);
   }
 
   async closeEphemeralContext(
     contextId: string,
   ): Promise<SessionProtocolResultByMethod["session.ephemeral.close"]> {
-    return await this.client.sendEphemeralClose(this.activeSessionId(), contextId);
+    return await this.client.sendEphemeralClose(this.activeObservation(), contextId);
   }
 
   async retain(durationMs: number) {
-    return await this.client.retainSession(this.activeSessionId(), durationMs);
+    return await this.client.retainSession(this.activeObservation(), durationMs);
   }
 
   async unobserve(): Promise<SessionProtocolResultByMethod["session.unobserve"]> {
-    const result = await this.client.unobserveSession(this.activeSessionId());
-    this.disposeLocal();
-    return result;
+    if (this.isUnobserved) return { unobserved: true };
+    try {
+      return await this.client.unobserveSession(this.activeObservation());
+    } finally {
+      this.disposeLocal();
+    }
   }
 
   private handleDelta(delta: Parameters<TauSdkDeltaListener>[0]): void {
-    if (this.isUnobserved || delta.sessionId !== this.sessionId) {
+    if (
+      this.isUnobserved ||
+      delta.sessionId !== this.sessionId ||
+      delta.observationId !== this.observationId
+    ) {
       return;
     }
 
@@ -940,7 +1074,11 @@ class TauSdkSessionImpl implements TauSdkSession {
   }
 
   private handleEphemeral(message: Parameters<TauSdkEphemeralListener>[0]): void {
-    if (this.isUnobserved || message.sessionId !== this.sessionId) {
+    if (
+      this.isUnobserved ||
+      message.sessionId !== this.sessionId ||
+      message.observationId !== this.observationId
+    ) {
       return;
     }
 
@@ -959,6 +1097,7 @@ class TauSdkSessionImpl implements TauSdkSession {
     if (
       this.isUnobserved ||
       message.sessionId !== this.sessionId ||
+      message.observationId !== this.observationId ||
       (this.pendingUserMessagesValue &&
         message.state.revision <= this.pendingUserMessagesValue.revision)
     ) {
@@ -976,7 +1115,11 @@ class TauSdkSessionImpl implements TauSdkSession {
   }
 
   private handleSubagentActivities(message: Parameters<TauSdkSubagentActivitiesListener>[0]): void {
-    if (this.isUnobserved || message.sessionId !== this.sessionId) {
+    if (
+      this.isUnobserved ||
+      message.sessionId !== this.sessionId ||
+      message.observationId !== this.observationId
+    ) {
       return;
     }
     if (!this.subagentActivitiesValue) {
@@ -1001,6 +1144,7 @@ class TauSdkSessionImpl implements TauSdkSession {
   }
 
   assertSessionId(sessionId: string): void {
+    this.assertActive();
     if (sessionId !== this.sessionId) {
       throw new TauSessionClientError(
         `observed session id '${sessionId}' did not match requested session id '${this.sessionId}'`,
@@ -1037,6 +1181,7 @@ class TauSdkSessionImpl implements TauSdkSession {
       return;
     }
     this.isUnobserved = true;
+    this.unsubscribeObservationEnded();
     this.unsubscribeClientDeltas();
     this.unsubscribeClientEphemeral();
     this.unsubscribeClientPendingUserMessages();
@@ -1049,9 +1194,9 @@ class TauSdkSessionImpl implements TauSdkSession {
     this.bufferedSubagentActivities.splice(0);
   }
 
-  private activeSessionId(): string {
+  private activeObservation(): SessionObservation {
     this.assertActive();
-    return this.sessionId;
+    return { sessionId: this.sessionId, observationId: this.observationId };
   }
 
   private assertActive(): void {

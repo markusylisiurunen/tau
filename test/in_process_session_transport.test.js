@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { HostedSessionInput } from "../dist/host/hosted_session_input.js";
 import { SESSION_PROTOCOL_VERSION } from "../dist/protocol/session_protocol.js";
 import {
   createTauSdkClientFromTransport,
@@ -69,6 +70,9 @@ function createHostedSession(sessionId, sessions, options = {}) {
     get sessionId() {
       return sessionId;
     },
+    onClosing() {
+      return () => {};
+    },
     onDelta(handler) {
       deltaHandlers.add(handler);
       return () => deltaHandlers.delete(handler);
@@ -111,6 +115,10 @@ function createHostedSession(sessionId, sessions, options = {}) {
         snapshot: await hostedSession.snapshot(),
         userHistoryEntryId,
       };
+    },
+    async submitTurn(options) {
+      const accepted = await hostedSession.acceptTurn(options);
+      return await hostedSession.runAcceptedTurn(accepted.userHistoryEntryId);
     },
     async acceptTurn(options) {
       return await hostedSession.record(options);
@@ -189,6 +197,7 @@ function createHostedSession(sessionId, sessions, options = {}) {
   };
 
   sessions.set(sessionId, hostedSession);
+  hostedSession.input = new HostedSessionInput(hostedSession);
   return hostedSession;
 }
 
@@ -246,7 +255,12 @@ describe("InProcessSessionProtocolTransport", () => {
       turn: { status: "completed", stopReason: "stop" },
     });
 
-    expect(deltas).toEqual([createNoticeDelta("session-1", 2, "running session-1")]);
+    expect(deltas).toEqual([
+      {
+        ...createNoticeDelta("session-1", 2, "running session-1"),
+        observationId: expect.any(String),
+      },
+    ]);
 
     await expect(session.snapshot()).resolves.toEqual(
       createProtocolSnapshot({

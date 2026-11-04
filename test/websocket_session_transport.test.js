@@ -5,6 +5,7 @@ import {
   runWebSocketSessionServer,
   WebSocketSessionServer,
 } from "../dist/core/modes/websocket_server.js";
+import { HostedSessionInput } from "../dist/host/hosted_session_input.js";
 import { SESSION_PROTOCOL_VERSION } from "../dist/protocol/session_protocol.js";
 import { createTauSdkClientFromTransport } from "../dist/sdk/index.js";
 import { WebSocketSessionProtocolTransport } from "../dist/transport/websocket_session_transport.js";
@@ -72,6 +73,9 @@ function createHostedSession(sessionId, sessions, options = {}) {
     get sessionId() {
       return sessionId;
     },
+    onClosing() {
+      return () => {};
+    },
     onDelta(handler) {
       deltaHandlers.add(handler);
       return () => deltaHandlers.delete(handler);
@@ -114,6 +118,10 @@ function createHostedSession(sessionId, sessions, options = {}) {
         snapshot: await hostedSession.snapshot(),
         userHistoryEntryId,
       };
+    },
+    async submitTurn(options) {
+      const accepted = await hostedSession.acceptTurn(options);
+      return await hostedSession.runAcceptedTurn(accepted.userHistoryEntryId);
     },
     async acceptTurn(options) {
       return await hostedSession.record(options);
@@ -179,6 +187,7 @@ function createHostedSession(sessionId, sessions, options = {}) {
   };
 
   sessions.set(sessionId, hostedSession);
+  hostedSession.input = new HostedSessionInput(hostedSession);
   return hostedSession;
 }
 
@@ -349,7 +358,12 @@ describe("WebSocketSessionProtocolTransport", () => {
         createProtocolExecResult({ output: "/repo\n" }),
       );
 
-      expect(deltas).toEqual([createNoticeDelta("session-1", 2, "running session-1")]);
+      expect(deltas).toEqual([
+        {
+          ...createNoticeDelta("session-1", 2, "running session-1"),
+          observationId: expect.any(String),
+        },
+      ]);
 
       unsubscribe();
       await client.close();
@@ -537,7 +551,11 @@ describe("WebSocketSessionProtocolTransport", () => {
     });
     await connect;
 
-    const snapshotRequest = transport.request("session.snapshot", { sessionId: "session-1" });
+    const snapshotRequest = transport.request(
+      "session.snapshot",
+      { sessionId: "session-1" },
+      "test-observation",
+    );
     const snapshotRequestId = socket.sent.at(-1).id;
     socket.emitMessage({
       version: SESSION_PROTOCOL_VERSION,

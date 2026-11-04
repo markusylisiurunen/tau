@@ -55,6 +55,8 @@ export type {
   SessionProtocolMessageState,
   SessionProtocolMethod,
   SessionProtocolModelSnapshot,
+  SessionProtocolObservationEndedMessage,
+  SessionProtocolObservedMessage,
   SessionProtocolObserveResult,
   SessionProtocolOperation,
   SessionProtocolOutgoingMessage,

@@ -17,7 +17,7 @@ import {
 import { environmentVariablesSchema } from "./environment_variables.js";
 import { type IntermediateSystemMessage, isIntermediateSystemMessage } from "./system_message.js";
 
-export const SESSION_PROTOCOL_VERSION = 19 as const;
+export const SESSION_PROTOCOL_VERSION = 20 as const;
 export const MIN_AUTO_COMPACT_THRESHOLD_TOKENS = 50_000;
 export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_IMAGES = 16;
 export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_CONTENT_BLOCKS = 1024;
@@ -1174,6 +1174,34 @@ export type SessionProtocolResultByMethod = {
   "session.clientTool.result": SessionProtocolClientToolResultResult;
 };
 
+const SESSION_PROTOCOL_UNBOUND_METHODS = [
+  "initialize",
+  "session.create",
+  "session.list",
+  "session.runtimeState",
+  "session.unload",
+  "session.clientTool.ack",
+  "session.clientTool.result",
+] as const satisfies readonly SessionProtocolMethod[];
+
+type SessionProtocolObservationMethod = Exclude<
+  SessionProtocolMethod,
+  (typeof SESSION_PROTOCOL_UNBOUND_METHODS)[number]
+>;
+
+export function isSessionProtocolObservationMethod(
+  method: SessionProtocolMethod,
+): method is SessionProtocolObservationMethod {
+  return !(SESSION_PROTOCOL_UNBOUND_METHODS as readonly string[]).includes(method);
+}
+
+export type SessionProtocolObservationEndedMessage = {
+  version: typeof SESSION_PROTOCOL_VERSION;
+  type: "session.observationEnded";
+  sessionId: string;
+  observationId: string;
+};
+
 export type SessionProtocolRequestMessage = {
   [M in SessionProtocolMethod]: {
     version: typeof SESSION_PROTOCOL_VERSION;
@@ -1181,7 +1209,9 @@ export type SessionProtocolRequestMessage = {
     id: SessionProtocolRequestId;
     method: M;
     params: SessionProtocolParamsByMethod[M];
-  };
+  } & (M extends SessionProtocolObservationMethod
+    ? { observationId: string }
+    : { observationId?: string });
 }[SessionProtocolMethod];
 
 export type SessionProtocolSuccessResponseMessage = {
@@ -1302,6 +1332,7 @@ export type SessionProtocolReadyMessage = {
 export type SessionProtocolClientToolCallMessage = {
   version: typeof SESSION_PROTOCOL_VERSION;
   type: "session.clientTool.call";
+  observationId: string;
   sessionId: string;
   agentId: string;
   callId: string;
@@ -1384,21 +1415,26 @@ export type SessionProtocolSubagentActivitiesMessage = {
   changes: SessionProtocolSubagentActivitiesChange[];
 };
 
-export type SessionProtocolOutgoingMessage =
-  | SessionProtocolResponseMessage
+export type SessionProtocolObservedMessage<T> = T & { observationId: string };
+
+type SessionProtocolObservationEvent = SessionProtocolObservedMessage<
   | SessionProtocolDeltaMessage
   | SessionProtocolEphemeralMessage
   | SessionProtocolPendingUserMessagesMessage
   | SessionProtocolSubagentActivitiesMessage
+>;
+
+export type SessionProtocolOutgoingMessage =
+  | SessionProtocolObservationEndedMessage
+  | SessionProtocolResponseMessage
+  | SessionProtocolObservationEvent
   | SessionProtocolClientToolMessage
   | SessionProtocolReadyMessage;
 
 export type SessionProtocolParsedOutgoingMessage =
+  | SessionProtocolObservationEndedMessage
   | SessionProtocolParsedResponseMessage
-  | SessionProtocolDeltaMessage
-  | SessionProtocolEphemeralMessage
-  | SessionProtocolPendingUserMessagesMessage
-  | SessionProtocolSubagentActivitiesMessage
+  | SessionProtocolObservationEvent
   | SessionProtocolClientToolMessage
   | SessionProtocolReadyMessage;
 
@@ -1647,10 +1683,20 @@ const sessionProtocolReadyMessageSchema = z
   })
   .strip();
 
+const sessionProtocolObservationEndedMessageSchema = z
+  .object({
+    version: z.literal(SESSION_PROTOCOL_VERSION),
+    type: z.literal("session.observationEnded"),
+    sessionId: nonEmptyStringSchema,
+    observationId: nonEmptyStringSchema,
+  })
+  .strict();
+
 const sessionProtocolClientToolCallMessageSchema = z
   .object({
     version: z.literal(SESSION_PROTOCOL_VERSION),
     type: z.literal("session.clientTool.call"),
+    observationId: nonEmptyStringSchema,
     sessionId: nonEmptyStringSchema,
     agentId: nonEmptyStringSchema,
     callId: nonEmptyStringSchema,
@@ -1682,6 +1728,7 @@ const sessionProtocolRequestEnvelopeSchema = z
     type: z.literal("request"),
     id: sessionProtocolRequestIdSchema,
     method: z.string(),
+    observationId: nonEmptyStringSchema.optional(),
     params: z.unknown(),
   })
   .strip();
@@ -1691,6 +1738,7 @@ const sessionProtocolOutgoingRoutingSchema = z
     version: z.literal(SESSION_PROTOCOL_VERSION),
     type: z.enum([
       "ready",
+      "session.observationEnded",
       "session.delta",
       "session.ephemeral",
       "session.pendingUserMessages",
@@ -4410,6 +4458,7 @@ export function parseSessionProtocolRequestLine(line: string): SessionProtocolPa
     requestEnvelope.data.id,
     method,
     requestEnvelope.data.params,
+    requestEnvelope.data.observationId,
   );
   if (!request.ok) {
     return {
@@ -4429,6 +4478,7 @@ export function createSessionProtocolRequest(
   id: SessionProtocolRequestId,
   method: SessionProtocolMethod,
   params: unknown,
+  observationId?: string,
 ): SessionProtocolParamsValidationResult<SessionProtocolRequestMessage> {
   const parsedId = sessionProtocolRequestIdSchema.safeParse(id);
   if (!parsedId.success) {
@@ -4441,6 +4491,18 @@ export function createSessionProtocolRequest(
     };
   }
 
+  if (
+    (isSessionProtocolObservationMethod(method) || observationId !== undefined) &&
+    !nonEmptyStringSchema.safeParse(observationId).success
+  ) {
+    return {
+      ok: false,
+      error: createSessionProtocolError(
+        SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+        "observationId is required",
+      ),
+    };
+  }
   const parsed = validateSessionProtocolParams(method, params);
   if (!parsed.ok) {
     return parsed;
@@ -4451,6 +4513,7 @@ export function createSessionProtocolRequest(
     value: {
       ...requestEnvelope(parsedId.data),
       method,
+      ...(observationId === undefined ? {} : { observationId }),
       params: parsed.value,
     } as SessionProtocolRequestMessage,
   };
@@ -4540,6 +4603,18 @@ export function parseSessionProtocolOutgoingLine(line: string): SessionProtocolO
       undefined,
       "unsupported_message_type",
     );
+  }
+
+  if (routing.data.type === "session.observationEnded") {
+    const result = sessionProtocolObservationEndedMessageSchema.safeParse(parsed);
+    return result.success
+      ? { ok: true, message: result.data }
+      : outgoingParseFailure(
+          "session.observationEnded",
+          null,
+          SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+          "invalid observation end message",
+        );
   }
 
   if (routing.data.type === "ready") {
@@ -5462,7 +5537,9 @@ function parseSessionProtocolDeltaMessage(payload: unknown): SessionProtocolOutg
       message,
     );
 
-  const deltaMessage = sessionProtocolDeltaMessageSchema.safeParse(payload);
+  const deltaMessage = sessionProtocolDeltaMessageSchema
+    .extend({ observationId: nonEmptyStringSchema })
+    .safeParse(payload);
   if (!deltaMessage.success) {
     if (hasIssue(deltaMessage.error, ["sessionId"])) {
       return fail("session.delta.sessionId must be a non-empty string");
@@ -5493,6 +5570,7 @@ function parseSessionProtocolDeltaMessage(payload: unknown): SessionProtocolOutg
       version: SESSION_PROTOCOL_VERSION,
       type: "session.delta",
       sessionId: deltaMessage.data.sessionId,
+      observationId: deltaMessage.data.observationId,
       fromRevision: deltaMessage.data.fromRevision,
       toRevision: deltaMessage.data.toRevision,
       cause: deltaMessage.data.cause,
@@ -5533,7 +5611,9 @@ function parseSessionProtocolEphemeralMessage(
       message,
     );
 
-  const ephemeralMessage = sessionProtocolEphemeralMessageSchema.safeParse(payload);
+  const ephemeralMessage = sessionProtocolEphemeralMessageSchema
+    .extend({ observationId: nonEmptyStringSchema })
+    .safeParse(payload);
   if (!ephemeralMessage.success) {
     if (hasIssue(ephemeralMessage.error, ["sessionId"])) {
       return fail("session.ephemeral.sessionId must be a non-empty string");
@@ -5546,7 +5626,8 @@ function parseSessionProtocolEphemeralMessage(
 
   return {
     ok: true,
-    message: ephemeralMessage.data as SessionProtocolEphemeralMessage,
+    message:
+      ephemeralMessage.data as SessionProtocolObservedMessage<SessionProtocolEphemeralMessage>,
   };
 }
 
@@ -5561,7 +5642,9 @@ function parseSessionProtocolPendingUserMessagesMessage(
       message,
     );
 
-  const message = sessionProtocolPendingUserMessagesMessageSchema.safeParse(payload);
+  const message = sessionProtocolPendingUserMessagesMessageSchema
+    .extend({ observationId: nonEmptyStringSchema })
+    .safeParse(payload);
   if (!message.success) {
     if (hasIssue(message.error, ["sessionId"])) {
       return fail("session.pendingUserMessages.sessionId must be a non-empty string");
@@ -5574,7 +5657,8 @@ function parseSessionProtocolPendingUserMessagesMessage(
 
   return {
     ok: true,
-    message: message.data as SessionProtocolPendingUserMessagesMessage,
+    message:
+      message.data as SessionProtocolObservedMessage<SessionProtocolPendingUserMessagesMessage>,
   };
 }
 
@@ -5589,7 +5673,9 @@ function parseSessionProtocolSubagentActivitiesMessage(
       message,
     );
 
-  const message = sessionProtocolSubagentActivitiesMessageSchema.safeParse(payload);
+  const message = sessionProtocolSubagentActivitiesMessageSchema
+    .extend({ observationId: nonEmptyStringSchema })
+    .safeParse(payload);
   if (!message.success) {
     if (hasIssue(message.error, ["sessionId"])) {
       return fail("session.subagentActivities.sessionId must be a non-empty string");
@@ -5605,7 +5691,8 @@ function parseSessionProtocolSubagentActivitiesMessage(
 
   return {
     ok: true,
-    message: message.data as SessionProtocolSubagentActivitiesMessage,
+    message:
+      message.data as SessionProtocolObservedMessage<SessionProtocolSubagentActivitiesMessage>,
   };
 }
 

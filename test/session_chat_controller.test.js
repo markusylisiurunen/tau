@@ -7391,8 +7391,7 @@ describe("SessionChatController", () => {
             },
           };
         };
-        const accepted = await hosted.acceptTurn({ text: "question" });
-        await hosted.runAcceptedTurn(accepted.userHistoryEntryId);
+        await hosted.submitTurn({ text: "question" });
         expect(speak).toHaveBeenCalledTimes(1);
         expect(view.programStatuses.at(-1)).toBe("done");
         await controller.syncFromSessionSnapshot();

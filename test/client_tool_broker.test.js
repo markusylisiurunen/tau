@@ -47,7 +47,7 @@ describe("ClientToolBroker", () => {
         const sendCall = vi.fn();
         const sendCancel = vi.fn();
         const registration = broker.registerClient({ tools: [schema], sendCall, sendCancel });
-        registration.attachSession("session-1");
+        registration.attachSession("session-1", "observation-1");
         const abortController = new AbortController();
         const execution = runTool(
           broker.getToolDefinitions("session-1")[0],
@@ -77,7 +77,7 @@ describe("ClientToolBroker", () => {
         } else if (ending === "interrupt") {
           abortController.abort();
         } else if (ending === "detach") {
-          registration.detachSession("session-1");
+          registration.detachSession("session-1", "observation-1");
         } else {
           registration.unregister();
         }
@@ -117,7 +117,7 @@ describe("ClientToolBroker", () => {
         sendCall,
         sendCancel,
       });
-      registration.attachSession("session-1");
+      registration.attachSession("session-1", "observation-1");
       const execution = runTool(broker.getToolDefinitions("session-1")[0], createToolCall());
       await vi.advanceTimersByTimeAsync(0);
       const message = sendCall.mock.calls[0][0];
@@ -189,7 +189,7 @@ describe("ClientToolBroker", () => {
       },
       sendCancel,
     });
-    registration.attachSession("session-1");
+    registration.attachSession("session-1", "observation-1");
 
     const definition = broker.getToolDefinitions("session-1")[0];
     const result = await runTool(definition, createToolCall({ choice: "a" }));
@@ -251,7 +251,7 @@ describe("ClientToolBroker", () => {
       },
       sendCancel: vi.fn(),
     });
-    registration.attachSession("session-1");
+    registration.attachSession("session-1", "observation-1");
 
     const definition = broker.getToolDefinitions("session-1")[0];
     const result = await runTool(definition, createToolCall({ choice: "a" }));
@@ -283,7 +283,7 @@ describe("ClientToolBroker", () => {
       },
       sendCancel: vi.fn(),
     });
-    registration.attachSession("session-1");
+    registration.attachSession("session-1", "observation-1");
 
     const definition = broker.getToolDefinitions("session-1")[0];
     const result = await runTool(definition, createToolCall());
@@ -330,7 +330,7 @@ describe("ClientToolBroker", () => {
       },
       sendCancel: vi.fn(),
     });
-    registration.attachSession("session-1");
+    registration.attachSession("session-1", "observation-1");
 
     const definition = broker.getToolDefinitions("session-1")[0];
     const result = await runTool(definition, createToolCall());
@@ -371,7 +371,7 @@ describe("ClientToolBroker", () => {
       },
       sendCancel: vi.fn(),
     });
-    registration.attachSession("session-1");
+    registration.attachSession("session-1", "observation-1");
 
     const definition = broker.getToolDefinitions("session-1")[0];
     const result = await runTool(definition, createToolCall());
@@ -408,7 +408,7 @@ describe("ClientToolBroker", () => {
       },
       sendCancel: vi.fn(),
     });
-    registration.attachSession("session-1");
+    registration.attachSession("session-1", "observation-1");
 
     const definition = broker.getToolDefinitions("session-1")[0];
     const execution = runTool(
@@ -465,7 +465,7 @@ describe("ClientToolBroker", () => {
       },
       sendCancel: vi.fn(),
     });
-    registration.attachSession("session-1");
+    registration.attachSession("session-1", "observation-1");
 
     const definition = broker.getToolDefinitions("session-1")[0];
     const result = await runTool(definition, createToolCall({ choice: "a" }));
@@ -496,7 +496,7 @@ describe("ClientToolBroker", () => {
       },
       sendCancel,
     });
-    registration.attachSession("session-1");
+    registration.attachSession("session-1", "observation-1");
 
     const definition = broker.getToolDefinitions("session-1")[0];
     let activityCount = 0;
@@ -521,30 +521,38 @@ describe("ClientToolBroker", () => {
     expect(result.uiEvent.presentation.subject).toBe("local_picker");
   });
 
-  it("returns clear errors when client tools become unavailable", async () => {
-    const broker = new ClientToolBroker();
-    const registration = broker.registerClient({
-      tools: [
-        {
-          name: "local_picker",
-          description: "Pick a local item.",
-          parameters: { type: "object", properties: {}, additionalProperties: false },
-        },
-      ],
-      sendCall: vi.fn(),
-      sendCancel: vi.fn(),
-    });
-    registration.attachSession("session-1");
-    const definition = broker.getToolDefinitions("session-1")[0];
-    registration.detachSession("session-1");
+  it.each([false, true])(
+    "blocks stale client tools after detach (reattached: %s)",
+    async (reattach) => {
+      const broker = new ClientToolBroker();
+      const registration = broker.registerClient({
+        tools: [
+          {
+            name: "local_picker",
+            description: "Pick a local item.",
+            parameters: { type: "object", properties: {}, additionalProperties: false },
+          },
+        ],
+        sendCall: vi.fn(),
+        sendCancel: vi.fn(),
+      });
+      registration.attachSession("session-1", "observation-1");
+      const definition = broker.getToolDefinitions("session-1")[0];
+      registration.detachSession("session-1", "observation-1");
+      if (reattach) {
+        registration.attachSession("session-1", "observation-2");
+        registration.detachSession("session-1", "observation-1");
+        expect(broker.getToolDefinitions("session-1")).toHaveLength(1);
+      }
 
-    const result = await runTool(definition, createToolCall({ choice: "a" }));
+      const result = await runTool(definition, createToolCall({ choice: "a" }));
 
-    expect(result.toolResult.outcome).toBe("blocked");
-    expect(result.toolResult.content[0].text).toBe(
-      "Client tool 'local_picker' is unavailable because its owning client detached.",
-    );
-  });
+      expect(result.toolResult.outcome).toBe("blocked");
+      expect(result.toolResult.content[0].text).toBe(
+        "Client tool 'local_picker' is unavailable because its owning client detached.",
+      );
+    },
+  );
 
   it.each([undefined, null])(
     "enforces acknowledgement timeout with execution timeout %s",
@@ -565,7 +573,7 @@ describe("ClientToolBroker", () => {
           sendCall: vi.fn(),
           sendCancel,
         });
-        registration.attachSession("session-1");
+        registration.attachSession("session-1", "observation-1");
         const definition = broker.getToolDefinitions("session-1")[0];
 
         const execution = definition.execute(createToolCall({ choice: "a" }), {
@@ -614,17 +622,17 @@ describe("ClientToolBroker", () => {
       sendCancel: vi.fn(),
     });
 
-    first.attachSession("session-1");
-    second.attachSession("session-2");
+    first.attachSession("session-1", "observation-1");
+    second.attachSession("session-2", "observation-2");
 
     expect(broker.getToolDefinitions("session-1")).toHaveLength(1);
     expect(broker.getToolDefinitions("session-2")).toHaveLength(1);
     expect(broker.getToolDefinitions("session-3")).toHaveLength(0);
-    expect(() => second.attachSession("session-1")).toThrow(
+    expect(() => second.attachSession("session-1", "observation-1")).toThrow(
       "client tool 'local_picker' is already advertised for this session",
     );
 
-    first.detachSession("session-1");
+    first.detachSession("session-1", "observation-1");
     expect(broker.getToolDefinitions("session-1")).toHaveLength(0);
   });
 });

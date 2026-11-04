@@ -8,6 +8,7 @@ export type {
   SessionProtocolDeltaListener,
   SessionProtocolEphemeralListener,
   SessionProtocolFailureListener,
+  SessionProtocolObservationEndedListener,
   SessionProtocolPendingUserMessagesListener,
   SessionProtocolSubagentActivitiesListener,
   SessionProtocolTransport,

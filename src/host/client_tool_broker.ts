@@ -35,7 +35,7 @@ export type ClientToolCancelDispatch = (message: SessionProtocolClientToolCancel
 type ClientToolClient = {
   id: string;
   tools: Map<string, SessionProtocolClientToolDefinition>;
-  sessionIds: Set<string>;
+  sessionIds: Map<string, string>;
   sendCall: ClientToolExecutionOutcome;
   sendCancel: ClientToolCancelDispatch;
 };
@@ -70,8 +70,8 @@ export class ClientToolBroker {
     sendCancel: ClientToolCancelDispatch;
   }): {
     clientId: string;
-    attachSession: (sessionId: string) => void;
-    detachSession: (sessionId: string) => void;
+    attachSession: (sessionId: string, observationId: string) => void;
+    detachSession: (sessionId: string, observationId: string) => void;
     unregister: () => void;
   } {
     const names = new Set<string>();
@@ -89,15 +89,17 @@ export class ClientToolBroker {
     const client: ClientToolClient = {
       id: clientId,
       tools: new Map(options.tools.map((tool) => [tool.name, tool])),
-      sessionIds: new Set(),
+      sessionIds: new Map(),
       sendCall: options.sendCall,
       sendCancel: options.sendCancel,
     };
     this.clients.set(clientId, client);
     return {
       clientId,
-      attachSession: (sessionId) => this.attachClientToSession(clientId, sessionId),
-      detachSession: (sessionId) => this.detachClientFromSession(clientId, sessionId),
+      attachSession: (sessionId, observationId) =>
+        this.attachClientToSession(clientId, sessionId, observationId),
+      detachSession: (sessionId, observationId) =>
+        this.detachClientFromSession(clientId, sessionId, observationId),
       unregister: () => this.unregisterClient(clientId),
     };
   }
@@ -106,7 +108,13 @@ export class ClientToolBroker {
     return [...this.clients.values()].flatMap((client) =>
       client.sessionIds.has(sessionId)
         ? [...client.tools.values()].map((tool) =>
-            createClientToolDefinition(sessionId, client.id, tool, this),
+            createClientToolDefinition(
+              sessionId,
+              client.sessionIds.get(sessionId)!,
+              client.id,
+              tool,
+              this,
+            ),
           )
         : [],
     );
@@ -176,6 +184,7 @@ export class ClientToolBroker {
 
   dispatch(options: {
     sessionId: string;
+    observationId: string;
     agentId: string;
     clientId: string;
     tool: SessionProtocolClientToolDefinition;
@@ -184,7 +193,10 @@ export class ClientToolBroker {
     emitActivity: ToolExecutionContext["emitActivity"];
   }): Promise<ClientToolDispatchResult> {
     const client = this.clients.get(options.clientId);
-    if (!client?.tools.has(options.tool.name) || !client.sessionIds.has(options.sessionId)) {
+    if (
+      !client?.tools.has(options.tool.name) ||
+      client.sessionIds.get(options.sessionId) !== options.observationId
+    ) {
       return Promise.resolve({
         outcome: createTextToolOutcome(
           `Client tool '${options.tool.name}' is unavailable because its owning client detached.`,
@@ -234,6 +246,7 @@ export class ClientToolBroker {
       client.sendCall({
         version: SESSION_PROTOCOL_VERSION,
         type: "session.clientTool.call",
+        observationId: options.observationId,
         sessionId: options.sessionId,
         agentId: options.agentId,
         callId,
@@ -245,7 +258,7 @@ export class ClientToolBroker {
     });
   }
 
-  private attachClientToSession(clientId: string, sessionId: string): void {
+  private attachClientToSession(clientId: string, sessionId: string, observationId: string): void {
     const client = this.clients.get(clientId);
     if (!client) {
       return;
@@ -262,15 +275,20 @@ export class ClientToolBroker {
       }
     }
 
-    client.sessionIds.add(sessionId);
+    client.sessionIds.set(sessionId, observationId);
   }
 
-  private detachClientFromSession(clientId: string, sessionId: string): void {
+  private detachClientFromSession(
+    clientId: string,
+    sessionId: string,
+    observationId: string,
+  ): void {
     const client = this.clients.get(clientId);
-    if (!client?.sessionIds.delete(sessionId)) {
+    if (client?.sessionIds.get(sessionId) !== observationId) {
       return;
     }
 
+    client.sessionIds.delete(sessionId);
     for (const [callId, pending] of [...this.pendingCalls]) {
       if (pending.clientId === clientId && pending.sessionId === sessionId) {
         this.fail(
@@ -446,6 +464,7 @@ function formatLineCount(lineCount: number): string | undefined {
 
 function createClientToolDefinition(
   sessionId: string,
+  observationId: string,
   clientId: string,
   tool: SessionProtocolClientToolDefinition,
   broker: ClientToolBroker,
@@ -470,6 +489,7 @@ function createClientToolDefinition(
         const startedAt = Date.now();
         const toolResult = await broker.dispatch({
           sessionId,
+          observationId,
           agentId: context.agentId,
           clientId,
           tool,

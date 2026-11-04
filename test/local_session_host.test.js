@@ -41,6 +41,7 @@ import {
   SESSION_PROTOCOL_VERSION,
 } from "../dist/protocol/session_protocol.js";
 import { createTauSdkWebSocketClient } from "../dist/sdk/client.js";
+import { createTauSdkClientFromTransport } from "../dist/sdk/session.js";
 import { FileSessionStore } from "../dist/store/file_session_store.js";
 import { MemorySessionStore } from "../dist/store/memory_session_store.js";
 import {
@@ -48,6 +49,7 @@ import {
   STORED_SESSION_DOCUMENT_FORMAT,
   STORED_SESSION_DOCUMENT_VERSION,
 } from "../dist/store/session_snapshot_migrations.js";
+import { InProcessSessionProtocolTransport } from "../dist/transport/in_process_session_transport.js";
 import {
   createProtocolImage,
   createProtocolSnapshot,
@@ -1031,7 +1033,7 @@ describe("LocalSessionHost", () => {
       },
     });
 
-    const accepted = await session.acceptTurn({
+    const result = await session.submitTurn({
       text: "run durably",
       historyEntryId: "durable-turn",
     });
@@ -1043,11 +1045,6 @@ describe("LocalSessionHost", () => {
       userHistoryEntryId: "durable-turn",
       state: "running",
     });
-    expect(accepted.snapshot.turns["durable-turn"]).toEqual(
-      acceptanceCommit?.turns["durable-turn"],
-    );
-
-    const result = await session.runAcceptedTurn(accepted.userHistoryEntryId);
     expect(result.turn).toEqual({ status: "completed", stopReason: "stop" });
     await expect(session.snapshot()).resolves.toMatchObject({
       turns: {
@@ -1058,9 +1055,9 @@ describe("LocalSessionHost", () => {
         },
       },
     });
-    await expect(session.runAcceptedTurn(accepted.userHistoryEntryId)).rejects.toThrow(
-      "turn 'durable-turn' was already settled",
-    );
+    await expect(
+      session.submitTurn({ text: "duplicate", historyEntryId: "durable-turn" }),
+    ).rejects.toThrow("turn 'durable-turn' was already accepted");
     await host.shutdown();
   });
 
@@ -1190,12 +1187,11 @@ describe("LocalSessionHost", () => {
       const session = await host.createSession(localCreateInput);
       session.runtime.runTurn = vi.fn(async () => runtimeResult);
 
-      const accepted = await session.acceptTurn({ text: "settle durably" });
-      const result = await session.runAcceptedTurn(accepted.userHistoryEntryId);
+      const result = await session.submitTurn({ text: "settle durably" });
 
       expect(result.turn).toEqual(outcome);
-      expect((await session.snapshot()).turns[accepted.userHistoryEntryId]).toEqual({
-        userHistoryEntryId: accepted.userHistoryEntryId,
+      expect((await session.snapshot()).turns[result.userHistoryEntryId]).toEqual({
+        userHistoryEntryId: result.userHistoryEntryId,
         state: "settled",
         outcome,
       });
@@ -1221,12 +1217,11 @@ describe("LocalSessionHost", () => {
       };
     };
 
-    const accepted = await session.acceptTurn({
+    const result = await session.submitTurn({
       text: "compact this turn",
       historyEntryId: " compacted-turn ",
     });
-    expect(accepted.userHistoryEntryId).toBe("compacted-turn");
-    const result = await session.runAcceptedTurn(accepted.userHistoryEntryId);
+    expect(result.userHistoryEntryId).toBe("compacted-turn");
     const compacted = await session.compact({ mode: "summary-only" });
 
     expect(compacted.snapshot.messages.some((message) => message.id === "compacted-turn")).toBe(
@@ -1747,10 +1742,16 @@ describe("LocalSessionHost", () => {
       }
       await commitSessionSnapshot(snapshot, options);
     });
+    const started = deferred();
+    const releaseModel = deferred();
     hostedSession.runtime.agent.spec.model.stream = vi
       .fn()
       .mockImplementationOnce(() => ({
-        async *[Symbol.asyncIterator]() {},
+        async *[Symbol.asyncIterator]() {
+          started.resolve();
+          await releaseModel.promise;
+          yield* [];
+        },
         async result() {
           return fauxAssistantMessage("before steering");
         },
@@ -1762,9 +1763,13 @@ describe("LocalSessionHost", () => {
         },
       }));
 
-    const accepted = await hostedSession.acceptTurn({ text: "Fail after steering" });
-    const run = hostedSession.runAcceptedTurn(accepted.userHistoryEntryId);
+    const run = hostedSession.submitTurn({
+      text: "Fail after steering",
+      historyEntryId: "root-turn",
+    });
+    await started.promise;
     const steering = hostedSession.steer("change direction");
+    releaseModel.resolve();
     await persistenceReached.promise;
     releasePersistence.resolve();
 
@@ -1779,10 +1784,7 @@ describe("LocalSessionHost", () => {
       errorMessage: "steering event sink failed",
     });
     const snapshot = await hostedSession.snapshot();
-    for (const userHistoryEntryId of [
-      accepted.userHistoryEntryId,
-      association.userHistoryEntryId,
-    ]) {
+    for (const userHistoryEntryId of ["root-turn", association.userHistoryEntryId]) {
       expect(snapshot.turns[userHistoryEntryId]).toEqual({
         userHistoryEntryId,
         state: "settled",
@@ -4228,6 +4230,7 @@ describe("LocalSessionHost", () => {
           type: "request",
           id,
           method,
+          observationId: "test-observation",
           params: { sessionId: session.sessionId, ...params },
         });
       await request("observe", "session.observe");
@@ -5832,6 +5835,264 @@ describe("LocalSessionHost", () => {
     expect(executionEnvironment.dispose).toHaveBeenCalledTimes(1);
   });
 
+  it.each(["acceptance", "execution", "settlement"])(
+    "unload waits for a submitted turn through %s",
+    async (phase) => {
+      const store = new MemorySessionStore();
+      const host = createHost(store);
+      const client = await createTauSdkClientFromTransport(
+        new InProcessSessionProtocolTransport({ host }),
+      );
+      const gate = deferred();
+      const reached = deferred();
+      let unloading;
+      try {
+        const facade = await client.sessions.create(localCreateInput);
+        const session = await host.observeSession(facade.id);
+        host.releaseSession(session);
+        session.runtime.agent.spec.model.stream = (_context, options) => ({
+          async *[Symbol.asyncIterator]() {
+            if (phase === "execution") {
+              reached.resolve();
+              await new Promise((resolve) =>
+                options.signal.addEventListener("abort", resolve, { once: true }),
+              );
+              await gate.promise;
+            }
+          },
+          async result() {
+            return fauxAssistantMessage("done", {
+              stopReason: phase === "execution" ? "aborted" : "stop",
+            });
+          },
+        });
+        const commit = store.commitSessionSnapshot.bind(store);
+        let blocked = false;
+        store.commitSessionSnapshot = async (snapshot, options) => {
+          const receipt = snapshot.turns["unload-turn"];
+          if (
+            !blocked &&
+            ((phase === "acceptance" && receipt?.state === "running") ||
+              (phase === "settlement" && receipt?.state === "settled"))
+          ) {
+            blocked = true;
+            reached.resolve();
+            await gate.promise;
+          }
+          await commit(snapshot, options);
+        };
+        const submitted = facade.submit("run", { historyEntryId: "unload-turn" });
+        await reached.promise;
+        const finished = vi.fn();
+        unloading = client.sessions.unload(facade.id).then(finished);
+        await vi.waitFor(() => expect(session.isDisposing).toBe(true));
+        expect(finished).not.toHaveBeenCalled();
+        expect(session.isDisposed).toBe(false);
+        gate.resolve();
+        const result = await submitted;
+        expect(result.turn.status).toBe(phase === "settlement" ? "completed" : "aborted");
+        await unloading;
+        expect((await store.loadSession(facade.id)).turns["unload-turn"]).toEqual({
+          userHistoryEntryId: "unload-turn",
+          state: "settled",
+          outcome: result.turn,
+        });
+        await expect(facade.unobserve()).resolves.toEqual({ unobserved: true });
+      } finally {
+        gate.resolve();
+        await unloading;
+        await client.close();
+        await host.shutdown();
+      }
+    },
+  );
+
+  it("cancels retained pending input without any observing connection", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const session = await host.createSession(localCreateInput);
+    const started = deferred();
+    session.runtime.agent.spec.model.stream = (_context, options) => ({
+      async *[Symbol.asyncIterator]() {
+        started.resolve();
+        await new Promise((resolve) =>
+          options.signal.addEventListener("abort", resolve, { once: true }),
+        );
+      },
+      async result() {
+        return fauxAssistantMessage("", { stopReason: "aborted" });
+      },
+    });
+    try {
+      const submitted = session.input.submit("submit", {
+        text: "running",
+        historyEntryId: "running",
+      });
+      await started.promise;
+      const queued = session.input
+        .submit("queue", { text: "never run", historyEntryId: "queued" })
+        .catch((error) => error);
+      host.retainSessionRuntime(session, 60_000);
+      host.releaseSession(session);
+      expect(session.input.snapshot().messages).toHaveLength(1);
+      await host.unloadSession(session.sessionId);
+      expect((await submitted).turn.status).toBe("aborted");
+      expect(await queued).toBeInstanceOf(Error);
+      const saved = await store.loadSession(session.sessionId);
+      expect(saved.turns.running.state).toBe("settled");
+      expect(saved.turns.queued).toBeUndefined();
+      expect(saved.messages.some((message) => message.id === "queued")).toBe(false);
+      expect(session.input.snapshot().messages).toEqual([]);
+    } finally {
+      await host.shutdown();
+    }
+  });
+
+  it.each(["running", "settled"])(
+    "waits for steering receipt persistence at %s before unload completes",
+    async (receiptState) => {
+      const store = new MemorySessionStore();
+      const host = createHost(store);
+      const client = await createTauSdkClientFromTransport(
+        new InProcessSessionProtocolTransport({ host }),
+      );
+      const facade = await client.sessions.create(localCreateInput);
+      const session = await host.observeSession(facade.id);
+      host.releaseSession(session);
+      const started = deferred();
+      const releaseModel = deferred();
+      const persisting = deferred();
+      const releasePersistence = deferred();
+      let unloading;
+      let calls = 0;
+      session.runtime.agent.spec.model.stream = () => {
+        const first = calls++ === 0;
+        return {
+          async *[Symbol.asyncIterator]() {
+            if (first) {
+              started.resolve();
+              await releaseModel.promise;
+            }
+            yield* [];
+          },
+          async result() {
+            return fauxAssistantMessage("done");
+          },
+        };
+      };
+      const commit = store.commitSessionSnapshot.bind(store);
+      let paused = false;
+      store.commitSessionSnapshot = async (snapshot, options) => {
+        if (
+          !paused &&
+          Object.values(snapshot.turns).some(
+            (turn) => turn.userHistoryEntryId !== "root" && turn.state === receiptState,
+          )
+        ) {
+          paused = true;
+          persisting.resolve();
+          await releasePersistence.promise;
+        }
+        await commit(snapshot, options);
+      };
+      try {
+        const submitted = facade.submit("root", { historyEntryId: "root" });
+        await started.promise;
+        const steering = facade.steer("continue");
+        void steering.catch(() => undefined);
+        await vi.waitFor(() => expect(facade.pendingUserMessages().messages).toHaveLength(1));
+        releaseModel.resolve();
+        await persisting.promise;
+        const finished = vi.fn();
+        unloading = host.unloadSession(session.sessionId).then(finished);
+        await vi.waitFor(() => expect(session.isDisposing).toBe(true));
+        expect(finished).not.toHaveBeenCalled();
+        releasePersistence.resolve();
+        const result = await steering;
+        await submitted;
+        await unloading;
+        const saved = await store.loadSession(session.sessionId);
+        expect(saved.turns[result.userHistoryEntryId]).toEqual({
+          userHistoryEntryId: result.userHistoryEntryId,
+          state: "settled",
+          outcome: result.turn,
+        });
+        expect(saved.turns.root.state).toBe("settled");
+      } finally {
+        releaseModel.resolve();
+        releasePersistence.resolve();
+        await unloading;
+        await client.close();
+        await host.shutdown();
+      }
+    },
+  );
+
+  it("ends every observation and tool attachment without allowing stale cleanup to detach a replacement", async () => {
+    const host = createHost(new MemorySessionStore());
+    const tools = [
+      {
+        schema: {
+          name: "local_picker",
+          description: "pick",
+          parameters: { type: "object", properties: {} },
+        },
+        execute: vi.fn(async () => "picked"),
+      },
+    ];
+    const transport = new InProcessSessionProtocolTransport({ host });
+    const first = await createTauSdkClientFromTransport(transport, { clientTools: tools });
+    const second = await createTauSdkClientFromTransport(
+      new InProcessSessionProtocolTransport({ host }),
+    );
+    const third = await createTauSdkClientFromTransport(
+      new InProcessSessionProtocolTransport({ host }),
+      { clientTools: tools },
+    );
+    try {
+      const old = await first.sessions.create(localCreateInput);
+      const other = await second.sessions.observe(old.id);
+      const ended = [];
+      transport.onObservationEnded((message) => ended.push(message));
+      expect(host.clientToolBroker.getToolDefinitions(old.id)).toHaveLength(1);
+      await second.sessions.unload(old.id);
+      expect(host.clientToolBroker.getToolDefinitions(old.id)).toHaveLength(0);
+      await expect(old.snapshot()).rejects.toThrow();
+      await expect(other.snapshot()).rejects.toThrow();
+      expect(await first.sessions.runtimeState(old.id)).toEqual({ loaded: false });
+      const replacement = await third.sessions.observe(old.id);
+      expect(replacement.pendingUserMessages()).toEqual({ revision: 1, messages: [] });
+      expect(replacement.subagentActivities()).toEqual({ revision: 1, agents: {} });
+      await old.unobserve();
+      await old.unobserve();
+      await other.unobserve();
+      expect(host.clientToolBroker.getToolDefinitions(old.id)).toHaveLength(1);
+      await replacement.unobserve();
+      const fresh = await first.sessions.observe(old.id);
+      await transport.request("session.unobserve", { sessionId: old.id }, ended[0].observationId);
+      await expect(
+        transport.request(
+          "session.record",
+          { sessionId: old.id, text: "stale" },
+          ended[0].observationId,
+        ),
+      ).rejects.toMatchObject({ code: "not_found" });
+      await fresh.record("fresh");
+      const snapshot = await fresh.snapshot();
+      expect(
+        snapshot.messages.some(
+          (entry) =>
+            entry.message.role === "user" &&
+            entry.message.content.some((part) => part.text === "stale"),
+        ),
+      ).toBe(false);
+      expect(host.clientToolBroker.getToolDefinitions(old.id)).toHaveLength(1);
+    } finally {
+      await Promise.all([first.close(), second.close(), third.close()]);
+      await host.shutdown();
+    }
+  });
+
   it("retains child conversations across SDK disconnects and unloads without recovery", async () => {
     const host = createHost(new MemorySessionStore());
     const listening = deferred();
@@ -5920,7 +6181,7 @@ describe("LocalSessionHost", () => {
         retainedUntil: null,
       });
       expect(parent.isDisposed).toBe(false);
-      await expect(observed.retain(60_000)).rejects.toMatchObject({ code: "not_found" });
+      await expect(observed.retain(60_000)).rejects.toThrow();
       let observedAgain = false;
       const observing = observer.sessions.observe(facade.id).then((session) => {
         observedAgain = true;
@@ -5936,7 +6197,7 @@ describe("LocalSessionHost", () => {
       expect(recovered.id).toBe(facade.id);
       expect(recovered.subagentActivities().agents).toEqual({});
       expect(await client.sessions.unload(facade.id)).toEqual({ unloaded: true });
-      await expect(recovered.retain(60_000)).rejects.toMatchObject({ code: "not_found" });
+      await expect(recovered.retain(60_000)).rejects.toThrow();
       expect(await client.sessions.unload(facade.id)).toEqual({ unloaded: false });
       expect(await client.sessions.runtimeState(facade.id)).toEqual({ loaded: false });
     } finally {
@@ -7248,8 +7509,7 @@ describe("session-owned MCP tools", () => {
           },
         };
       };
-      const accepted = await session.acceptTurn({ text: "use the host service" });
-      const result = await session.runAcceptedTurn(accepted.userHistoryEntryId);
+      const result = await session.submitTurn({ text: "use the host service" });
       expect(result.turn.status).toBe("completed");
       const snapshot = await session.snapshot();
       expect(projected).toEqual(snapshot);

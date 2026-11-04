@@ -109,6 +109,7 @@ import type { SessionStore } from "../store/session_store.js";
 import { ClientToolBroker } from "./client_tool_broker.js";
 import { createExecutionEnvironmentSubagentPromptResolver } from "./execution_runtime.js";
 import { HostedEphemeralAgentSession } from "./hosted_ephemeral_agent_session.js";
+import { HostedSessionInput } from "./hosted_session_input.js";
 import type { SessionBootstrap } from "./session_bootstrap.js";
 import {
   SessionExecBusyError,
@@ -920,6 +921,8 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   private readonly agents = new Map<string, SessionProtocolAgentRun>();
   private readonly agentCostTotals = new Map<string, number>();
   private readonly facets = new Map<string, SessionProtocolFacet>();
+  readonly input = new HostedSessionInput(this);
+  private readonly closingListeners = new Set<() => void>();
   private readonly deltaListeners = new Set<(delta: SessionProtocolDeltaMessage) => void>();
   private readonly ephemeralListeners = new Set<
     (message: SessionProtocolEphemeralMessage) => void
@@ -986,7 +989,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   }
 
   get isTurnRunning(): boolean {
-    return this.runtime.isTurnRunning;
+    return Boolean(this.activeTurnPromise) || this.runtime.isTurnRunning;
   }
 
   get canAcceptSteering(): boolean {
@@ -1007,6 +1010,14 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
   hasExecutionEnvironment(executionEnvironment: ExecutionEnvironment): boolean {
     return this.executionEnvironment === executionEnvironment;
+  }
+
+  onClosing(handler: () => void): () => void {
+    this.assertActive();
+    this.closingListeners.add(handler);
+    return () => {
+      this.closingListeners.delete(handler);
+    };
   }
 
   onDelta(handler: (delta: SessionProtocolDeltaMessage) => void): () => void {
@@ -1064,15 +1075,28 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     };
   }
 
-  async acceptTurn(
+  async submitTurn(
+    options: Omit<SessionProtocolRecordParams, "sessionId">,
+  ): Promise<SessionProtocolUserMessageTurnResult> {
+    return await this.runLogicalTurn(async (logicalTurn) => {
+      const { userHistoryEntryId } = await this.acceptTurn(options);
+      const turn = await this.runTurnNow(logicalTurn, userHistoryEntryId);
+      await this.settleTurn(userHistoryEntryId, turn);
+      return { userHistoryEntryId, turn };
+    });
+  }
+
+  private async acceptTurn(
     options: Omit<SessionProtocolRecordParams, "sessionId">,
   ): Promise<SessionProtocolRecordResult> {
-    this.assertActive();
     const userHistoryEntryId = this.createTurnHistoryEntryId(options.historyEntryId);
     this.pendingAcceptedTurnHistoryEntryIds.add(userHistoryEntryId);
     try {
       await this.session.commitUserText(options.text, { historyEntryId: userHistoryEntryId });
-      return { snapshot: await this.snapshot(), userHistoryEntryId };
+      return {
+        snapshot: await this.enqueueMutation(() => this.commitProjectedSnapshot()),
+        userHistoryEntryId,
+      };
     } finally {
       this.pendingAcceptedTurnHistoryEntryIds.delete(userHistoryEntryId);
     }
@@ -1100,19 +1124,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       id = `history-${randomUUID()}`;
     }
     return id;
-  }
-
-  async runAcceptedTurn(userHistoryEntryId: string): Promise<SessionProtocolUserMessageTurnResult> {
-    const acceptedTurn = this.turns.get(userHistoryEntryId);
-    if (!acceptedTurn) throw new Error(`turn '${userHistoryEntryId}' was not accepted`);
-    if (acceptedTurn.state === "settled") {
-      throw new Error(`turn '${userHistoryEntryId}' was already settled`);
-    }
-    const turn = await this.runLogicalTurn((logicalTurn) =>
-      this.runTurnNow(logicalTurn, userHistoryEntryId),
-    );
-    await this.settleTurn(userHistoryEntryId, turn);
-    return { userHistoryEntryId, turn };
   }
 
   async runTurn(): Promise<SessionProtocolTurnOutcome> {
@@ -1155,23 +1166,25 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     execute: (logicalTurn: ActiveLogicalTurn) => Promise<T>,
   ): Promise<T> {
     this.assertActive();
-    if (this.activeLogicalTurn) {
+    if (this.activeTurnPromise || this.activeLogicalTurn) {
       throw new Error("session turn is already active");
     }
     const logicalTurn: ActiveLogicalTurn = {
       cancellationRequested: false,
     };
     this.activeLogicalTurn = logicalTurn;
-    const run = execute(logicalTurn);
-    this.activeTurnPromise = run;
-    try {
-      return await run;
-    } finally {
-      if (this.activeTurnPromise === run) {
-        this.activeTurnPromise = undefined;
+    const completion = Promise.withResolvers<T>();
+    this.activeTurnPromise = completion.promise;
+    void (async () => execute(logicalTurn))()
+      .finally(async () => {
         this.activeLogicalTurn = undefined;
         await this.enqueueSnapshotResetIfChanged("assistant-message");
-      }
+      })
+      .then(completion.resolve, completion.reject);
+    try {
+      return await completion.promise;
+    } finally {
+      if (this.activeTurnPromise === completion.promise) this.activeTurnPromise = undefined;
     }
   }
 
@@ -1228,8 +1241,8 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
   get hasActiveWork(): boolean {
     return (
-      Boolean(this.activeTurnPromise) ||
-      this.runtime.isTurnRunning ||
+      this.input.hasPending ||
+      this.input.busy ||
       this.activeWorkPromises.size > 0 ||
       this.runtime.hasActiveSubagents ||
       this.runtime.jobs.hasRunning
@@ -1237,7 +1250,9 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   }
 
   async waitForActiveWork(): Promise<void> {
+    await this.input.waitForMutations();
     await Promise.allSettled([
+      this.input.waitForIdle(),
       ...(this.activeTurnPromise ? [this.activeTurnPromise] : []),
       ...this.activeWorkPromises,
     ]);
@@ -1267,21 +1282,26 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         applied: submission.applied.then((association) => ({
           userHistoryEntryId: association.historyEntryId,
         })),
-        result: submission.result.then(
-          async (association) => {
-            const turn = turnOutcomeFromResult(association.result, association.result.finalMessage);
-            await this.settleTurn(association.historyEntryId, turn);
-            return { userHistoryEntryId: association.historyEntryId, turn };
-          },
-          async (error) => {
-            const association = await submission.applied;
-            await this.settleTurn(association.historyEntryId, {
-              status: "failed",
-              stopReason: "error",
-              errorMessage: formatErrorDiagnostic(error),
-            });
-            throw error;
-          },
+        result: this.trackActiveWork(
+          submission.result.then(
+            async (association) => {
+              const turn = turnOutcomeFromResult(
+                association.result,
+                association.result.finalMessage,
+              );
+              await this.settleTurn(association.historyEntryId, turn);
+              return { userHistoryEntryId: association.historyEntryId, turn };
+            },
+            async (error) => {
+              const association = await submission.applied;
+              await this.settleTurn(association.historyEntryId, {
+                status: "failed",
+                stopReason: "error",
+                errorMessage: formatErrorDiagnostic(error),
+              });
+              throw error;
+            },
+          ),
         ),
       };
     }
@@ -1603,6 +1623,15 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     }
   }
 
+  private async trackActiveWork<T>(promise: Promise<T>): Promise<T> {
+    this.activeWorkPromises.add(promise);
+    try {
+      return await promise;
+    } finally {
+      this.activeWorkPromises.delete(promise);
+    }
+  }
+
   private async runActiveWork<T>(
     operation: (signal: AbortSignal) => Promise<T>,
     externalSignal?: AbortSignal,
@@ -1613,12 +1642,10 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       : abortController.signal;
     this.activeWorkAbortControllers.add(abortController);
     const promise = operation(signal);
-    this.activeWorkPromises.add(promise);
     try {
-      return await promise;
+      return await this.trackActiveWork(promise);
     } finally {
       this.activeWorkAbortControllers.delete(abortController);
-      this.activeWorkPromises.delete(promise);
     }
   }
 
@@ -1764,6 +1791,15 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     }
 
     const errors: unknown[] = [];
+    this.input.close();
+    for (const listener of [...this.closingListeners]) {
+      try {
+        listener();
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    this.closingListeners.clear();
     this.interruptActiveWork();
     const subagentsClosed = this.runtime.closeSubagents().catch((error) => {
       errors.push(error);
@@ -1963,7 +1999,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
           ? { usageCheckpoint: { ...agentState.usageCheckpoint } }
           : {}),
       },
-      lifecycle: this.activeTurnPromise || this.runtime.isTurnRunning ? "running" : "idle",
+      lifecycle: this.activeLogicalTurn || this.runtime.isTurnRunning ? "running" : "idle",
       costTotal: this.costTotal,
       settings: {
         autoCompactThresholdTokens: this.runtime.autoCompactOverrideTokens,

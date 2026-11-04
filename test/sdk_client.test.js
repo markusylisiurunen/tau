@@ -84,7 +84,8 @@ class FakeSessionProtocolTransport {
       this.initializeParams = initializeParams;
       this.connectTimeoutMs = timeoutMs;
     });
-    this.request = vi.fn(async (method, params) => {
+    this.request = vi.fn(async (method, params, observationId) => {
+      if (method === "session.observe") this.observations.set(params.sessionId, observationId);
       this.requests.push({ method, params });
       const overrideResult = await this.onRequest?.(method, params);
       if (overrideResult !== undefined) {
@@ -220,6 +221,7 @@ class FakeSessionProtocolTransport {
     });
   }
 
+  observations = new Map();
   requests = [];
   listeners = new Set();
   pendingUserMessagesListeners = new Set();
@@ -230,6 +232,13 @@ class FakeSessionProtocolTransport {
   connectTimeoutMs;
   closed = false;
   onRequest;
+
+  observationEndedListeners = new Set();
+
+  onObservationEnded(listener) {
+    this.observationEndedListeners.add(listener);
+    return () => this.observationEndedListeners.delete(listener);
+  }
 
   onDelta(listener) {
     this.listeners.add(listener);
@@ -272,25 +281,37 @@ class FakeSessionProtocolTransport {
 
   emitDelta(delta) {
     for (const listener of this.listeners) {
-      listener(delta);
+      listener({
+        ...delta,
+        observationId: delta.observationId ?? this.observations.get(delta.sessionId),
+      });
     }
   }
 
   emitPendingUserMessages(message) {
     for (const listener of this.pendingUserMessagesListeners) {
-      listener(message);
+      listener({
+        ...message,
+        observationId: message.observationId ?? this.observations.get(message.sessionId),
+      });
     }
   }
 
   emitSubagentActivities(message) {
     for (const listener of this.subagentActivitiesListeners) {
-      listener(message);
+      listener({
+        ...message,
+        observationId: message.observationId ?? this.observations.get(message.sessionId),
+      });
     }
   }
 
   emitClientTool(message) {
     for (const listener of this.clientToolListeners) {
-      listener(message);
+      listener({
+        ...message,
+        observationId: message.observationId ?? this.observations.get(message.sessionId),
+      });
     }
   }
 
@@ -430,9 +451,10 @@ describe("sdk_client", () => {
       revision: 2,
       agents: { "agent-1": agentState },
     });
-    expect(subagentActivityMessages.at(-1)).toEqual(
-      createSubagentActivitiesMessage("session-1", 2, [agentSet]),
-    );
+    expect(subagentActivityMessages.at(-1)).toEqual({
+      ...createSubagentActivitiesMessage("session-1", 2, [agentSet]),
+      observationId: transport.observations.get("session-1"),
+    });
 
     transport.emitSubagentActivities(
       createSubagentActivitiesMessage("session-1", 3, [
@@ -672,7 +694,9 @@ describe("sdk_client", () => {
     });
 
     expect(createdSession.id).toBe("session-2");
-    expect(receivedDeltas).toEqual([matchingDelta]);
+    expect(receivedDeltas).toEqual([
+      { ...matchingDelta, observationId: transport.observations.get("session-2") },
+    ]);
 
     await expect(createdSession.unobserve()).resolves.toEqual({ unobserved: true });
     await expect(createdSession.snapshot()).rejects.toBeInstanceOf(TauSessionClientError);
@@ -681,7 +705,9 @@ describe("sdk_client", () => {
     });
 
     transport.emitDelta(matchingDelta);
-    expect(receivedDeltas).toEqual([matchingDelta]);
+    expect(receivedDeltas).toEqual([
+      { ...matchingDelta, observationId: transport.observations.get("session-2") },
+    ]);
     unsubscribe();
 
     const bufferedDelta = createNoticeDelta("session-1", 7, "buffered before listener");
@@ -704,7 +730,9 @@ describe("sdk_client", () => {
 
     const bufferedDeltas = [];
     bufferedSession.onDelta((delta) => bufferedDeltas.push(delta));
-    expect(bufferedDeltas).toEqual([bufferedDelta]);
+    expect(bufferedDeltas).toEqual([
+      { ...bufferedDelta, observationId: transport.observations.get("session-1") },
+    ]);
     expect(bufferedSession.subagentActivities()).toEqual({
       revision: 2,
       agents: { "agent-buffered": bufferedActivityState },
@@ -712,10 +740,76 @@ describe("sdk_client", () => {
 
     const afterListenerDelta = createNoticeDelta("session-1", 8, "after listener");
     transport.emitDelta(afterListenerDelta);
-    expect(bufferedDeltas).toEqual([bufferedDelta, afterListenerDelta]);
+    expect(bufferedDeltas).toEqual(
+      [bufferedDelta, afterListenerDelta].map((delta) => ({
+        ...delta,
+        observationId: transport.observations.get("session-1"),
+      })),
+    );
 
     await client.close();
     expect(transport.closed).toBe(true);
+  });
+
+  it("isolates replaced observations from delayed events and cleanup", async () => {
+    const transport = new FakeSessionProtocolTransport();
+    const client = await createTauSdkClientFromTransport(transport);
+    const old = await client.sessions.observe("session-1");
+    const oldId = transport.observations.get(old.id);
+    transport.emitPendingUserMessages(
+      createPendingUserMessagesMessage(old.id, [{ id: "old", mode: "queue", text: "old" }], 8),
+    );
+    const agentState = { runRevision: 1, activities: [] };
+    transport.emitSubagentActivities(
+      createSubagentActivitiesMessage(old.id, 8, [
+        { type: "agent.set", agentId: "old", state: agentState },
+      ]),
+    );
+    for (const listener of [...transport.observationEndedListeners]) {
+      listener({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "session.observationEnded",
+        sessionId: old.id,
+        observationId: oldId,
+      });
+    }
+    await expect(old.snapshot()).rejects.toBeInstanceOf(TauSessionClientError);
+    const fresh = await client.sessions.observe(old.id);
+    const requests = transport.requests.length;
+    await old.unobserve();
+    expect(transport.requests).toHaveLength(requests);
+    transport.emitPendingUserMessages({
+      ...createPendingUserMessagesMessage(
+        old.id,
+        [{ id: "stale", mode: "queue", text: "stale" }],
+        9,
+      ),
+      observationId: oldId,
+    });
+    transport.emitSubagentActivities({
+      ...createSubagentActivitiesMessage(old.id, 9, [
+        { type: "agent.set", agentId: "stale", state: agentState },
+      ]),
+      observationId: oldId,
+    });
+    expect(fresh.pendingUserMessages().messages).toEqual([]);
+    expect(fresh.subagentActivities().agents).toEqual({});
+    transport.emitSubagentActivities(
+      createSubagentActivitiesMessage(old.id, 2, [
+        { type: "agent.set", agentId: "new", state: agentState },
+      ]),
+    );
+    expect(fresh.subagentActivities()).toEqual({ revision: 2, agents: { new: agentState } });
+    transport.emitPendingUserMessages(
+      createPendingUserMessagesMessage(old.id, [{ id: "new", mode: "queue", text: "new" }], 2),
+    );
+    expect(fresh.pendingUserMessages()).toEqual({
+      revision: 2,
+      messages: [{ id: "new", mode: "queue", text: "new" }],
+    });
+    await fresh.unobserve();
+    expect(transport.observationEndedListeners.size).toBe(0);
+    await client.close();
   });
 
   it("cancels only the in-flight exec whose abort signal fires", async () => {
@@ -1335,7 +1429,9 @@ describe("sdk_client", () => {
       sessionId: "session-2",
       revision: deliveredDelta.toRevision,
     });
-    expect(deliveredDeltas).toEqual([deliveredDelta]);
+    expect(deliveredDeltas).toEqual([
+      { ...deliveredDelta, observationId: transport.observations.get("session-2") },
+    ]);
     expect(transport.requests.at(-1)).toEqual({
       method: "session.snapshot",
       params: { sessionId: "session-2" },

@@ -220,7 +220,7 @@ There is no `--until`, `--session`, or `--agent` filter. For a remote session, r
 | WebSocket host restarts | Recovered from storage | Lost | Session returns idle; subagents are not restored | Each client reconnects on its own |
 | TUI restarts while the host keeps running | Kept | Kept in host memory | Continue | Loaded again by the new client process |
 | Host unloads the session after its last client leaves, with work finished and any [retention](remote-sessions.md#keep-a-session-loaded) ended | Kept | Lost | No running work remains; idle subagents are removed | Not affected, because no client is attached |
-| A client calls `session.unload` | Kept | Lost | Interrupted and removed | Observers are not notified |
+| A client calls `session.unload` | Kept | Lost | Interrupted and removed | Every client's observation ends, and a client must observe the session again to continue |
 | `/new` | Old session stays saved | Not copied | New idle session | Same TUI process continues |
 
 An unsent draft exists only in the TUI. Press Ctrl+S to copy it to the clipboard before restarting a client.

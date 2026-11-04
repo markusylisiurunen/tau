@@ -281,13 +281,14 @@ Test persona ${id}.
         const observer = await client.sessions.observe(session.id);
         const deltas = [];
         observer.onDelta((delta) => deltas.push(delta));
-        let snapshot = await session.snapshot();
+        await expect(session.snapshot()).rejects.toThrow();
+        let snapshot = await observer.snapshot();
         expect(snapshot.settings.autoCompactThresholdTokens).toBe(50000);
         expect(snapshot.settings.effectiveAutoCompactThresholdTokens).toBe(
           Math.min(50000, snapshot.bootstrap.model.contextWindow - 16384),
         );
-        await expect(session.setAutoCompactThreshold(49999)).rejects.toThrow();
-        await session.setAutoCompactThreshold(75000);
+        await expect(observer.setAutoCompactThreshold(49999)).rejects.toThrow();
+        await observer.setAutoCompactThreshold(75000);
         expect((await observer.snapshot()).settings.autoCompactThresholdTokens).toBe(75000);
         expect(
           deltas.some(
@@ -300,7 +301,7 @@ Test persona ${id}.
               ),
           ),
         ).toBe(true);
-        await session.setAutoCompactThreshold(null);
+        await observer.setAutoCompactThreshold(null);
         snapshot = await observer.snapshot();
         expect(snapshot.settings.autoCompactThresholdTokens).toBeNull();
         expect(snapshot.settings.effectiveAutoCompactThresholdTokens).toBe(
@@ -320,7 +321,7 @@ Test persona ${id}.
       let unsubscribe = () => {};
 
       try {
-        expect(client.ready.version).toBe(19);
+        expect(client.ready.version).toBe(20);
         await expect(client.sessions.list()).resolves.toEqual([]);
 
         const session = await client.sessions.create(localCreateInput);

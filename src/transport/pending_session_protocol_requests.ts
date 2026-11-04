@@ -28,9 +28,10 @@ export class PendingSessionProtocolRequests {
   create<M extends SessionProtocolMethod>(
     method: M,
     params: SessionProtocolParamsByMethod[M],
+    observationId?: string,
   ): PendingSessionProtocolRequest<M> {
     const requestId = randomUUID();
-    const request = createSessionProtocolRequest(requestId, method, params);
+    const request = createSessionProtocolRequest(requestId, method, params, observationId);
     if (!request.ok) {
       throw new TauSessionProtocolResponseError({
         requestId,

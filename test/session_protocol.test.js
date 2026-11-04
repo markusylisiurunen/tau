@@ -41,6 +41,38 @@ const bootstrap = createProtocolBootstrap();
 const catalog = createProtocolCatalog();
 
 describe("session_protocol", () => {
+  it("requires observation identity on scoped requests and live events", () => {
+    expect(createSessionProtocolRequest("r", "session.snapshot", { sessionId: "s" }).ok).toBe(
+      false,
+    );
+    expect(
+      createSessionProtocolRequest("r", "session.snapshot", { sessionId: "s" }, "o"),
+    ).toMatchObject({ ok: true, value: { observationId: "o" } });
+    const message = {
+      version: SESSION_PROTOCOL_VERSION,
+      type: "session.observationEnded",
+      sessionId: "s",
+      observationId: "o",
+    };
+    expect(parseSessionProtocolOutgoingLine(JSON.stringify(message))).toEqual({
+      ok: true,
+      message,
+    });
+    for (const observationId of [undefined, "", 1]) {
+      expect(
+        parseSessionProtocolOutgoingLine(JSON.stringify({ ...message, observationId })).ok,
+      ).toBe(false);
+    }
+    const pending = createSessionProtocolPendingUserMessagesMessage({
+      sessionId: "s",
+      state: { revision: 1, messages: [] },
+    });
+    expect(parseSessionProtocolOutgoingLine(JSON.stringify(pending)).ok).toBe(false);
+    expect(
+      parseSessionProtocolOutgoingLine(JSON.stringify({ ...pending, observationId: "o" })),
+    ).toMatchObject({ ok: true, message: { observationId: "o" } });
+  });
+
   it("bounds live runtime retention and validates unload without observing", () => {
     expect(
       validateSessionProtocolParams("session.retain", { sessionId: "s", durationMs: 259200000 }).ok,
@@ -169,6 +201,7 @@ describe("session_protocol", () => {
         JSON.stringify({
           version: SESSION_PROTOCOL_VERSION,
           type: "request",
+          observationId: "observation-1",
           id: "obsolete",
           method,
           params: { sessionId: "session-1", objective: "Ship it" },
@@ -405,7 +438,14 @@ describe("session_protocol", () => {
       },
     ],
   ])("parses valid %s request lines", (id, method, params) => {
-    const request = { version: SESSION_PROTOCOL_VERSION, type: "request", id, method, params };
+    const request = {
+      version: SESSION_PROTOCOL_VERSION,
+      type: "request",
+      observationId: "observation-1",
+      id,
+      method,
+      params,
+    };
     expect(parseSessionProtocolRequestLine(JSON.stringify(request))).toEqual({
       ok: true,
       request,
@@ -418,6 +458,7 @@ describe("session_protocol", () => {
         JSON.stringify({
           version: SESSION_PROTOCOL_VERSION,
           type: "request",
+          observationId: "observation-1",
           id: "req-prune",
           method: "session.prune",
           params: { sessionId: "session-1", strategy: "smart" },
@@ -565,6 +606,7 @@ describe("session_protocol", () => {
       JSON.stringify({
         version: SESSION_PROTOCOL_VERSION,
         type: "request",
+        observationId: "observation-1",
         id: "req-unknown",
         method: "session.unknown",
         params: {},
@@ -582,6 +624,7 @@ describe("session_protocol", () => {
       JSON.stringify({
         version: SESSION_PROTOCOL_VERSION,
         type: "request",
+        observationId: "observation-1",
         id: "",
         method: "session.snapshot",
         params: { sessionId: "session-1" },
@@ -599,6 +642,7 @@ describe("session_protocol", () => {
       JSON.stringify({
         version: SESSION_PROTOCOL_VERSION,
         type: "request",
+        observationId: "observation-1",
         id: "req-invalid-submit",
         method: "session.submit",
         params: { sessionId: "session-1", text: 123 },
@@ -616,6 +660,7 @@ describe("session_protocol", () => {
       JSON.stringify({
         version: SESSION_PROTOCOL_VERSION,
         type: "request",
+        observationId: "observation-1",
         id: "req-unsupported",
         method: "session.submit",
         params: { sessionId: "session-1", text: "hello" },
@@ -627,6 +672,7 @@ describe("session_protocol", () => {
       request: {
         version: SESSION_PROTOCOL_VERSION,
         type: "request",
+        observationId: "observation-1",
         id: "req-unsupported",
         method: "session.submit",
         params: { sessionId: "session-1", text: "hello" },
@@ -637,6 +683,7 @@ describe("session_protocol", () => {
       JSON.stringify({
         version: SESSION_PROTOCOL_VERSION,
         type: "request",
+        observationId: "observation-1",
         id: "req-without-params",
         method: "session.snapshot",
       }),
@@ -807,6 +854,7 @@ describe("session_protocol", () => {
         JSON.stringify({
           version: SESSION_PROTOCOL_VERSION,
           type: "session.clientTool.call",
+          observationId: "observation-1",
           sessionId: "session-1",
           agentId: "main",
           callId: "call-1",
@@ -1293,15 +1341,21 @@ describe("session_protocol", () => {
 
   it("constructs outbound requests through shared method params validation", () => {
     expect(
-      createSessionProtocolRequest("req-out", "session.submit", {
-        sessionId: "session-1",
-        text: "hello",
-      }),
+      createSessionProtocolRequest(
+        "req-out",
+        "session.submit",
+        {
+          sessionId: "session-1",
+          text: "hello",
+        },
+        "observation-1",
+      ),
     ).toEqual({
       ok: true,
       value: {
         version: SESSION_PROTOCOL_VERSION,
         type: "request",
+        observationId: "observation-1",
         id: "req-out",
         method: "session.submit",
         params: { sessionId: "session-1", text: "hello" },
@@ -1309,16 +1363,22 @@ describe("session_protocol", () => {
     });
 
     expect(
-      createSessionProtocolRequest("req-extra", "session.submit", {
-        sessionId: "session-1",
-        text: "hello",
-        mode: "submit",
-      }),
+      createSessionProtocolRequest(
+        "req-extra",
+        "session.submit",
+        {
+          sessionId: "session-1",
+          text: "hello",
+          mode: "submit",
+        },
+        "observation-1",
+      ),
     ).toEqual({
       ok: true,
       value: {
         version: SESSION_PROTOCOL_VERSION,
         type: "request",
+        observationId: "observation-1",
         id: "req-extra",
         method: "session.submit",
         params: { sessionId: "session-1", text: "hello" },
@@ -1326,10 +1386,15 @@ describe("session_protocol", () => {
     });
 
     expect(
-      createSessionProtocolRequest("", "session.submit", {
-        sessionId: "session-1",
-        text: "hello",
-      }),
+      createSessionProtocolRequest(
+        "",
+        "session.submit",
+        {
+          sessionId: "session-1",
+          text: "hello",
+        },
+        "observation-1",
+      ),
     ).toEqual({
       ok: false,
       error: expect.objectContaining({
@@ -2125,6 +2190,7 @@ describe("session_protocol", () => {
       },
     });
 
+    message.observationId = "observation-1";
     expect(parseSessionProtocolOutgoingLine(JSON.stringify(message))).toEqual({
       ok: true,
       message,
@@ -2180,6 +2246,7 @@ describe("session_protocol", () => {
       ],
     });
 
+    message.observationId = "observation-1";
     expect(parseSessionProtocolOutgoingLine(JSON.stringify(message))).toEqual({
       ok: true,
       message,
@@ -2358,6 +2425,7 @@ describe("session_protocol", () => {
         changes: [{ type: "lifecycle.set", lifecycle: "idle" }],
       },
     });
+    delta.observationId = "observation-1";
     expect(parseSessionProtocolOutgoingLine(JSON.stringify(delta))).toEqual({
       ok: true,
       message: delta,
@@ -2518,6 +2586,7 @@ describe("session_protocol", () => {
         },
       },
     });
+    ephemeral.observationId = "observation-1";
     expect(parseSessionProtocolOutgoingLine(JSON.stringify(ephemeral))).toEqual({
       ok: true,
       message: ephemeral,
@@ -2533,6 +2602,7 @@ describe("session_protocol", () => {
         durationMs: 3_000,
       },
     });
+    feedback.observationId = "observation-1";
     expect(parseSessionProtocolOutgoingLine(JSON.stringify(feedback))).toEqual({
       ok: true,
       message: feedback,

@@ -4,6 +4,8 @@ This page lists every request method of the protocol version that ships with thi
 
 Every request is `{ version, type: "request", id, method, params }`, and every successful response is `{ version, type: "response", id, ok: true, result }`. `version` is the number the server sends in `ready`. `params` is required even when empty, and unknown fields are removed.
 
+Most session methods also need a non-empty [`observationId`](session-protocol.md#observe-before-consuming-session-state) in the envelope. Only these omit it: `initialize`, `session.create`, `session.list`, `session.runtimeState`, `session.unload`, `session.clientTool.ack`, and `session.clientTool.result`.
+
 ## Common values
 
 A `sessionId` is a non-empty opaque string returned by `session.create` or `session.list`. A client-supplied `historyEntryId` is also a non-empty opaque string; omit it to let Tau generate one.
@@ -101,7 +103,7 @@ result: {
 
 ### `session.observe`
 
-Observes one session on this connection.
+Observes one session on this connection, under a new `observationId`.
 
 ```ts
 params: {
@@ -114,11 +116,11 @@ result: {
 }
 ```
 
-Install all three before applying later messages. Calling `observe` again returns fresh starting states; it does not create a second session.
+Install all three before applying later messages. Calling `observe` again replaces this connection's earlier observation of the session.
 
 ### `session.unobserve`
 
-Stops this connection's observation without deleting or interrupting the hosted session.
+Ends one observation without deleting or interrupting the hosted session.
 
 ```ts
 params: {
@@ -129,7 +131,7 @@ result: {
 }
 ```
 
-The session must currently be observed by this connection.
+A stale or unknown `observationId` succeeds and changes nothing.
 
 ### `session.retain`
 
@@ -145,7 +147,7 @@ result: {
 }
 ```
 
-The session must currently be observed by this connection. `durationMs` is an integer from 1 to 2,147,483,647, which is about 24.8 days. `retainedUntil` is the deadline in milliseconds since the Unix epoch.
+`durationMs` is an integer from 1 to 2,147,483,647, which is about 24.8 days. `retainedUntil` is the deadline in milliseconds since the Unix epoch.
 
 Each call replaces the previous deadline, so a shorter duration moves it closer. After the deadline, the normal unload rules apply. The host does not save retention, and a host restart ends it. See [keep a session loaded](remote-sessions.md#keep-a-session-loaded).
 
@@ -181,7 +183,7 @@ result: {
 
 The connection does not need to observe the session. The host interrupts turns and subagents, stops background jobs, and waits for them to settle before it responds. Interrupted turns are saved as they settle. Subagents, pending messages, and retention are lost. `unloaded` is `false` when the session was not in memory, and the call never loads it. If the host is recovering the session, it waits for recovery to finish and then unloads it.
 
-Other observing connections are not notified. A later `session.observe` waits for the unload to finish, and then loads the saved session again, idle and without subagents. Most other requests from a connection that was observing the session load it the same way. `session.retain` returns `not_found` until the connection observes the session again.
+The unload ends every observation of the session, and each connection receives `session.observationEnded`. A later `session.observe` with a new ID waits for the unload to finish, and then loads the saved session again, idle and without subagents.
 
 ## Add user input and run turns
 

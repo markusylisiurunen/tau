@@ -18,7 +18,7 @@ The server sends `ready` as its first message:
 
 ```json
 {
-  "version": 19,
+  "version": 20,
   "type": "ready",
   "methods": ["initialize", "session.create", "session.list"]
 }
@@ -30,7 +30,7 @@ After `ready`, send `initialize` with non-empty client metadata:
 
 ```json
 {
-  "version": 19,
+  "version": 20,
   "type": "request",
   "id": "init-1",
   "method": "initialize",
@@ -50,21 +50,22 @@ Every request has the same envelope:
 
 ```json
 {
-  "version": 19,
+  "version": 20,
   "type": "request",
   "id": "req-42",
   "method": "session.snapshot",
+  "observationId": "observation-7",
   "params": { "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3" }
 }
 ```
 
-`id` is a non-empty string chosen by the client, unique among its open requests on the connection. `params` is always required, even if empty, as in `{}` for `session.list`. The host validates required fields, types, discriminators, method names, and the exact protocol version. Unknown fields are accepted and removed, except in system messages and their metadata, where they are rejected.
+`id` is a non-empty string chosen by the client, unique among its open requests on the connection. `observationId` is required on most session requests, as described in [observe before consuming session state](#observe-before-consuming-session-state). `params` is always required, even if empty, as in `{}` for `session.list`. The host validates required fields, types, discriminators, method names, and the exact protocol version. Unknown fields are accepted and removed, except in system messages and their metadata, where they are rejected.
 
 Successful responses echo the request id:
 
 ```json
 {
-  "version": 19,
+  "version": 20,
   "type": "response",
   "id": "req-42",
   "ok": true,
@@ -72,11 +73,24 @@ Successful responses echo the request id:
 }
 ```
 
-A request can remain open while the host emits state messages or handles later requests. Route responses by `id`, never by arrival order. Route streamed messages by `sessionId`.
+A request can remain open while the host emits state messages or handles later requests. Route responses by `id`, never by arrival order. Route streamed session messages by `observationId`.
 
 ## Observe before consuming session state
 
-`session.create` creates a session but does not observe it. `session.observe` starts observing on this connection and returns three complete starting states together:
+`session.create` creates a session but does not observe it. To observe it, choose an `observationId` and send it in the `session.observe` envelope:
+
+```json
+{
+  "version": 20,
+  "type": "request",
+  "id": "observe-1",
+  "method": "session.observe",
+  "observationId": "observation-7",
+  "params": { "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3" }
+}
+```
+
+The ID is a non-empty string. Use a new value for every `session.observe`, because the ID is what separates a new observation from messages and requests of an earlier one. The result contains three complete starting states:
 
 ```json
 {
@@ -88,7 +102,35 @@ A request can remain open while the host emits state messages or handles later r
 
 Install all three before processing later messages for that session. The host holds back updates while preparing the response, and afterward sends only updates newer than the returned revisions.
 
-Observing controls which updates you receive; it does not make you the owner. `session.unobserve` stops this connection's updates without deleting the session or interrupting work. To keep a session in host memory without an observer, use `session.retain`. Several connections can observe one session, and each can change it. Client tool names must be unique among observing clients.
+Observing controls which updates you receive; it does not make you the owner. To keep a session in host memory without an observer, use `session.retain`. Several connections can observe one session, and each can change it. Client tool names must be unique among observing clients.
+
+Every session update and client tool call carries the `observationId` it belongs to. Send the same ID with later requests for that session. A connection has at most one observation of a session at a time. `session.runtimeState` and `session.unload` work without an observation, and the [method reference](session-protocol-methods.md) lists every method that takes no `observationId`.
+
+### When an observation ends
+
+An observation ends when:
+
+- This connection sends `session.unobserve` with its ID. The session keeps running.
+- This connection sends `session.observe` for the same session again. The new observation replaces the old one. If the new request fails, the connection may be left with no observation, so send `session.observe` again.
+- Any client unloads the session. This ends the observations of every connection.
+- The connection closes.
+
+Unless the connection has closed, the host then sends:
+
+```json
+{
+  "version": 20,
+  "type": "session.observationEnded",
+  "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
+  "observationId": "observation-7"
+}
+```
+
+No more updates arrive for that ID, and the host cancels the client tool calls that belong to it. Requests that were already open still get their responses.
+
+A request with an ended or unknown `observationId` returns `not_found` and never loads the session. The exception is `session.unobserve`, which succeeds and changes nothing, so cleanup is safe to repeat and cannot end a newer observation.
+
+To continue after an observation ends, send `session.observe` with a new ID and install the new starting states. If the session was unloaded, this waits for the unload to finish and then loads the saved session.
 
 ## Treat the snapshot as the source of truth
 
@@ -151,8 +193,9 @@ Observed snapshot changes arrive as `session.delta`:
 
 ```json
 {
-  "version": 19,
+  "version": 20,
   "type": "session.delta",
+  "observationId": "observation-7",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "fromRevision": 8,
   "toRevision": 9,
@@ -189,8 +232,9 @@ Some live state is not part of the snapshot. Each of these channels has its own 
 
 ```json
 {
-  "version": 19,
+  "version": 20,
   "type": "session.pendingUserMessages",
+  "observationId": "observation-7",
   "sessionId": "...",
   "state": {
     "revision": 4,
@@ -226,8 +270,9 @@ An initialized client that advertised a tool can receive:
 
 ```json
 {
-  "version": 19,
+  "version": 20,
   "type": "session.clientTool.call",
+  "observationId": "observation-7",
   "sessionId": "...",
   "agentId": "main",
   "callId": "call-1",
@@ -237,6 +282,8 @@ An initialized client that advertised a tool can receive:
   "executionDeadlineMs": 60000
 }
 ```
+
+`observationId` identifies the observation that attached the tool. Use it for any requests you make while handling the call, such as `session.exec`.
 
 `executionDeadlineMs` is a positive duration in milliseconds, or `null` when the advertised tool has no execution deadline. Omitting `executionTimeoutMs` from the tool definition uses 60 seconds; setting it to `null` disables only the execution deadline. Acknowledgement deadlines and cancellation on interruption or client detach still apply.
 
@@ -252,7 +299,7 @@ Error responses use `ok: false`:
 
 ```json
 {
-  "version": 19,
+  "version": 20,
   "type": "response",
   "id": "req-42",
   "ok": false,
@@ -268,10 +315,10 @@ The supported codes are:
 | Code | Meaning |
 | --- | --- |
 | `parse_error` | The JSON payload could not be parsed. |
-| `invalid_request` | The envelope, version, type, id, or requested operation is invalid. |
+| `invalid_request` | The envelope, version, type, id, or requested operation is invalid, or a required `observationId` is missing. |
 | `method_not_found` | The method is unsupported. |
 | `invalid_params` | Method parameters failed validation. |
-| `not_found` | The addressed session does not exist on this host. |
+| `not_found` | The addressed session does not exist on this host, or this connection has no observation of it with the given `observationId`. |
 | `busy` | Conflicting session work or a same-thread ephemeral submission is active. |
 | `cancelled` | Pending input, execution, or sampling was cancelled. |
 | `internal_error` | The host could not complete the operation. |

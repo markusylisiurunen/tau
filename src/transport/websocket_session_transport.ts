@@ -19,6 +19,7 @@ import {
   notifySessionProtocolDeltaListeners,
   notifySessionProtocolEphemeralListeners,
   notifySessionProtocolFailureListeners,
+  notifySessionProtocolObservationEndedListeners,
   notifySessionProtocolPendingUserMessagesListeners,
   notifySessionProtocolSubagentActivitiesListeners,
   waitForPromiseOrTimeout,
@@ -29,6 +30,7 @@ import type {
   SessionProtocolDeltaListener,
   SessionProtocolEphemeralListener,
   SessionProtocolFailureListener,
+  SessionProtocolObservationEndedListener,
   SessionProtocolPendingUserMessagesListener,
   SessionProtocolSubagentActivitiesListener,
   SessionProtocolTransport,
@@ -65,6 +67,7 @@ export class WebSocketSessionProtocolTransport implements SessionProtocolTranspo
     new Set<SessionProtocolPendingUserMessagesListener>();
   private readonly subagentActivitiesListeners =
     new Set<SessionProtocolSubagentActivitiesListener>();
+  private readonly observationEndedListeners = new Set<SessionProtocolObservationEndedListener>();
   private readonly clientToolListeners = new Set<SessionProtocolClientToolListener>();
   private readonly failureListeners = new Set<SessionProtocolFailureListener>();
   private readonly pendingRequests = new PendingSessionProtocolRequests();
@@ -161,6 +164,7 @@ export class WebSocketSessionProtocolTransport implements SessionProtocolTranspo
   request<M extends SessionProtocolMethod>(
     method: M,
     params: SessionProtocolParamsByMethod[M],
+    observationId?: string,
   ): Promise<SessionProtocolResultByMethod[M]> {
     if (this.isClosed) {
       return Promise.reject(new TauTransportError("tau websocket transport is closed"));
@@ -177,7 +181,7 @@ export class WebSocketSessionProtocolTransport implements SessionProtocolTranspo
 
     let pending: PendingSessionProtocolRequest<M>;
     try {
-      pending = this.pendingRequests.create(method, params);
+      pending = this.pendingRequests.create(method, params, observationId);
     } catch (error) {
       return Promise.reject(error);
     }
@@ -191,6 +195,13 @@ export class WebSocketSessionProtocolTransport implements SessionProtocolTranspo
     }
 
     return pending.promise;
+  }
+
+  onObservationEnded(listener: SessionProtocolObservationEndedListener): () => void {
+    this.observationEndedListeners.add(listener);
+    return () => {
+      this.observationEndedListeners.delete(listener);
+    };
   }
 
   onDelta(listener: SessionProtocolDeltaListener): () => void {
@@ -245,6 +256,7 @@ export class WebSocketSessionProtocolTransport implements SessionProtocolTranspo
     const closeError = new TauTransportError("tau websocket transport was closed");
     this.pendingRequests.rejectAll(closeError);
     this.rejectReadyIfPending(closeError);
+    this.observationEndedListeners.clear();
     this.deltaListeners.clear();
     this.ephemeralListeners.clear();
     this.pendingUserMessagesListeners.clear();
@@ -316,6 +328,13 @@ export class WebSocketSessionProtocolTransport implements SessionProtocolTranspo
         this.readyValue = message;
         this.readyDeferred.resolve(message);
       }
+      return;
+    }
+
+    if (message.type === "session.observationEnded") {
+      notifySessionProtocolObservationEndedListeners(this.observationEndedListeners, message, {
+        ignoreListenerErrors: true,
+      });
       return;
     }
 

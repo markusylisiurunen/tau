@@ -17,7 +17,7 @@ A Telegram runner offers the built-in `send_photo_to_telegram`, `send_video_to_t
 
 Node SDK clients can pass `TauSdkClientTool` handlers when they initialize. Their schemas may set `executionTimeoutMs` to `null` for no execution deadline, or omit it for the 60-second default. Configured command tools require a positive timeout and do not accept `null`. The same rules for routing, cancellation, and execution-environment access apply.
 
-Only a client that is observing a session can add tools to it. The tools disappear when that client detaches or disconnects. When several clients observe one session, only one may offer a given tool name, and Tau rejects the later client if names collide. Client tool names also must not match host tools or built-in tools.
+Only a client that is observing a session can add tools to it. The tools disappear when that client's observation ends, such as on detach, disconnect, or unload by any client. When several clients observe one session, only one may offer a given tool name, and Tau rejects the later client if names collide. Client tool names also must not match host tools or built-in tools.
 
 Only the session's main agent can call client tools. [Subagents](subagents.md#tools) never get them.
 
@@ -412,7 +412,7 @@ A successful exchange writes one `ready` frame, waits for `execute`, writes one 
 
 Client tool calls are not saved. Tau never replays them and never moves them to another client when the owning client goes away.
 
-When the owning client detaches, Tau removes its tools from later turns and cancels its running calls. When the client closes or its connection fails for good, local handlers and the execution-environment commands they started are aborted. Closing waits for running handlers to finish, but no results are sent once the connection is gone.
+When the owning client's observation ends, Tau removes its tools from later turns and cancels its running calls. Observing again on the same connection ends the earlier observation and cancels those calls. When the client closes or its connection fails for good, local handlers and the execution-environment commands they started are aborted. Closing waits for running handlers to finish, but no results are sent once the connection is gone.
 
 After reconnecting, the client offers its current tools again, and they become available once it observes the session. If another client already offers one of those names, the attachment fails. A reconnect never resumes a command process from the earlier connection.
 

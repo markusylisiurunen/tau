@@ -80,7 +80,7 @@ The WebSocket token gives full access to all sessions. See [remote sessions](rem
 
 ### Supply a protocol transport
 
-`createTauSdkClientFromTransport(transport, options?)` builds the same client on top of any `SessionProtocolTransport`, so you can use another transport with the same session behavior.
+`createTauSdkClientFromTransport(transport, options?)` builds the same client on top of any `SessionProtocolTransport`.
 
 A custom transport implements:
 
@@ -88,16 +88,19 @@ A custom transport implements:
 type SessionProtocolTransport = {
   readonly ready: SessionProtocolReadyMessage;
   connect(initializeParams, timeoutMs): Promise<void>;
-  request(method, params): Promise<unknown>;
+  request(method, params, observationId?): Promise<unknown>;
   onDelta(listener): () => void;
   onEphemeral(listener): () => void;
   onPendingUserMessages(listener): () => void;
   onSubagentActivities(listener): () => void;
   onClientTool(listener): () => void;
+  onObservationEnded(listener): () => void;
   onFailure(listener): () => void;
   close(): Promise<void>;
 };
 ```
+
+`request` puts `observationId` in the request envelope.
 
 When the transport fails for good, it must call the `onFailure` listeners, so the SDK can abort client tools and reject open requests.
 
@@ -162,9 +165,9 @@ The connected `TauSdkClient` exposes:
 | `ready` | The validated server `ready` message and advertised methods. |
 | `sessions.create(input)` | Create and observe a session, and return its object. |
 | `sessions.list()` | List `{ sessionId, lifecycle }` for each session. |
-| `sessions.observe(sessionId)` | Observe an existing session and return its object. |
+| `sessions.observe(sessionId)` | Observe an existing session and return a new object, replacing any earlier one. |
 | `sessions.runtimeState(sessionId)` | Read a session's in-memory state without loading it. |
-| `sessions.unload(sessionId)` | Stop live work and remove the session from host memory. |
+| `sessions.unload(sessionId)` | Stop live work, remove the session from host memory, and [end all observations](remote-sessions.md#end-an-observation) of it. |
 | `subscribe(listener)` | Receive deltas for every observed session on this connection. |
 | `subscribePendingUserMessages(listener)` | Receive pending-state replacements across observed sessions. |
 | `subscribeSubagentActivities(listener)` | Receive subagent-activity changes across observed sessions. |
@@ -289,7 +292,7 @@ If you show `timeline.item` events, accept only the current epoch and place each
 
 ## Host a browser diff review
 
-`startTauSdkDiffReview()` starts the built-in browser review UI for an observed session, without the TUI and without opening a browser. Your application can put it behind its own reverse proxy, store review state, restore earlier conversations, and receive the submitted review once through a callback.
+`startTauSdkDiffReview()` starts the built-in browser review UI for an observed session, which your application can put behind its own reverse proxy.
 
 See [SDK browser diff review](sdk-diff-review.md) for startup, storage, submission, and lifecycle.
 

@@ -197,6 +197,22 @@ Retention only applies to the live runtime:
 
 `unload` interrupts running work immediately and does not wait for it to finish on its own. Call it before removing a session's working directory, so that no agent keeps running there. Use `runtimeState` to check for running work without loading the session.
 
+### End an observation
+
+An SDK session object belongs to one observation. The observation ends when you call `unobserve()`, when `sessions.observe()` replaces it on the same client, or when any client unloads the session. An unload therefore affects every connected client, including clients that did not ask for it.
+
+After that, calls on the object fail with `TauSessionClientError` and do not reach the host. The exception is `unobserve()`, which succeeds, so cleanup is safe to repeat and cannot affect a newer object. The object has no event for this, so a long-running application learns that its observation ended when a call fails.
+
+To continue, observe the session again:
+
+```ts
+await client.sessions.unload(session.id);
+await session.unobserve(); // Safe, although the unload already ended this observation.
+const recovered = await client.sessions.observe(session.id);
+```
+
+After an unload, the session stays out of memory until a client observes it again. The new object starts from the saved session, idle and without subagents. Raw protocol clients receive `session.observationEnded`; see [when an observation ends](session-protocol.md#when-an-observation-ends).
+
 ## Use multiple observers carefully
 
 Several WebSocket clients can observe the same live session and receive the same updates and pending messages. Every one of them can also submit, queue, steer, interrupt, or change the session. None is read-only, so agree on who, or which automation, is in charge.

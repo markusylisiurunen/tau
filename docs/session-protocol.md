@@ -90,6 +90,25 @@ Install all three before processing later messages for that session. The host ho
 
 Observing controls which updates you receive; it does not make you the owner. `session.unobserve` stops this connection's updates without deleting the session or interrupting work. Several connections can observe one session, and each can change it. Client tool names must be unique among observing clients.
 
+## Keep a session loaded without clients
+
+After the last client stops observing, the host normally unloads an idle session from memory and keeps it saved. Unloading removes the session's subagents. To keep an unattached session and its idle subagents available, set a retention period with `session.setRetention`. A client that observes the session during that period gets the same live session.
+
+A session stays loaded while a client observes it, while its retention period lasts, or while work is running. Running work includes turns, maintenance such as compaction, reloads, persona changes, prompt resolution, path autocomplete, `session.exec` commands, `session.sample` calls, ephemeral context creation and submissions, background jobs, and running subagents. Idle subagents do not count as running work. When retention expires or is cleared, only that reason goes away: clients stay attached and work keeps running. The host unloads the session once no reason remains.
+
+Retention exists only in host memory. It ends when the host shuts down, and a session recovered after a restart has no retention and no subagents.
+
+Before you delete files that a session uses, make sure the host has unloaded the session:
+
+1. Clear retention with `session.setRetention` and `durationMs: null`.
+2. Stop observing with `session.unobserve`, or close the connection.
+3. Call `session.collect`.
+4. If it returns `disposed: true`, the session is unloaded and its execution environment has been released. If it returns `disposed: false`, keep the files and retry later. If the request fails, keep the files and retry later. A failed save can succeed on retry, but after a failed disposal no retry reports `disposed: true` until the host restarts.
+
+`session.collect` never loads a session, so you can repeat these steps safely. It reports only the state at that moment. Any client can still observe the saved session and load it again, so agree between your clients on when a session is finished.
+
+See the [method reference](session-protocol-methods.md#keep-sessions-loaded-and-unload-them) for exact parameters and results.
+
 ## Treat the snapshot as the source of truth
 
 `SessionProtocolSnapshot` is the saved, recoverable state of one session. Its main fields are:
@@ -271,7 +290,7 @@ The supported codes are:
 | `invalid_request` | The envelope, version, type, id, or requested operation is invalid. |
 | `method_not_found` | The method is unsupported. |
 | `invalid_params` | Method parameters failed validation. |
-| `not_found` | The addressed session does not exist on this host. |
+| `not_found` | The addressed session does not exist on this host, or `session.setRetention` set a period on a session that is not loaded. |
 | `busy` | Conflicting session work or a same-thread ephemeral submission is active. |
 | `cancelled` | Pending input, execution, or sampling was cancelled. |
 | `internal_error` | The host could not complete the operation. |

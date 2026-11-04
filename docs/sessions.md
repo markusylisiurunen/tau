@@ -70,6 +70,8 @@ After a host restart, recovery loads the current configuration so providers and 
 
 A session is saved throughout its life, not only when the TUI exits. Reattaching to a running host returns the current state and continues with live updates. Reattaching after a host restart loads the saved session and reconnects its execution environment, using the host's configuration for that environment type.
 
+After the last client detaches, the host unloads the session from memory once its work has finished. The session stays saved, but its subagents are gone. Protocol and SDK clients can keep an unattached session and its idle subagents loaded for a limited time with [retention](session-protocol.md#keep-a-session-loaded-without-clients).
+
 Recovery keeps:
 
 - the conversation messages and finished tool results

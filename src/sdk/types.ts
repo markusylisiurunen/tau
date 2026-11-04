@@ -253,6 +253,11 @@ export type TauSdkSession = {
 export type TauSdkSessionClient = {
   create(input: TauSdkCreateSessionInput): Promise<TauSdkSession>;
   list(): Promise<TauSdkSessionSummary[]>;
+  setRetention(
+    sessionId: string,
+    durationMs: number | null,
+  ): Promise<{ retainedUntil: number | null }>;
+  collect(sessionId: string): Promise<{ disposed: boolean }>;
   observe(sessionId: string): Promise<TauSdkSession>;
 };
 

@@ -110,6 +110,8 @@ Rules that follow:
 
 **Recovery.** Child processes do not survive a restart. Recovery therefore drops supervised agents and their presentation, normalizes unrecoverable tool state, and cancels running work in place. Expected results: `test/local_session_host.test.js`.
 
+**Retention.** Attached clients, a retention hold, and running work are independent reasons to keep a session runtime loaded. The host owns the hold, in memory only: it is never persisted or recovered. Expiring or clearing a hold removes only that reason, and never detaches clients, interrupts work, or forces disposal. `session.collect` must never load a runtime, and reports disposal only after execution-environment disposal has finished. A failed save before disposal leaves the runtime loaded and can be retried. A failed disposal, including recovery rollback, blocks that report until the host restarts, even after the runtime leaves the loaded set, because workspace safety can no longer be established. Session operations that use the execution environment must count as running work, so disposal never runs beneath them. Retention duration is client policy, so do not add a host default.
+
 **Instructions in messages.**
 
 - Keep exactly one native system prompt: the persona/base prompt, stored as the first message.

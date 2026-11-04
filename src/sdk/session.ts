@@ -116,6 +116,14 @@ class TauSdkClientImpl implements TauSdkClient {
     return this.transport.request("session.create", input);
   }
 
+  setRetention(sessionId: string, durationMs: number | null) {
+    return this.transport.request("session.setRetention", { sessionId, durationMs });
+  }
+
+  collectSession(sessionId: string) {
+    return this.transport.request("session.collect", { sessionId });
+  }
+
   listSessions(): Promise<SessionProtocolResultByMethod["session.list"]> {
     return this.transport.request("session.list", {});
   }
@@ -580,6 +588,14 @@ class TauSdkSessionClientImpl implements TauSdkSessionClient {
   async create(input: SessionProtocolCreateParams): Promise<TauSdkSession> {
     const { sessionId } = await this.client.createSession(input);
     return this.observe(sessionId);
+  }
+
+  setRetention(sessionId: string, durationMs: number | null) {
+    return this.client.setRetention(sessionId, durationMs);
+  }
+
+  collect(sessionId: string) {
+    return this.client.collectSession(sessionId);
   }
 
   async list() {

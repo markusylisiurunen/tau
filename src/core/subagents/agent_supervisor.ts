@@ -166,6 +166,12 @@ export class AgentSupervisor {
     return { running: this.getActiveCount(), limit: MAX_ACTIVE_SUBAGENTS };
   }
 
+  async waitForIdle(): Promise<void> {
+    while (this.getActiveCount() > 0) {
+      await Promise.allSettled(this.delegatedRecords().map((record) => record.completion));
+    }
+  }
+
   getActiveCount(): number {
     return this.delegatedRecords().filter((record) => record.run.status === "running").length;
   }

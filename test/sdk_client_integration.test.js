@@ -27,6 +27,35 @@ async function withTempHome(test) {
 }
 
 describe("sdk client integration", () => {
+  it("retains and collects sessions through the SDK without observing for cleanup", async () => {
+    await withTempHome(async (home) => {
+      const client = await createTauSdkClient({ cwd: home, refreshModelCatalog: false });
+      try {
+        const session = await client.sessions.create({
+          ...localCreateInput,
+          executionEnvironment: { kind: "local", cwd: home },
+        });
+        const before = await session.snapshot();
+        expect(
+          (await client.sessions.setRetention(session.id, 259_200_000)).retainedUntil,
+        ).toBeGreaterThan(Date.now());
+        await session.unobserve();
+        expect(await client.sessions.collect(session.id)).toEqual({ disposed: false });
+        const observed = await client.sessions.observe(session.id);
+        expect(await observed.snapshot()).toEqual(before);
+        await client.sessions.setRetention(session.id, null);
+        expect(await client.sessions.collect(session.id)).toEqual({ disposed: false });
+        await observed.unobserve();
+        expect(await client.sessions.collect(session.id)).toEqual({ disposed: true });
+        await expect(client.sessions.setRetention(session.id, 1000)).rejects.toMatchObject({
+          code: "not_found",
+        });
+        expect(await client.sessions.collect(session.id)).toEqual({ disposed: true });
+      } finally {
+        await client.close();
+      }
+    });
+  });
   it("resolves integrations per project and refreshes vocabulary on reload and recovery", async () => {
     await withTempHome(async (home) => {
       const writeConfig = async (cwd, name) => {

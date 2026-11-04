@@ -12,6 +12,7 @@ import { createLocalToolExecutionBackend } from "../dist/core/index.js";
 import { resolveModel } from "../dist/core/models/catalog.js";
 import { runWebSocketSessionServer } from "../dist/core/modes/websocket_server.js";
 import { personas } from "../dist/core/personas.js";
+import { renderSubagentPrefixPrompt } from "../dist/core/static/index.js";
 import { ToolCatalog } from "../dist/core/tools/catalog.js";
 import {
   buildToolRunPresentation,
@@ -3772,6 +3773,20 @@ describe("LocalSessionHost", () => {
       expect(leafRuntime.spec.systemPrompt).not.toContain("directory-context:/repo/parent:end");
       expect(leafRuntime.spec.systemPrompt).not.toContain("directory-context:/repo:end");
       expect(leafRuntime.spec.systemPrompt.split("<environment>")).toHaveLength(2);
+      for (const [runtime, sessionIds] of [
+        [parentRuntime, [session.sessionId, parent.id]],
+        [leafRuntime, [session.sessionId, parent.id, leaf.id]],
+      ]) {
+        expect(
+          runtime.spec.systemPrompt.startsWith(
+            renderSubagentPrefixPrompt({
+              sessionIds,
+              historyEnabled: true,
+            }),
+          ),
+        ).toBe(true);
+        expect(runtime.spec.systemPrompt.split("<subagent-role>")).toHaveLength(2);
+      }
       expect(
         (await historyStore.read({ sessionId: parent.id, limit: 10 })).session.parentSessionId,
       ).toBe(session.sessionId);

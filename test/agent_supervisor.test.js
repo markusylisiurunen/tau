@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { AgentRuntime } from "../dist/core/index.js";
 import { personas } from "../dist/core/personas.js";
+import { renderSubagentPrefixPrompt } from "../dist/core/static/index.js";
 import { AgentSupervisor } from "../dist/core/subagents/agent_supervisor.js";
 import { AgentJobRegistry } from "../dist/core/tools/agent_jobs.js";
 import { BashJobRegistry } from "../dist/core/tools/bash_jobs.js";
@@ -1111,6 +1112,17 @@ describe("nested supervision", () => {
       ).toEqual([a.id, b.id, sibling.id]);
       expect(scope.list()).toMatchObject([{ id: b.id, parentId: a.id, depth: 2 }]);
       expect(scope.read(b.id).depth).toBe(2);
+      const prompt = getRecord(supervisor, b.id).runtime.agent.spec.systemPrompt;
+      expect(
+        prompt.startsWith(
+          renderSubagentPrefixPrompt({
+            sessionIds: [supervisor.mainAgentId, a.id, b.id],
+            historyEnabled: false,
+          }),
+        ),
+      ).toBe(true);
+      expect(prompt).not.toContain(sibling.id);
+      expect(prompt.split("<subagent-role>")).toHaveLength(2);
       expect(() => spawn(b.id)).toThrow(expect.objectContaining({ code: "operation_failed" }));
       expect(
         getRecord(supervisor, b.id).runtime.agent.spec.tools.get("wait_for_agents"),

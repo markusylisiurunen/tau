@@ -223,12 +223,19 @@ export class AgentSupervisor {
         (tool) => tool !== "agents" || (depth < 2 && options.runtimeConfig.kind === "native"),
       ),
     };
+    const sessionIds: string[] = [id];
+    let ancestorId = parentId;
+    while (ancestorId !== this.mainAgentId) {
+      sessionIds.unshift(ancestorId);
+      ancestorId = this.requireRecord(ancestorId).parentId;
+    }
+    sessionIds.unshift(this.mainAgentId);
     const createdAt = this.deps.clock.now();
     const openHistory = this.options.openHistory;
     const runtime = createSubagentRuntime(runtimeConfig, {
       ...options,
       id,
-      parentId,
+      sessionIds,
       supervisor: this,
       agents: options.agents,
       deps: this.deps,

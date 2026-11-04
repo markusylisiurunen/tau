@@ -35,7 +35,7 @@ export interface SubagentRuntime {
 
 export type SubagentRuntimeOptions = {
   id: string;
-  parentId: string;
+  sessionIds: string[];
   supervisor: AgentSupervisor;
   agents?: AgentsCapabilityOptions;
   config: SessionRuntimeSettings;

@@ -84,7 +84,7 @@ export class NativeSubagentRuntime implements SubagentRuntime {
         }),
         systemPrompt:
           buildSubagentSystemPrompt(config.systemPrompt, {
-            parentSessionId: options.parentId,
+            sessionIds: options.sessionIds,
             historyEnabled: config.tools.includes("history"),
           }) + (formatSubagentsForPrompt(persona) ?? ""),
         tools: ToolCatalog.createSubagentRegistry(

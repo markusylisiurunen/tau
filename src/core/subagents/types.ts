@@ -1,6 +1,7 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ToolCardLine, ToolCardWrap } from "../tools/presentation.js";
 import {
+  TOOL_NAME_AGENTS,
   TOOL_NAME_BASH,
   TOOL_NAME_EDIT,
   TOOL_NAME_HISTORY,
@@ -14,6 +15,7 @@ import type { Persona, PersonaSettings, ReasoningEffort } from "../types.js";
 import type { ClaudeCodeEffort, ClaudeCodeModel } from "./claude_code_models.js";
 
 export const SUBAGENT_TOOL_NAMES = [
+  TOOL_NAME_AGENTS,
   TOOL_NAME_BASH,
   TOOL_NAME_WRITE,
   TOOL_NAME_EDIT,
@@ -81,6 +83,8 @@ export type SubagentRunSnapshot =
 
 export type SubagentStateSnapshot = {
   id: string;
+  parentId: string;
+  depth: number;
   title: string;
   availability: "running" | "idle";
   model: {
@@ -164,6 +168,8 @@ export type ResolveSubagentPrompt = (options: {
 
 export type SubagentConversationState = {
   id: string;
+  parentId: string;
+  depth: number;
   title: string;
   model: string;
   workingDirectory: string;

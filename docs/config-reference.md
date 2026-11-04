@@ -72,7 +72,7 @@ Each entry must use `<provider>/<model>:<effort>` and resolve against the merged
 }
 ```
 
-A more specific list replaces the broader one. Subagents inherit instructions and tools from the main persona. Custom subagent definitions are not supported. See [subagents](subagents.md).
+A more specific list replaces the broader one. Subagents inherit instructions and tools from their parent agent. Custom subagent definitions are not supported. See [subagents](subagents.md).
 
 ### `modelSystemNotices`
 

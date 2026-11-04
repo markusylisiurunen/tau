@@ -145,6 +145,7 @@ describe("bundled Claude Agent SDK runner", () => {
       const options = createRuntimeOptions(directory, []);
       let sent = false;
       const supervisor = new AgentSupervisor({
+        mainAgentId: "main",
         recordUsage: vi.fn(),
         onEvent: (event) => {
           if (event.type === "subagent_activity" && event.activity.type === "assistant" && !sent) {
@@ -162,6 +163,8 @@ describe("bundled Claude Agent SDK runner", () => {
       try {
         const marker = fakeClaude(directory, true, "steering", outcome);
         const state = supervisor.spawn({
+          parentId: supervisor.mainAgentId,
+          launchEpoch: supervisor.prepareSpawn(supervisor.mainAgentId),
           runtimeConfig: options.config,
           backend: options.backend,
           config: {},
@@ -298,12 +301,18 @@ describe("bundled Claude Agent SDK runner", () => {
     const directory = mkdtempSync(join(tmpdir(), "tau-claude-usage-"));
     const recordUsage = vi.fn();
     const events = [];
-    const supervisor = new AgentSupervisor({ recordUsage, onEvent: (event) => events.push(event) });
+    const supervisor = new AgentSupervisor({
+      mainAgentId: "main",
+      recordUsage,
+      onEvent: (event) => events.push(event),
+    });
     const options = createRuntimeOptions(directory, []);
     let id;
     try {
       fakeClaude(directory, true, "after-usage");
       const spawned = supervisor.spawn({
+        parentId: supervisor.mainAgentId,
+        launchEpoch: supervisor.prepareSpawn(supervisor.mainAgentId),
         runtimeConfig: options.config,
         backend: options.backend,
         config: {},

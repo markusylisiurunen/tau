@@ -66,7 +66,7 @@ export const ToolCatalog = {
       mcp: new McpManager(options.config.mcpServers),
       subagentSystemPrompt: undefined,
       autoCompactThresholdTokens: options.persona.autoCompactThresholdTokens ?? null,
-      supervisor: new AgentSupervisor({ onEvent: () => {} }),
+      supervisor: new AgentSupervisor({ mainAgentId: "main", onEvent: () => {} }),
     });
   },
 
@@ -87,13 +87,17 @@ export const ToolCatalog = {
     resolveSubagentPrompt?: ResolveSubagentPrompt;
     clientTools?: () => AgentTool[];
   }): ToolRegistry {
-    const tools = [createWaitForAgentsToolDefinition(options.supervisor)];
+    const tools = [
+      createWaitForAgentsToolDefinition(options.supervisor.scope(options.supervisor.mainAgentId)),
+    ];
     const enabledToolNames = new Set<string>(options.persona.tools);
     return new ToolRegistry([
       ...createCommonTools({
         ...options,
         allowedTools: options.persona.tools,
-        ...(enabledToolNames.has("agents") ? { agents: options } : {}),
+        ...(enabledToolNames.has("agents")
+          ? { agents: { ...options, callerId: options.supervisor.mainAgentId } }
+          : {}),
       }),
       ...(enabledToolNames.has("agents") ? tools : []),
       ...(options.clientTools?.() ?? []),
@@ -109,9 +113,10 @@ export const ToolCatalog = {
     codeJobs: CodeJobRegistry,
     history?: HistoryQuery,
     mcp?: McpManager,
+    agents?: AgentsCapabilityOptions,
   ): ToolRegistry {
-    return new ToolRegistry(
-      createCommonTools({
+    return new ToolRegistry([
+      ...createCommonTools({
         backend,
         cwd,
         config,
@@ -120,7 +125,11 @@ export const ToolCatalog = {
         history,
         mcp,
         allowedTools,
+        agents,
       }),
-    );
+      ...(agents
+        ? [createWaitForAgentsToolDefinition(agents.supervisor.scope(agents.callerId))]
+        : []),
+    ]);
   },
 };

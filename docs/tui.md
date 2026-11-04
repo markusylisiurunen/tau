@@ -110,7 +110,9 @@ Run commands that change the context, such as persona changes, compaction, rewin
 
 The footer shows context usage as a percentage of the full model window, such as `20%/272k`. When a session override is set, or the default threshold is below the model-based threshold, the effective compaction threshold appears in parentheses: `20%/272k (50k)`. This threshold cannot exceed the model's context window minus 16,384 tokens. Without an override or a lower default, the footer shows no threshold. Applying a persona removes the session override, even when reapplying the current persona.
 
-While subagents are running, a panel above the editor shows the selected subagent's title, recent activity, and a usage line such as `openai-codex/gpt-6-astra:medium · ↑12k ↓2k (r8k w0) · 14%/200k · $0.04`. The line starts with the subagent's provider, model, and reasoning effort, including settings inherited from the persona. Text that does not fit the terminal width is cut off on the right.
+While subagents are running, a panel above the editor shows the selected subagent's title, recent activity, and a usage line such as `openai-codex/gpt-6-astra:medium · ↑12k ↓2k (r8k w0) · 14%/200k · $0.04`. The line starts with the subagent's provider, model, and reasoning effort, including inherited settings. Text that does not fit the terminal width is cut off on the right.
+
+A subagent started by another subagent shows `parent title › child title`, with a long parent title shortened first. A subagent with running children shows their number, such as `· 2 children running`, and its footer reads `ctrl+g to interrupt this subagent only`, because they keep running.
 
 [Sessions](sessions.md) describes compaction, rewind, recovery, and retry. [Prompts and project context](prompts-and-project-context.md) covers prompt files.
 
@@ -153,8 +155,8 @@ Requests time out after 30 seconds, responses are limited to 64 KiB, and redirec
 | Enter | Steer a running turn, or submit while idle. |
 | Ctrl+Enter | Queue another turn, or submit while idle. |
 | Alt+Up | Cancel pending input and put it back in the editor. |
-| Alt+Down | Select the next running subagent. |
-| Ctrl+G | Interrupt the selected subagent. |
+| Alt+Down | Select the next running subagent, one branch at a time. |
+| Ctrl+G | Interrupt only the selected subagent. |
 | Enter twice | Retry, when the editor is empty and the session is idle. |
 | Escape | Interrupt local work or the session. |
 | Escape twice | Clear the editor. |
@@ -306,8 +308,4 @@ Restart the TUI instead after changing themes, voice, recording shortcut, person
 
 - `!` and `!!` run in the execution environment, not on the attaching machine.
 - Enter during a turn steers it. Use Ctrl+Enter to queue another turn.
-- Ctrl+T changes only what is displayed. Use Shift+Tab to change reasoning effort.
-- `/prompt:<id>` fills the editor but does not send it.
-- `/diff` adds the returned review to the session but does not ask the assistant to act on it.
-- `/reload` does not reload client themes or client tools.
 - Exiting a WebSocket attachment does not delete the session and does not necessarily stop it. Exiting a local TUI shuts down its host, so running work is interrupted and saved where possible.

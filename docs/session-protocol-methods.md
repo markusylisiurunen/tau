@@ -464,7 +464,7 @@ Rewind requires an idle session with no pending input, and returns `busy` instea
 
 ### `session.interruptSubagent`
 
-Interrupts one subagent's current run. The subagent stays available for follow-ups.
+Interrupts one subagent's current run, at any depth. Its descendants keep running, and the subagent stays available for follow-ups.
 
 ```ts
 params: {

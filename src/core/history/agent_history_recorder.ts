@@ -11,6 +11,7 @@ import type { HistoryToolEntry } from "./types.js";
 
 export type OpenSubagentHistory = (session: {
   sessionId: string;
+  parentSessionId: string;
   workingDirectory: string;
   createdAt: number;
 }) => AgentEventSink;

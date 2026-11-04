@@ -119,11 +119,11 @@ For a host tool, check the active persona's `tools` list. A list replaces the de
 
 For subagents, check three things:
 
-1. The main persona has `agents`.
+1. The main persona has `agents`, and the calling agent is the main agent or a native Tau subagent at depth 1.
 2. A requested model exactly matches an entry in the launch allowlist.
-3. Fewer than eight subagents are running.
+3. Fewer than 16 subagents are running in the session.
 
-A running subagent keeps its model, tools, and working directory after a reload. Recovery does not restore subagents, so old IDs cannot receive follow-ups after a host restart. Use `tau.agents.list()` in `code` to see live subagents. See [subagents](subagents.md).
+A running subagent keeps its model, tools, and working directory after a reload. Recovery does not restore subagents, so old IDs cannot receive follow-ups after a host restart. Use `tau.agents.list()` in `code` to see the caller's live descendants. The main agent sees all of them. See [subagents](subagents.md).
 
 If `tau_docs` is missing, the problem is the host's installation or version, not a persona. Check the host package and restart it.
 

@@ -1,7 +1,7 @@
 import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
 import type { SystemMessageMetadata } from "../../protocol/system_message.js";
 import {
-  AgentRuntime,
+  type AgentRuntime,
   type AgentState,
   type AgentStateRecovery,
   type AgentTurnResult,
@@ -128,13 +128,14 @@ export class ChatRuntime {
     this.mcp = options.mcp;
     this.latestPromptComposition = composition;
     this.supervisor = new AgentSupervisor({
+      mainAgentId: options.sessionId,
       onEvent: options.subagentEventSink,
       openHistory: options.openSubagentHistory,
       ...(options.recordUsage ? { recordUsage: options.recordUsage } : {}),
       deps: this.deps,
     });
     const tools = this.buildToolRegistry(composition);
-    this.agent = new AgentRuntime({
+    this.agent = this.supervisor.createMainRuntime({
       agentId: options.sessionId,
       spec: createAgentSpec({
         ...this.resolvedModel,
@@ -153,7 +154,7 @@ export class ChatRuntime {
       clock: this.deps.clock,
       archiveAutoCompaction: createAutoCompactionArchiver(this.backend),
       getCompactionContinuationSystemMessages: () => {
-        const context = this.supervisor.getActiveCompactionContext();
+        const context = this.supervisor.getActiveCompactionContext(this.supervisor.mainAgentId);
         return context ? [context] : [];
       },
     });
@@ -240,8 +241,7 @@ export class ChatRuntime {
   }
 
   dispose(): void {
-    this.supervisor.reset();
-    this.agent.dispose();
+    this.supervisor.dispose();
   }
 
   hasSubagent(id: string): boolean {

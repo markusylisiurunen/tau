@@ -18,6 +18,7 @@ import type {
 } from "./types.js";
 
 const INHERITABLE_TOOL_NAMES = new Set<SubagentToolName>([
+  TOOL_NAME_AGENTS,
   TOOL_NAME_BASH,
   TOOL_NAME_WRITE,
   TOOL_NAME_EDIT,

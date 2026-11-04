@@ -7,7 +7,7 @@ import {
 } from "../protocol/session_protocol.js";
 
 export const STORED_SESSION_DOCUMENT_FORMAT = "tau-session" as const;
-export const STORED_SESSION_DOCUMENT_VERSION = 14 as const;
+export const STORED_SESSION_DOCUMENT_VERSION = 15 as const;
 export const LEGACY_SESSION_MODEL_CONTEXT_KEY = "legacy-v3";
 
 export type StoredSessionDocument = {
@@ -33,6 +33,7 @@ const storedSessionMigrations = new Map<number, StoredSessionMigration>([
   [11, migrateStoredSessionV11ToV12],
   [12, migrateStoredSessionV12ToV13],
   [13, migrateStoredSessionV13ToV14],
+  [14, migrateStoredSessionV14ToV15],
 ]);
 
 export class UnsupportedStoredSessionVersionError extends Error {
@@ -851,4 +852,26 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isNonNegativeInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+function migrateStoredSessionV14ToV15(value: unknown): unknown {
+  if (!isRecord(value)) return value;
+  const snapshot = structuredClone(value);
+  if (isRecord(snapshot.agents)) {
+    for (const agent of Object.values(snapshot.agents)) {
+      if (!isRecord(agent)) continue;
+      agent.parentId = snapshot.sessionId;
+      agent.depth = 1;
+    }
+  }
+  if (isRecord(snapshot.bootstrap) && isRecord(snapshot.bootstrap.prompt)) {
+    const prompt = snapshot.bootstrap.prompt;
+    if (typeof prompt.subagentSystemPrompt === "string") {
+      prompt.subagentSystemPrompt = prompt.subagentSystemPrompt.replace(
+        /^<subagent-role>[\s\S]*?<\/subagent-role>\s*/,
+        "",
+      );
+    }
+  }
+  return snapshot;
 }

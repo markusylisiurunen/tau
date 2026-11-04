@@ -1026,6 +1026,8 @@ export type SessionProtocolAgentRunState =
 
 export type SessionProtocolAgentRun = {
   id: string;
+  parentId: string;
+  depth: number;
   title: string;
   availability: "running" | "idle";
   model: {
@@ -2530,6 +2532,8 @@ const sessionProtocolAgentRunStateSchema = z.discriminatedUnion("status", [
 const sessionProtocolAgentRunSchema = z
   .object({
     id: nonEmptyStringSchema,
+    parentId: nonEmptyStringSchema,
+    depth: z.number().int().min(1).max(2),
     title: nonEmptyStringSchema,
     availability: z.enum(["running", "idle"]),
     model: z

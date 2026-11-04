@@ -72,7 +72,7 @@ for (const session of page.sessions) {
 if (page.nextCursor) printText("more matching sessions are available");
 ```
 
-To follow the workers of a past session, list its direct children:
+To follow the workers of a past session, list its direct children. Search a worker's session the same way to find the workers it started:
 
 ```js
 const { session } = await tau.history.read({ sessionId: "selected-session-id", limit: 1 });

@@ -52,6 +52,7 @@ function fixture(run) {
   };
   const openHistory = vi.fn();
   const supervisor = new AgentSupervisor({
+    mainAgentId: "main",
     onEvent: (event) => events.push(event),
     recordUsage,
     openHistory,
@@ -60,6 +61,8 @@ function fixture(run) {
     .launchModel.model;
   const spawn = () =>
     supervisor.spawn({
+      parentId: supervisor.mainAgentId,
+      launchEpoch: supervisor.prepareSpawn(supervisor.mainAgentId),
       runtimeConfig: {
         kind: "claude-code",
         model,

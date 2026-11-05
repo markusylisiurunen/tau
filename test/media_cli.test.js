@@ -54,7 +54,7 @@ async function readManifest(options, output) {
 const imageArgs = [
   "image-generate",
   "--model",
-  "gpt-image-2.5-flare",
+  "gpt-image-2.6-flare",
   "--prompt",
   "an otter",
   "--output",
@@ -158,33 +158,53 @@ describe("image generation CLI", () => {
     expect(await readdir(options.cwd)).toEqual([]);
   });
 
-  it("dispatches native generation with command-local credentials and publishes only a complete image", async () => {
-    const options = await fixture();
-    options.env.OPENAI_API_KEY = "env-key";
-    const image = await png();
-    options.fetchImpl.mockResolvedValue(
-      Response.json({
-        data: [{ b64_json: image.toString("base64") }],
-        usage: { output_tokens: 1000 },
-      }),
-    );
-    await runToolCommand([...imageArgs, "--quality", "max", "--size", "1536x1024"], options);
-    const [url, request] = options.fetchImpl.mock.calls[0];
-    expect(url).toBe("https://api.openai.com/v1/images/generations");
-    expect(request.headers.Authorization).toBe("Bearer env-key");
-    expect(JSON.parse(request.body)).toEqual({
-      model: "gpt-image-2.5-flare",
-      prompt: "an otter",
-      n: 1,
-      output_format: "png",
-      quality: "max",
-      size: "1536x1024",
-    });
-    expect(await readFile(join(options.cwd, "image.png"))).toEqual(image);
-    expect(JSON.parse(options.stdout.mock.calls[0][0]).usage).toEqual({ output_tokens: 1000 });
-    await expect(runToolCommand(imageArgs, options)).rejects.toThrow();
-    expect(options.fetchImpl).toHaveBeenCalledTimes(1);
-  });
+  it.each(
+    ["gpt-image-2.6-flare", "gpt-image-2.6-sunburst"].flatMap((model) =>
+      [undefined, "low", "medium", "high"].map((complexity) => [model, complexity]),
+    ),
+  )(
+    "generates with %s and complexity %s using command-local credentials",
+    async (model, complexity) => {
+      const options = await fixture();
+      options.env.OPENAI_API_KEY = "env-key";
+      const image = await png();
+      options.fetchImpl.mockResolvedValue(
+        Response.json({
+          data: [{ b64_json: image.toString("base64") }],
+          usage: { output_tokens: 1000 },
+        }),
+      );
+      await runToolCommand(
+        [
+          ...imageArgs.slice(0, 2),
+          model,
+          ...imageArgs.slice(3),
+          "--quality",
+          "max",
+          "--size",
+          "1536x1024",
+          ...(complexity === undefined ? [] : ["--complexity", complexity]),
+        ],
+        options,
+      );
+      const [url, request] = options.fetchImpl.mock.calls[0];
+      expect(url).toBe("https://api.openai.com/v1/images/generations");
+      expect(request.headers.Authorization).toBe("Bearer env-key");
+      expect(JSON.parse(request.body)).toEqual({
+        model,
+        prompt: "an otter",
+        n: 1,
+        output_format: "png",
+        quality: "max",
+        size: "1536x1024",
+        ...(complexity === undefined ? {} : { complexity }),
+      });
+      expect(await readFile(join(options.cwd, "image.png"))).toEqual(image);
+      expect(JSON.parse(options.stdout.mock.calls[0][0]).usage).toEqual({ output_tokens: 1000 });
+      await expect(runToolCommand(imageArgs, options)).rejects.toThrow();
+      expect(options.fetchImpl).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("normalizes OpenAI encoding controls before building the provider request", async () => {
     const options = await fixture();
@@ -229,12 +249,23 @@ describe("image generation CLI", () => {
       Response.json({ data: [{ b64_json: result.toString("base64") }] }),
     );
     await runToolCommand(
-      [...imageArgs, "--reference", "a.png", "--reference", "b.png", "--background", "transparent"],
+      [
+        ...imageArgs,
+        "--reference",
+        "a.png",
+        "--reference",
+        "b.png",
+        "--background",
+        "transparent",
+        "--complexity",
+        "low",
+      ],
       options,
     );
     const [url, { body }] = options.fetchImpl.mock.calls[0];
     expect(url).toBe("https://api.openai.com/v1/images/edits");
     expect(body.get("background")).toBe("transparent");
+    expect(body.get("complexity")).toBe("low");
     expect(
       await Promise.all(
         body.getAll("image[]").map(async (file) => Buffer.from(await file.arrayBuffer())),
@@ -436,7 +467,10 @@ describe("image generation CLI", () => {
   it.each([
     ["gemini-nano-banana-2.1", "--quality", "high"],
     ["gemini-nano-banana-2.1", "--resolution", "512"],
-    ["gpt-image-2.5-flare", "--thinking", "minimal"],
+    ["gpt-image-2.6-flare", "--thinking", "minimal"],
+    ["gpt-image-2.6-flare", "--complexity", "auto"],
+    ["gpt-image-2.6-sunburst", "--complexity", "max"],
+    ["gemini-nano-banana-2.1", "--complexity", "low"],
   ])("rejects %s %s %s at the model settings boundary", async (model, flag, value) => {
     const options = await fixture();
     await expect(
@@ -449,21 +483,24 @@ describe("image generation CLI", () => {
     expect(await readdir(options.cwd)).toEqual([]);
   });
 
-  it.each(["gemini-3-pro-image", "gemini-3.1-flash-image", "gemini-3.1-flash-lite-image"])(
-    "rejects retired model %s without generating or creating artifacts",
-    async (model) => {
-      const options = await fixture();
-      const log = vi.fn();
-      printImageGenerateHelp(log);
-      expect(log.mock.calls.map(([line]) => line).join("\n")).not.toContain(model);
-      await expect(
-        runToolCommand([...imageArgs.slice(0, 2), model, ...imageArgs.slice(3)], options),
-      ).rejects.toThrow();
-      expect(options.fetchImpl).not.toHaveBeenCalled();
-      expect(options.stdout).not.toHaveBeenCalled();
-      expect(await readdir(options.cwd)).toEqual([]);
-    },
-  );
+  it.each([
+    "gemini-3-pro-image",
+    "gemini-3.1-flash-image",
+    "gemini-3.1-flash-lite-image",
+    "gpt-image-2.5-flare",
+    "gpt-image-2.5-sunburst",
+  ])("rejects retired model %s without generating or creating artifacts", async (model) => {
+    const options = await fixture();
+    const log = vi.fn();
+    printImageGenerateHelp(log);
+    expect(log.mock.calls.map(([line]) => line).join("\n")).not.toContain(model);
+    await expect(
+      runToolCommand([...imageArgs.slice(0, 2), model, ...imageArgs.slice(3)], options),
+    ).rejects.toThrow();
+    expect(options.fetchImpl).not.toHaveBeenCalled();
+    expect(options.stdout).not.toHaveBeenCalled();
+    expect(await readdir(options.cwd)).toEqual([]);
+  });
 
   it.each(["not json", JSON.stringify({ data: [{}] })])(
     "rejects malformed provider responses without publishing output or retrying",

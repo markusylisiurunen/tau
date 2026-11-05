@@ -5,7 +5,7 @@
 ```bash
 tau tool image-generate --help
 tau tool image-generate \
-  --model gpt-image-2.5-flare \
+  --model gpt-image-2.6-flare \
   --prompt 'A quiet lakeside sauna at dusk, editorial photograph, no text' \
   --size 1536x1024 --quality medium --output ./sauna.png
 ```
@@ -16,17 +16,17 @@ Requires an OpenAI or Google API key for the selected model. See [feature-specif
 
 ## Models and capabilities
 
-`--model` is required; there is no default. Start with `gpt-image-2.5-flare` at `--quality medium` for everyday generation and editing, balancing quality and cost.
+`--model` is required; there is no default. Start with `gpt-image-2.6-flare` at `--quality medium` for everyday generation and editing, balancing quality and cost.
 
-For demanding generation and editing where image quality is the priority, choose `gemini-nano-banana-2.1` or `gpt-image-2.5-sunburst`. Nano Banana supports very wide aspect ratios and resolution tiers up to `4K`. Sunburst supports exact dimensions, transparent backgrounds, and PNG/JPEG/WebP output. See [approximate cost](#approximate-cost) before choosing settings.
+For demanding generation and editing where image quality is the priority, choose `gemini-nano-banana-2.1` or `gpt-image-2.6-sunburst`. Nano Banana supports very wide aspect ratios and resolution tiers up to `4K`. Sunburst supports exact dimensions, transparent backgrounds, and PNG/JPEG/WebP output. See [approximate cost](#approximate-cost) before choosing settings.
 
 Choose size, resolution, and aspect ratio for the intended use; no single size fits everything. The sizes in the examples are for those particular cases. Options you leave out use the provider's defaults, except `--format`, which defaults to `png`. Unsupported options fail before anything is generated.
 
 | Model | Resolution | Aspect ratios | Thinking | Other controls |
 | --- | --- | --- | --- | --- |
 | `gemini-nano-banana-2.1` | `1K`, `2K`, `4K` | Standard and wide | `minimal`, `medium`, `high` | PNG |
-| `gpt-image-2.5-flare` | Exact `--size` | Through dimensions | Not exposed | Quality, background, encoding, compression |
-| `gpt-image-2.5-sunburst` | Exact `--size` | Through dimensions | Not exposed | Quality, background, encoding, compression |
+| `gpt-image-2.6-flare` | Exact `--size` | Through dimensions | Not exposed | Quality, complexity, background, encoding, compression |
+| `gpt-image-2.6-sunburst` | Exact `--size` | Through dimensions | Not exposed | Quality, complexity, background, encoding, compression |
 
 Google's defaults are `1K` resolution and `medium` thinking. Use `--thinking minimal` for faster generation and lower thinking-token usage.
 
@@ -35,7 +35,8 @@ Standard `--aspect-ratio` values are `1:1`, `2:3`, `3:2`, `3:4`, `4:3`, `4:5`, `
 OpenAI controls:
 
 - `--size auto` or `WIDTHxHEIGHT`: both dimensions must be multiples of 16, neither above 3840, aspect ratio between 1:3 and 3:1, and total pixels between 655,360 and 8,294,400. Above 2560×1440 total pixels is experimental at the provider.
-- `--quality auto|low|medium|high|xhigh|max`: generation effort. Flare favors speed; Sunburst favors demanding editing and quality.
+- `--quality auto|low|medium|high|xhigh|max`: rendering quality. Flare favors speed; Sunburst favors demanding editing and quality.
+- `--complexity low|medium|high`: planning effort, separate from rendering quality. Omit it to use the provider default, `high`. Start with `low` for focused edits; use `medium` or `high` for dense text, complex layouts, or many constraints. Higher complexity can increase latency and introduce unwanted changes. There is no separate complexity fee.
 - `--background auto|opaque|transparent`: `transparent` requires PNG or WebP.
 - `--format png|jpeg|webp`: the output extension must match (`.jpg` or `.jpeg` for JPEG).
 - `--compression 0..100`: an integer, only with JPEG or WebP.
@@ -52,7 +53,7 @@ Create an asset:
 
 ```bash
 tau tool image-generate \
-  --model gpt-image-2.5-flare \
+  --model gpt-image-2.6-flare \
   --prompt 'A friendly otter mascot, isolated, no lettering' \
   --size 1024x1024 --quality medium --background transparent \
   --output ./otter.png
@@ -62,9 +63,9 @@ Edit an existing image:
 
 ```bash
 tau tool image-generate \
-  --model gpt-image-2.5-flare --reference ./otter.png \
+  --model gpt-image-2.6-flare --reference ./otter.png \
   --prompt 'Give the otter a blue scarf. Preserve its face, pose, proportions, and transparent background.' \
-  --quality high --background transparent --output ./otter-scarf.png
+  --quality high --complexity low --background transparent --output ./otter-scarf.png
 ```
 
 Generate at a higher resolution using a reference:
@@ -80,7 +81,7 @@ Generate inexpensive draft variants:
 
 ```bash
 for i in 1 2 3 4; do
-  tau tool image-generate --model gpt-image-2.5-flare \
+  tau tool image-generate --model gpt-image-2.6-flare \
     --size 1024x1024 --quality low \
     --prompt-file ./prompt.txt --output "./variant-$i.png" || break
 done
@@ -106,18 +107,11 @@ For OpenAI models, start at `--quality medium`, use `low` for inexpensive explor
 
 ### OpenAI: cost per image
 
-Both `gpt-image-2.5-flare` and `gpt-image-2.5-sunburst` charge $30 per million image-output tokens. The [OpenAI output-cost calculator](https://developers.openai.com/api/docs/guides/image-generation#gpt-image-25-and-gpt-image-2-output-tokens) groups both models under GPT Image 2.5 and gives these approximate USD image-output costs:
+Both `gpt-image-2.6-flare` and `gpt-image-2.6-sunburst` charge $30 per million image-output tokens. Text input costs $5 per million tokens and reference images cost $8 per million image-input tokens. Complexity has no separate fee.
 
-| Size        | `low`    | `medium` | `high`   | `xhigh`  | `max`    |
-| ----------- | -------- | -------- | -------- | -------- | -------- |
-| `1024x1024` | $0.00588 | $0.01317 | $0.05268 | $0.09366 | $0.21072 |
-| `1536x1024` | $0.00474 | $0.01029 | $0.04116 | $0.07377 | $0.16464 |
-| `2048x2048` | $0.01191 | $0.02676 | $0.10704 | $0.19029 | $0.42816 |
-| `3840x2160` | $0.01113 | $0.02595 | $0.10008 | $0.17790 | $0.40026 |
+Use the [OpenAI output-cost calculator](https://developers.openai.com/api/docs/guides/image-generation#calculating-costs) with the selected model, quality, and size. Equal token rates do not guarantee equal cost per image: token consumption can differ by model and quality. The manifest records provider `usage` for checking actual consumption.
 
-These are calculator estimates, not fixed prices or a guarantee that Flare and Sunburst cost the same per request. OpenAI notes that actual token consumption can differ by model and quality. The calculator accounts for aspect ratio as well as pixel count, so estimates need not increase with pixel count alone. Sizes above 2560×1440 total pixels are experimental.
-
-For example, 100 square 1024-pixel drafts at `low` have an estimated output cost of $0.59, compared with $1.32 at `medium`, $5.27 at `high`, or $21.07 at `max`. Text input adds $5 per million tokens and reference images add $8 per million image-input tokens. A request with 1,000 text-input tokens and 2,000 image-input tokens adds $0.021 to the output cost. Direct Images API requests do not receive cached-input pricing. The manifest records provider `usage` for checking actual consumption.
+For example, a request using 1,000 text-input tokens, 2,000 image-input tokens, and 1,000 image-output tokens costs $0.051. This illustrates token pricing, not an estimate for a particular size or quality setting.
 
 ### Google: cost per image
 
@@ -129,6 +123,6 @@ Approximate USD image-output costs from [Google pricing](https://ai.google.dev/g
 
 Input costs $1.50 per million tokens. Text and thinking output cost $7.50 per million tokens, in addition to image output. The manifest records provider-reported usage.
 
-Use OpenAI when transparent backgrounds or JPEG/WebP output are required. Compare the quality needed for the task, not just matching tier names across providers. Check [OpenAI pricing](https://developers.openai.com/api/docs/guides/image-generation#gpt-image-25-costs) and Google pricing for current rates before large batches.
+Use OpenAI when transparent backgrounds or JPEG/WebP output are required. Compare the quality needed for the task, not just matching tier names across providers. Check [OpenAI pricing](https://developers.openai.com/api/docs/guides/image-generation#gpt-image-26-costs) and Google pricing for current rates before large batches.
 
 See [command-line tools](tools.md) for the other tools and where commands run.

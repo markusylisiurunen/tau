@@ -41,7 +41,7 @@ Pre-v1, optimize for one clean v1 contract, even when the change is breaking.
 
 ## Ownership
 
-Path of a request: client → SDK session facade → protocol transport → host → `ChatRuntime` → `AgentRuntime`. Events return through the host's serialized snapshot projection as protocol deltas to every observer. `SessionChatApp` and `SessionChatController` are the one TUI path for local and remote sessions. WebSocket attach, SDK, and Telegram reuse the same host and runtime. Public descriptions: `docs/ownership-and-scope.md`, `docs/remote-sessions.md`, `docs/node-sdk.md`.
+Path of a request: client → SDK session facade → protocol transport → host → `ChatRuntime` → `AgentRuntime`. Events return through the host's serialized snapshot projection as protocol deltas to every observer. `SessionChatApp` and `SessionChatController` are the one TUI path for local and remote sessions. WebSocket attach, SDK, and Telegram reuse the same host and runtime. Public descriptions: `docs/how-tau-works.md`, `docs/remote-sessions.md`, `docs/sdk.md`.
 
 | Owner | Owns |
 | --- | --- |
@@ -80,7 +80,7 @@ Rules that follow:
 
 ## Sessions, snapshots, and protocol
 
-`src/protocol/session_protocol.ts` owns wire DTOs, strict parsers, the snapshot schema, delta application, and protocol limits. A protocol change updates its tests (`test/session_protocol.test.js`), the SDK or host integration tests that consume it, and `docs/session-protocol.md` / `docs/session-protocol-methods.md`. Never copy limits or field lists into other files. Test payload bounds, including UTF-8 projection, at the protocol and host boundaries.
+`src/protocol/session_protocol.ts` owns wire DTOs, strict parsers, the snapshot schema, delta application, and protocol limits. A protocol change updates its tests (`test/session_protocol.test.js`), the SDK or host integration tests that consume it, and `docs/session-protocol.md`. Never copy limits or field lists into other files. Test payload bounds, including UTF-8 projection, at the protocol and host boundaries.
 
 **Snapshot.** The snapshot is the recoverable source of truth.
 
@@ -158,9 +158,9 @@ Start with the smallest owning area, its callers, and its tests.
 | Protocol | `src/protocol/` | `test/session_protocol.test.js`, `docs/session-protocol.md` |
 | Persistence | `src/store/` | `test/session_store.test.js`, `test/file_session_store.test.js` |
 | Execution environments | `src/execution/`, `src/core/tools/execution_backend.ts` | `test/local_execution_environment.test.js`, `test/fly_sprite_execution_environment.test.js` |
-| Transports, SDK | `src/transport/`, `src/sdk/` | `test/in_process_session_transport.test.js`, `test/sdk_client_integration.test.js`, `docs/node-sdk.md` |
-| Config, models, personas, prompts | `src/core/config/`, `src/core/models/`, `src/core/personas.ts`, `src/core/runtime/runtime_bootstrap.ts`, `src/host/session_bootstrap.ts` | `test/config_layers.test.js`, `test/session_bootstrap.test.js`, `test/model_catalog.test.js`, `test/skills_discovery.test.js`, `docs/config-reference.md` |
-| Credentials | `src/core/auth/` | `test/auth_storage.test.js`, `test/auth_cli.test.js`, `docs/credentials.md` |
+| Transports, SDK | `src/transport/`, `src/sdk/` | `test/in_process_session_transport.test.js`, `test/sdk_client_integration.test.js`, `docs/sdk.md` |
+| Config, models, personas, prompts | `src/core/config/`, `src/core/models/`, `src/core/personas.ts`, `src/core/runtime/runtime_bootstrap.ts`, `src/host/session_bootstrap.ts` | `test/config_layers.test.js`, `test/session_bootstrap.test.js`, `test/model_catalog.test.js`, `test/skills_discovery.test.js`, `docs/configuration.md` |
+| Credentials | `src/core/auth/` | `test/auth_storage.test.js`, `test/auth_cli.test.js`, `docs/models-and-credentials.md` |
 | Host tools, code mode | `src/core/tools/`, `src/code_mode/`, `src/core/code_mode/`, `src/core/static/code_mode/` | `test/tool_catalog.test.js`, `test/code_mode.test.js`, `docs/tools.md` |
 | Client tools | `src/core/config/client_tools.ts`, `src/core/client_tools/`, `src/host/client_tool_broker.ts`, `src/sdk/client_tool_command.ts` | `test/client_tool_broker.test.js`, `test/command_client_tools.test.js` |
 | Subagents | `src/core/subagents/`, `src/core/code_mode/agents.ts`, `src/core/tools/wait_for_agents.ts` | `test/agent_supervisor.test.js`, `test/spawn_agent_tool.test.js` |
@@ -258,7 +258,7 @@ Before writing, identify the reader and what they need to do. Use only concepts 
 | Surface | Reader | Content |
 | --- | --- | --- |
 | Agent prompts, tool and parameter descriptions, injected context | The agent doing the user's task | What it can do and observe: files, commands, working directory, current chat. Never internal machinery. Write "send a local file to the current Telegram chat", not "from the execution environment". |
-| `docs/*.md` | People and agents using, operating, configuring, or integrating Tau | Self-contained product docs: behavior, prerequisites, public interfaces, exact schemas and limits, where things run. No repository structure or internal abstractions. Never written as instructions to Tau's agent: agent behavior in third person, direct instructions only for the reader's own actions. |
+| `docs/*.md` | People and agents using, operating, configuring, or integrating Tau | The version-matched manual. Lead with the normal path, and show configuration as types and examples. Include what a reader needs to complete a task, choose an approach, or avoid a consequential mistake. Leave out internals, feature history, rare failures, and repeated rules. Integrators get an overview and can read the source for detail. Never written as instructions to Tau's agent: agent behavior in third person, direct instructions only for the reader's own actions. |
 | CLI help and diagnostics | Anyone running the command, inside or outside Tau | Usage, prerequisites, actionable errors, public doc links. Never depend on `tau_docs`. |
 | `README.md` | Prospective and first-time users | What Tau is, how to start, where to go next. |
 | `AGENTS.md` | Contributors | What code cannot say: intent, invariants, prohibitions, ownership, workflow. Point to the owning source and tests instead of copying field lists, limits, inventories, or step-by-step logic. If a sentence would need editing whenever the code changes, it probably does not belong here. |
@@ -267,6 +267,8 @@ Before writing, identify the reader and what they need to do. Use only concepts 
 **Docs maintenance.**
 
 - Describe the current product only. No change narratives ("added", "replaced", "no longer"); those belong in PRs and release notes.
+- Before adding a passage, ask what the reader would do differently without it. If the answer is unclear, leave it out. Each rule has one home, and other pages link to it.
+- Page and corpus size limits are enforced by `test/tau_docs_corpus.test.js` and `scripts/copy-tau-docs.js`. Most pages should stay far below the page limit. When a page grows, prefer replacing text over adding to it.
 - Update the affected `docs/*.md` pages when supported behavior changes. Update `README.md` only when the landing or first-run path changes. Update this file when workflow, ownership, architecture, or a safeguard changes.
 - Do not document unrelated undocumented behavior unless asked.
 - The docs corpus is flat. Each page appears once in `docs/manifest.json`, uses valid flat links, and stays within packaging bounds (`test/tau_docs_corpus.test.js`).

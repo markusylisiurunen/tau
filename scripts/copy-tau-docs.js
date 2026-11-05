@@ -14,7 +14,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const sourceDir = join(__dirname, "../docs");
 const targetDir = join(__dirname, "../dist/core/static/tau_docs");
 const manifestPath = join(sourceDir, "manifest.json");
-const maxDocumentBytes = 24 * 1024;
+const bytesPerToken = 6;
+const maxDocumentBytes = 8192 * bytesPerToken;
+const maxCorpusBytes = 32768 * bytesPerToken;
 
 if (!existsSync(manifestPath)) {
   throw new Error(`Tau documentation manifest not found: ${manifestPath}`);
@@ -27,6 +29,7 @@ if (!manifest || !Array.isArray(manifest.files) || manifest.files.length === 0) 
 
 const files = manifest.files;
 const seen = new Set();
+let corpusBytes = 0;
 for (const file of files) {
   if (typeof file !== "string" || !/^[a-z0-9]+(?:-[a-z0-9]+)*\.md$/.test(file)) {
     throw new Error(`Invalid Tau documentation path: ${String(file)}`);
@@ -44,6 +47,11 @@ for (const file of files) {
   if (bytes > maxDocumentBytes) {
     throw new Error(`Tau documentation file exceeds ${maxDocumentBytes} bytes: ${file}`);
   }
+  corpusBytes += bytes;
+}
+
+if (corpusBytes > maxCorpusBytes) {
+  throw new Error(`Tau documentation corpus exceeds ${maxCorpusBytes} bytes: ${corpusBytes}`);
 }
 
 if (files[0] !== "index.md") {

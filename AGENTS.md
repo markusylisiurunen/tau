@@ -1,250 +1,151 @@
 # Contributing to Tau as an agent
 
-Tau is a terminal AI client. Local and remote sessions share one host and runtime. This guide records what the code cannot tell you: intent, cross-cutting invariants, prohibitions the compiler does not enforce, taste, and workflow. For exact behavior, read the owning source and its tests. They win over this file.
+Tau is a terminal AI client. Local and remote sessions share one host and runtime.
 
-Sources and their roles:
+This file tells agents working on Tau what they could not learn from the code and would get wrong without being told: intent, invariants that span owners, prohibitions the compiler does not enforce, taste, and workflow. Source and tests are the authority on current behavior and win over this file. `docs/*.md` is the public product manual.
 
-- `README.md`: landing page and first run.
-- `docs/*.md`: version-matched public product docs for users, operators, integrators, and Tau's own agent.
-- `AGENTS.md` (this file plus nested ones): contributor rules and design context.
-- Source and tests: authoritative current behavior.
+Tau loads this file into every session in the repository, so each line costs context even in sessions that never touch its subject. Before adding a line, ask what an agent would get wrong without it, and whether the code, a test, or a type would catch the mistake anyway. If they would, or the answer is unclear, leave the line out. Keep the whole file below 4,096 tokens, at 6 bytes per token.
+
+Mistakes that AI agents keep making earn more space and blunter wording, even when the rule looks obvious. Documentation is the clearest example: agents tend to add text with every change, relevant or not, so [Documentation](#documentation) is strict and explicit on purpose.
 
 ## Hard rules
 
-- **Shared, dirty worktree.** Existing changes are intentional. Never revert, overwrite, reformat, or "fix" unrelated work. Read a file's current contents before editing it. If it changes between your read and write, stop and ask.
-- **Nested guide is mandatory.** `src/diff_tool/AGENTS.md` adds rules for its subtree.
-- **macOS and Linux only.** Never add Windows support or a Windows fallback (`src/core/platform_support.ts`).
-- **Pre-v1: no compatibility scaffolding,** except for stored sessions (see [Design principles](#design-principles)).
-- **Client, host, and execution environment are separate machines,** even in one process (see [Ownership](#ownership)).
-- **Never run `npm start` or `node dist/main.js`.** They need a real terminal.
-- **No commits, releases, or work-destroying git commands** unless the user explicitly asks for that exact operation. That includes `git reset --hard`, `git checkout -- <file>`, `git restore`, `git stash`, rebase, cherry-pick, and force-push.
-- **Never edit durable Tau state directly** (auth storage, session documents, history databases and outboxes, Telegram runner state, managed workspaces). Use the supported command, protocol, or recovery path.
-- **Confirm before destructive operations** such as deleting files or dropping data.
-- **Keep the docs short.** A behavior change does not by itself justify new docs text. Follow [Documentation](#documentation).
+- **Shared, dirty worktree.** Existing changes are intentional. Never revert, overwrite, reformat, or "fix" unrelated work. Read a file right before editing it. If it changes between your read and write, stop and ask.
 - **Do only the requested change.** No surrounding cleanup, speculative config, or speculative abstractions. Match local naming, structure, error handling, and test style.
+- **Keep the docs short.** A behavior change does not by itself justify new docs text. Follow [Documentation](#documentation).
+- **No commits, releases, or work-destroying git commands** unless the user explicitly asks for that exact operation. That includes `git reset --hard`, `git checkout -- <file>`, `git restore`, `git stash`, rebase, cherry-pick, and force-push.
+- **Confirm before destructive operations** such as deleting files or dropping data.
+- **Never run `npm start` or `node dist/main.js`.** They need a real terminal. Ask the user to start long-running servers such as `npm run history:dev`.
+- **Never edit durable Tau state directly:** auth storage, session documents, history databases and outboxes, Telegram runner state, or managed workspaces. Use the supported command, protocol, or recovery path.
+- **Never print credentials,** full environments, auth stores, or credential-bearing config.
+- **macOS and Linux only.** Never add Windows support or a Windows fallback.
+- **Nested guides are mandatory.** `src/diff_tool/AGENTS.md` adds rules for that isolated subtree, which shares only narrow protocol types with core.
 
-## Design principles
+## Design
 
-Pre-v1, optimize for one clean v1 contract, even when the change is breaking.
+Before v1, optimize for one clean contract, even when the change is breaking.
 
 - Change a contract at its owner and update every caller.
-- Make a field required when every caller can provide it. Use optionality only when absence is a real domain state, and then define and test the absent case and how consumers react.
-- No fallback branches, aliases, dual readers, legacy unions, migrations, or shims unless the user asks.
-- Keep types narrow so invalid states are unrepresentable.
+- Add no fallback branches, aliases, dual readers, legacy unions, migrations, or shims unless the user asks.
+- Make a field required when every caller can provide it. Use optionality only when absence is a real domain state, and test how consumers handle it. Keep types narrow so invalid states are unrepresentable.
 - When required data cannot be produced, fail at the owning boundary. Never silently omit it.
 
-**Stored-session exception.** Session documents under `~/.config/tau/sessions` are shipped user data, and newer Tau must open supported older ones.
-
-- The guarantee covers semantic conversation and session data, not byte-identical documents or identical rendering. Derived, cached, and presentation state may be regenerated, dropped, or rendered generically.
-- Compatibility lives only at the storage/recovery boundary: `src/store/session_snapshot_migrations.ts`, `src/store/file_session_store.ts`, `src/host/local_session_host.ts`. Use sequential migrations, versioned payloads, recovery normalization, regeneration, or an explicit degraded/read-only mode. Never leak old shapes into runtime, protocol, host, or TUI types.
-- Rejecting corrupt documents or documents from a newer storage version is fine. Recovery may also fail when the recorded execution environment cannot be restored.
-- Test with a representative old document through store loading, host recovery, and the affected consumer (`test/file_session_store.test.js`, `test/local_session_host.test.js`).
+**Stored sessions are the one exception.** Newer Tau must open supported older documents under `~/.config/tau/sessions`. This covers conversation and session data, not identical bytes or rendering. Compatibility code lives only in `src/store/session_snapshot_migrations.ts`, `src/store/file_session_store.ts`, and `src/host/local_session_host.ts`, and old shapes never reach runtime, protocol, host, or TUI types. Test an old document through store loading, host recovery, and the affected consumer.
 
 ## Ownership
 
-Path of a request: client → SDK session facade → protocol transport → host → `ChatRuntime` → `AgentRuntime`. Events return through the host's serialized snapshot projection as protocol deltas to every observer. `SessionChatApp` and `SessionChatController` are the one TUI path for local and remote sessions. WebSocket attach, SDK, and Telegram reuse the same host and runtime. Public descriptions: `docs/how-tau-works.md`, `docs/remote-sessions.md`, `docs/sdk.md`.
+A request flows from client to SDK session facade, protocol transport, host, `ChatRuntime`, and `AgentRuntime`. Events return through the host's snapshot projection as protocol deltas to every observer. The TUI, WebSocket attach, SDK, and Telegram all use this one path.
+
+Client, host, and execution environment are separate machines, even in one process:
 
 | Owner | Owns |
 | --- | --- |
-| Client | TUI, editor and drafts, terminal appearance and theme, local speech, diff tool process, command client tools |
-| Host | Orchestration, persistence and recovery, model calls, credentials, model catalogs, history, tool binding, execution-environment lifecycle |
-| Execution environment | Everything agent-visible: paths, `cwd`, home, repository, project config and content, `AGENTS.md`, skills, platform, Node, `PATH`, files, commands |
-| Telegram runner | Polling, routing, attachments, prepared workspaces, outbound messages, runner state. It is a client of in-process sessions. |
+| Client | TUI, drafts, theme, local speech, diff tool process, command client tools |
+| Host | Orchestration, persistence, recovery, model calls, credentials, model catalogs, history, tool binding, execution-environment lifecycle |
+| Execution environment | Everything agent-visible: paths, `cwd`, home, repository, project config, `AGENTS.md`, skills, `PATH`, files, commands |
+| Telegram runner | Polling, routing, attachments, prepared workspaces, runner state. It is a client of in-process sessions. |
 
-Rules that follow:
-
-- Every agent-visible access goes through `ExecutionEnvironment` and `ToolExecutionBackend` (`src/execution/execution_environment.ts`, `src/core/tools/execution_backend.ts`), even for local sessions. Co-location must never create a second runtime path or a local-only filesystem shortcut.
-- Client and host code must not inspect execution-environment paths. The only exception is narrow pre-creation metadata a client reads from an environment it manages directly.
-- Session creation attributes are authoritative client input, except `machine` and `cwd`. The host sets those two from the execution environment when it creates a session, and they replace any client values. Host and stores never infer or normalize other attributes, and recovery never changes saved attributes.
-- Process-local temp paths come from `node:os` `tmpdir()`, never a hard-coded `/tmp`. Target temp paths come from target capabilities, never from the caller's temp directory.
-- Every config field has one owner, assigned in `src/core/config/ownership.ts`. Host and client code receive only their own settings from their startup directory. Anything that depends on a session's project comes from `src/host/session_bootstrap.ts` or the session's runtime config, and clients learn it through the snapshot catalog. Never read a session-owned setting from a startup directory. Credentials stay out of what the execution environment resolves: the host injects them during bootstrap.
-- Model catalogs and their cache belong to the host. Model metadata comes only from the bundled and refreshed catalogs. Execution environments and backends never read the cache; host-side config resolution may receive an immutable catalog snapshot. A live session keeps one catalog generation until explicit reload. Startup refresh is async and never a recurring timer.
-- API-key config is global-only (credential precedence: `src/core/auth/`). Codex OAuth uses exactly one active stored account. Do not add session pinning, quota-based selection, or failover.
-- Telegram workspaces are prepared once per session and preserved across runner restarts (`docs/telegram.md`, `test/telegram_workspace.test.js`).
-
-**Adapters are dumb.** Execution environments and tool backends expose generic capabilities: run Bash or Node, read and write files, list directories. Tau logic (prompts, personas, config precedence, content parsing, session semantics) belongs in `src/core/config/`, `src/core/runtime/`, or `src/host/`, built on those generic operations. When hosted resolution needs several target files, prefer one target-side Node script over many round trips.
+- Every agent-visible access goes through `ExecutionEnvironment` and `ToolExecutionBackend`, even locally. Co-location never justifies a filesystem shortcut.
+- Client and host code do not inspect execution-environment paths, except narrow pre-creation metadata from an environment a client manages directly.
+- The host sets the `machine` and `cwd` attributes. Clients own all other creation attributes. Nothing infers or normalizes them, and recovery never changes them.
+- Local temp paths come from `tmpdir()`, never a hard-coded `/tmp`. Target temp paths come from target capabilities.
+- Each config field has one owner in `src/core/config/ownership.ts`. Never read a session-owned setting from a startup directory: it comes from `src/host/session_bootstrap.ts` or the session's runtime config, and clients learn it through the snapshot catalog. Credentials stay out of what the execution environment resolves.
+- The host owns model catalogs. A live session keeps one catalog until explicit reload. Startup refresh is async and never a recurring timer.
+- API-key config is global-only. Codex OAuth has one active account. Do not add session pinning, quota-based selection, or failover.
+- Execution environments and tool backends stay generic: run commands, read and write files. Tau logic belongs in `src/core/config/`, `src/core/runtime/`, or `src/host/`. When hosted resolution needs several target files, prefer one target-side Node script over many round trips.
+- Telegram workspaces are prepared once per session and preserved across runner restarts.
 
 ## Agent runtime
 
-`src/core/agent/agent_runtime.ts` is the single stateful Tau runtime for main sessions, native subagents, and ephemeral threads. It owns subturns, streaming, retries, compaction, steering, interruption, recovery, and durable agent state. Never fork these into a mode-specific runner.
+`src/core/agent/agent_runtime.ts` is the single runtime for main sessions, native subagents, and ephemeral threads. Never fork subturns, retries, compaction, steering, or recovery into a mode-specific runner.
 
-`AgentSupervisor` holds one flat pool of agents per session, including the main agent at depth 0. Parent IDs and session-relative depth are metadata on pool entries. They select policy (who can manage whom, who can delegate, which agents a subtree interruption or rewind affects) and never a separate execution path or a per-parent supervisor. Session responsibilities stay with `ChatRuntime` and the host: user input, turn receipts, persistence, and recovery. Delegated workers remain live-only.
+- A logical turn captures its full `AgentSpec` for all its subturns and steering. Settings changes apply to the next turn.
+- Every `AgentRuntime` has one required, awaited `AgentEventSink`. Mutate durable state, emit, await acknowledgement, then continue. Sink failure aborts execution. Never add fire-and-forget semantic events.
+- `model_sampler.ts` is stateless. Never couple it to the active persona.
 
-`AgentSupervisor` supervises both native Tau and external Claude Code runtimes. Launch and runtime configuration distinguish them explicitly: Pi model metadata and inherited prompts belong to native workers. Claude Code resolves its own model metadata, project instructions, and skills. Its SDK runner executes through `ToolExecutionBackend` on the execution environment, where Claude Code owns its credentials, tools, and sessions. Keep capacity limits, lifecycle operations, and event projection shared. Both runtimes implement one contract (`src/core/subagents/runtime.ts`). The supervisor owns queued input, and each runtime owns only the delivery of steering into its active turn. A turn settles only after every event is acknowledged and every steering delivery has finished, even when the turn fails. The runtime returns unapplied steering with the settlement instead of retrying it, and the supervisor queues it behind pending input. Never copy Claude credentials to the host or use Claude transcripts for Tau recovery.
+**Subagents.** `AgentSupervisor` holds one flat pool per session. Parent IDs and depth select policy, never a separate execution path.
 
-- Neighbors: `ChatRuntime` resolves model, prompt, and the bound `AgentSpec`. `src/core/tools/catalog.ts` binds tool dependencies. `model_sampler.ts` does stateless inference against a target the caller chooses; never couple it to the active persona. `src/core/subagents/agent_supervisor.ts` owns child lifecycle, limits, waits, usage, and cleanup. `src/host/hosted_ephemeral_agent_session.ts` owns ephemeral threads and forks.
-- A logical turn captures its full `AgentSpec` (tools, model settings) for all its subturns and steering continuations. A settings change applies to the next turn, not the active one.
-- **Event sink contract.** Every `AgentRuntime` has one required, awaited `AgentEventSink` (`src/core/agent/events.ts`). Mutate durable state, emit the event, await acknowledgement, then continue. Sink failure aborts execution. Never add fire-and-forget semantic events.
-- Subagents are general-purpose workers. Do not add named worker types or configurable worker definitions; only the launch-model allowlist is configurable. Persona tool selection (`agents`) controls whether they can be launched. Children inherit the immediate parent's effective prompt, model, settings, working directory, and eligible tools. The supervisor owns ancestry and enforces the depth limit, removing `agents` at maximum depth and from Claude Code workers, which stay leaves until they have a bridge into this supervisor. The capability does not authorize delegation: the assignment or active instructions must still ask for it. Snapshots keep `subagentSystemPrompt` raw, and the native runtime adds the role prefix and delegation block at launch.
-- Agents manage their descendants through the `tau.agents` code-mode capability (`src/core/code_mode/agents.ts`) and wait with `wait_for_agents`. Do not add other direct management tools. Bind the caller's identity when exposing these tools, and never accept a parent or caller ID from the model. Every operation goes through the caller-scoped supervisor view, so siblings and ancestors stay out of reach. Interruption targets one agent unless the caller explicitly selects its subtree. Waits cover only the requested agents. Rewind removes a whole branch. Each runtime adapter translates its own events into the shared observable events, and one trace recorder (`src/core/subagents/trace.ts`) owns ordering, retention, pagination, and completeness for every runtime. A new runtime adds an adapter, never its own trace store or query logic. Traces live as long as the worker and are never persisted or recovered. Native workers and main sessions record searchable history through one `AgentHistoryRecorder`, whether or not the worker has the `history` tool. A worker's history session uses the worker ID and an immutable parent link, outlives the worker and any parent rewind, and never recovers a runtime. Claude Code workers are never recorded. A worker is idle when it has no active turn and no pending input. Only input from an ancestor starts an idle worker's turn; its background jobs, notifications, and finishing children must never wake it.
-- A subagent with another working directory rebuilds only target-dependent context (environment, repository, `AGENTS.md`, context files, skills). Persona, model catalog and settings, and tool policy stay with the parent.
+- Workers are general-purpose. Do not add named worker types or configurable definitions. Only the launch-model allowlist is configurable.
+- Having the `agents` tool does not authorize delegation. The assignment or active instructions must ask for it.
+- Agents manage descendants only through `tau.agents` and `wait_for_agents`. Do not add other management tools. Never accept a parent or caller ID from the model.
+- Children inherit the immediate parent's prompt, model, settings, working directory, and eligible tools. The supervisor enforces depth by removing `agents`. A worker in another directory rebuilds only target-dependent context, and persona and tool policy stay with the parent.
+- Interruption targets one agent unless the caller selects its subtree. Waits cover only the requested agents. Rewind removes a whole branch.
+- Native and Claude Code runtimes implement one contract (`src/core/subagents/runtime.ts`). A new runtime adds an adapter, never its own trace store. The supervisor owns queued input, and each runtime only delivers steering into its active turn. A turn settles only after every event is acknowledged and every steering delivery has finished, and unapplied steering returns with the settlement instead of being retried.
+- Only input from an ancestor starts an idle worker's turn. Background jobs, notifications, and finishing children never wake it.
+- Workers are live-only. Traces are never persisted, and a worker's history session never recovers a runtime. Claude Code workers are never recorded in history and cannot start subagents.
+- Never copy Claude credentials to the host, forward Tau's MCP connections to Claude Code, or use Claude transcripts for recovery.
 
-## Sessions, snapshots, and protocol
+## Sessions and protocol
 
-`src/protocol/session_protocol.ts` owns wire DTOs, strict parsers, the snapshot schema, delta application, and protocol limits. A protocol change updates its tests (`test/session_protocol.test.js`), the SDK or host integration tests that consume it, and `docs/session-protocol.md` when its overview or method list changes. Never copy limits or field lists into other files. Test payload bounds, including UTF-8 projection, at the protocol and host boundaries.
+`src/protocol/session_protocol.ts` owns wire types, parsers, the snapshot schema, delta application, and limits. Never copy limits or field lists elsewhere. Protocol changes test delta application and observer behavior, not just parsing.
 
-**Snapshot.** The snapshot is the recoverable source of truth.
+**Snapshot.** It is the recoverable source of truth, and ordered deltas must reproduce it exactly.
 
-- Ordered deltas applied to the previous snapshot must reproduce the next snapshot exactly.
-- These counters are independent and must never be mixed up: protocol snapshot revision, agent revision, model context key, timeline epoch, pending-message revision, subagent-activity revision.
+- Never mix these independent counters: snapshot revision, agent revision, model context key, timeline epoch, pending-message revision, subagent-activity revision.
 - Compaction, rewind, and resync use structured delta causes. Never infer a transition from titles, IDs, counts, or content.
-- Render order comes from `timeline.items`. Mutable tool and operation state lives in keyed maps, and timeline items reference it.
-- Successful compaction increments the epoch exactly once. Failed, skipped, or aborted compaction stays in the same epoch.
-- Rewind never lowers the sequence high-water mark, and removed sequence numbers are never reused.
-- After compaction, retained messages may stay model-visible without timeline items. Model context and rendered transcript are different sets.
-- A client present during compaction may keep the old epoch as local presentation. A newly attached client renders only the persisted active epoch.
-- Tool outcome is snapshot status. Never derive it from activity or presentation facets.
+- Render order comes from `timeline.items`, and tool outcome comes from snapshot status. Model context and rendered transcript are different sets.
+- Successful compaction increments the epoch exactly once. Rewind never lowers the sequence high-water mark or reuses a sequence number.
 
-**Turns and failures.**
+**Turns.** Every accepted turn has a receipt in `turns`. Persist a running receipt before model work and the settlement before returning the result. Compaction and rewind preserve receipts. Provider failures and interruptions are assistant-message state, and a failed or blocked turn without a failed assistant message settles exactly once as a core notice. Clients switch on notice `kind` and request outcome, never on titles or timing. `tau.*` kinds are reserved.
 
-- Every accepted logical turn has a receipt in the snapshot's `turns` ledger, keyed by the submitted user history entry ID. Persist a running receipt before model work and the settlement before returning the live result. Compaction and rewind preserve receipts. Recovery aborts running receipts.
-- Provider failures and interruptions are assistant-message state. A failed or blocked turn without a failed assistant message settles exactly once as a semantic core notice.
-- Clients switch on notice `kind` and the live request outcome, never on titles, IDs, counts, or timing. `tau.*` kinds are reserved; other kinds are lowercase and dotted.
-- One per-session mutation queue serializes durable writes with streamed and transient projections. Publish only state built on a committed predecessor. Roll back the projection when persistence fails. Observer-listener failure never fails a committed event.
+**Durable writes.** One per-session mutation queue serializes durable writes with projections. Publish only state built on a committed predecessor, and roll back the projection when persistence fails. An observer-listener failure never fails a committed event.
 
-**Streaming and live channels.**
+**Recovery.** Child processes do not survive a restart. Recovery drops supervised agents, normalizes unrecoverable tool state, aborts running receipts, and cancels running work in place.
 
-- Assistant streaming goes through the shared protocol path: coalesce partials and prefer `message.content.append`. No local TUI shortcut.
-- While a tool call streams, expose only tool identity and draft origin. Partial arguments never enter the protocol.
-- `session.pendingUserMessages`, `session.subagentActivities`, and `session.ephemeral` are separate from the snapshot and from each other. None is persisted, and all start empty after recovery. A sequenced ephemeral `timeline.item` still advances and persists the timeline high-water mark, but never appears in snapshots. Observation installs the snapshot, pending-input, and subagent-activity baselines before any later update.
-- Host maintenance such as compaction is semantic operation state, never an ephemeral footer lifecycle.
+**Live channels.** Assistant streaming uses the shared protocol path, with no TUI shortcut. Partial tool arguments never enter the protocol. `session.pendingUserMessages`, `session.subagentActivities`, and `session.ephemeral` stay separate from the snapshot and are never persisted. Themes, prompt bodies, and path autocomplete do not belong in the snapshot, and searchable history cannot recover a session.
 
-**Recovery.** Child processes do not survive a restart. Recovery therefore drops supervised agents and their presentation, normalizes unrecoverable tool state, and cancels running work in place. Expected results: `test/local_session_host.test.js`.
+**Retention.** Attached clients, a retention hold, and running work are independent reasons to stay loaded. The hold lives in host memory. Clearing it never detaches clients or interrupts work. `session.collect` never loads a runtime, and reports disposal only after execution-environment disposal has finished. A failed disposal blocks that report until the host restarts, because workspace safety is unknown. Operations that use the execution environment count as running work. Retention duration is client policy, so add no host default.
 
-**Retention.** Attached clients, a retention hold, and running work are independent reasons to keep a session runtime loaded. The host owns the hold, in memory only: it is never persisted or recovered. Expiring or clearing a hold removes only that reason, and never detaches clients, interrupts work, or forces disposal. `session.collect` must never load a runtime, and reports disposal only after execution-environment disposal has finished. A failed save before disposal leaves the runtime loaded and can be retried. A failed disposal, including recovery rollback, blocks that report until the host restarts, even after the runtime leaves the loaded set, because workspace safety can no longer be established. Session operations that use the execution environment must count as running work, so disposal never runs beneath them. Retention duration is client policy, so do not add a host default.
+**Instructions in messages.** Keep exactly one native system prompt, stored first. Inject new instructions as leading `<system>...</system>\n` blocks in user messages through `src/core/utils/user_metadata.ts`, and never add native intermediate system messages. Support for existing ones in `src/protocol/system_message.ts` does not authorize new uses. Snapshot user text is raw, so strip metadata before model calls and display. Hide `<system>` blocks only in user messages.
 
-**Instructions in messages.**
+## Tools
 
-- Keep exactly one native system prompt: the persona/base prompt, stored as the first message.
-- Inject new instructions as leading `<system>...</system>\n` blocks in `role: "user"` messages via `src/core/utils/user_metadata.ts`. This includes storage migrations. Never add new native intermediate `role: "system"` messages, and never promote these blocks to native instructions.
-- `src/protocol/system_message.ts` supports existing intermediate system messages. That support does not authorize new uses. When handling them, keep their plain-text contract and versioned metadata: strip metadata for model calls, keep it for recovery and forks. Sections and tool mutations are unsupported.
-- Snapshot user text is raw. Strip Tau metadata before model calls and display. Hide leading `<system>` blocks only when displaying user messages, never in assistant, tool-result, or system messages.
+The inventory lives in `src/core/tools/catalog.ts`, `registry.ts`, and `tool_names.ts`.
 
-**State that does not belong in the snapshot:** themes (client-local, fixed catalog), prompt bodies (catalogs hold metadata, bodies load lazily through the execution environment), and path autocomplete. Searchable history (`src/core/history/`, `docs/history.md`) is a separate transcript and cannot recover session state. Rewind truncates it; compaction does not.
-
-## Tools and processes
-
-The tool inventory lives in `src/core/tools/catalog.ts`, `registry.ts`, and `tool_names.ts`. When a tool contract changes, check `docs/tools.md`, `docs/client-tools.md`, and `docs/security.md` for anything that has become wrong.
-
-- **MCP** (`src/core/mcp/manager.ts`): each hosted session owns one manager, shared with its main and child registries and closed when the session is disposed. Local sessions take definitions from their session config. Remote execution environments bind no servers and report an explicit unavailable state, because stdio servers deliberately run on the host with host authority and remote config must never become host commands. Definitions stay frozen while a session is loaded: reload warns on drift, and only a new load applies them. Keep calls bounded and cancellable, never retry mutations, and await cleanup at disposal. The `mcp` tool reuses code mode. Claude Code workers keep their own MCP configuration on the execution environment; never forward Tau's connections to them.
-- **Client tools** are capabilities of attached clients, not host registry entries. Commands run on the client machine. Tool names must be unique among observers. Validate arguments against the configured schema, honor cancellation, and kill active process groups on detach or transport failure.
-- **Code mode** (`src/code_mode/` sandbox and output, `src/core/code_mode/` capability APIs, `src/core/tools/code.ts` binding):
-  - Generated code receives only the declared API. Credentials and service clients stay in the trusted parent. Target file and process access goes through the execution backend.
-  - Only `printText` text and `await printImage(block)` images reach the result. Image validation and preparation run outside the sandbox. An image keeps the position where it was emitted, not where preparation finished, all the way to clients.
-  - Background code jobs (`src/core/tools/code_jobs.ts`) follow the Bash job lifecycle and ownership described below, and are never rerun. Stopping a job cancels its program and in-flight capability calls, but not Bash jobs it started. Host disposal stops code jobs before Bash jobs, so no program is still running when Bash jobs are disposed.
-  - Direct tools and composed operations share the same services. Model usage inside code mode is an awaited `tool_usage` event, persisted even if the program fails.
-- **Bash.** Each call runs a fresh, noninteractive login Bash in the execution environment, so no shell state persists. Capture, timeout, env sanitization, and termination stay centralized in `src/core/tools/execution_backend.ts`. Background jobs (`src/core/tools/bash_jobs.ts`) are live-only and never recovered. Each agent, whether main, native subagent, or ephemeral thread, owns its own Bash and code job registries. Never share them with a parent, child, sibling, or thread. The session tracks every agent's registries (`src/core/tools/agent_jobs.ts`) only to keep itself loaded and to stop all jobs at disposal. Jobs survive turn interruption and observer release, and running jobs prevent session eviction. Disposal must stop running jobs before waiting for them.
-- **Process safety.** Preserve process-group termination with `SIGKILL` escalation so aborted commands do not orphan children. Do not weaken local env sanitization of secret-like names; it is not a complete security boundary either.
+- **MCP.** Stdio servers run on the host with host authority, so remote execution environments bind no servers, and remote config must never become host commands. Each hosted session owns one manager. Definitions stay frozen while a session is loaded. Keep calls bounded and cancellable, await cleanup at disposal, and never retry mutations.
+- **Client tools** belong to attached clients and are not host registry entries. Names are unique among observers. Validate arguments against the schema, honor cancellation, and kill active process groups on detach or transport failure.
+- **Code mode.** Generated code receives only the declared API. Credentials stay in the trusted parent. Target access goes through the execution backend. Only `printText` and `await printImage` reach the result, and an image keeps the position where it was emitted. Direct tools and composed operations share the same services. Model usage is an awaited `tool_usage` event, persisted even if the program fails. Stopping a code job does not stop Bash jobs it started, and disposal stops code jobs first.
+- **Bash.** Capture, timeout, env sanitization, and termination stay centralized in `src/core/tools/execution_backend.ts`. Each agent owns its job registries, so never share them with a parent, child, sibling, or thread. Jobs survive turn interruption and detaching, prevent session eviction, and are never recovered. Disposal stops running jobs before waiting for them.
+- **Process safety.** Preserve process-group termination with `SIGKILL` escalation. Do not weaken env sanitization of secret-like names.
 - Keep immediate tool-call schemas strict.
 
-## Presentation and copy
+## Presentation
 
-- XML-like prompt tags use dash-case: `<available-skills>`, `<tool-result>`. Never snake_case.
-- Feedback titles: concise lowercase fragments, no trailing punctuation, failures as `failed to ...`. Diagnostics and IDs go in content. Error tone for failures, default tone for information, expected cancellation, and nonfatal degradation.
-- Tool cards: producers own a bounded `ToolRunPresentation`. One generic renderer, no tool-specific renderers, no expanded mode. Preview policy lives in `src/core/tools/presentation.ts`. Lifecycle: `preparing` → `queued` → `running` → terminal status.
-- New tools default to a middle-truncated preview derived from the exact result text returned to the model. Use the shared preview policy, and use a different result format only when explicitly requested. Test that the preview comes from the returned content and respects its bounds.
-- Presentation facets have their own version. Missing or historical presentation degrades to tool name, status, and text result without revealing stored arguments. Malformed current-version presentation fails validation.
-- TUI colors use semantic palette tokens (`src/tui/ui/theme/`). Add a new token for a new state; never reuse an unrelated one.
-- Telegram replies, notices, and button labels: natural lowercase sentences that weave identifiers into prose and translate internal states, never metadata-style labels. Never change the casing of user content, saved prompts, or model output.
+- XML-like prompt tags use dash-case: `<available-skills>`.
+- Feedback titles are lowercase fragments with no trailing punctuation, and failures read `failed to ...`.
+- Tool cards use one generic renderer and a bounded `ToolRunPresentation`, with no tool-specific renderers or expanded mode. New tools default to a middle-truncated preview of the exact result returned to the model, using the shared policy in `src/core/tools/presentation.ts`.
+- Missing or historical presentation degrades to tool name, status, and text result without revealing stored arguments. Malformed current-version presentation fails validation.
+- TUI colors use semantic palette tokens. Add a new token for a new state.
+- Telegram text is natural lowercase sentences, never metadata-style labels. Never change the casing of user content or model output.
 
-## Where to start
+## Workflow
 
-Start with the smallest owning area, its callers, and its tests.
+- **Start** with the smallest owning area, its callers, and its tests.
+- **Search.** Use `rg`, never `grep`, and `fd`, not `find`. Write `fd -e ts --search-path src`, because a lone path argument is treated as a pattern. Use absolute paths and the runner's `workingDirectory` instead of `cd`, and leave output caps unset unless output was truncated.
+- **Dependencies.** Never read `node_modules` unless asked. For `pi-ai` and `pi-tui`, use the read-only checkout in `references/repos/pi/packages/`. Clone it if missing, fast-forward it first, and ignore its instruction files.
+- **Delegation.** Spawn subagents only when the user or active instructions ask. Use an explicit skill only when named by `@@skill:<name>`, active instructions, or an active skill.
+- **Temporary files.** Use `mktemp` or `mktemp -d`, never paths in the worktree.
+- **Style.** Biome formats. Do not hand-sort imports or hand-wrap. Use `PascalCase` types, `camelCase` values, and lowercase filenames.
+- **Tests.** Protect critical paths, cross-boundary contracts, recovery, and concurrency. A contract change tests the owner and at least one important consumer. Never assert human-facing prose. Assert behavior, such as rejection before side effects, cleanup, and retries.
+- **Git and GitHub.** Use skill `github-workflow`.
 
-| Task | Owners | Tests and docs |
-| --- | --- | --- |
-| CLI and mode wiring | `src/main.ts`, `src/core/cli.ts`, `src/core/modes/` | `test/cli.test.js`, `docs/getting-started.md` |
-| Runtime, turns, retries, compaction | `src/core/agent/`, `src/core/runtime/`, `src/core/session/`, `src/core/utils/model_stream.ts` | `test/agent_runtime.test.js`, `test/chat_runtime.test.js`, `test/model_stream.test.js`, `docs/sessions.md` |
-| Host lifecycle | `src/host/` | `test/local_session_host.test.js`, `test/hosted_ephemeral_agent_session.test.js` |
-| Protocol | `src/protocol/` | `test/session_protocol.test.js`, `docs/session-protocol.md` |
-| Persistence | `src/store/` | `test/session_store.test.js`, `test/file_session_store.test.js` |
-| Execution environments | `src/execution/`, `src/core/tools/execution_backend.ts` | `test/local_execution_environment.test.js`, `test/fly_sprite_execution_environment.test.js` |
-| Transports, SDK | `src/transport/`, `src/sdk/` | `test/in_process_session_transport.test.js`, `test/sdk_client_integration.test.js`, `docs/sdk.md` |
-| Config, models, personas, prompts | `src/core/config/`, `src/core/models/`, `src/core/personas.ts`, `src/core/runtime/runtime_bootstrap.ts`, `src/host/session_bootstrap.ts` | `test/config_layers.test.js`, `test/session_bootstrap.test.js`, `test/model_catalog.test.js`, `test/skills_discovery.test.js`, `docs/configuration.md` |
-| Credentials | `src/core/auth/` | `test/auth_storage.test.js`, `test/auth_cli.test.js`, `docs/models-and-credentials.md` |
-| Host tools, code mode | `src/core/tools/`, `src/code_mode/`, `src/core/code_mode/`, `src/core/static/code_mode/` | `test/tool_catalog.test.js`, `test/code_mode.test.js`, `docs/tools.md` |
-| Client tools | `src/core/config/client_tools.ts`, `src/core/client_tools/`, `src/host/client_tool_broker.ts`, `src/sdk/client_tool_command.ts` | `test/client_tool_broker.test.js`, `test/command_client_tools.test.js` |
-| Subagents | `src/core/subagents/`, `src/core/code_mode/agents.ts`, `src/core/tools/wait_for_agents.ts` | `test/agent_supervisor.test.js`, `test/spawn_agent_tool.test.js` |
-| TUI | `src/tui/` | `test/session_chat_controller.test.js`, `test/tool_card.test.js`, `docs/tui.md` |
-| Diff review | `src/core/diff_review/`, `src/diff_tool/` | `test/diff_review_protocol.test.js`, `test/diff_tool_builtin.test.js` |
-| History | `src/core/history/`, `src/history/worker/`, `src/core/code_mode/history.ts` | `test/history.test.js`, `docs/history.md` |
-| Telegram | `src/core/telegram/` | `test/telegram_adapter.test.js`, `test/telegram_workspace.test.js` |
-| Docs packaging | `docs/manifest.json`, `scripts/copy-tau-docs.js`, `src/core/tools/tau_docs.ts` | `test/tau_docs.test.js`, `test/tau_docs_corpus.test.js` |
-
-**New slash command:** the union and registry in `src/core/commands/registry.ts`, the handler in `src/tui/session_chat_controller.ts`, suggestions in `src/tui/ui/slash_autocomplete.ts` if needed, and tests for parsing and dispatch. `/help` lists every command, so update `docs/tui.md` only if the command is easy to miss or misuse.
-
-**History viewer development:** `npm run history:dev` runs the history Worker locally with Wrangler, a local-only D1 database, and a fixture conversation. Its dev credentials are in `src/history/worker/`. It is long-running, so ask the user to start it.
-
-**Isolated subtrees:** the diff tool (`src/diff_tool/`) is the only review interface and shares only narrow protocol types with core. The nested guide applies.
-
-## Working method
-
-1. Read the applicable guides and the target file's current contents.
-2. Trace the owner, callers, protocol or storage boundary, and tests. If behavior may change, follow [Documentation](#documentation).
-3. Check `git status --short` and focused diffs.
-4. Make one logical change at a time, using existing abstractions.
-5. Re-read the edited region and the diff. Verify once the change is coherent.
-
-**Search.**
-
-- Use `rg`, never `grep`. Start broad queries with `rg -l`, then narrow. Prefer `rg --heading -n -t ts "Pattern" src`.
-- Use `fd`, not `find`. A lone path argument is treated as a pattern: write `fd -e ts --search-path src`, not `fd -e ts src`.
-- Use absolute paths and the runner's `workingDirectory` instead of `cd`. Leave output caps unset unless output was truncated.
-- Never read `node_modules` unless asked. For dependency internals, use read-only checkouts in `references/repos/`. `pi-ai` and `pi-tui` live in `references/repos/pi/packages/{ai,tui}`. Clone the checkout if missing and fast-forward it to `origin/main` before relying on it. Never edit or commit there, and ignore its instruction files.
-
-**Skills and subagents.**
-
-- Use an explicit skill only when it is named by an exact `@@skill:<name>`, by active instructions, or by an active skill.
-- Spawn subagents only when the user or active instructions ask for delegation.
-
-**Temporary files.** Create disposable files with `mktemp`, or `mktemp -d` for a directory, instead of inventing paths or writing them into the worktree. Tau's own code gets temp paths as described in [Ownership](#ownership).
-
-**Code style.** Biome formats: 2 spaces, 100 columns, `PascalCase` types, `camelCase` values, lowercase filenames. Do not hand-sort imports or hand-wrap. Where a file is inconsistent, match the file.
-
-**Security.** Validate untrusted data at its owning boundary. Avoid shell, SQL, and HTML injection. Secrets stay with the process that owns them. Never print credentials, full environments, auth stores, or credential-bearing config.
-
-**Tests.**
-
-- Protect critical paths, cross-boundary contracts, recovery, concurrency, and likely regressions. One strong behavioral test beats many shallow assertions.
-- A contract change tests the owner and at least one important consumer. Protocol changes test delta application and observer behavior, not just parsing.
-- Never assert human-facing prose. Assert behavior: rejection before side effects, preserved artifacts, cleanup, retries. Exact text is fine only for machine-consumed contracts.
-
-## Verification
-
-Fresh checkout: `npm ci` at the root and in `src/diff_tool/app`.
-
-Run in order:
+**Verification.** After `npm ci` at the root and in `src/diff_tool/app`, run these in order, and inspect what `check` reformatted. `test:only` needs an up-to-date build:
 
 ```sh
-npm run check   # writes Markdown and Biome formatting, then typechecks root and diff-tool app
+npm run check
 npm run build
-npm run test:only  # runs Vitest against the existing build
+npm run test:only
 ```
 
-Inspect what `npm run check` reformatted before building. Use `npm test` for a standalone build and test run; `npm run test:only` requires an up-to-date build.
+**Dependency upgrades.** Update both `package.json` files and both lockfiles, and review `npm audit`. Keep `@types/node` on the supported Node LTS major. For `pi-ai` and `pi-tui`, read the changelog and API changes in the refreshed checkout, then verify imports and behavior. For `ses`, verify code mode and update version-coupled config such as the Biome schema and `allowScripts`.
 
-**Dependency upgrades.**
-
-- Update both `package.json` files and both lockfiles. Accept compatible transitive updates, review `npm audit`, and do not override versions owned by an upstream package.
-- Keep `@types/node` on Tau's supported Node LTS major.
-- For `pi-ai`/`pi-tui`: read the changelog and exported API changes in the refreshed `references/repos/pi`, then verify Tau's imports and behavior.
-- For `ses`: verify code mode and its sandbox assets, and update version-coupled config such as the Biome schema and `allowScripts` keys.
-
-## Git and GitHub
-
-Use skill `github-workflow` for all Git and GitHub work, including commit and pull request formatting.
-
-## Releases
-
-Only when the user explicitly asks. A published GitHub Release triggers npm publishing through Actions (`NPM_TOKEN` secret).
-
-Preconditions: the branch is `main`, the worktree is clean (unpushed commits are fine), dependencies are installed in both roots, and check, build, and test pass in order. If the branch or worktree condition fails, stop and ask. Never clean or switch branches yourself.
+**Releases.** Only when the user explicitly asks. The branch must be `main` with a clean worktree, and verification must pass. If not, stop and ask. A published GitHub Release triggers npm publishing.
 
 ```sh
-# patch (use `minor` for a minor release)
+# patch, or minor
 npm version patch && git push --follow-tags && gh release create v$(node -p "require('./package.json').version") --generate-notes
 
-# alpha prerelease (npm tag `alpha`)
+# alpha prerelease
 if node -p "require('./package.json').version.includes('-alpha.')"; then npm version prerelease --preid alpha; else npm version preminor --preid alpha; fi
 git push --follow-tags
 gh release create v$(node -p "require('./package.json').version") --generate-notes --prerelease
@@ -252,52 +153,45 @@ gh release create v$(node -p "require('./package.json').version") --generate-not
 
 ## Writing
 
-Use skill `clear-writing` for all prose.
+Use skill `clear-writing` for all prose. Identify the reader first, and use only concepts that reader has. An implementation fact being true does not make it relevant.
 
-Before writing, identify the reader and what they need to do. Use only concepts that reader has. An implementation fact being true does not make it relevant.
-
-| Surface | Reader | Content |
-| --- | --- | --- |
-| Agent prompts, tool and parameter descriptions, injected context | The agent doing the user's task | What it can do and observe: files, commands, working directory, current chat. Never internal machinery. Write "send a local file to the current Telegram chat", not "from the execution environment". |
-| `docs/*.md` | People and agents using, operating, configuring, or integrating Tau | The version-matched manual. See [Documentation](#documentation). |
-| CLI help and diagnostics | Anyone running the command, inside or outside Tau | Usage, prerequisites, actionable errors, public doc links. Never depend on `tau_docs`. |
-| `README.md` | Prospective and first-time users | What Tau is, how to start, where to go next. Update it only when the landing or first-run path changes. |
-| `AGENTS.md` | Contributors | What code cannot say: intent, invariants, prohibitions, ownership, workflow. Point to the owning source and tests instead of copying field lists, limits, inventories, or step-by-step logic. If a sentence would need editing whenever the code changes, it probably does not belong here. Update it when workflow, ownership, architecture, or a safeguard changes. |
-| Code comments | Maintainers | Non-obvious constraints and reasons, not narration. |
+- **Agent prompts and tool descriptions:** what the agent can do and observe. Write "send a local file to the current Telegram chat", not "from the execution environment".
+- **CLI help and diagnostics:** usage, prerequisites, actionable errors, and public doc links. Never depend on `tau_docs`.
+- **`README.md`:** what Tau is, how to start, and where to go next. Update it only when that path changes.
+- **Code comments:** non-obvious constraints and reasons, never narration.
 
 ## Documentation
 
-`docs/` is the version-matched manual for people and agents who use, operate, configure, or integrate Tau. It is short on purpose. It once grew past 70,000 estimated tokens because each change added its own details, and agents load a whole page with each read. Hold every change and every review to these rules.
+`docs/` is the version-matched manual for people and agents who use, operate, configure, or integrate Tau. It is short on purpose. It once grew past 70,000 estimated tokens because each change added its own details, and agents load a whole page with each read. Agents tend to repeat this: they add a paragraph for every change and call it thoroughness. Hold every change and every review to these rules.
 
-### When behavior changes
+**The default is no docs change.** Most bug fixes and internal changes need none. A new slash command rarely needs one, because `/help` lists it.
 
-1. Read what the docs say now, and correct anything that has become wrong. Wrong docs are never acceptable.
-2. Add text only if a reader would otherwise fail a task, choose wrongly, or make a consequential mistake. Ask what the reader would do differently without the passage. If the answer is unclear, leave it out. Most bug fixes and internal changes need no docs change.
-3. Describe a new feature briefly: what it is for, how to use it, and the limits that could change the reader's approach. Do not list every flag, limit, and edge case.
+When behavior changes:
+
+1. Correct anything in the docs that has become wrong. Wrong docs are never acceptable.
+2. Add text only if a reader would otherwise fail a task, choose wrongly, or make a consequential mistake. Ask what the reader would do differently without the passage. If the answer is unclear, leave it out.
+3. Describe a new feature briefly: what it is for, how to use it, and limits that could change the reader's approach.
 4. Give each rule one home, and link to it from other pages.
-5. Prefer replacing text over adding to it. When a page grows, look for something to cut.
+5. Prefer replacing text over adding it. When a page grows, cut something.
 
-A question the docs do not answer is not by itself a reason to add text. Apply the same test to reports from people and agents, and check their claims against the source first.
+A question the docs do not answer is not by itself a reason to add text. Check reports from people and agents against the source, then apply the same test.
 
-### What to leave out
+Never add:
 
 - Internals: class names, call chains, state transitions, and how components coordinate.
-- Rare failures, validation details, and numeric limits or deadlines that do not change what the reader does.
-- Anything readers get elsewhere: `--help`, `/help`, tool descriptions, the `tau.docs` references, and exported types.
-- General knowledge that developers already have, and setup steps owned by other products.
-- Instructions for how the agent should behave, feature history, and security advice beyond the boundaries in `docs/security.md`.
-- Unrelated behavior that is currently undocumented, unless someone asks for it.
+- Rare failures, validation details, and limits or deadlines that do not change what the reader does.
+- Anything readers get from `--help`, `/help`, tool descriptions, `tau.docs`, or exported types.
+- General developer knowledge, and setup steps owned by other products.
+- Instructions for the agent, feature history, change narratives ("added", "no longer"), or security advice beyond `docs/security.md`.
+- Unrelated undocumented behavior, unless someone asks.
 
-### Form and accuracy
+Form:
 
-- Lead with the normal path. Show configuration and contracts as handwritten types and small examples instead of prose or field tables.
-- Give integrators an overview. They can read the source for detail.
-- Describe agent behavior in the third person. Use direct instructions only for the reader's own actions.
-- Describe the current product only. Change narratives ("added", "replaced", "no longer") belong in PRs and release notes.
-- Check every example and type against the source. Examples get copied, so an example that does not work is a bug.
-- Add a page only for a separate reader task, never to fit a size limit.
-- Keep the corpus flat. Each page appears once in `docs/manifest.json` and uses valid flat links.
-- Treat the page and corpus limits in `test/tau_docs_corpus.test.js` and `scripts/copy-tau-docs.js` as a last resort. Staying under them does not make an addition acceptable, and most pages should stay far below the page limit. Do not raise the limits unless the user asks.
+- Lead with the normal path. Show configuration and contracts as handwritten types and small examples. Integrators get an overview and can read the source.
+- Describe agent behavior in the third person. Give direct instructions only for the reader's own actions.
+- Check every example and type against the source, because examples get copied.
+- Add a page only for a separate reader task, never to fit a size limit. The corpus is flat, and each page appears once in `docs/manifest.json`.
+- The limits in `test/tau_docs_corpus.test.js` and `scripts/copy-tau-docs.js` are a last resort. Staying under them does not make an addition acceptable. Do not raise them unless the user asks.
 
 <!-- agents:subagents:start -->
 

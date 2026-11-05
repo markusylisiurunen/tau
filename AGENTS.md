@@ -20,6 +20,7 @@ Sources and their roles:
 - **No commits, releases, or work-destroying git commands** unless the user explicitly asks for that exact operation. That includes `git reset --hard`, `git checkout -- <file>`, `git restore`, `git stash`, rebase, cherry-pick, and force-push.
 - **Never edit durable Tau state directly** (auth storage, session documents, history databases and outboxes, Telegram runner state, managed workspaces). Use the supported command, protocol, or recovery path.
 - **Confirm before destructive operations** such as deleting files or dropping data.
+- **Keep the docs short.** A behavior change does not by itself justify new docs text. Follow [Documentation](#documentation).
 - **Do only the requested change.** No surrounding cleanup, speculative config, or speculative abstractions. Match local naming, structure, error handling, and test style.
 
 ## Design principles
@@ -123,7 +124,7 @@ Rules that follow:
 
 ## Tools and processes
 
-Read `docs/tools.md`, `docs/client-tools.md`, and `docs/security.md` before changing a tool contract. The tool inventory lives in `src/core/tools/catalog.ts`, `registry.ts`, and `tool_names.ts`.
+The tool inventory lives in `src/core/tools/catalog.ts`, `registry.ts`, and `tool_names.ts`. When a tool contract changes, check `docs/tools.md`, `docs/client-tools.md`, and `docs/security.md` for anything that has become wrong.
 
 - **MCP** (`src/core/mcp/manager.ts`): each hosted session owns one manager, shared with its main and child registries and closed when the session is disposed. Local sessions take definitions from their session config. Remote execution environments bind no servers and report an explicit unavailable state, because stdio servers deliberately run on the host with host authority and remote config must never become host commands. Definitions stay frozen while a session is loaded: reload warns on drift, and only a new load applies them. Keep calls bounded and cancellable, never retry mutations, and await cleanup at disposal. The `mcp` tool reuses code mode. Claude Code workers keep their own MCP configuration on the execution environment; never forward Tau's connections to them.
 - **Client tools** are capabilities of attached clients, not host registry entries. Commands run on the client machine. Tool names must be unique among observers. Validate arguments against the configured schema, honor cancellation, and kill active process groups on detach or transport failure.
@@ -179,7 +180,7 @@ Start with the smallest owning area, its callers, and its tests.
 ## Working method
 
 1. Read the applicable guides and the target file's current contents.
-2. Trace the owner, callers, protocol or storage boundary, tests, and the public docs if behavior may change.
+2. Trace the owner, callers, protocol or storage boundary, and tests. If behavior may change, follow [Documentation](#documentation).
 3. Check `git status --short` and focused diffs.
 4. Make one logical change at a time, using existing abstractions.
 5. Re-read the edited region and the diff. Verify once the change is coherent.
@@ -258,17 +259,17 @@ Before writing, identify the reader and what they need to do. Use only concepts 
 | Surface | Reader | Content |
 | --- | --- | --- |
 | Agent prompts, tool and parameter descriptions, injected context | The agent doing the user's task | What it can do and observe: files, commands, working directory, current chat. Never internal machinery. Write "send a local file to the current Telegram chat", not "from the execution environment". |
-| `docs/*.md` | People and agents using, operating, configuring, or integrating Tau | The version-matched manual. Lead with the normal path, and show configuration as types and examples. Integrators get an overview and can read the source for detail. See the docs maintenance rules below. Never written as instructions to Tau's agent: agent behavior in third person, direct instructions only for the reader's own actions. |
+| `docs/*.md` | People and agents using, operating, configuring, or integrating Tau | The version-matched manual. See [Documentation](#documentation). |
 | CLI help and diagnostics | Anyone running the command, inside or outside Tau | Usage, prerequisites, actionable errors, public doc links. Never depend on `tau_docs`. |
-| `README.md` | Prospective and first-time users | What Tau is, how to start, where to go next. |
-| `AGENTS.md` | Contributors | What code cannot say: intent, invariants, prohibitions, ownership, workflow. Point to the owning source and tests instead of copying field lists, limits, inventories, or step-by-step logic. If a sentence would need editing whenever the code changes, it probably does not belong here. |
+| `README.md` | Prospective and first-time users | What Tau is, how to start, where to go next. Update it only when the landing or first-run path changes. |
+| `AGENTS.md` | Contributors | What code cannot say: intent, invariants, prohibitions, ownership, workflow. Point to the owning source and tests instead of copying field lists, limits, inventories, or step-by-step logic. If a sentence would need editing whenever the code changes, it probably does not belong here. Update it when workflow, ownership, architecture, or a safeguard changes. |
 | Code comments | Maintainers | Non-obvious constraints and reasons, not narration. |
 
-**Docs maintenance.**
+## Documentation
 
-`docs/` is a short manual on purpose. It once grew to more than four times its current size because each change added its own details, and every page an agent reads costs context. Treat each addition as a cost that the reader pays, in every change and every review.
+`docs/` is the version-matched manual for people and agents who use, operate, configure, or integrate Tau. It is short on purpose. It once grew past 70,000 estimated tokens because each change added its own details, and agents load a whole page with each read. Hold every change and every review to these rules.
 
-When a change affects behavior:
+### When behavior changes
 
 1. Read what the docs say now, and correct anything that has become wrong. Wrong docs are never acceptable.
 2. Add text only if a reader would otherwise fail a task, choose wrongly, or make a consequential mistake. Ask what the reader would do differently without the passage. If the answer is unclear, leave it out. Most bug fixes and internal changes need no docs change.
@@ -276,25 +277,27 @@ When a change affects behavior:
 4. Give each rule one home, and link to it from other pages.
 5. Prefer replacing text over adding to it. When a page grows, look for something to cut.
 
-Leave these out:
+A question the docs do not answer is not by itself a reason to add text. Apply the same test to reports from people and agents, and check their claims against the source first.
+
+### What to leave out
 
 - Internals: class names, call chains, state transitions, and how components coordinate.
 - Rare failures, validation details, and numeric limits or deadlines that do not change what the reader does.
 - Anything readers get elsewhere: `--help`, `/help`, tool descriptions, the `tau.docs` references, and exported types.
 - General knowledge that developers already have, and setup steps owned by other products.
 - Instructions for how the agent should behave, feature history, and security advice beyond the boundaries in `docs/security.md`.
+- Unrelated behavior that is currently undocumented, unless someone asks for it.
 
-A question the docs do not answer is not by itself a reason to add text. Apply the same test to reports from people and agents, and check their claims against the source first.
+### Form and accuracy
 
-Form and accuracy:
-
-- Describe the current product only. No change narratives ("added", "replaced", "no longer"); those belong in PRs and release notes.
 - Lead with the normal path. Show configuration and contracts as handwritten types and small examples instead of prose or field tables.
+- Give integrators an overview. They can read the source for detail.
+- Describe agent behavior in the third person. Use direct instructions only for the reader's own actions.
+- Describe the current product only. Change narratives ("added", "replaced", "no longer") belong in PRs and release notes.
 - Check every example and type against the source. Examples get copied, so an example that does not work is a bug.
 - Add a page only for a separate reader task, never to fit a size limit.
-- The page and corpus limits in `test/tau_docs_corpus.test.js` and `scripts/copy-tau-docs.js` are a last resort, and staying under them does not make an addition acceptable. Most pages should stay far below the page limit. Do not raise the limits unless the user asks.
-- The docs corpus is flat. Each page appears once in `docs/manifest.json` and uses valid flat links.
-- Do not document unrelated undocumented behavior unless asked. Update `README.md` only when the landing or first-run path changes. Update this file when workflow, ownership, architecture, or a safeguard changes.
+- Keep the corpus flat. Each page appears once in `docs/manifest.json` and uses valid flat links.
+- Treat the page and corpus limits in `test/tau_docs_corpus.test.js` and `scripts/copy-tau-docs.js` as a last resort. Staying under them does not make an addition acceptable, and most pages should stay far below the page limit. Do not raise the limits unless the user asks.
 
 <!-- agents:subagents:start -->
 

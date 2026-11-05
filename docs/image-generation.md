@@ -36,7 +36,7 @@ OpenAI controls:
 
 - `--size auto` or `WIDTHxHEIGHT`: both dimensions must be multiples of 16, neither above 3840, aspect ratio between 1:3 and 3:1, and total pixels between 655,360 and 8,294,400. Above 2560×1440 total pixels is experimental at the provider.
 - `--quality auto|low|medium|high|xhigh|max`: rendering quality. Flare favors speed; Sunburst favors demanding editing and quality.
-- `--complexity low|medium|high`: planning effort, separate from rendering quality. Omit it to use the provider default, `high`. Start with `low` for focused edits; use `medium` or `high` for dense text, complex layouts, or many constraints. Higher complexity can increase latency and introduce unwanted changes. There is no separate complexity fee.
+- `--complexity low|medium|high`: planning effort, separate from rendering quality. Omit it to use the provider default, `high`. Start with `low` for focused edits; use `medium` or `high` for dense text, complex layouts, or many constraints. Higher complexity can increase latency and introduce unwanted changes.
 - `--background auto|opaque|transparent`: `transparent` requires PNG or WebP.
 - `--format png|jpeg|webp`: the output extension must match (`.jpg` or `.jpeg` for JPEG).
 - `--compression 0..100`: an integer, only with JPEG or WebP.
@@ -107,11 +107,24 @@ For OpenAI models, start at `--quality medium`, use `low` for inexpensive explor
 
 ### OpenAI: cost per image
 
-Both `gpt-image-2.6-flare` and `gpt-image-2.6-sunburst` charge $30 per million image-output tokens. Text input costs $5 per million tokens and reference images cost $8 per million image-input tokens. Complexity has no separate fee.
+Both `gpt-image-2.6-flare` and `gpt-image-2.6-sunburst` charge $30 per million image-output tokens. Text input costs $5 per million tokens and reference images cost $8 per million image-input tokens.
 
-Use the [OpenAI output-cost calculator](https://developers.openai.com/api/docs/guides/image-generation#calculating-costs) with the selected model, quality, and size. Equal token rates do not guarantee equal cost per image: token consumption can differ by model and quality. The manifest records provider `usage` for checking actual consumption.
+OpenAI gives one estimate for both models. These are its approximate USD image-output costs per image, excluding input:
 
-For example, a request using 1,000 text-input tokens, 2,000 image-input tokens, and 1,000 image-output tokens costs $0.051. This illustrates token pricing, not an estimate for a particular size or quality setting.
+| Size        | `low`  | `medium` | `high` | `xhigh` | `max`  |
+| ----------- | ------ | -------- | ------ | ------- | ------ |
+| `1024x1024` | $0.025 | $0.043   | $0.053 | $0.094  | $0.211 |
+| `1536x1024` | $0.020 | $0.034   | $0.041 | $0.074  | $0.165 |
+| `2048x2048` | $0.050 | $0.088   | $0.107 | $0.190  | $0.428 |
+| `3840x2160` | $0.047 | $0.086   | $0.100 | $0.178  | $0.400 |
+
+Quality has the largest effect. At `1024x1024`, `high` costs about twice as much as `low`, and `max` costs about 8.5 times as much. For example, 100 images cost about $2.47 at `low`, $4.35 at `medium`, $5.27 at `high`, or $21.07 at `max`.
+
+Cost does not follow pixel count alone. `1536x1024` costs less than `1024x1024` because the estimate also depends on aspect ratio, and `2048x2048` has four times the pixels of `1024x1024` but costs about twice as much.
+
+Input adds to these costs. For example, 1,000 text-input tokens and 2,000 image-input tokens add $0.021.
+
+Actual cost can differ from these estimates because OpenAI notes that the two models can use different token counts at the same quality. The estimates do not vary with `--complexity`. The manifest records provider `usage` for checking actual consumption. For other sizes, OpenAI's guide includes an [interactive calculator](https://developers.openai.com/api/docs/guides/image-generation#calculating-costs).
 
 ### Google: cost per image
 

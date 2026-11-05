@@ -27,7 +27,7 @@ try {
 }
 ```
 
-`cwd` must be an absolute path in the execution environment, which can also be `{ kind: "fly-sprite", spriteName, cwd }`. A successful call can still return a failed or aborted turn, so check `result.turn.status`.
+`cwd` must be an absolute path in the execution environment, which can also be `{ kind: "fly-sprite", spriteName, cwd }`. A successful call does not mean the turn succeeded, so check `result.turn.status`, which is `completed`, `failed`, `aborted`, or `blocked`.
 
 ## Choose a client
 

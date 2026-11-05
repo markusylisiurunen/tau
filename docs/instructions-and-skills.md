@@ -30,7 +30,7 @@ A skill is a directory with a `SKILL.md` file, and any other files it refers to:
 ```markdown
 ---
 name: release-check
-description: Verify a release candidate and summarize blockers. Trigger: explicit.
+description: "Verify a release candidate and summarize blockers. Trigger: explicit."
 ---
 
 Check the release branch, run scripts/verify.sh, and report only blocking failures.
@@ -38,7 +38,7 @@ Check the release branch, run scripts/verify.sh, and report only blocking failur
 
 `name` must match the directory name and use lowercase letters, digits, and single dashes. `description` is required and limited to 1,024 characters. Until a skill is activated, the agent sees only its name, description, and path, so the description should say what the skill does and when it applies.
 
-The description also sets when the agent activates the skill:
+The description also sets when the agent activates the skill. Quote it, because the colon in a trigger phrase is invalid in plain YAML:
 
 - `Trigger: eager.` means whenever the skill would help.
 - `Trigger: balanced.` means when the request clearly matches. This is the default.

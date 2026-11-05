@@ -18,7 +18,7 @@ Export the API key of the provider you want to use:
 export ANTHROPIC_API_KEY='sk-ant-...'
 ```
 
-`OPENAI_API_KEY` and `GEMINI_API_KEY` work the same way. To use a ChatGPT subscription instead, run `tau auth login codex`. See [models and credentials](models-and-credentials.md).
+`OPENAI_API_KEY` and `GEMINI_API_KEY` work the same way. To use a ChatGPT subscription instead, run `tau auth login codex` and start Tau with a ChatGPT persona: `tau --persona gpt-6.1-sol-chatgpt-coder`. See [models and credentials](models-and-credentials.md).
 
 ## Run a session
 

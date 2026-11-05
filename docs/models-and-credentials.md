@@ -33,7 +33,7 @@ The agent's Bash commands do not inherit variables whose names end in `_KEY`, `_
 
 ## ChatGPT subscription
 
-The `openai-codex` provider uses a ChatGPT Plus or Pro account through OAuth. Run these on the host:
+The `openai-codex` provider uses a ChatGPT Plus or Pro account through OAuth. Personas with `chatgpt` in their ID use it, such as `gpt-6.1-sol-chatgpt-coder`. Run these on the host:
 
 ```sh
 tau auth login codex

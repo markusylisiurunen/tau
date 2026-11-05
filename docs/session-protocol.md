@@ -1,32 +1,16 @@
 # Session protocol
 
-Tau's session protocol is the wire format for clients that create, observe, and control sessions hosted by `tau serve`. Node applications can usually use the typed [Node SDK](node-sdk.md) instead.
+This is the protocol that clients use to control sessions hosted by `tau serve`. Node applications can use the [SDK](sdk.md) instead. This page explains the model and lists the methods. For exact field types, read `@markusylisiurunen/tau/sdk` or `src/protocol/session_protocol.ts` in the [source](https://github.com/markusylisiurunen/tau).
 
-The protocol is based on requests and responses, plus server messages for session state, pending input, subagent activity, short-lived feedback, and client tool calls. It does not depend on a particular transport; Tau serves it over WebSocket. The complete method surface is in the [session protocol method reference](session-protocol-methods.md).
+## Messages
 
-## Connect over WebSocket
-
-`tau serve` uses one UTF-8 JSON object per text WebSocket message. Binary messages are not supported. Authentication, TLS, listener setup, SSH tunneling, and host lifetime belong to [remote sessions](remote-sessions.md).
-
-The server exposes one host. Starting it does not create or select a session. A client lists, creates, or observes sessions explicitly.
-
-The client, host, and execution environment are separate, even when they share a process or filesystem. Session paths and commands are on the execution environment. Saving, credentials, model calls, and protocol handling are on the host. Client tools and local UI are on the connected client. See [ownership and scope](ownership-and-scope.md) before passing paths or credentials across this boundary.
-
-## Connect and initialize
-
-The server sends `ready` as its first message:
+Each WebSocket text message is one JSON object. Authentication and deployment are in [remote sessions](remote-sessions.md). The server speaks first, and the versions must match exactly:
 
 ```json
-{
-  "version": 19,
-  "type": "ready",
-  "methods": ["initialize", "session.create", "session.list"]
-}
+{ "version": 19, "type": "ready", "methods": ["initialize", "session.create"] }
 ```
 
-The real `methods` array lists every supported method; the example above is shortened. Versions must match exactly and are not negotiated. If client and host disagree on `version`, use matching Tau releases.
-
-After `ready`, send `initialize` with non-empty client metadata:
+Use the `version` the server sends. Then send `initialize`, optionally advertising client tools:
 
 ```json
 {
@@ -34,145 +18,56 @@ After `ready`, send `initialize` with non-empty client metadata:
   "type": "request",
   "id": "init-1",
   "method": "initialize",
-  "params": {
-    "client": { "name": "acme-editor", "version": "1.4.0" }
-  }
+  "params": { "client": { "name": "acme-editor", "version": "1.4.0" } }
 }
 ```
 
-A successful result returns `protocolVersion`, the full `methods` array, and `alreadyInitialized`. Calling `initialize` again is allowed and returns `alreadyInitialized: true`. It does not act on any session, but clients should complete it before other requests.
-
-A client can offer its own tools in `client.tools` when initializing. Calls to those tools are then sent to it over this connection. [Client tools](client-tools.md) covers tool behavior, permissions, and command helpers; this page covers only the wire messages a raw protocol client needs.
-
-## Send requests and match responses
-
-Every request has the same envelope:
+Responses echo the request ID. A request can stay open while other messages arrive, so route responses by `id` and streamed messages by `sessionId`.
 
 ```json
-{
-  "version": 19,
-  "type": "request",
-  "id": "req-42",
-  "method": "session.snapshot",
-  "params": { "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3" }
-}
+{ "version": 19, "type": "response", "id": "req-42", "ok": true, "result": {} }
+{ "version": 19, "type": "response", "id": "req-42", "ok": false, "error": { "code": "busy", "message": "..." } }
 ```
 
-`id` is a non-empty string chosen by the client, unique among its open requests on the connection. `params` is always required, even if empty, as in `{}` for `session.list`. The host validates required fields, types, discriminators, method names, and the exact protocol version. Unknown fields are accepted and removed, except in system messages and their metadata, where they are rejected.
+Error codes are `parse_error`, `invalid_request`, `method_not_found`, `invalid_params`, `not_found`, `busy`, `cancelled`, and `internal_error`. Branch on the code, never on the message.
 
-Successful responses echo the request id:
-
-```json
-{
-  "version": 19,
-  "type": "response",
-  "id": "req-42",
-  "ok": true,
-  "result": { "sessionId": "..." }
-}
-```
-
-A request can remain open while the host emits state messages or handles later requests. Route responses by `id`, never by arrival order. Route streamed messages by `sessionId`.
-
-## Observe before consuming session state
-
-`session.create` creates a session but does not observe it. `session.observe` starts observing on this connection and returns three complete starting states together:
-
-```json
-{
-  "snapshot": { "sessionId": "...", "revision": 8 },
-  "pendingUserMessages": { "revision": 3, "messages": [] },
-  "subagentActivities": { "revision": 5, "agents": {} }
-}
-```
-
-Install all three before processing later messages for that session. The host holds back updates while preparing the response, and afterward sends only updates newer than the returned revisions.
-
-Observing controls which updates you receive; it does not make you the owner. `session.unobserve` stops this connection's updates without deleting the session or interrupting work. Several connections can observe one session, and each can change it. Client tool names must be unique among observing clients.
-
-## Keep a session loaded without clients
-
-After the last client stops observing, the host normally unloads an idle session from memory and keeps it saved. Unloading removes the session's subagents. To keep an unattached session and its idle subagents available, set a retention period with `session.setRetention`. A client that observes the session during that period gets the same live session.
-
-A session stays loaded while a client observes it, while its retention period lasts, or while work is running. Running work includes turns, maintenance such as compaction, reloads, persona changes, prompt resolution, path autocomplete, `session.exec` commands, `session.sample` calls, ephemeral context creation and submissions, background jobs, and running subagents. Idle subagents do not count as running work. When retention expires or is cleared, only that reason goes away: clients stay attached and work keeps running. The host unloads the session once no reason remains.
-
-Retention exists only in host memory. It ends when the host shuts down, and a session recovered after a restart has no retention and no subagents.
-
-Before you delete files that a session uses, make sure the host has unloaded the session:
-
-1. Clear retention with `session.setRetention` and `durationMs: null`.
-2. Stop observing with `session.unobserve`, or close the connection.
-3. Call `session.collect`.
-4. If it returns `disposed: true`, the session is unloaded and its execution environment has been released. If it returns `disposed: false`, keep the files and retry later. If the request fails, keep the files and retry later. A failed save can succeed on retry, but after a failed disposal no retry reports `disposed: true` until the host restarts.
-
-`session.collect` never loads a session, so you can repeat these steps safely. It reports only the state at that moment. Any client can still observe the saved session and load it again, so agree between your clients on when a session is finished.
-
-See the [method reference](session-protocol-methods.md#keep-sessions-loaded-and-unload-them) for exact parameters and results.
-
-## Treat the snapshot as the source of truth
-
-`SessionProtocolSnapshot` is the saved, recoverable state of one session. Its main fields are:
-
-| Field | Meaning |
-| --- | --- |
-| `sessionId`, `attributes`, `createdAt` | Identity and immutable creation metadata. |
-| `revision` | Monotonic protocol snapshot revision. |
-| `lifecycle` | `idle` or `running`. |
-| `agentState` | Independent agent revision, model context key, and optional usage checkpoint. |
-| `settings`, `costTotal` | Persona, reasoning, and auto-compaction settings, and accumulated session cost. |
-| `bootstrap`, `catalog` | Selected model and prompt metadata plus available personas, prompt metadata, skills, MCP availability, and speech vocabulary. |
-| `executionEnvironment` | The environment kind, identity, `cwd`, and home used for agent-visible work. |
-| `messages`, `turns` | Messages sent to the model, and a saved record for each accepted turn. |
-| `timeline` | Ordered active transcript placement. |
-| `tools`, `operations`, `agents` | Changing state that timeline items or client views refer to. |
-| `facets` | Versioned client-facing metadata. Unknown facet kinds and versions should be ignored. |
-
-Both auto-compaction fields in `settings` are required:
-
-- `autoCompactThresholdTokens` is the configured value: a safe integer of at least 50,000, or `null` to use the default threshold.
-- `effectiveAutoCompactThresholdTokens` is the integer threshold clients should display. It resolves the session override, then any host default (such as a Telegram bot's threshold), then the persona default, then the model's context window minus 16,384 tokens. It is capped at that model-based limit.
-
-`bootstrap.model.contextWindow` is the full model window, regardless of the compaction threshold.
-
-`catalog.mcp` says whether the session can use MCP. A session on a local execution environment lists its enabled servers by name, and a session on a remote execution environment has none:
+## Session state
 
 ```ts
-catalog.mcp:
-  | { status: "available"; servers: string[] }
-  | { status: "unavailable"; reason: "remote-execution" };
+// session.create
+params: {
+  executionEnvironment:
+    | { kind: "local"; cwd: string; env?: Record<string, string> }
+    | { kind: "fly-sprite"; spriteName: string; cwd: string };
+  attributes: Record<string, string>; // required, can be empty
+  personaId?: string;
+  reasoning?: Reasoning;
+  autoCompactThresholdTokens?: number | null;
+}
+result: { sessionId: string }
 ```
 
-A listed server may not be connected yet, because servers connect on first use. Connection settings and credentials are never included. The host sets this field when it loads the session, and it stays the same until the host loads the session again.
+`session.create` does not observe a session. `session.observe` starts updates on this connection and returns three starting states: `snapshot`, `pendingUserMessages`, and `subagentActivities`. Install all three before processing later messages. Several connections can observe one session, and each can change it.
 
-`catalog.speechVocabulary` holds the session's merged [`speech.vocabulary`](config-reference.md#speech) terms. The list has at most 100 terms and at most 10,000 Unicode characters in total. Each term is trimmed and non-empty, has at most 100 Unicode characters, and contains no angle brackets or line breaks. Clients that transcribe speech use these terms for this session. The host resolves them again on load, reload, and persona changes.
+The **snapshot** is the saved state of a session. Important fields:
 
-`bootstrap.prompt.subagentSystemPrompt` is present when subagents can be started. It holds the base prompt, and Tau adds each native subagent's role section when it starts that subagent. Each catalog persona has a `subagentLaunchModels` allowlist. Subagent records have task titles and IDs; there are no worker types. Each record in `agents` also has `parentId`, the ID of the agent that started it, and `depth`, which is 1 or 2. A subagent of the main agent has depth 1, and its `parentId` is the session ID.
+- `revision`, `lifecycle` (`idle` or `running`), `settings`, `costTotal`
+- `bootstrap` and `catalog`: the selected model and prompt, and available personas, prompts, skills, and MCP servers
+- `executionEnvironment`: kind, identity, `cwd`, and home
+- `messages`: what the model sees
+- `timeline`: what to render, in order, referencing messages, `tools`, and `operations`
+- `turns`: a record for each accepted turn, keyed by `userHistoryEntryId`
+- `agents`: subagents
 
-Render active transcript order from `timeline.items`, not by sorting or filtering `messages`. A timeline item either contains a notice or references a message, tool, or operation in the corresponding snapshot collection. Some model-visible messages intentionally have no timeline item.
+Render from `timeline.items`, because some model-visible messages have no timeline item. User text is stored raw, so remove Tau metadata and leading `<system>...</system>` blocks before showing it. Use `turns` to find out what happened to a request, and do not infer outcomes from notices or message counts.
 
-The timeline has an `epoch`, a per-epoch sequence high-water mark, and ordered items. Successful compaction replaces the active recoverable timeline and advances the epoch. Rewind stays in the same epoch, removes later items, and preserves the sequence high-water mark so sequence numbers are not reused.
-
-Assistant messages preserve optional `providerThinkingLevel` strings for provider request reconstruction and prompt-cache reuse after recovery. Tool calls preserve optional `argumentsError` diagnostics; calls with this field are blocked before execution and return the diagnostic as an error result.
-
-User message text is stored raw. Before showing it, remove Tau metadata and any leading `<system>...</system>\n` blocks; the Node SDK exports helpers for this. Apply this only to user messages, never to assistant, tool-result, or system messages.
-
-The first system message is the persona's base prompt. Later system messages are history records, in order, with plain-text `content`, a `timestamp`, and required `metadata`: `{ type: "instruction" | "auto-compaction-continuation", version: 1 }`. The model sees them and they are recoverable. The TUI hides them, and searchable history includes them as system entries. Tau metadata is removed before sending to the provider. System messages cannot contain text-block arrays, named sections, or tool changes.
-
-These later system messages are added without a turn record. Adding one uses the `system-message` delta cause and needs no timeline item. The base prompt has no such metadata, and recovery restores later instructions without duplicating it. Clients cannot insert system messages, and a user's `<system>` text is never turned into one.
-
-Turn requests return a final outcome, and each accepted user turn is also recorded in `snapshot.turns`, keyed by `userHistoryEntryId`. Use this record to tell an unknown request apart from accepted work that is running or finished. Never infer outcomes from notice titles, message counts, or timing.
-
-User-facing behavior such as retry, compaction, rewind, and recovery is described in [sessions](sessions.md).
-
-## Apply snapshot deltas in order
-
-Observed snapshot changes arrive as `session.delta`:
+**Deltas** update the snapshot:
 
 ```json
 {
   "version": 19,
   "type": "session.delta",
-  "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
+  "sessionId": "...",
   "fromRevision": 8,
   "toRevision": 9,
   "cause": { "type": "assistant-stream" },
@@ -190,124 +85,67 @@ Observed snapshot changes arrive as `session.delta`:
 }
 ```
 
-For a patch, `fromRevision` must equal your current snapshot revision, and `toRevision` becomes the new one. Apply all `changes` in order, as one unit. Changes can set scalar state, append or replace messages, append streamed content, update the timeline, or set and remove keyed tools, operations, agents, turns, and facets.
+`fromRevision` must match your revision. Apply all changes in order as one unit. A `snapshot.reset` carries a complete new snapshot, and its cause is `compaction`, `rewind`, or `resync`. If a revision is unexpected, stop applying and call `session.snapshot`.
 
-`snapshot.reset` carries a complete new snapshot. Its cause is `compaction`, `rewind`, or `resync`, and compaction and rewind include the timeline data needed to validate the change. Use the cause; never guess at a destructive change from the content.
+Three other channels are separate from the snapshot, are not saved, and are empty after recovery:
 
-If a patch has an unexpected `fromRevision`, or a change would leave invalid references or ordering, stop applying deltas and call `session.snapshot`. A delta whose `toRevision` you already have is stale; do not replay its effects in the UI.
+- `session.pendingUserMessages` replaces the whole pending list when its own revision is newer.
+- `session.subagentActivities` carries per-agent changes (`agent.set`, `agent.remove`) with its own revision.
+- `session.ephemeral` carries live notices, which are not guaranteed to arrive and never need a resync. Show a `timeline.item` only if its epoch matches your snapshot.
 
-Node clients can use `applySessionProtocolDelta`, which validates session identity, revision continuity, timeline rules, references, and the resulting snapshot.
+## Concurrency
 
-## Maintain the independent live-state channels
+One main-session turn runs at a time, and `session.submit` and `session.retry` return `busy` on conflict. `session.queue` waits for idle, and `session.steer` joins the running turn. Session changes run one at a time across all clients. `session.exec`, `session.sample`, and ephemeral threads run alongside everything else.
 
-Some live state is not part of the snapshot. Each of these channels has its own revision or delivery rules.
+## Client tools
 
-### Pending user messages
+A client that advertised a tool receives `session.clientTool.call`. Answer with `session.clientTool.ack` before `ackDeadlineMs`, and start work only after it returns `{ accepted: true }`. Then send one `session.clientTool.result`. If `session.clientTool.cancel` arrives, stop and send no result.
 
-`session.pendingUserMessages` is a full replacement:
+## Keeping a session loaded
 
-```json
-{
-  "version": 19,
-  "type": "session.pendingUserMessages",
-  "sessionId": "...",
-  "state": {
-    "revision": 4,
-    "messages": [
-      { "id": "pending-1", "mode": "steer", "text": "Use the smaller API." },
-      { "id": "pending-2", "mode": "queue", "text": "Run tests afterward." }
-    ]
-  }
-}
-```
+A host keeps a session loaded while a client observes it, retention is active, or work is running. `session.setRetention` keeps an unattached session and its idle subagents available for a period. Retention exists only in memory and ends when the host shuts down.
 
-Replace the whole list, but only when the revision is newer. These revisions are separate from snapshot revisions. All observers share this state while the session is loaded on the host. It is empty after recovery.
+Before deleting files that a session uses:
 
-### Subagent activities
+1. Clear retention with `durationMs: null`, and unobserve.
+2. Call `session.collect`.
+3. Delete the files only if it returns `disposed: true`. Otherwise keep them and retry later.
 
-`session.subagentActivities` carries an independent `revision` and a list of changes. `agent.set` replaces that agent's complete current-run activity list; `agent.remove` deletes it. Apply changes only when the message revision is newer than the installed activity revision. The observe result provides the complete baseline.
+## Methods
 
-Activity lists contain limited assistant text, finished tool cards, and notices. They are live progress information, do not replace `snapshot.agents`, and are empty after recovery.
+Every request has `params`, even if empty. All `session.*` methods take `sessionId`, except `session.create` and `session.list`.
 
-### Ephemeral events
-
-`session.ephemeral` carries live events that are not guaranteed and have no revision:
-
-- `feedback.notice` is short-lived footer feedback.
-- `ephemeral-agent.thread-update` reports progress of an ephemeral context and thread.
-- `timeline.item` is a notice that is not saved, with a timeline epoch and sequence number.
-
-Show a `timeline.item` only if its epoch matches your snapshot. After compaction, drop items from the old epoch; after rewind, drop items past the rewind point. Missing ephemeral events never require a resync.
-
-## Delegate client tools
-
-An initialized client that advertised a tool can receive:
-
-```json
-{
-  "version": 19,
-  "type": "session.clientTool.call",
-  "sessionId": "...",
-  "agentId": "main",
-  "callId": "call-1",
-  "toolName": "local_picker",
-  "arguments": {},
-  "ackDeadlineMs": 2000,
-  "executionDeadlineMs": 60000
-}
-```
-
-`executionDeadlineMs` is a positive duration in milliseconds, or `null` when the advertised tool has no execution deadline. Omitting `executionTimeoutMs` from the tool definition uses 60 seconds; setting it to `null` disables only the execution deadline. Acknowledgement deadlines and cancellation on interruption or client detach still apply.
-
-Acknowledge promptly with `session.clientTool.ack`, optionally with a partial presentation for the running tool card. Start work only after the acknowledgement returns `{ accepted: true }`. Then send exactly one `session.clientTool.result` with `{ ok: true, content }` or `{ ok: false, error }`, optionally with a separate presentation for the finished card. `content` is an ordered array of text and image blocks. Both presentations may contain `subject`, `subjectWrap`, `details`, and `metadata`. The host sets the action and operation and fills in omitted fields. Fields you set are kept unchanged once they pass validation, while defaults are truncated the way Tau truncates its own cards. An empty `details` or `metadata` array hides that default.
-
-A successful result is rejected until the acknowledgement has completed. If preparation fails, send an error result before acknowledging; the host records a preparation failure and the tool never runs. If no result arrives, because of a timeout, cancellation, detach, or other failure, the host shows a complete default card. The result method returns `{ accepted: boolean }`; `false` means the result does not fit the call's current state or the call no longer expects it.
-
-`session.clientTool.cancel` names the session and call, with reason `aborted`, `timeout`, `client-detached`, or `host-failed`. Stop local work and do not send a result. The SDK handles all of this for you. Permissions and execution-environment access for client tools are covered in [client tools](client-tools.md).
-
-## Handle errors and terminal transport failure
-
-Error responses use `ok: false`:
-
-```json
-{
-  "version": 19,
-  "type": "response",
-  "id": "req-42",
-  "ok": false,
-  "error": {
-    "code": "busy",
-    "message": "a session turn is already running"
-  }
-}
-```
-
-The supported codes are:
-
-| Code | Meaning |
+| Method | Purpose |
 | --- | --- |
-| `parse_error` | The JSON payload could not be parsed. |
-| `invalid_request` | The envelope, version, type, id, or requested operation is invalid. |
-| `method_not_found` | The method is unsupported. |
-| `invalid_params` | Method parameters failed validation. |
-| `not_found` | The addressed session does not exist on this host, or `session.setRetention` set a period on a session that is not loaded. |
-| `busy` | Conflicting session work or a same-thread ephemeral submission is active. |
-| `cancelled` | Pending input, execution, or sampling was cancelled. |
-| `internal_error` | The host could not complete the operation. |
-
-When the request ID cannot be read, the error response uses `id: null`. The error `message` and optional `data` are for diagnostics. Branch on `code`, never on message text.
-
-A WebSocket close, a malformed server message, an unsupported version, or another fatal transport failure rejects all open requests. Stop sending, cancel running client tools, and reconnect or create a new transport on purpose. A WebSocket disconnect only detaches from the long-running host.
-
-## Coordinate concurrent work
-
-The server accepts new requests before earlier ones finish, so responses and streamed messages can interleave.
-
-- Only one main-session turn runs at a time. `session.submit` and `session.retry` return `busy` on conflict.
-- `session.queue` waits until the session is idle. `session.steer` joins the running turn at its next safe point. Each request gets its own response when done.
-- Session changes run one at a time, in arrival order across all clients. Changes that replace the context can interrupt running work and reject pending input. `session.rewind` instead requires an idle session with no pending input.
-- `session.setReasoning` and `session.setAutoCompactThreshold` wait their turn but do not interrupt the running turn. New settings apply from the next logical turn. The running turn and its steering continuations keep their original settings.
-- `session.exec` and `session.sample` run alongside everything else: turns, other changes, each other, and ephemeral agents. Clients must coordinate their own use of the workspace.
-- Ephemeral contexts are not part of that one-at-a-time ordering. Two submissions to the same ephemeral thread conflict, while different threads can run at once.
-
-A success response may arrive before or after the deltas the request caused. Keep state from the observed streams, match completion by request ID, and call `session.snapshot` when unsure whether you missed something.
+| `initialize` | Identify the client and advertise client tools. |
+| `session.create` | Create a session in an execution environment. |
+| `session.list` | List sessions on this host. |
+| `session.observe` | Start updates and return starting states. |
+| `session.unobserve` | Stop updates without touching the session. |
+| `session.setRetention` | Set or clear the retention period. |
+| `session.collect` | Unload the session if nothing holds it, and report `disposed`. |
+| `session.record` | Append user text without running a turn. |
+| `session.submit` | Append user text and run a turn on an idle session. |
+| `session.queue` | Run a turn now, or when the session is idle. |
+| `session.steer` | Add input to the running turn. |
+| `session.cancelPendingMessages` | Cancel queued and steering input. |
+| `session.retry` | Run a turn from current history. |
+| `session.interrupt` | Stop turns, commands, samples, and maintenance. |
+| `session.exec` | Run a command in the execution environment, outside the conversation. |
+| `session.cancelExec` | Cancel one running command. |
+| `session.sample` | Run a standalone model call with supplied context. |
+| `session.snapshot` | Return the current snapshot. |
+| `session.setAutoCompactThreshold` | Set the compaction threshold from the next turn. |
+| `session.setReasoning` | Set reasoning from the next turn. |
+| `session.setPersona` | Apply a persona and optional settings. |
+| `session.resolvePrompt` | Load a prompt body. |
+| `session.autocompletePaths` | Suggest paths from the execution environment. |
+| `session.reload` | Reload configuration and content. |
+| `session.compact` | Replace the model's context with a summary. |
+| `session.rewind` | Remove a user message and everything after it. |
+| `session.interruptSubagent` | Interrupt one subagent's run. |
+| `session.ephemeral.create` | Create an unsaved agent context. |
+| `session.ephemeral.submit` | Run or continue an ephemeral thread. |
+| `session.ephemeral.close` | Close a context and its threads. |
+| `session.clientTool.ack` | Acknowledge a client tool call. |
+| `session.clientTool.result` | Complete a client tool call. |

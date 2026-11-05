@@ -1,73 +1,50 @@
 # OpenRouter
 
-`tau tool openrouter` makes single requests for typed decisions and for understanding text or media. It works from any shell, inside or outside Tau, without a session, persona, conversation, tools, or session cost tracking. Only the content you pass is sent to OpenRouter and its chosen provider. Its judgments are model output; never use them as a security or permission check.
+`tau tool openrouter` makes single model requests for typed decisions and for analyzing text or media. It has no session or conversation, and only what you pass is sent. Its output is model judgment, so never use it as a security or permission check.
 
 ## Credentials and requirements
 
-Install Tau and configure `OPENROUTER_API_KEY`, or put `apiKeys.openrouter` in the global `~/.config/tau/config.json` on the machine running the command. A nonblank environment key takes precedence. Project configuration cannot supply API keys. There is no key flag.
-
-The agent's Bash tool removes inherited variables that look like credentials. When the agent runs the command, put the key in global configuration on that machine, or set it some other way that machine supports. See [credentials](credentials.md) and [tools](tools.md).
-
-Audio and video require `ffprobe` from FFmpeg on `PATH`: `brew install ffmpeg` on macOS or `apt install ffmpeg` on Debian/Ubuntu. Text and images do not require FFmpeg. Media is validated locally, not transcoded.
+Needs `OPENROUTER_API_KEY` or `apiKeys.openrouter` in global configuration. When the agent runs the command, use global configuration, because Bash commands do not inherit keys. Audio and video also need `ffprobe` from FFmpeg.
 
 ```sh
-tau tool openrouter --help
 tau tool openrouter decisions --help
-tau tool openrouter chat --help
-tau tool openrouter decisions --list-models
 tau tool openrouter chat --list-models
 ```
 
-Help and model listing require neither credentials nor network access and never read stdin. `--list-models` is a separate mode, incompatible with request flags, and prints one JSON object containing `models`, with each model's `id`, `inputs`, `reasoning` settings, and `role` guidance. `--help` and `-h` print text help.
+`--model` is required and must be one of these exact IDs:
 
-## Fixed model choices
-
-Every request needs an exact `--model` ID from this table. There is no default, no way to use other IDs, no model discovery or refresh, and no automatic substitution. A versioned ID is not necessarily an immutable provider snapshot; output records the returned model separately.
-
-| Operation | Model | Inputs and suggested role | Reasoning efforts |
-| --- | --- | --- | --- |
-| `decisions` | `openai/gpt-6-luna-decisions` | Questions about text, structured state, or images; recommended first choice for decisions | Not supported |
-| `decisions` | `typesafe/jev-1.14` | Questions about text, structured state, or images; use for high-volume decisions when cost is the priority | Not supported |
-| `chat` | `google/gemini-3.8-flash` | Text, images, audio, video; first choice for audio/video and image-heavy analysis | `low`, `medium`, `high` |
-| `chat` | `google/gemini-4-argon` | Text, images, audio, video; multimodal analysis | `low`, `medium`, `high` |
-| `chat` | `openai/gpt-6-luna` | Text and images; cheap everyday extraction, summarization, and routine questions | `none`, `low`, `medium`, `high`, `xhigh`, `max` |
-| `chat` | `openai/gpt-6.1-terra` | Text and images; efficient visual reasoning, writing, and everyday coding | `low`, `medium`, `high`, `xhigh`, `max` |
-| `chat` | `openai/gpt-6.1-sol` | Text and images; coding, debugging, technical reasoning | `low`, `medium`, `high`, `xhigh`, `max` |
-| `chat` | `anthropic/claude-sonnet-5.5` | Text and images; writing, coding, and general-purpose reasoning | `low`, `medium`, `high`, `xhigh`, `max` |
-| `chat` | `anthropic/claude-opus-5.5` | Text and images; premium generalist for writing, synthesis, difficult reasoning, and second opinions | `low`, `medium`, `high`, `xhigh`, `max` |
-
-Roles are guidance for choosing, not guarantees or limits on what a model may be used for. Unsupported settings and media types fail locally; the command never switches models, transcribes audio, or extracts video frames instead.
+| Operation | Model | Use for |
+| --- | --- | --- |
+| `decisions` | `openai/gpt-6-luna-decisions` | First choice, supports text and images |
+| `decisions` | `typesafe/jev-1.14` | High volume when cost matters most |
+| `chat` | `google/gemini-3.8-flash` | First choice for audio, video, and images |
+| `chat` | `google/gemini-4-argon` | Multimodal analysis |
+| `chat` | `openai/gpt-6-luna` | Cheap extraction and summaries |
+| `chat` | `openai/gpt-6.1-terra` | Visual reasoning, writing, everyday coding |
+| `chat` | `openai/gpt-6.1-sol` | Coding and technical reasoning |
+| `chat` | `anthropic/claude-sonnet-5.5` | Writing, coding, general reasoning |
+| `chat` | `anthropic/claude-opus-5.5` | Difficult reasoning and second opinions |
 
 ## Input and examples
 
 ### Decisions
 
-```sh
-tau tool openrouter decisions --model openai/gpt-6-luna-decisions --input ./decision.json
-```
-
-`--input` is required. A file path reads a UTF-8 JSON document. Exactly `--input -` reads one complete document from stdin until EOF:
+A decision asks independent typed questions about some `state`:
 
 ```sh
 tau tool openrouter decisions --model openai/gpt-6-luna-decisions --input - <<'JSON'
 {
   "state": { "ticket": "The checkout page crashes when I click Pay." },
   "questions": {
-    "is_bug": {
-      "type": "noul",
-      "instructions": "Does this report describe broken product behavior?"
-    },
+    "is_bug": { "type": "noul", "instructions": "Is this broken product behavior?" },
     "team": {
       "type": "choice",
-      "instructions": "Which team should own this ticket?",
-      "criteria": {
-        "payments": "Checkout or billing problems",
-        "other": "Problems unrelated to payments"
-      }
+      "instructions": "Which team should own this?",
+      "criteria": { "payments": "Checkout or billing", "other": "Anything else" }
     },
     "urgency": {
       "type": "score",
-      "instructions": "How urgent is the issue?",
+      "instructions": "How urgent is it?",
       "criteria": ["Can wait", "Fix soon", "Blocking revenue"]
     }
   }
@@ -75,35 +52,11 @@ tau tool openrouter decisions --model openai/gpt-6-luna-decisions --input - <<'J
 JSON
 ```
 
-Stdin must not be a terminal and must reach EOF within 30 seconds. Empty input, malformed JSON, multiple documents, invalid UTF-8, and oversized input fail before any request.
+`--input` also takes a file path. Add images with repeatable `--image` flags. Answers have this shape:
 
-The input contains exactly `state` and `questions`. The model belongs only in `--model`, not the document. `state` is a string, JSON object, or array. `questions` is a nonempty map of nonempty names to questions:
-
-- `noul`: required `instructions`; optional `criteria` with both `true` and `false`. The answer's `noul` is a probability from zero to one, not a boolean.
-- `choice`: required `instructions` and a nonempty `criteria` object mapping category names to guidance. The answer's `choice` names a supplied category; optional `probabilities` and `confidence` retain provider probabilities.
-- `score`: required `instructions` and a nonempty ordered `criteria` array. The answer's `score` is a numeric position from zero to the last rubric index, possibly fractional. Optional `legend`, `probabilities`, and `confidence` retain distribution details.
-
-Instructions and criterion guidance accept strings, JSON objects, or arrays; choice criterion values may also be `null`. Unknown question fields and the reserved question/category name `__proto__` are rejected. Arbitrary keys within state and guidance are preserved. Several independent questions can share one state; dependent questions require separate calls.
-
-Luna Decisions supports at most 200 questions, 255 categories per choice question, and 2–10 rubric levels per score question. Tau checks these limits before sending the request. Jev also accepts a single-level score rubric. Both models use the same JSON input format.
-
-Luna also accepts up to 64 ordered local PNG/JPEG/WebP images using repeatable `--image <path>` flags:
-
-```sh
-tau tool openrouter decisions \
-  --model openai/gpt-6-luna-decisions \
-  --input ./visual-checks.json --image ./checkout.png
-```
-
-Describe what to check in `questions` and supply images with `--image`. Images follow `state` in flag order and retain their original bytes. Objects and arrays in `state` are sent as JSON text, so image URLs inside `state` are treated as text.
-
-Jev accepts up to 16 PNG/JPEG images through the same flags. Each side must be 256–1,568 pixels, with at least 78,400 pixels in total (inclusive limits). A 256×256 image is too small; 280×280 meets the minimum area. WebP is unsupported. Tau checks these constraints before sending, without resizing or converting images. EXIF orientation is not applied by Jev, so rotate photos before attaching them.
-
-Images also use the [same validation and limits as chat images](#outputs-and-recovery). Only local files are accepted; external URLs and file IDs are unsupported. Neither decision model accepts audio or video.
-
-Multimodal requests follow [OpenRouter’s Decisions format](https://openrouter.ai/docs/guides/community/multimodal-decisions): a plain string followed by `image_url` parts in the `state` array. Tau’s byte and attachment limits still apply. Jev also imposes provider-side processed-image and expanded-request limits, so a request that passes local validation can still be rejected. Bounding-box questions are unsupported.
-
-The command posts once to OpenRouter's alpha Decisions endpoint. It validates answer names, types, categories, rubric ranges, and probability bounds. Refusals and malformed answers fail the command. Successful output is one JSON object:
+- `noul`: a probability from 0 to 1
+- `choice`: the name of a category
+- `score`: a position in the `criteria` list, possibly fractional
 
 ```json
 {
@@ -114,75 +67,24 @@ The command posts once to OpenRouter's alpha Decisions endpoint. It validates an
 }
 ```
 
-This illustrates a single-question response; every submitted question must have an answer. Provider `id` and `provider` are included when supplied. Usage contains reported token counts and optional reported cost, never an estimated cost. Negative judgments and low confidence still exit successfully. No thresholds or prose explanations are invented.
+Luna accepts at most 200 questions and up to 64 PNG, JPEG, or WebP images. Jev accepts up to 16 PNG or JPEG images, with each side between 256 and 1,568 pixels.
 
 ### Chat
 
 ```sh
 tau tool openrouter chat \
-  --model openai/gpt-6.1-sol \
-  --system 'Review carefully. Separate observations from assumptions.' \
-  --prompt-file ./review-context.txt \
-  --image ./error.png \
-  --reasoning high
-```
-
-Flags belong after `chat`. No positional arguments are accepted.
-
-| Flag | Contract |
-| --- | --- |
-| `--model <id>` | Required exact shipped chat model ID |
-| `--prompt <text>` or `--prompt-file <path>` | Exactly one required; nonblank UTF-8 user prompt |
-| `--system <text>` or `--system-file <path>` | Optional, mutually exclusive, nonblank explicit system instructions |
-| `--image <path>` | Repeatable local PNG, JPEG, or WebP image |
-| `--audio <path>` | Repeatable local WAV or MP3 audio; Gemini only |
-| `--video <path>` | Repeatable local MP4 video; Gemini only |
-| `--reasoning <effort>` | Optional model-supported effort from the table |
-
-All file paths resolve relative to the invoking working directory. Prompt/system files name regular files; `-` has special stdin meaning only for decisions. Omitting system instructions sends no system message. Omitting reasoning leaves that parameter to the provider, not necessarily disabled. Effort does not request a written reasoning trace.
-
-Media flags may be mixed; the request contains the prompt first, followed by attachments in command-line order. Files are embedded inline as data URLs or base64 audio, not uploaded to public hosting. There are no remote URL inputs, generated media, automatic resizing, clipping, conversion, chunking, conversation history, or tool execution.
-
-```sh
-tau tool openrouter chat \
   --model google/gemini-3.8-flash \
-  --prompt 'Compare this recording with the reference and spoken requirements.' \
-  --video ./recording.mp4 \
-  --image ./reference.png \
-  --audio ./requirements.wav > ./analysis.json
+  --prompt 'Compare this recording with the reference.' \
+  --system 'Separate observations from assumptions.' \
+  --video ./recording.mp4 --image ./reference.png --reasoning high
 ```
 
-Chat sends one non-streaming completion request. It imposes no output token cap: neither `max_tokens` nor `max_completion_tokens` is sent, and there is no `--max-tokens` flag. Provider defaults, remaining context, and model limits still apply; omission does not mean unlimited output.
+Use `--prompt` or `--prompt-file`, and `--system` or `--system-file`. Attachments are `--image` (PNG, JPEG, WebP), and for Gemini only, `--audio` (WAV, MP3) and `--video` (H.264 MP4). Each can repeat.
 
-Successful stdout contains one JSON object with `requested_model`, returned `model`, `answer` (text or `null`), and `finish_reason`. Reported `id`, `provider`, `usage` (including cost and token details), `native_finish_reason`, and `refusal` appear when supplied. Missing optional metadata is not fabricated. Reasoning is never substituted for the answer or returned as answer text.
-
-- `stop` with no refusal is a complete answer.
-- `length` is truncated output, even if answer text is empty.
-- `content_filter` or a nonempty `refusal` indicates refusal, not a complete answer.
-
-These are successful exchanges with distinguishable outcomes; scripts must inspect them. Provider errors, malformed responses, unexpected tool calls, and a normal stop with neither answer nor refusal fail instead of masquerading as an answer.
+Stdout has `answer` and `finish_reason`. `stop` means a complete answer, `length` means the answer was cut off, and `content_filter` or a `refusal` field means the model refused. Check these, because all of them exit successfully.
 
 ## Outputs and recovery
 
-Tau sets these limits to reject abnormal input. They are not the providers' maximum capacities, and a request within them can still exceed the selected model's context window or a provider limit. 1 MiB is 1,048,576 bytes.
+Output is one JSON object on stdout, with diagnostics on stderr. Failures exit nonzero. Requests are never retried, because the provider may already have charged for one with an unknown result.
 
-| Resource | Limit |
-| --- | --- |
-| Decisions JSON | 20 MiB of UTF-8 |
-| Chat prompt, system instructions, and schema | 20 MiB of UTF-8 combined |
-| Attachments per request | 64 of any mix of types; 16 for Jev |
-| Each image | 32 MiB, 32,768 pixels per edge, 100 megapixels; one frame |
-| Each audio or video | 256 MiB |
-| Audio formats | Single-stream PCM 16-bit little-endian WAV or MP3 |
-| Video format | H.264 MP4 up to 3840×2160 with optional AAC audio |
-| Audio/video duration | Known positive duration; 7,200 seconds (2 hours) combined |
-| Complete encoded JSON request | 512 MiB, including base64 expansion and text |
-| Response | 32 MiB |
-| Local media probe | 15 seconds per file |
-| HTTP request and response | 10 minutes |
-
-Oversized or unsupported inputs fail before sending. Audio/video validation uses private temporary copies of the exact bytes being submitted and removes those copies after probing. Keep FFmpeg current when handling untrusted media.
-
-Diagnostics go to stderr and failures exit nonzero. Authentication, insufficient credits, permission failures, rate limits, and provider/service failures report distinct status diagnostics without dumping provider bodies. There are no automatic retries, including after timeouts or interrupted connections: the provider may already have charged for an unknown outcome. A response exceeding the safety bound can fail after a billable request.
-
-Passing local validation does not guarantee the provider accepts the request. OpenRouter's alpha Decisions API and provider availability can change independently of Tau. Read the actual output and errors, and never treat model judgments as verified facts.
+Input over Tau's limits fails before sending. Limits include 20 MiB of text, 64 attachments, 32 MiB per image, 256 MiB per audio or video file, and two hours of combined media. A request within these limits can still exceed a model's or provider's limit.

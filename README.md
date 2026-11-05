@@ -40,6 +40,6 @@ Or go directly to:
 - [Getting started](docs/getting-started.md)
 - [Configuration](docs/configuration.md)
 - [Session protocol](docs/session-protocol.md)
-- [Node SDK](docs/node-sdk.md)
+- [Node SDK](docs/sdk.md)
 - [Remote sessions](docs/remote-sessions.md)
 - [Security](docs/security.md)

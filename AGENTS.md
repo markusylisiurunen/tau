@@ -80,7 +80,7 @@ Rules that follow:
 
 ## Sessions, snapshots, and protocol
 
-`src/protocol/session_protocol.ts` owns wire DTOs, strict parsers, the snapshot schema, delta application, and protocol limits. A protocol change updates its tests (`test/session_protocol.test.js`), the SDK or host integration tests that consume it, and `docs/session-protocol.md`. Never copy limits or field lists into other files. Test payload bounds, including UTF-8 projection, at the protocol and host boundaries.
+`src/protocol/session_protocol.ts` owns wire DTOs, strict parsers, the snapshot schema, delta application, and protocol limits. A protocol change updates its tests (`test/session_protocol.test.js`), the SDK or host integration tests that consume it, and `docs/session-protocol.md` when its overview or method list changes. Never copy limits or field lists into other files. Test payload bounds, including UTF-8 projection, at the protocol and host boundaries.
 
 **Snapshot.** The snapshot is the recoverable source of truth.
 
@@ -170,7 +170,7 @@ Start with the smallest owning area, its callers, and its tests.
 | Telegram | `src/core/telegram/` | `test/telegram_adapter.test.js`, `test/telegram_workspace.test.js` |
 | Docs packaging | `docs/manifest.json`, `scripts/copy-tau-docs.js`, `src/core/tools/tau_docs.ts` | `test/tau_docs.test.js`, `test/tau_docs_corpus.test.js` |
 
-**New slash command:** the union and registry in `src/core/commands/registry.ts`, the handler in `src/tui/session_chat_controller.ts`, suggestions in `src/tui/ui/slash_autocomplete.ts` if needed, tests for parsing and dispatch, and `docs/tui.md`.
+**New slash command:** the union and registry in `src/core/commands/registry.ts`, the handler in `src/tui/session_chat_controller.ts`, suggestions in `src/tui/ui/slash_autocomplete.ts` if needed, and tests for parsing and dispatch. `/help` lists every command, so update `docs/tui.md` only if the command is easy to miss or misuse.
 
 **History viewer development:** `npm run history:dev` runs the history Worker locally with Wrangler, a local-only D1 database, and a fixture conversation. Its dev credentials are in `src/history/worker/`. It is long-running, so ask the user to start it.
 
@@ -258,7 +258,7 @@ Before writing, identify the reader and what they need to do. Use only concepts 
 | Surface | Reader | Content |
 | --- | --- | --- |
 | Agent prompts, tool and parameter descriptions, injected context | The agent doing the user's task | What it can do and observe: files, commands, working directory, current chat. Never internal machinery. Write "send a local file to the current Telegram chat", not "from the execution environment". |
-| `docs/*.md` | People and agents using, operating, configuring, or integrating Tau | The version-matched manual. Lead with the normal path, and show configuration as types and examples. Include what a reader needs to complete a task, choose an approach, or avoid a consequential mistake. Leave out internals, feature history, rare failures, and repeated rules. Integrators get an overview and can read the source for detail. Never written as instructions to Tau's agent: agent behavior in third person, direct instructions only for the reader's own actions. |
+| `docs/*.md` | People and agents using, operating, configuring, or integrating Tau | The version-matched manual. Lead with the normal path, and show configuration as types and examples. Integrators get an overview and can read the source for detail. See the docs maintenance rules below. Never written as instructions to Tau's agent: agent behavior in third person, direct instructions only for the reader's own actions. |
 | CLI help and diagnostics | Anyone running the command, inside or outside Tau | Usage, prerequisites, actionable errors, public doc links. Never depend on `tau_docs`. |
 | `README.md` | Prospective and first-time users | What Tau is, how to start, where to go next. |
 | `AGENTS.md` | Contributors | What code cannot say: intent, invariants, prohibitions, ownership, workflow. Point to the owning source and tests instead of copying field lists, limits, inventories, or step-by-step logic. If a sentence would need editing whenever the code changes, it probably does not belong here. |
@@ -266,12 +266,35 @@ Before writing, identify the reader and what they need to do. Use only concepts 
 
 **Docs maintenance.**
 
+`docs/` is a short manual on purpose. It once grew to more than four times its current size because each change added its own details, and every page an agent reads costs context. Treat each addition as a cost that the reader pays, in every change and every review.
+
+When a change affects behavior:
+
+1. Read what the docs say now, and correct anything that has become wrong. Wrong docs are never acceptable.
+2. Add text only if a reader would otherwise fail a task, choose wrongly, or make a consequential mistake. Ask what the reader would do differently without the passage. If the answer is unclear, leave it out. Most bug fixes and internal changes need no docs change.
+3. Describe a new feature briefly: what it is for, how to use it, and the limits that could change the reader's approach. Do not list every flag, limit, and edge case.
+4. Give each rule one home, and link to it from other pages.
+5. Prefer replacing text over adding to it. When a page grows, look for something to cut.
+
+Leave these out:
+
+- Internals: class names, call chains, state transitions, and how components coordinate.
+- Rare failures, validation details, and numeric limits or deadlines that do not change what the reader does.
+- Anything readers get elsewhere: `--help`, `/help`, tool descriptions, the `tau.docs` references, and exported types.
+- General knowledge that developers already have, and setup steps owned by other products.
+- Instructions for how the agent should behave, feature history, and security advice beyond the boundaries in `docs/security.md`.
+
+A question the docs do not answer is not by itself a reason to add text. Apply the same test to reports from people and agents, and check their claims against the source first.
+
+Form and accuracy:
+
 - Describe the current product only. No change narratives ("added", "replaced", "no longer"); those belong in PRs and release notes.
-- Before adding a passage, ask what the reader would do differently without it. If the answer is unclear, leave it out. Each rule has one home, and other pages link to it.
-- Page and corpus size limits are enforced by `test/tau_docs_corpus.test.js` and `scripts/copy-tau-docs.js`. Most pages should stay far below the page limit. When a page grows, prefer replacing text over adding to it.
-- Update the affected `docs/*.md` pages when supported behavior changes. Update `README.md` only when the landing or first-run path changes. Update this file when workflow, ownership, architecture, or a safeguard changes.
-- Do not document unrelated undocumented behavior unless asked.
-- The docs corpus is flat. Each page appears once in `docs/manifest.json`, uses valid flat links, and stays within packaging bounds (`test/tau_docs_corpus.test.js`).
+- Lead with the normal path. Show configuration and contracts as handwritten types and small examples instead of prose or field tables.
+- Check every example and type against the source. Examples get copied, so an example that does not work is a bug.
+- Add a page only for a separate reader task, never to fit a size limit.
+- The page and corpus limits in `test/tau_docs_corpus.test.js` and `scripts/copy-tau-docs.js` are a last resort, and staying under them does not make an addition acceptable. Most pages should stay far below the page limit. Do not raise the limits unless the user asks.
+- The docs corpus is flat. Each page appears once in `docs/manifest.json` and uses valid flat links.
+- Do not document unrelated undocumented behavior unless asked. Update `README.md` only when the landing or first-run path changes. Update this file when workflow, ownership, architecture, or a safeguard changes.
 
 <!-- agents:subagents:start -->
 

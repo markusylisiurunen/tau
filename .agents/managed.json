@@ -9,6 +9,10 @@
       "type": "file",
       "hash": "836fae3fe3208edf4177c9902b94ad8fbeada9f5b942458d3357f28d1dc34e4c"
     },
+    ".agents/skills/be-ambitious/SKILL.md": {
+      "type": "file",
+      "hash": "097796b80d58f5d67a873ddc6dd37a3a95806b5fae91f7c233e1de04804b5289"
+    },
     ".agents/skills/clear-writing/SKILL.md": {
       "type": "file",
       "hash": "3d5f808d92b394c087d44de2775e2861539ddc6835e521d17652fea1a5d817ca"
@@ -31,7 +35,7 @@
     },
     ".agents/skills/design-afresh/SKILL.md": {
       "type": "file",
-      "hash": "cbabd89be614848269c159265a51e4ef9a26e91d3fc414e884fc7e5008857e6c"
+      "hash": "96668273bade893a5f68cb79d65c25252d401e616e7d0222ed339bfc1d4dae8a"
     },
     ".agents/skills/deslop/references/go.md": {
       "type": "file",
@@ -55,7 +59,7 @@
     },
     ".agents/skills/plan/SKILL.md": {
       "type": "file",
-      "hash": "0b9e1605b8c68b6336b4f577e2079ddc7780f1f5c8138032fd163958cf41726b"
+      "hash": "ca3124faea6ea66c313b23fe0a7ea66b79f8d008dd97f3608a15c6b28e104e56"
     },
     ".agents/skills/ui-design/references/interaction-and-accessibility.md": {
       "type": "file",
@@ -136,6 +140,10 @@
     ".claude/skills/agent-browser": {
       "type": "symlink",
       "hash": "42c69efa53113db14344b45869afad16976d1a55fe4d54b202a4d1995924fc45"
+    },
+    ".claude/skills/be-ambitious": {
+      "type": "symlink",
+      "hash": "57f4ddde08c4addb7c2859aa7fbe3be280dd91412ec0880a581cd19293333858"
     },
     ".claude/skills/clear-writing": {
       "type": "symlink",

@@ -48,6 +48,8 @@ Read the applicable project guidance and inspect the target, its consumers, rela
 
 Existing code and tests are evidence. Weigh them, but do not treat them as an unquestionable specification. Keep observed behavior separate from inferred intent. Resolve uncertainty from the available context first, and ask the user only when a consequential question remains open and the workflow allows it.
 
+Use skill `be-ambitious` to find what a top professional in this field would do with this target that the request does not ask for. Bring its answers into your design and your verification, without writing a separate prompt or offering to run one. "Deeper, not bigger" excludes new features and deliverables, but it does not limit how much of the existing system the redesign may change.
+
 ### Form a preferred design
 
 Build your own model of the solution before organizing any critique around existing files or functions. Start with the core concepts, their responsibilities and relationships, and where ownership lies. Then shape the APIs and the flow of data, state, control, and failures. Implementation details come last.

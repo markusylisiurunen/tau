@@ -486,6 +486,26 @@ describe("prepared speech cleanup", () => {
     },
   );
 
+  it.each(["ready", "generating"])(
+    "rejects a lost connection while %s without retrying",
+    async (phase) => {
+      vi.useFakeTimers();
+      const { socket, prepared, warm } = prepare();
+      socket.emit("open");
+      warm();
+      if (phase === "ready") socket.emit("close", 1006, Buffer.alloc(0));
+      const result = prepared.finish({ transcript: "original", vocabulary: [] });
+      const rejected = expect(result).rejects.toThrow();
+      await vi.advanceTimersByTimeAsync(0);
+      if (phase === "generating") socket.emit("close", 1006, Buffer.alloc(0));
+      await rejected;
+      prepared.dispose();
+      expect(socket.send).toHaveBeenCalledTimes(phase === "ready" ? 1 : 2);
+      expect(socket.terminate).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
   it("bounds generation independently of recording duration", async () => {
     vi.useFakeTimers();
     const { socket, prepared, warm } = prepare();

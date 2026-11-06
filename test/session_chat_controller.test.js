@@ -6280,142 +6280,156 @@ describe("SessionChatController", () => {
     },
   );
 
-  it("replaces Scribe previews and unlocks editing on the first final commit", async () => {
-    const audioPath = join(tmpdir(), `tau-session-listen-scribe-${Date.now()}.wav`);
-    const pcm = Buffer.alloc(6400, 1);
-    const socket = new EventEmitter();
-    const socketEvents = [];
-    const audioSent = Promise.withResolvers();
-    socket.send = vi.fn((data, callback) => {
-      const event = JSON.parse(data);
-      socketEvents.push(event);
-      callback?.();
-      if (!event.commit) audioSent.resolve();
-    });
-    socket.close = vi.fn();
-    socket.terminate = vi.fn();
-    const webSocketFactory = vi.fn(() => {
-      queueMicrotask(() =>
-        socket.emit("message", JSON.stringify({ message_type: "session_started" })),
-      );
-      return socket;
-    });
-    const emitTranscript = (type, text) =>
-      socket.emit("message", JSON.stringify({ message_type: `${type}_transcript`, text }));
-    const fetchImpl = vi.fn();
-    const spawn = vi.fn(async (command, _args, options = {}) => {
-      if (command === "mktemp") {
-        return createSpawnResult({ stdout: `${audioPath}\n` });
-      }
-      if (command === "ffmpeg") {
-        const stdout = new EventEmitter();
-        options.onSpawn({ stdout });
-        queueMicrotask(() => stdout.emit("data", pcm));
-        return await new Promise((resolve) => {
-          options.signal.addEventListener("abort", () => {
-            stdout.emit("data", Buffer.from([5, 6]));
-            resolve(createSpawnResult({ aborted: true }));
+  it.each(["commit", "deadline"])(
+    "replaces Scribe previews and unlocks editing on %s",
+    async (finalization) => {
+      const audioPath = join(tmpdir(), `tau-session-listen-scribe-${Date.now()}.wav`);
+      const pcm = Buffer.alloc(6400, 1);
+      const socket = new EventEmitter();
+      const socketEvents = [];
+      const audioSent = Promise.withResolvers();
+      socket.send = vi.fn((data, callback) => {
+        const event = JSON.parse(data);
+        socketEvents.push(event);
+        callback?.();
+        if (!event.commit) audioSent.resolve();
+      });
+      socket.close = vi.fn();
+      socket.terminate = vi.fn();
+      const webSocketFactory = vi.fn(() => {
+        queueMicrotask(() =>
+          socket.emit("message", JSON.stringify({ message_type: "session_started" })),
+        );
+        return socket;
+      });
+      const emitTranscript = (type, text) =>
+        socket.emit("message", JSON.stringify({ message_type: `${type}_transcript`, text }));
+      const fetchImpl = vi.fn();
+      const spawn = vi.fn(async (command, _args, options = {}) => {
+        if (command === "mktemp") {
+          return createSpawnResult({ stdout: `${audioPath}\n` });
+        }
+        if (command === "ffmpeg") {
+          const stdout = new EventEmitter();
+          options.onSpawn({ stdout });
+          queueMicrotask(() => stdout.emit("data", pcm));
+          return await new Promise((resolve) => {
+            options.signal.addEventListener("abort", () => {
+              stdout.emit("data", Buffer.from([5, 6]));
+              resolve(createSpawnResult({ aborted: true }));
+            });
           });
-        });
-      }
-      throw new Error(`unexpected command: ${command}`);
-    });
-    const session = new FakeSession();
-    const view = new FakeView();
-    const editor = new CustomEditor(createUiTheme("plain"));
-    const prefix = "header\nprefix ";
-    const suffix = "suffix\nfooter";
-    editor.setText(prefix + suffix);
-    editor.handleInput("\x01");
-    editor.handleInput("\x1b[A");
-    for (let i = 0; i < 7; i++) editor.handleInput("\x1b[C");
-    const cursor = editor.getCursor();
-    view.beginEditorTextPreview = () => editor.beginTextPreview();
-    view.getEditorText = () => editor.getText();
-    view.setEditorInputEnabled = (enabled) => {
-      view.editorEnabledUpdates.push(enabled);
-      editor.setInputEnabled(enabled);
-    };
-    const { controller } = await createControllerHarness({
-      view,
-      session,
-      deps: createMockDeps(spawn),
-      config: {
-        apiKeys: { elevenlabs: "eleven-key" },
-      },
-      speechToTextDeps: { webSocketFactory, fetchImpl },
-    });
+        }
+        throw new Error(`unexpected command: ${command}`);
+      });
+      const session = new FakeSession();
+      const view = new FakeView();
+      const editor = new CustomEditor(createUiTheme("plain"));
+      const prefix = "header\nprefix ";
+      const suffix = "suffix\nfooter";
+      editor.setText(prefix + suffix);
+      editor.handleInput("\x01");
+      editor.handleInput("\x1b[A");
+      for (let i = 0; i < 7; i++) editor.handleInput("\x1b[C");
+      const cursor = editor.getCursor();
+      view.beginEditorTextPreview = () => editor.beginTextPreview();
+      view.getEditorText = () => editor.getText();
+      view.setEditorInputEnabled = (enabled) => {
+        view.editorEnabledUpdates.push(enabled);
+        editor.setInputEnabled(enabled);
+      };
+      const { controller } = await createControllerHarness({
+        view,
+        session,
+        deps: createMockDeps(spawn),
+        config: {
+          apiKeys: { elevenlabs: "eleven-key" },
+        },
+        speechToTextDeps: { webSocketFactory, fetchImpl },
+      });
 
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    try {
-      controller.start();
-      await controller.onUserInput("/listen");
-      expect(view.status.editor.mode).toBe("recording");
-      await writeFile(audioPath, Buffer.alloc(2048, 1));
-
-      await audioSent.promise;
-      expect(socketEvents).toHaveLength(1);
-      for (const [type, text, preview] of [
-        ["partial", "English", "English"],
-        ["committed", "English.", "English."],
-        ["partial", "Suomeksi myös", "English. Suomeksi myös"],
-      ]) {
-        emitTranscript(type, text);
-        expect(editor.getText()).toBe(prefix + preview + suffix);
-        const previewCursor = editor.getCursor();
-        for (const key of ["x", "\x1b[D", "\r", "\x7f", "\x1b[200~paste\x1b[201~"])
-          editor.handleInput(key);
-        expect(editor.getText()).toBe(prefix + preview + suffix);
-        expect(editor.getCursor()).toEqual(previewCursor);
-      }
-      controller.getInputHandlers().onToggleRecording();
-      await vi.waitFor(() => expect(socketEvents.at(-1).commit).toBe(true), { timeout: 2000 });
-      expect(view.editorEnabledUpdates.at(-1)).toBe(false);
-      expect(editor.getText()).toBe(`${prefix}English. Suomeksi myös${suffix}`);
-      emitTranscript("committed", "Suomeksi myös.");
-      expect(editor.getText()).toBe(`${prefix}English. Suomeksi myös.${suffix}`);
-      expect(view.editorEnabledUpdates.at(-1)).toBe(false);
-      expect(socket.close).toHaveBeenCalledOnce();
-      await controller.listenTransition;
-      expect(view.editorEnabledUpdates.at(-1)).toBe(true);
-    } finally {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
       try {
-        await controller.dispose();
+        controller.start();
+        await controller.onUserInput("/listen");
+        expect(view.status.editor.mode).toBe("recording");
+        await writeFile(audioPath, Buffer.alloc(2048, 1));
+
+        await audioSent.promise;
+        expect(socketEvents).toHaveLength(1);
+        for (const [type, text, preview] of [
+          ["partial", "English", "English"],
+          ["committed", "English.", "English."],
+          ["partial", "Suomeksi myös", "English. Suomeksi myös"],
+        ]) {
+          emitTranscript(type, text);
+          expect(editor.getText()).toBe(prefix + preview + suffix);
+          const previewCursor = editor.getCursor();
+          for (const key of ["x", "\x1b[D", "\r", "\x7f", "\x1b[200~paste\x1b[201~"])
+            editor.handleInput(key);
+          expect(editor.getText()).toBe(prefix + preview + suffix);
+          expect(editor.getCursor()).toEqual(previewCursor);
+        }
+        controller.getInputHandlers().onToggleRecording();
+        await vi.waitFor(() => expect(socketEvents.at(-1).commit).toBe(true), { timeout: 2000 });
+        expect(view.editorEnabledUpdates.at(-1)).toBe(false);
+        expect(editor.getText()).toBe(`${prefix}English. Suomeksi myös${suffix}`);
+        if (finalization === "commit") {
+          emitTranscript("committed", "Suomeksi myös.");
+          expect(editor.getText()).toBe(`${prefix}English. Suomeksi myös.${suffix}`);
+          expect(view.editorEnabledUpdates.at(-1)).toBe(false);
+        } else {
+          await vi.advanceTimersByTimeAsync(1000);
+          expect(socket.close).not.toHaveBeenCalled();
+          expect(view.editorEnabledUpdates.at(-1)).toBe(false);
+          emitTranscript("partial", "Suomeksi myös!");
+          await vi.advanceTimersByTimeAsync(1000);
+        }
+        expect(socket.close).toHaveBeenCalledOnce();
+        await controller.listenTransition;
+        expect(view.editorEnabledUpdates.at(-1)).toBe(true);
       } finally {
         try {
-          await rm(audioPath, { force: true });
+          await controller.dispose();
         } finally {
-          vi.useRealTimers();
+          try {
+            await rm(audioPath, { force: true });
+          } finally {
+            vi.useRealTimers();
+          }
         }
       }
-    }
 
-    const finalText = "English. Suomeksi myös.";
-    expect(view.editorEnabledUpdates).toContain(true);
-    expect(editor.getText()).toBe(`${prefix}${finalText}${suffix}`);
-    expect(editor.getCursor()).toEqual({ line: 1, col: 7 + finalText.length });
-    editor.handleInput("\x1b[45;5u");
-    expect(editor.getText()).toBe(prefix + suffix);
-    expect(editor.getCursor()).toEqual(cursor);
-    expect(
-      Buffer.concat(socketEvents.map(({ audio_base_64 }) => Buffer.from(audio_base_64, "base64"))),
-    ).toEqual(Buffer.concat([pcm, Buffer.from([5, 6])]));
-    expect(socketEvents.slice(0, -1).every(({ commit }) => !commit)).toBe(true);
-    expect(socketEvents.at(-1).commit).toBe(true);
-    expect(spawn).toHaveBeenNthCalledWith(
-      2,
-      "ffmpeg",
-      expect.arrayContaining(["-ar", "16000", "-f", "s16le", "pipe:1"]),
-      expect.objectContaining({
-        detached: true,
-        killProcessGroup: true,
-        captureOutput: "stderr",
-        stdio: ["ignore", "pipe", "pipe"],
-      }),
-    );
-    expect(session.submit).not.toHaveBeenCalled();
-    expect(fetchImpl).not.toHaveBeenCalled();
-  });
+      const finalText =
+        finalization === "commit" ? "English. Suomeksi myös." : "English. Suomeksi myös!";
+      expect(view.editorEnabledUpdates).toContain(true);
+      expect(editor.getText()).toBe(`${prefix}${finalText}${suffix}`);
+      expect(editor.getCursor()).toEqual({ line: 1, col: 7 + finalText.length });
+      editor.handleInput("\x1b[45;5u");
+      expect(editor.getText()).toBe(prefix + suffix);
+      expect(editor.getCursor()).toEqual(cursor);
+      expect(
+        Buffer.concat(
+          socketEvents.map(({ audio_base_64 }) => Buffer.from(audio_base_64, "base64")),
+        ),
+      ).toEqual(Buffer.concat([pcm, Buffer.from([5, 6])]));
+      expect(socketEvents.slice(0, -1).every(({ commit }) => !commit)).toBe(true);
+      expect(socketEvents.at(-1).commit).toBe(true);
+      expect(spawn).toHaveBeenNthCalledWith(
+        2,
+        "ffmpeg",
+        expect.arrayContaining(["-ar", "16000", "-f", "s16le", "pipe:1"]),
+        expect.objectContaining({
+          detached: true,
+          killProcessGroup: true,
+          captureOutput: "stderr",
+          stdio: ["ignore", "pipe", "pipe"],
+        }),
+      );
+      expect(session.submit).not.toHaveBeenCalled();
+      expect(fetchImpl).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     ["submit", "steer"],

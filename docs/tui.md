@@ -232,7 +232,7 @@ The shortcut can be changed with [`speech.recordingShortcut`](config-reference.m
 
 While you speak, ElevenLabs Scribe shows a live preview in muted italics at the cursor. Pauses finalize segments while recording continues. Tau keeps finalized segments and replaces only the current preview.
 
-After sending the remaining audio, Tau requests a final commit without adding silence. The first subsequent commit completes transcription. After two seconds without a commit, Tau uses the available text, including any partial. Delayed segments can be lost. There is no second upload.
+After sending the remaining audio, Tau asks Scribe to finalize without adding silence. Tau finishes on the first finalized segment after that request, or after two seconds using the latest text, even if unfinished. Later segments can be lost. The result comes from the live stream.
 
 The final transcript replaces the preview in normal text, without duplication. An empty transcript inserts nothing.
 
@@ -240,7 +240,7 @@ A submitted draft that contains dictation carries hidden guidance saying that so
 
 The editor is locked from the start of recording until transcription and cleanup finish. Escape cancels voice input at any stage: startup, recording, microphone shutdown, transcription, cleanup, or retry. Cancelling removes the preview at once, restores the original draft, and unlocks the editor without inserting or submitting anything. The cancelled recording is deleted once pending file work finishes. A transcription failure also restores the original draft. A recording or retry cannot start while another editor update is pending.
 
-While recording starts, GPT-6 Luna (reasoning disabled) extracts spelling hints from the recent conversation. Tau buffers audio until the transcription session is ready, then streams it to Scribe v2 Realtime at up to twice real time until it catches up. Scribe detects the spoken language and uses verbatim mode, retaining fillers and false starts. Hint extraction needs OpenAI credentials, and transcription continues without it. The session's [`speech.vocabulary`](config-reference.md#speech) terms, then the TUI's own global terms, come before extracted hints. Live transcription uses only short hints.
+At recording startup, GPT-6 Luna (reasoning disabled) extracts spelling hints from the recent conversation. Tau buffers audio until Scribe v2 Realtime is ready, then sends it at up to twice real time to catch up. Scribe detects the language and retains fillers and false starts. Transcription works without OpenAI credentials or hint extraction. Configured [`speech.vocabulary`](config-reference.md#speech) terms take priority: session terms first, then the TUI's global terms, then extracted hints. Live transcription uses only short hints.
 
 If transcription fails, Tau keeps the local WAV file and reports its path:
 
@@ -259,9 +259,9 @@ Transcription needs `ELEVENLABS_API_KEY` or `apiKeys.elevenlabs`, and cleanup ne
 
 ### Cleanup styles
 
-Default style: `speech.cleanupStyle` (`off` if unset, keeping the raw transcript). Tab toggles it for this recording. Enabling cleanup prepares the OpenAI connection and instructions while you speak.
+`speech.cleanupStyle` sets each recording's initial style (`off` by default). Tab switches it for that recording. With `off`, Tau keeps the raw transcript.
 
-With `default`, GPT-6.1 Terra (reasoning disabled) edits the complete transcript. It removes fillers and false starts, fixes punctuation and grammar, applies explicit spoken corrections, writes numbers as numerals, and formats spoken lists. It keeps your wording, languages, names, facts, identifiers, and paths, and never summarizes or translates.
+With `default`, Tau prepares the OpenAI connection and cleanup instructions while you speak. After transcription, GPT-6.1 Terra (reasoning disabled) removes fillers and false starts, fixes punctuation and grammar, applies explicit spoken corrections, writes numbers as numerals, and formats spoken lists. The model is instructed to preserve your wording, languages, names, facts, identifiers, and paths without summarizing or translating.
 
 If cleanup fails, Tau reports it and inserts the uncleaned transcript. After Enter or Ctrl+Enter, the text stays in the editor for review instead of being submitted.
 

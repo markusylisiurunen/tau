@@ -36,7 +36,8 @@ These pages describe how to install, configure, operate, and integrate the versi
 - [Sessions](sessions.md): creating sessions, turns, queueing, compaction, rewind, recovery, and storage.
 - [Remote sessions](remote-sessions.md): `serve`, `attach`, remote paths, and authentication.
 - [History](history.md): searchable local history, optional remote replication, and the history tool.
-- [Telegram](telegram.md): running the Telegram runner, bot access, chat commands, attachments, and recovery.
+- [Telegram](telegram.md): running the Telegram runner, bot access, attachments, and recovery.
+- [Telegram chat commands](telegram-commands.md): commands for projects, sessions, personas, effort, prompts, and compaction, and how to use them in groups.
 - [Telegram projects and workspaces](telegram-projects.md): repository, persistent-directory, and composite projects, workspace lifecycle, and provision hooks.
 
 ## Run command-line tools

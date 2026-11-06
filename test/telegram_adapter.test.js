@@ -481,6 +481,7 @@ describe("telegram adapter", () => {
         { command: "new", description: "start a new session" },
         { command: "status", description: "show active session status" },
         { command: "persona", description: "choose a persona or preset" },
+        { command: "effort", description: "choose the reasoning effort for future turns" },
         { command: "prompt", description: "add a saved prompt without starting a turn" },
         { command: "compact", description: "compact session context" },
         { command: "interrupt", description: "interrupt active run" },
@@ -490,10 +491,6 @@ describe("telegram adapter", () => {
         },
         { command: "tts_on", description: "enable voice responses" },
         { command: "tts_off", description: "disable voice responses" },
-        { command: "effort_low", description: "set reasoning effort to low" },
-        { command: "effort_medium", description: "set reasoning effort to medium" },
-        { command: "effort_high", description: "set reasoning effort to high" },
-        { command: "effort_xhigh", description: "set reasoning effort to xhigh" },
       ]);
     } finally {
       await adapter.close();
@@ -1250,7 +1247,7 @@ describe("telegram adapter", () => {
           message: {
             chat: { id: chatId, type: "private" },
             from: { id: 7 },
-            text: `/effort_${reasoning}`,
+            text: `/effort ${reasoning}`,
           },
         })),
       ],
@@ -1284,12 +1281,7 @@ describe("telegram adapter", () => {
         ["reasoning-session", "high"],
         ["reasoning-session", "xhigh"],
       ]);
-      expect(apiHarness.sendMessages.map((entry) => entry.text)).toEqual([
-        "reasoning effort set to low.",
-        "reasoning effort set to medium.",
-        "reasoning effort set to high.",
-        "reasoning effort set to xhigh.",
-      ]);
+      await waitFor(() => apiHarness.sendMessages.length === 4);
     } finally {
       await adapter.close();
     }
@@ -1305,7 +1297,7 @@ describe("telegram adapter", () => {
           message: {
             chat: { id: personaChatId, type: "private" },
             from: { id: 7 },
-            text: "/effort_xhigh",
+            text: "/effort xhigh",
           },
         },
         {
@@ -1313,7 +1305,7 @@ describe("telegram adapter", () => {
           message: {
             chat: { id: modelChatId, type: "private" },
             from: { id: 7 },
-            text: "/effort_low",
+            text: "/effort low",
           },
         },
       ],
@@ -1367,10 +1359,6 @@ describe("telegram adapter", () => {
 
     try {
       await waitFor(() => apiHarness.sendMessages.length === 2);
-      expect(apiHarness.sendMessages.map((entry) => entry.text)).toEqual([
-        "reasoning effort xhigh is not supported by this session.",
-        "reasoning effort low is not supported by this session.",
-      ]);
       expect(managerHarness.manager.setReasoning).not.toHaveBeenCalled();
     } finally {
       await adapter.close();
@@ -1412,7 +1400,7 @@ describe("telegram adapter", () => {
     }
   });
 
-  it("requires an active session and rejects arguments for effort selectors", async () => {
+  it("requires an active session and rejects values outside the effort choices", async () => {
     const activeChatId = 21;
     const inactiveChatId = 22;
     const apiHarness = createApiHarness([
@@ -1422,7 +1410,7 @@ describe("telegram adapter", () => {
           message: {
             chat: { id: inactiveChatId, type: "private" },
             from: { id: 7 },
-            text: "/effort_low",
+            text: "/effort low",
           },
         },
         {
@@ -1430,7 +1418,7 @@ describe("telegram adapter", () => {
           message: {
             chat: { id: activeChatId, type: "private" },
             from: { id: 7 },
-            text: "/effort_high now",
+            text: "/effort high now",
           },
         },
       ],
@@ -1451,8 +1439,8 @@ describe("telegram adapter", () => {
 
     try {
       await waitFor(() => apiHarness.sendMessages.length === 2);
-      expect(apiHarness.sendMessages.map((entry) => entry.text)).toEqual(
-        expect.arrayContaining(["no active session. use /new.", "usage: /effort_high"]),
+      expect(apiHarness.sendMessages.map((entry) => entry.text)).toContain(
+        "no active session. use /new.",
       );
       expect(managerHarness.manager.setReasoning).not.toHaveBeenCalled();
     } finally {
@@ -3290,6 +3278,344 @@ describe("telegram adapter", () => {
     }
   });
 
+  describe("typed and picked choices", () => {
+    const chat = { id: 329, type: "private" };
+    const from = { id: 7 };
+    const message = (id, text) => ({ update_id: id, message: { chat, from, text } });
+    const press = (id, data) => ({
+      update_id: id,
+      callback_query: { id: `${id}`, from, message: { chat, message_id: 42 }, data },
+    });
+    const pickers = (apiHarness) =>
+      apiHarness.sendMessages.filter((sent) => sent.options?.replyMarkup);
+    const buttons = (sent) => sent.options.replyMarkup.inline_keyboard.flat();
+
+    // Runs each batch of updates after the previous batch's replies have arrived.
+    const runUpdates = async (apiHarness, managerHarness, adapterOptions, batches) => {
+      let mock = apiHarness.api.getUpdates;
+      for (const batch of batches) {
+        mock = mock.mockImplementationOnce(async () => await batch());
+      }
+      mock.mockImplementation(async () => await new Promise(() => {}));
+      return await startAdapter({
+        sessionManager: managerHarness.manager,
+        api: apiHarness.api,
+        ...adapterOptions,
+      });
+    };
+
+    it("offers only supported efforts and applies a pick like a typed value", async () => {
+      const apiHarness = createApiHarness([]);
+      const managerHarness = createSessionManagerHarness([], {
+        createSnapshot: () =>
+          createStatusSnapshot({
+            catalog: {
+              ...createStatusSnapshot().catalog,
+              personas: [{ id: "default", allowedReasoningLevels: ["low", "max"] }],
+            },
+          }),
+      });
+      const adapter = await runUpdates(apiHarness, managerHarness, {}, [
+        () => [message(1, "/new"), message(2, "/effort")],
+        async () => {
+          await waitFor(() => pickers(apiHarness).length === 1);
+          return [
+            press(3, buttons(pickers(apiHarness)[0])[0].callback_data),
+            message(4, "/effort high"),
+            message(5, "/effort low"),
+          ];
+        },
+      ]);
+      try {
+        await waitFor(() => managerHarness.manager.setReasoning.mock.calls.length === 2);
+        await waitFor(() => apiHarness.sendMessages.length === 3);
+        expect(buttons(pickers(apiHarness)[0]).map((button) => button.text)).toEqual(["low"]);
+        expect(managerHarness.manager.setReasoning.mock.calls).toEqual([
+          ["s1", "low"],
+          ["s1", "low"],
+        ]);
+        const [, id, edited] = apiHarness.api.editMessage.mock.calls[0];
+        expect(id).toBe(42);
+        expect(edited).toBe(apiHarness.sendMessages.at(-1).text);
+        expect(apiHarness.api.editMessage.mock.calls[0][3].replyMarkup).toBeUndefined();
+      } finally {
+        await adapter.close();
+      }
+    });
+
+    it("does not offer efforts when the model has no reasoning", async () => {
+      const apiHarness = createApiHarness([[message(1, "/new"), message(2, "/effort")]]);
+      const base = createStatusSnapshot();
+      const managerHarness = createSessionManagerHarness([], {
+        createSnapshot: () =>
+          createStatusSnapshot({
+            bootstrap: { model: { ...base.bootstrap.model, reasoning: false } },
+          }),
+      });
+      const adapter = await startAdapter({
+        sessionManager: managerHarness.manager,
+        api: apiHarness.api,
+      });
+      try {
+        await waitFor(() => apiHarness.sendMessages.length === 1);
+        expect(pickers(apiHarness)).toEqual([]);
+        expect(managerHarness.manager.setReasoning).not.toHaveBeenCalled();
+      } finally {
+        await adapter.close();
+      }
+    });
+
+    it("checks an open effort picker against the current persona", async () => {
+      const apiHarness = createApiHarness([]);
+      const snapshot = (allowedReasoningLevels) =>
+        createStatusSnapshot({
+          catalog: {
+            ...createStatusSnapshot().catalog,
+            personas: [{ id: "default", allowedReasoningLevels }],
+          },
+        });
+      const managerHarness = createSessionManagerHarness([], {
+        createSnapshot: () => snapshot(["low", "high"]),
+      });
+      const adapter = await runUpdates(apiHarness, managerHarness, {}, [
+        () => [message(1, "/new"), message(2, "/effort")],
+        async () => {
+          await waitFor(() => pickers(apiHarness).length === 1);
+          managerHarness.manager.getSessionSnapshot.mockResolvedValue(snapshot(["low"]));
+          return [press(3, buttons(pickers(apiHarness)[0])[1].callback_data)];
+        },
+      ]);
+      try {
+        await waitFor(() => apiHarness.answerCallbackQueryCalls.length === 1);
+        expect(managerHarness.manager.setReasoning).not.toHaveBeenCalled();
+        expect(apiHarness.api.editMessage).not.toHaveBeenCalled();
+      } finally {
+        await adapter.close();
+      }
+    });
+
+    it.each([
+      ["/new", 2],
+      ["/effort", 1],
+      ["/effort low", 1],
+    ])("expires the effort picker after %s", async (command, sessions) => {
+      const apiHarness = createApiHarness([]);
+      const managerHarness = createSessionManagerHarness([], {
+        createSnapshot: () => createStatusSnapshot(),
+      });
+      const adapter = await runUpdates(apiHarness, managerHarness, {}, [
+        () => [message(1, "/new"), message(2, "/effort")],
+        async () => {
+          await waitFor(() => pickers(apiHarness).length === 1);
+          return [message(3, command), press(4, buttons(pickers(apiHarness)[0])[0].callback_data)];
+        },
+      ]);
+      try {
+        await waitFor(() => apiHarness.answerCallbackQueryCalls.length === 1);
+        expect(managerHarness.manager.createSession).toHaveBeenCalledTimes(sessions);
+        expect(managerHarness.manager.setReasoning).toHaveBeenCalledTimes(
+          command === "/effort low" ? 1 : 0,
+        );
+        expect(apiHarness.api.editMessage).not.toHaveBeenCalled();
+        expect(apiHarness.sendMessages).toHaveLength(command === "/new" ? 2 : 3);
+      } finally {
+        await adapter.close();
+      }
+    });
+
+    it("selects presets by key, including keys with spaces, never by persona or label", async () => {
+      const presets = {
+        "deep review": {
+          source: "persona",
+          persona: "sol",
+          label: "Careful",
+          reasoning: "high",
+          autoCompactThresholdTokens: 60000,
+        },
+        workspace: { source: "workspace", label: "Workspace default" },
+      };
+      const apiHarness = createApiHarness([
+        [
+          message(1, "/new"),
+          message(2, "/persona sol"),
+          message(3, "/persona Careful"),
+          message(4, "/persona constructor"),
+          message(5, "/persona deep   review"),
+          message(6, "/persona workspace"),
+        ],
+      ]);
+      const managerHarness = createSessionManagerHarness([], {
+        createSnapshot: () => ({
+          settings: { personaId: "sol" },
+          catalog: { personas: [{ id: "sol", label: "Sol Coder" }] },
+        }),
+      });
+      const adapter = await startAdapter({
+        sessionManager: managerHarness.manager,
+        api: apiHarness.api,
+        presets,
+      });
+      try {
+        await waitFor(() => managerHarness.manager.setPersona.mock.calls.length === 2);
+        expect(managerHarness.manager.setPersona.mock.calls).toEqual([
+          ["s1", "sol", { reasoning: "high", autoCompactThresholdTokens: 60000 }],
+          ["s1", null, undefined],
+        ]);
+        expect(pickers(apiHarness)).toEqual([]);
+      } finally {
+        await adapter.close();
+      }
+    });
+
+    it("rejects whitespace-colliding keys while keeping both presets selectable", async () => {
+      const apiHarness = createApiHarness([]);
+      const managerHarness = createSessionManagerHarness([], {
+        createSnapshot: () => createStatusSnapshot(),
+      });
+      const adapter = await runUpdates(
+        apiHarness,
+        managerHarness,
+        {
+          presets: {
+            "deep review": { source: "persona", persona: "sol", label: "First" },
+            "deep  review": { source: "persona", persona: "astra", label: "Second" },
+          },
+        },
+        [
+          () => [message(1, "/new"), message(2, "/persona deep   review")],
+          async () => {
+            await waitFor(() => apiHarness.sendMessages.length === 1);
+            expect(managerHarness.manager.setPersona).not.toHaveBeenCalled();
+            return [message(3, "/persona")];
+          },
+          async () => {
+            await waitFor(() => pickers(apiHarness).length === 1);
+            return [press(4, buttons(pickers(apiHarness)[0])[0].callback_data)];
+          },
+          async () => {
+            await waitFor(() => apiHarness.api.editMessage.mock.calls.length === 1);
+            return [message(5, "/persona")];
+          },
+          async () => {
+            await waitFor(() => pickers(apiHarness).length === 2);
+            return [press(6, buttons(pickers(apiHarness)[1])[1].callback_data)];
+          },
+        ],
+      );
+      try {
+        await waitFor(() => apiHarness.api.editMessage.mock.calls.length === 2);
+        expect(managerHarness.manager.setPersona.mock.calls).toEqual([
+          ["s1", "sol", { reasoning: undefined, autoCompactThresholdTokens: undefined }],
+          ["s1", "astra", { reasoning: undefined, autoCompactThresholdTokens: undefined }],
+        ]);
+      } finally {
+        await adapter.close();
+      }
+    });
+
+    it("selects workspace personas by id and rejects a value with presets disabled", async () => {
+      const apiHarness = createApiHarness([
+        [message(1, "/new"), message(2, "/persona Sol Coder"), message(3, "/persona sol")],
+      ]);
+      const managerHarness = createSessionManagerHarness([], {
+        createSnapshot: () => ({
+          settings: { personaId: "review" },
+          catalog: { personas: [{ id: "sol", label: "Sol Coder" }] },
+        }),
+      });
+      const adapter = await startAdapter({
+        sessionManager: managerHarness.manager,
+        api: apiHarness.api,
+      });
+      try {
+        await waitFor(() => managerHarness.manager.setPersona.mock.calls.length === 1);
+        expect(managerHarness.manager.setPersona.mock.calls).toEqual([["s1", "sol", undefined]]);
+      } finally {
+        await adapter.close();
+      }
+
+      const emptyApi = createApiHarness([[message(1, "/new"), message(2, "/persona sol")]]);
+      const emptyManager = createSessionManagerHarness();
+      const empty = await startAdapter({
+        sessionManager: emptyManager.manager,
+        api: emptyApi.api,
+        presets: {},
+      });
+      try {
+        await waitFor(() => emptyApi.sendMessages.length === 1);
+        expect(emptyManager.manager.setPersona).not.toHaveBeenCalled();
+      } finally {
+        await empty.close();
+      }
+    });
+
+    it("records a typed prompt by id without starting a turn", async () => {
+      const apiHarness = createApiHarness([
+        [
+          message(1, "/new"),
+          message(2, "/prompt Release notes"),
+          message(3, "/prompt release notes"),
+        ],
+      ]);
+      const managerHarness = createSessionManagerHarness([], {
+        createSnapshot: () => ({
+          catalog: { prompts: [{ id: "release notes", label: "Release notes" }] },
+        }),
+      });
+      managerHarness.manager.recordPrompt.mockResolvedValue("x".repeat(5000));
+      const adapter = await startAdapter({
+        sessionManager: managerHarness.manager,
+        api: apiHarness.api,
+      });
+      try {
+        await waitFor(() => managerHarness.manager.recordPrompt.mock.calls.length === 1);
+        await waitFor(
+          () =>
+            apiHarness.sendMessages
+              .map((sent) => sent.text)
+              .join("")
+              .split("x").length > 5000,
+        );
+        expect(managerHarness.manager.recordPrompt).toHaveBeenCalledExactlyOnceWith(
+          "s1",
+          "release notes",
+        );
+        expect(managerHarness.manager.sendMessage).not.toHaveBeenCalled();
+        expect(pickers(apiHarness)).toEqual([]);
+      } finally {
+        await adapter.close();
+      }
+    });
+
+    it("leaves an open picker usable after a typed value fails", async () => {
+      const apiHarness = createApiHarness([]);
+      const managerHarness = createSessionManagerHarness([], {
+        createSnapshot: () => ({
+          settings: { personaId: "sol" },
+          catalog: { personas: [{ id: "sol", label: "Sol Coder" }] },
+        }),
+      });
+      managerHarness.manager.setPersona.mockRejectedValueOnce(new Error("session is running"));
+      const adapter = await runUpdates(apiHarness, managerHarness, {}, [
+        () => [message(1, "/new"), message(2, "/persona")],
+        async () => {
+          await waitFor(() => pickers(apiHarness).length === 1);
+          return [
+            message(3, "/persona sol"),
+            press(4, buttons(pickers(apiHarness)[0])[0].callback_data),
+          ];
+        },
+      ]);
+      try {
+        await waitFor(() => apiHarness.api.editMessage.mock.calls.length === 1);
+        expect(managerHarness.manager.setPersona).toHaveBeenCalledTimes(2);
+        expect(apiHarness.sendMessages.at(-1).text).toBe("session is running");
+      } finally {
+        await adapter.close();
+      }
+    });
+  });
+
   it("compacts the active session", async () => {
     const apiHarness = createApiHarness([
       [
@@ -3399,7 +3725,7 @@ describe("telegram adapter", () => {
     try {
       await waitFor(() => apiHarness.sendMessages.length === 1);
       expect(apiHarness.sendMessages[0].text).toBe(
-        "unsupported command. supported commands: /new, /status, /persona, /prompt, /compact, /interrupt, /auto_compact, /tts_on, /tts_off, /effort_low, /effort_medium, /effort_high, /effort_xhigh, /use_demo",
+        "unsupported command. supported commands: /new, /status, /persona, /effort, /prompt, /compact, /interrupt, /auto_compact, /tts_on, /tts_off, /use_demo",
       );
       expect(managerHarness.manager.closeSession).not.toHaveBeenCalled();
     } finally {

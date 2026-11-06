@@ -52,13 +52,13 @@ The session stores only each prompt's ID and label. Tau reads the body from the 
 
 If the file is missing or invalid when Tau reads it, the command fails. Tau never falls back to an older copy of the body. An attached client always gets the prompt from the session's execution environment, never from a file with the same name on the client machine.
 
-### Telegram prompt picker
+### Telegram prompts
 
-In [Telegram](telegram.md), `/prompt` lists the active session's saved prompts, split into pages when there are many. Selecting one reads its current body and adds it to the session as a user message, without starting a turn. You can select a prompt only while the session is idle. Otherwise, wait for Tau to finish or use `/interrupt` first.
+In [Telegram](telegram.md), `/prompt` opens a picker with the active session's saved prompts, split into pages when there are many. `/prompt <id>` chooses a prompt [directly](telegram-commands.md#choose-a-persona-effort-or-prompt). Either way, Tau reads the prompt's current body and adds it to the session as a user message, without starting a turn. You can add a prompt only while the session is idle. Otherwise, wait for Tau to finish or use `/interrupt` first.
 
-After a prompt is added, the picker's buttons stop working and it shows the prompt text, split across more messages if needed. Send a normal message, such as details or “go”, to start the next turn with the prompt in context. In groups, that message must mention the bot as usual. Selecting another prompt adds another message; it does not replace the first. Added prompts survive session recovery.
+After a prompt is added, any open picker's buttons stop working and the bot shows the prompt text, split across more messages if needed. Send a normal message, such as details or “go”, to start the next turn with the prompt in context. In groups, that message must mention the bot as usual. Adding another prompt adds another message and does not replace the first. Added prompts survive session recovery.
 
-Only the newest picker in a chat works. A picker belongs to the session that opened it and expires after a selection, when the session is replaced, or when the runner restarts. Tapping twice does not add the prompt twice. Selecting a prompt does not use up pending attachments or group context.
+Only the newest picker in a chat works. A picker belongs to the session that opened it and expires after a prompt is added, when the session is replaced, or when the runner restarts. Tapping twice does not add the prompt twice. Adding a prompt does not use up pending attachments or group context.
 
 ## `AGENTS.md` provides standing context
 

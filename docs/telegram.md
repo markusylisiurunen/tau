@@ -88,7 +88,7 @@ Use both lists for a private bot. `allowedUserIds` decides who can start work, b
 
 A bot sees only its `allowedProjectIds`, or every project if the field is missing. If only one project is allowed, it is selected automatically and the command palette omits `/use_<project>` commands. The command still works when typed directly. Otherwise the palette includes project-switch commands, and a chat needs `defaultProjectId` or a `/use_<project>` choice before `/new`. Each startup replaces the palette, removing switch commands if the bot now has only one available project.
 
-Telegram allows 100 commands per bot: thirteen built-ins and up to 87 `/use_<projectId>` commands. With `presets: {}`, `/persona` is hidden, which leaves room for one more project command.
+Telegram allows 100 commands per bot: ten built-ins and up to 90 `/use_<projectId>` commands. With `presets: {}`, `/persona` is hidden, which leaves room for one more project command.
 
 ## Projects
 
@@ -124,38 +124,7 @@ The runner loads its speech credentials and `speech.voiceId` at startup, from it
 
 ## Chat commands
 
-| Command | Behavior |
-| --- | --- |
-| `/use_<projectId>` | Selects the project for future `/new` sessions. |
-| `/new` | Replaces the active session using the preferred project. |
-| `/status` | Reports session state, project, model, reasoning, context usage, and cost. |
-| `/persona` | Applies a persona or preset from a menu while idle, without losing history or starting a turn. |
-| `/effort_low` | Selects low reasoning for future turns. |
-| `/effort_medium` | Selects medium reasoning for future turns. |
-| `/effort_high` | Selects high reasoning for future turns. |
-| `/effort_xhigh` | Selects xhigh reasoning for future turns. |
-| `/prompt` | [Records a saved prompt](prompts-and-project-context.md#telegram-prompt-picker) while idle, without starting a turn. |
-| `/auto_compact [tokens\|default]` | Shows the automatic-compaction threshold. Pass `50k` or `50000` to set it (minimum 50,000 tokens), or `default` to remove the session override and use the default. |
-| `/compact` | Runs summary-only compaction while idle. |
-| `/interrupt` | Interrupts the active Tau turn. |
-| `/tts_on` | Sends a voice note after each final assistant response. |
-| `/tts_off` | Disables voice responses. |
-
-Changes to the auto-compaction threshold apply from the next turn and survive session recovery. `/status` shows context usage as a percentage of the full model window. When a session override is set, or the default threshold is below the model-based threshold, it also shows the effective threshold in parentheses. See [compaction thresholds](#compaction-thresholds) for bot defaults and [automatic compaction](sessions.md#automatic-compaction) for limits and costs.
-
-A [persona](personas.md) or preset choice applies to the current session only. `/new` starts from the bot's `startup`.
-
-Preferences are saved per bot and chat, and survive restarts and new sessions. A project change applies at the next `/new`, not to the current session.
-
-In groups, commands must explicitly mention the bot. Accepted forms include:
-
-```text
-/status@tau_engineering_bot
-/status @tau_engineering_bot
-@tau_engineering_bot /status
-```
-
-Commands addressed to other bots are ignored.
+Commands select projects and sessions and change a session's persona, effort, and other settings. [Telegram chat commands](telegram-commands.md) lists them and how they work in groups.
 
 ## Startup and presets
 
@@ -182,9 +151,9 @@ Commands addressed to other bots are ignored.
 - A `workspace` preset resolves the workspace's `defaultPersona` each time it is applied.
 - A `persona` preset names a persona ID without an effort suffix. Its optional `reasoning` is one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`, and defaults to the persona's own setting. Its optional `autoCompactThresholdTokens` is [described below](#compaction-thresholds).
 
-Every preset needs a non-empty `label`. Keys must be non-empty, without surrounding whitespace.
+Every preset needs a non-empty `label`. Keys must be non-empty, without surrounding whitespace. [`/persona <key>`](telegram-commands.md#choose-a-persona-effort-or-prompt) applies a preset by its key.
 
-The `/persona` menu depends on `presets`:
+The choices that `/persona` offers depend on `presets`:
 
 - Omitted: all personas available in the session's workspace, with their own labels and default settings.
 - `{}`: nothing, and `/persona` is hidden from the command palette. Typing it replies that no presets are configured.
@@ -192,7 +161,7 @@ The `/persona` menu depends on `presets`:
 
 Buttons show only labels, because a session does not record which preset was applied. `/status` reports the session's actual settings.
 
-Applying a preset changes the prompt, model, tools, reasoning, and other persona settings together, and keeps the conversation. It applies them once, so effort commands then change only reasoning, and applying the preset again restores its settings.
+Applying a preset changes the prompt, model, tools, reasoning, and other persona settings together, and keeps the conversation. It applies them once, so `/effort` then changes only reasoning, and applying the preset again restores its settings.
 
 An unavailable persona stays in the menu. Applying it, or a `reasoning` value the persona does not support, reports an error and changes no settings. The value must be in the persona's `allowedReasoningLevels` when that list is non-empty, and a model without reasoning accepts only `none`. A failing preset at `startup` fails the new session.
 

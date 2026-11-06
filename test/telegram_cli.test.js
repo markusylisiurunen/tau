@@ -297,30 +297,32 @@ describe("telegram cli", () => {
     );
   });
 
-  it("reserves thirteen Telegram commands when validating the project command limit", () => {
-    const projects = Object.fromEntries(
-      Array.from({ length: 90 }, (_, index) => [`project_${index}`, { repo: "owner/repo" }]),
-    );
-    const accepted = writeConfig({
-      bots: {
-        ops: {
-          botToken: "token",
-          startup: { source: "workspace" },
-          allowedProjectIds: Object.keys(projects).slice(0, 87),
+  it.each([undefined, {}])(
+    "reserves visible built-in Telegram commands with presets %j",
+    (presets) => {
+      const limit = presets === undefined ? 90 : 91;
+      const projects = Object.fromEntries(
+        Array.from({ length: limit + 1 }, (_, index) => [
+          `project_${index}`,
+          { repo: "owner/repo" },
+        ]),
+      );
+      const bot = { botToken: "token", startup: { source: "workspace" }, presets };
+      const accepted = writeConfig({
+        bots: {
+          ops: {
+            ...bot,
+            allowedProjectIds: Object.keys(projects).slice(0, limit),
+          },
         },
-      },
-      projects,
-    });
-    expect(loadTelegramConfig(accepted.path).bots.ops.allowedProjectIds).toHaveLength(87);
+        projects,
+      });
+      expect(loadTelegramConfig(accepted.path).bots.ops.allowedProjectIds).toHaveLength(limit);
 
-    const rejected = writeConfig({
-      bots: { ops: { botToken: "token", startup: { source: "workspace" } } },
-      projects,
-    });
-    expect(() => loadTelegramConfig(rejected.path)).toThrow(
-      "bots.ops exposes 90 projects, exceeding Telegram's 100-command limit with built-in commands",
-    );
-  });
+      const rejected = writeConfig({ bots: { ops: bot }, projects });
+      expect(() => loadTelegramConfig(rejected.path)).toThrow();
+    },
+  );
 
   it("rejects composite projects that reference a persistent directory", () => {
     const { path } = writeConfig({

@@ -6282,17 +6282,15 @@ describe("SessionChatController", () => {
 
   it("replaces Scribe previews and keeps editing locked until the live transcript finishes draining", async () => {
     const audioPath = join(tmpdir(), `tau-session-listen-scribe-${Date.now()}.wav`);
-    const pcm = Buffer.from([1, 2, 3, 4]);
+    const pcm = Buffer.alloc(6400, 1);
     const socket = new EventEmitter();
     const socketEvents = [];
     const audioSent = Promise.withResolvers();
-    const commitSent = Promise.withResolvers();
     socket.send = vi.fn((data, callback) => {
       const event = JSON.parse(data);
       socketEvents.push(event);
       callback?.();
-      if (event.commit) commitSent.resolve();
-      else audioSent.resolve();
+      if (!event.commit) audioSent.resolve();
     });
     socket.close = vi.fn();
     socket.terminate = vi.fn();
@@ -6371,7 +6369,7 @@ describe("SessionChatController", () => {
         expect(editor.getCursor()).toEqual(previewCursor);
       }
       controller.getInputHandlers().onToggleRecording();
-      await commitSent.promise;
+      await vi.waitFor(() => expect(socketEvents.at(-1).commit).toBe(true), { timeout: 2000 });
       expect(view.editorEnabledUpdates.at(-1)).toBe(false);
       expect(editor.getText()).toBe(`${prefix}English. Suomeksi myös${suffix}`);
       emitTranscript("committed", "Suomeksi myös.");
@@ -6402,11 +6400,11 @@ describe("SessionChatController", () => {
     editor.handleInput("\x1b[45;5u");
     expect(editor.getText()).toBe(prefix + suffix);
     expect(editor.getCursor()).toEqual(cursor);
-    expect(socketEvents.map(({ audio_base_64, commit }) => ({ audio_base_64, commit }))).toEqual([
-      { audio_base_64: pcm.toString("base64"), commit: false },
-      { audio_base_64: Buffer.from([5, 6]).toString("base64"), commit: false },
-      { audio_base_64: expect.any(String), commit: true },
-    ]);
+    expect(
+      Buffer.concat(socketEvents.map(({ audio_base_64 }) => Buffer.from(audio_base_64, "base64"))),
+    ).toEqual(Buffer.concat([pcm, Buffer.from([5, 6]), Buffer.alloc(64_000)]));
+    expect(socketEvents.slice(0, -1).every(({ commit }) => !commit)).toBe(true);
+    expect(socketEvents.at(-1).commit).toBe(true);
     expect(spawn).toHaveBeenNthCalledWith(
       2,
       "ffmpeg",

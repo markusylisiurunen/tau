@@ -29,6 +29,7 @@ async function live() {
   await vi.advanceTimersByTimeAsync(0);
   const emit = (event) => socket.emit("message", JSON.stringify(event));
   emit({ message_type: "session_started" });
+  await vi.advanceTimersByTimeAsync(500);
   return { transcription, socket, factory, onProgress, emit };
 }
 
@@ -113,7 +114,7 @@ describe("Scribe transcription", () => {
     const { transcription, socket, emit } = await live();
     if (text) emit({ message_type: "committed_transcript", text });
     const result = transcription.finish();
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(1000);
     emit({ message_type: "committed_transcript", text: "" });
     await vi.advanceTimersByTimeAsync(1999);
     expect(socket.close).not.toHaveBeenCalled();
@@ -131,6 +132,97 @@ describe("Scribe transcription", () => {
         fetchImpl: async () => json({}, 503),
       }),
     ).toEqual(["Tau"]);
+  });
+
+  it("paces delayed startup and live audio at 2x, then commits after draining all audio", async () => {
+    vi.useFakeTimers();
+    const keywords = Promise.withResolvers();
+    const socket = new EventEmitter();
+    const sent = [];
+    socket.send = vi.fn((data, callback) => {
+      sent.push({ time: Date.now(), ...JSON.parse(data) });
+      callback?.();
+    });
+    socket.close = vi.fn();
+    socket.terminate = vi.fn();
+    const factory = vi.fn(() => socket);
+    const transcription = startScribeTranscription({
+      apiKey: "key",
+      openAIApiKey: "openai",
+      context: { messages: [{ role: "user", text: "context" }] },
+      fetchImpl: () => keywords.promise,
+      webSocketFactory: factory,
+    });
+    const startup = Buffer.alloc(160_000, 1);
+    // Pipe reads may split samples and need not match the outbound chunk size.
+    transcription.appendAudio(startup.subarray(0, 3));
+    transcription.appendAudio(startup.subarray(3));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(factory).not.toHaveBeenCalled();
+    keywords.resolve(json({}, 503));
+    await vi.advanceTimersByTimeAsync(0);
+    socket.emit("message", JSON.stringify({ message_type: "session_started" }));
+    expect(sent).toHaveLength(1);
+    const liveAudio = [];
+    for (let i = 0; i < 50; i++) {
+      const audio = Buffer.alloc(3200, i + 2);
+      liveAudio.push(audio);
+      transcription.appendAudio(audio);
+      await vi.advanceTimersByTimeAsync(100);
+    }
+    // Ten seconds of speech have been sent in five seconds; the backlog is gone.
+    expect(sent).toHaveLength(50);
+    expect(sent.every((event) => !event.commit)).toBe(true);
+    const tail = Buffer.alloc(42, 99);
+    transcription.appendAudio(tail);
+    const result = transcription.finish();
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(sent.filter((event) => event.commit)).toEqual([sent.at(-1)]);
+    expect(sent.at(-1).commit).toBe(true);
+    for (let i = 1; i < sent.length; i++) {
+      expect(sent[i].time - sent[i - 1].time).toBeGreaterThanOrEqual(100);
+    }
+    const chunks = sent.map((event) => Buffer.from(event.audio_base_64, "base64"));
+    expect(chunks.every((audio) => audio.length <= 6400)).toBe(true);
+    expect(Buffer.concat(chunks)).toEqual(
+      Buffer.concat([startup, ...liveAudio, tail, Buffer.alloc(64_000)]),
+    );
+    socket.emit("message", JSON.stringify({ message_type: "committed_transcript", text: "done" }));
+    await vi.advanceTimersByTimeAsync(2000);
+    await expect(result).resolves.toBe("done");
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("starts the finalization deadline only after a long queue has drained", async () => {
+    const { transcription, socket, emit } = await live();
+    transcription.appendAudio(Buffer.alloc(32_000 * 70));
+    const result = transcription.finish();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(socket.terminate).not.toHaveBeenCalled();
+    expect(JSON.parse(socket.send.mock.calls.at(-1)[0]).commit).toBe(false);
+    emit({ message_type: "committed_transcript", text: "first" });
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(socket.close).not.toHaveBeenCalled();
+    expect(JSON.parse(socket.send.mock.calls.at(-1)[0]).commit).toBe(true);
+    emit({ message_type: "committed_transcript", text: "last" });
+    await vi.advanceTimersByTimeAsync(2000);
+    await expect(result).resolves.toBe("first last");
+  });
+
+  it.each(["abort", "send-error"])("stops queued audio on %s", async (failure) => {
+    const { transcription, socket } = await live();
+    transcription.appendAudio(Buffer.alloc(320_000));
+    const result = transcription.finish();
+    const rejected = expect(result).rejects.toThrow();
+    if (failure === "abort") transcription.abort();
+    else socket.send.mockImplementation((_data, callback) => callback(new Error("send failed")));
+    await vi.advanceTimersByTimeAsync(100);
+    await rejected;
+    const sends = socket.send.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(socket.send).toHaveBeenCalledTimes(sends);
+    expect(socket.terminate).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("filters realtime keyterms to 50 terms of at most 20 characters without changing order", async () => {
@@ -158,13 +250,13 @@ describe("Scribe transcription", () => {
     expect(url.searchParams.getAll("keyterms")).toEqual(["Tau"]);
     expect(factory.mock.calls[0][1]).toEqual({ headers: { "xi-api-key": "key" } });
     expect(JSON.parse(socket.send.mock.calls[0][0]).audio_base_64).toBe(
-      Buffer.alloc(32000).toString("base64"),
+      Buffer.alloc(6400).toString("base64"),
     );
     emit({ message_type: "partial_transcript", text: "first draft" });
     emit({ message_type: "partial_transcript", text: "first" });
     emit({ message_type: "committed_transcript", text: "first" });
     const result = transcription.finish();
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(1000);
     expect(JSON.parse(socket.send.mock.calls.at(-1)[0]).commit).toBe(true);
     emit({ message_type: "committed_transcript", text: "second" });
     await vi.advanceTimersByTimeAsync(1900);
@@ -199,7 +291,7 @@ describe("Scribe transcription", () => {
       else if (failure === "malformed") socket.emit("message", "{");
       else if (failure === "provider-error")
         emit({ message_type: "quota_exceeded", error: "quota exceeded" });
-      else await vi.advanceTimersByTimeAsync(30000);
+      else await vi.advanceTimersByTimeAsync(31000);
       await rejected;
       expect(socket.terminate).toHaveBeenCalledOnce();
     },

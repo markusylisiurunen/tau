@@ -232,7 +232,7 @@ The shortcut can be changed with [`speech.recordingShortcut`](config-reference.m
 
 While you speak, ElevenLabs Scribe shows a live preview in muted italics at the cursor. Pauses finalize segments while recording continues. Tau keeps finalized segments and replaces only the current preview.
 
-After recording stops, Tau sends two seconds of silence and asks Scribe to finalize the remaining speech. Scribe does not report its last segment, so Tau keeps receiving results until two seconds pass with no unfinished speech, and fails after 30 seconds. The final transcript comes from this live stream, without a second upload.
+After recording stops, Tau sends the remaining audio and two seconds of silence, then asks Scribe to finalize. Scribe does not report its last segment, so Tau waits until two seconds pass with no unfinished speech, failing 30 seconds after the last audio is sent. The final transcript comes from this live stream, without a second upload.
 
 The final transcript replaces the preview in normal text, without duplication. An empty transcript inserts nothing.
 
@@ -240,7 +240,7 @@ A submitted draft that contains dictation carries hidden guidance saying that so
 
 The editor is locked from the start of recording until transcription and cleanup finish. Escape cancels voice input at any stage: startup, recording, microphone shutdown, transcription, cleanup, or retry. Cancelling removes the preview at once, restores the original draft, and unlocks the editor without inserting or submitting anything. The cancelled recording is deleted once pending file work finishes. A transcription failure also restores the original draft. A recording or retry cannot start while another editor update is pending.
 
-While recording starts, GPT-6 Luna (reasoning disabled) extracts spelling hints from the recent conversation. Tau buffers audio until the transcription session is ready, then streams it to Scribe v2 Realtime. Scribe detects the spoken language, also within one recording, and leaves out filler words and false starts. Hint extraction needs OpenAI credentials, and transcription continues without it. The session's [`speech.vocabulary`](config-reference.md#speech) terms, then the TUI's own global terms, come before extracted hints. Live transcription uses only short hints.
+While recording starts, GPT-6 Luna (reasoning disabled) extracts spelling hints from the recent conversation. Tau buffers audio until the transcription session is ready, then streams it to Scribe v2 Realtime at up to twice real time until it catches up. Scribe detects the spoken language, also within one recording, and leaves out filler words and false starts. Hint extraction needs OpenAI credentials, and transcription continues without it. The session's [`speech.vocabulary`](config-reference.md#speech) terms, then the TUI's own global terms, come before extracted hints. Live transcription uses only short hints.
 
 If transcription fails, Tau keeps the local WAV file and reports its path:
 

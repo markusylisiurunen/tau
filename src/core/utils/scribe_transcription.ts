@@ -87,12 +87,18 @@ export function startScribeTranscription(options: StreamingOptions) {
   return new ScribeStreamingTranscription(options);
 }
 
+const AUDIO_CHUNK_BYTES = 6_400; // 200 ms of mono PCM16 at 16 kHz.
+const AUDIO_SEND_INTERVAL_MS = 100; // At most 2x real time, ten messages per second.
+
 class ScribeStreamingTranscription {
   private socket?: SpeechToTextWebSocket;
   private readonly controller = new AbortController();
   private readonly ready = Promise.withResolvers<void>();
   private readonly result = Promise.withResolvers<string>();
   private pendingAudio: Buffer[] = [];
+  private pendingAudioBytes = 0;
+  private finalAudioQueued = false;
+  private sendTimer?: ReturnType<typeof setTimeout>;
   private connected = false;
   private stopped = false;
   private finishing = false;
@@ -159,8 +165,9 @@ class ScribeStreamingTranscription {
   appendAudio(audio: Buffer): void {
     if (!audio.length || this.stopped || this.finishing) return;
     this.hasAudio = true;
-    if (!this.connected) this.pendingAudio.push(audio);
-    else this.sendAudio(audio);
+    this.pendingAudio.push(audio);
+    this.pendingAudioBytes += audio.length;
+    this.pumpAudio();
   }
 
   finish(options: { signal?: AbortSignal } = {}): Promise<string> {
@@ -177,14 +184,11 @@ class ScribeStreamingTranscription {
       await this.ready.promise;
       if (this.failure) throw this.failure;
       if (!this.hasAudio) throw new Error("ElevenLabs transcription received no audio");
-      this.finishTimer = setTimeout(
-        () => this.fail(new Error("timed out waiting for ElevenLabs transcription")),
-        30_000,
-      );
-      this.finishTimer.unref?.();
       // Scribe buffers roughly two seconds before processing, including short recordings.
-      this.finalCommitSent = true;
-      this.sendAudio(Buffer.alloc(64_000), true);
+      this.pendingAudio.push(Buffer.alloc(64_000));
+      this.pendingAudioBytes += 64_000;
+      this.finalAudioQueued = true;
+      this.pumpAudio();
       return await this.result.promise;
     } finally {
       signal?.removeEventListener("abort", onAbort);
@@ -214,9 +218,8 @@ class ScribeStreamingTranscription {
       if (event.message_type === "session_started" && !this.connected) {
         this.connected = true;
         clearTimeout(this.readyTimer);
-        for (const audio of this.pendingAudio) this.sendAudio(audio);
-        this.pendingAudio = [];
         this.ready.resolve();
+        this.pumpAudio();
       } else if (
         event.message_type === "partial_transcript" ||
         event.message_type === "committed_transcript"
@@ -246,6 +249,40 @@ class ScribeStreamingTranscription {
     }
   }
 
+  private pumpAudio(): void {
+    if (!this.connected || this.stopped || this.sendTimer || this.finalCommitSent) return;
+    if (!this.pendingAudioBytes) return;
+    if (this.pendingAudioBytes < AUDIO_CHUNK_BYTES && !this.finalAudioQueued) return;
+
+    const audio = Buffer.allocUnsafe(Math.min(AUDIO_CHUNK_BYTES, this.pendingAudioBytes));
+    let offset = 0;
+    while (offset < audio.length) {
+      const next = this.pendingAudio[0]!;
+      const length = Math.min(next.length, audio.length - offset);
+      next.copy(audio, offset, 0, length);
+      offset += length;
+      if (length === next.length) this.pendingAudio.shift();
+      else this.pendingAudio[0] = next.subarray(length);
+    }
+    this.pendingAudioBytes -= audio.length;
+    this.finalCommitSent = this.finalAudioQueued && this.pendingAudioBytes === 0;
+    if (this.finalCommitSent) {
+      this.finishTimer = setTimeout(
+        () => this.fail(new Error("timed out waiting for ElevenLabs transcription")),
+        30_000,
+      );
+      this.finishTimer.unref?.();
+    }
+    this.sendAudio(audio, this.finalCommitSent);
+    if (this.stopped || this.finalCommitSent) return;
+    // Schedule from this send, so a delayed timer never causes a catch-up burst.
+    this.sendTimer = setTimeout(() => {
+      this.sendTimer = undefined;
+      this.pumpAudio();
+    }, AUDIO_SEND_INTERVAL_MS);
+    this.sendTimer.unref?.();
+  }
+
   private sendAudio(audio: Buffer, commit = false): void {
     if (this.stopped) return;
     try {
@@ -270,6 +307,7 @@ class ScribeStreamingTranscription {
     this.stopped = true;
     this.failure = error;
     this.pendingAudio = [];
+    this.pendingAudioBytes = 0;
     this.controller.abort(error);
     this.clearTimers();
     this.ready.reject(error);
@@ -278,6 +316,7 @@ class ScribeStreamingTranscription {
   }
 
   private clearTimers(): void {
+    clearTimeout(this.sendTimer);
     clearTimeout(this.readyTimer);
     clearTimeout(this.finishTimer);
     clearTimeout(this.drainTimer);

@@ -42,7 +42,7 @@ describe("speech-to-text transcription", () => {
       transcription.appendAudio(Buffer.alloc(32000));
       emit({ message_type: "partial_transcript", text: "the last" });
       const completion = transcription.finish({ audio: Buffer.alloc(32000) });
-      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(1500);
       emit({ message_type: "committed_transcript", text: "the last word" });
       await vi.advanceTimersByTimeAsync(2000);
       expect(socket.close).toHaveBeenCalledTimes(1);

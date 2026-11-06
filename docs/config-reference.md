@@ -22,7 +22,7 @@ Project and global content can change which persona ids exist. A configured defa
 | --- | --- | --- | --- | --- |
 | `apiKeys` | Object of string values | Global only | Provider-keyed map | Owning host or feature process; restart after changes |
 | `defaultPersona` | Non-empty string | Global, project | Most-specific wins | Session host; new session |
-| `speech` | Object with optional `voiceId`, `recordingShortcut`, and `vocabulary` | Global, project | Merge by field; vocabulary is additive | `voiceId` and `recordingShortcut`: TUI client or Telegram runner; process restart. `vocabulary`: session host; `/reload` or new session. Global `vocabulary` terms are also read by the client; process restart |
+| `speech` | Object with optional `voiceId`, `recordingShortcut`, `cleanupStyle`, and `vocabulary` | Global, project | Merge by field; vocabulary is additive | `voiceId`, `recordingShortcut`, and `cleanupStyle`: client; process restart. `vocabulary`: session host; `/reload` or new session. Global `vocabulary` terms are also read by the client; process restart |
 | `defaultTheme` | Non-empty string | Global, project | Most-specific wins | TUI client; client restart |
 | `markdownExport` | Object with `url` and optional `token`, `tokenEnv` | Global only | One global object | TUI client; client restart |
 | `clientTools` | Array of objects | Global only | One global definition list | Owning client; TUI restart or new Telegram session client |
@@ -155,6 +155,18 @@ For terminal recording, `recordingShortcut` replaces Ctrl+Y. Its required `key` 
 
 A double tap must arrive within 300 ms. For printable double-tap bindings, an unmatched first tap inserts the character after that delay; another key inserts it immediately before processing the new input. A single-press binding reserves its character, so it can no longer be typed. Bracketed paste never triggers recording. Keyboard auto-repeat can count as repeated taps. Recording shortcuts apply only to the TUI, not Telegram.
 
+For terminal dictation, `cleanupStyle` sets the initial [cleanup style](tui.md#cleanup-styles) for each recording. It accepts `"off"` (the default) or `"default"`. Tab changes the style for the current recording only. Enabling cleanup prepares the OpenAI connection and instructions during recording.
+
+```json
+{
+  "speech": {
+    "cleanupStyle": "default"
+  }
+}
+```
+
+Telegram uses its separate per-bot `speechCleanupStyle` setting.
+
 For dictation, `vocabulary` supplies spelling hints for recurring names, identifiers, and short phrases:
 
 ```json
@@ -177,7 +189,7 @@ Authentication, permission, rate-limit, and network errors during voice lookup d
 
 Speech uses Eleven v4 Turbo, the delivery note `[Brisk but relaxed, speaking naturally to a colleague]`, and a 1.15× tempo adjustment. GPT-6 Luna rewrites the text with reasoning disabled before ElevenLabs synthesis, so both OpenAI and ElevenLabs credentials are required. Voice Library API access may require a paid ElevenLabs plan, and shared voices can become unavailable.
 
-`voiceId` and `recordingShortcut` come from the client's own configuration. The TUI reads them from its startup directory's configuration, also when attached to a remote host, and Telegram reads `voiceId` from the runner's startup configuration. Restart the respective process after changes. `voiceId` does not affect the explicit voices supplied to `tau tool speech-generate`.
+`voiceId`, `recordingShortcut`, and `cleanupStyle` come from the client's own configuration. The TUI reads them from its startup directory's configuration, also when attached to a remote host, and Telegram reads `voiceId` from the runner's startup configuration. Restart the respective process after changes. `voiceId` does not affect the explicit voices supplied to `tau tool speech-generate`.
 
 Vocabulary follows the session. The host resolves it from the global and project levels of the session's working directory, on the execution environment. The client that transcribes the audio then adds the terms from its own global configuration, after the session's terms. Project configuration in the client's startup directory is not used. For example:
 

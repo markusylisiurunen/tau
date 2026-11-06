@@ -35,7 +35,12 @@ import { TOOL_NAME_BASH } from "../core/tools/tool_names.js";
 import { REASONING_LEVELS, type ReasoningEffort } from "../core/types.js";
 import { formatAdaptiveNumber, formatCwd, formatTokenWindow } from "../core/utils/format.js";
 import { extractAssistantText } from "../core/utils/messages.js";
-import { cleanupSpeechTranscript, type SpeechCleanupStyle } from "../core/utils/speech_cleanup.js";
+import {
+  cleanupSpeechTranscript,
+  type PreparedSpeechCleanup,
+  prepareSpeechCleanup,
+  type SpeechCleanupStyle,
+} from "../core/utils/speech_cleanup.js";
 import {
   getSpeechToTextRecordingMaxDurationMs,
   getSpeechToTextStreamingSampleRate,
@@ -209,6 +214,7 @@ export class SessionChatController {
   private listenStartupAbortController?: AbortController;
   private activeListenTranscription?: ListenRecording["transcription"];
   private activeListenCleanup?: AbortController;
+  private preparedListenCleanup?: PreparedSpeechCleanup;
   private listenActivityLabel?: string;
   private listenPreview?: ReturnType<ChatView["beginEditorTextPreview"]>;
   private editorHiddenSystemMessages: string[] = [];
@@ -928,7 +934,20 @@ export class SessionChatController {
     const recording = this.listenRecording;
     if (!recording) return;
     recording.cleanupStyle = nextListenCleanupStyle(recording.cleanupStyle);
+    this.prepareListenCleanup(recording.cleanupStyle);
     this.refreshStatus();
+  }
+
+  private prepareListenCleanup(style: SpeechCleanupStyle): void {
+    this.preparedListenCleanup?.dispose();
+    this.preparedListenCleanup =
+      style === "off"
+        ? undefined
+        : prepareSpeechCleanup({
+            style,
+            apiKey: getOpenAIApiKey(this.config, this.deps.env.env()),
+            webSocketFactory: this.speechToTextDeps?.webSocketFactory,
+          });
   }
 
   private async startListenCaptureFromCommand(): Promise<void> {
@@ -1051,13 +1070,14 @@ export class SessionChatController {
         abortController,
         completion,
         transcription,
-        cleanupStyle: "off",
+        cleanupStyle: this.config.speech.cleanupStyle ?? "off",
       };
       recording.maxDurationTimeout = setTimeout(() => {
         if (this.listenRecording !== recording || this.listenTransition) return;
         void this.runListenTransition(() => this.stopListenCapture());
       }, getSpeechToTextRecordingMaxDurationMs());
       this.listenRecording = recording;
+      this.prepareListenCleanup(recording.cleanupStyle);
       this.refreshStatus();
       void this.watchListenRecording(recording);
     } catch (err) {
@@ -1201,6 +1221,8 @@ export class SessionChatController {
   }
 
   private endListenPreview(): void {
+    this.preparedListenCleanup?.dispose();
+    this.preparedListenCleanup = undefined;
     const preview = this.listenPreview;
     this.listenPreview = undefined;
     preview?.cancel();
@@ -1374,6 +1396,7 @@ export class SessionChatController {
         ),
         signal: abortController.signal,
         fetchImpl: this.speechToTextDeps?.fetchImpl,
+        prepared: this.preparedListenCleanup,
       });
       if (abortController.signal.aborted || this.listenPreview !== preview) return undefined;
       return { text, failed: false };

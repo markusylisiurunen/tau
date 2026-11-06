@@ -13,6 +13,7 @@ import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { builtinThemes } from "../dist/core/config/builtin_themes.js";
 import { parseMcpServersConfig } from "../dist/core/config/mcp.js";
+import { loadClientConfig, loadSessionConfig } from "../dist/core/config/ownership.js";
 import { resolveConfigLevels } from "../dist/core/config/paths.js";
 import { loadRuntimeConfig } from "../dist/core/config/runtime.js";
 import {
@@ -262,6 +263,28 @@ describe("config paths", () => {
     }
   });
 
+  it.each([undefined, "off", "default"])(
+    "resolves the client cleanup style with project override %j",
+    (cleanupStyle) => {
+      const fx = setupFixture();
+      try {
+        const repo = join(fx.home, "repo");
+        for (const [directory, speech] of [
+          [join(fx.home, ".config", "tau"), { cleanupStyle: "default" }],
+          [join(repo, ".tau"), { cleanupStyle }],
+        ]) {
+          mkdirSync(directory, { recursive: true });
+          writeFileSync(join(directory, "config.json"), JSON.stringify({ speech }));
+        }
+        const deps = createConfigDeps({ cwd: repo, home: fx.home, env: {} });
+        expect(loadClientConfig(repo, deps).speech.cleanupStyle).toBe(cleanupStyle ?? "default");
+        expect(loadSessionConfig(repo, deps)).not.toHaveProperty("speech");
+      } finally {
+        fx.cleanup();
+      }
+    },
+  );
+
   it.each([undefined, [], [" Tau ", "Nearest", "TAU"]])(
     "merges speech vocabulary from nearest project to global (%j)",
     (vocabulary) => {
@@ -295,6 +318,8 @@ describe("config paths", () => {
     "voice",
     { voiceId: " " },
     { voiceId: 42 },
+    { cleanupStyle: "invalid" },
+    { cleanupStyle: true },
     { vocabulary: "Tau" },
     { vocabulary: [42] },
     { vocabulary: [" "] },

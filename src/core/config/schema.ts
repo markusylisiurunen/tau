@@ -11,7 +11,7 @@ import { formatPersonaReference, parsePersonaReference } from "../persona_refere
 import { parseSubagentLaunchModelList } from "../subagents/launch_model.js";
 import { REASONING_LEVELS, type ReasoningEffort } from "../types.js";
 import { normalizeModelNoticeKey } from "../utils/model_notices.js";
-import type { SpeechCleanupStyle } from "../utils/speech_cleanup.js";
+import { type SpeechCleanupStyle, speechCleanupStyleSchema } from "../utils/speech_cleanup.js";
 import {
   normalizeSpeechToTextKeywords,
   SPEECH_TO_TEXT_MAX_VOCABULARY_CHARACTERS,
@@ -39,7 +39,12 @@ export const autoCompactThresholdTokensSchema = z
 export interface Config {
   apiKeys?: Record<string, string>;
   markdownExport?: MarkdownExportConfig;
-  speech?: { voiceId?: string; recordingShortcut?: RecordingShortcut; vocabulary?: string[] };
+  speech?: {
+    voiceId?: string;
+    recordingShortcut?: RecordingShortcut;
+    vocabulary?: string[];
+    cleanupStyle?: SpeechCleanupStyle;
+  };
   defaultPersona?: string;
   defaultTheme?: string;
   clientTools?: CommandClientToolConfig[];
@@ -349,6 +354,7 @@ function validateConfigData(
       z
         .object({
           voiceId: NonEmptyStringSchema.optional(),
+          cleanupStyle: speechCleanupStyleSchema.optional(),
           vocabulary: z.array(speechToTextKeywordSchema).optional(),
           recordingShortcut: z
             .object({
@@ -363,7 +369,7 @@ function validateConfigData(
             .optional(),
         })
         .strip(),
-      "'speech' must contain a non-empty voiceId, a vocabulary array of non-empty terms of at most 50 characters and 5 words, without line breaks or the characters < > { } [ ] \\, or a recordingShortcut with a printable key, ctrl+y, or f1–f12 and a press or double-tap gesture.",
+      "'speech' must contain cleanupStyle off or default, a non-empty voiceId, a vocabulary array of non-empty terms of at most 50 characters and 5 words, without line breaks or the characters < > { } [ ] \\, or a recordingShortcut with a printable key, ctrl+y, or f1–f12 and a press or double-tap gesture.",
     ],
   ]);
   Object.assign(config as Record<string, unknown>, scalarResult.values);

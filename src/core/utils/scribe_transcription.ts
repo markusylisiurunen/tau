@@ -41,7 +41,7 @@ export async function transcribeScribeAudio(
   options.signal?.throwIfAborted();
   const body = new FormData();
   body.set("model_id", "scribe_v2");
-  body.set("no_verbatim", "true");
+  body.set("no_verbatim", "false");
   body.set("tag_audio_events", "false");
   body.set("diarize", "false");
   body.set(
@@ -110,7 +110,6 @@ class ScribeStreamingTranscription {
   private finishPromise?: Promise<string>;
   private readyTimer?: ReturnType<typeof setTimeout>;
   private finishTimer?: ReturnType<typeof setTimeout>;
-  private drainTimer?: ReturnType<typeof setTimeout>;
 
   constructor(private readonly options: StreamingOptions) {
     if (!options.apiKey.trim()) throw new Error("missing ElevenLabs API key");
@@ -137,7 +136,7 @@ class ScribeStreamingTranscription {
     url.searchParams.set("model_id", "scribe_v2_realtime");
     url.searchParams.set("audio_format", "pcm_16000");
     url.searchParams.set("commit_strategy", "vad");
-    url.searchParams.set("no_verbatim", "true");
+    url.searchParams.set("no_verbatim", "false");
     const realtimeKeywords = keywords.filter((keyword) => [...keyword].length <= 20).slice(0, 50);
     for (const keyword of realtimeKeywords) url.searchParams.append("keyterms", keyword);
     const factory =
@@ -184,9 +183,6 @@ class ScribeStreamingTranscription {
       await this.ready.promise;
       if (this.failure) throw this.failure;
       if (!this.hasAudio) throw new Error("ElevenLabs transcription received no audio");
-      // Scribe buffers roughly two seconds before processing, including short recordings.
-      this.pendingAudio.push(Buffer.alloc(64_000));
-      this.pendingAudioBytes += 64_000;
       this.finalAudioQueued = true;
       this.pumpAudio();
       return await this.result.promise;
@@ -230,16 +226,9 @@ class ScribeStreamingTranscription {
           this.partial = "";
         } else this.partial = event.text;
         this.options.onProgress?.(joinText(this.committed, this.partial));
-        // Committed events have no audio watermark. Drain delayed segments after the final commit.
-        clearTimeout(this.drainTimer);
-        if (this.finalCommitSent && !this.partial) {
-          this.drainTimer = setTimeout(() => {
-            this.stopped = true;
-            this.clearTimers();
-            this.result.resolve(this.committed.trim());
-            this.socket?.close();
-          }, 2_000);
-          this.drainTimer.unref?.();
+        // Scribe has no commit IDs; assume the first post-request commit completes live audio.
+        if (this.finalCommitSent && event.message_type === "committed_transcript") {
+          this.complete();
         }
       }
     } catch (error) {
@@ -251,7 +240,7 @@ class ScribeStreamingTranscription {
 
   private pumpAudio(): void {
     if (!this.connected || this.stopped || this.sendTimer || this.finalCommitSent) return;
-    if (!this.pendingAudioBytes) return;
+    if (!this.pendingAudioBytes && !this.finalAudioQueued) return;
     if (this.pendingAudioBytes < AUDIO_CHUNK_BYTES && !this.finalAudioQueued) return;
 
     const audio = Buffer.allocUnsafe(Math.min(AUDIO_CHUNK_BYTES, this.pendingAudioBytes));
@@ -267,10 +256,7 @@ class ScribeStreamingTranscription {
     this.pendingAudioBytes -= audio.length;
     this.finalCommitSent = this.finalAudioQueued && this.pendingAudioBytes === 0;
     if (this.finalCommitSent) {
-      this.finishTimer = setTimeout(
-        () => this.fail(new Error("timed out waiting for ElevenLabs transcription")),
-        30_000,
-      );
+      this.finishTimer = setTimeout(() => this.complete(), 2_000);
       this.finishTimer.unref?.();
     }
     this.sendAudio(audio, this.finalCommitSent);
@@ -281,6 +267,14 @@ class ScribeStreamingTranscription {
       this.pumpAudio();
     }, AUDIO_SEND_INTERVAL_MS);
     this.sendTimer.unref?.();
+  }
+
+  private complete(): void {
+    if (this.stopped) return;
+    this.stopped = true;
+    this.clearTimers();
+    this.result.resolve(joinText(this.committed, this.partial).trim());
+    this.socket?.close();
   }
 
   private sendAudio(audio: Buffer, commit = false): void {
@@ -319,7 +313,6 @@ class ScribeStreamingTranscription {
     clearTimeout(this.sendTimer);
     clearTimeout(this.readyTimer);
     clearTimeout(this.finishTimer);
-    clearTimeout(this.drainTimer);
   }
 }
 

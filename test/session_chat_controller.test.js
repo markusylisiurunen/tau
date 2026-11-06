@@ -6280,7 +6280,7 @@ describe("SessionChatController", () => {
     },
   );
 
-  it("replaces Scribe previews and keeps editing locked until the live transcript finishes draining", async () => {
+  it("replaces Scribe previews and unlocks editing on the first final commit", async () => {
     const audioPath = join(tmpdir(), `tau-session-listen-scribe-${Date.now()}.wav`);
     const pcm = Buffer.alloc(6400, 1);
     const socket = new EventEmitter();
@@ -6375,10 +6375,7 @@ describe("SessionChatController", () => {
       emitTranscript("committed", "Suomeksi myös.");
       expect(editor.getText()).toBe(`${prefix}English. Suomeksi myös.${suffix}`);
       expect(view.editorEnabledUpdates.at(-1)).toBe(false);
-      await vi.advanceTimersByTimeAsync(1999);
-      expect(view.editorEnabledUpdates.at(-1)).toBe(false);
-      expect(socket.close).not.toHaveBeenCalled();
-      await vi.advanceTimersByTimeAsync(1);
+      expect(socket.close).toHaveBeenCalledOnce();
       await controller.listenTransition;
       expect(view.editorEnabledUpdates.at(-1)).toBe(true);
     } finally {
@@ -6402,7 +6399,7 @@ describe("SessionChatController", () => {
     expect(editor.getCursor()).toEqual(cursor);
     expect(
       Buffer.concat(socketEvents.map(({ audio_base_64 }) => Buffer.from(audio_base_64, "base64"))),
-    ).toEqual(Buffer.concat([pcm, Buffer.from([5, 6]), Buffer.alloc(64_000)]));
+    ).toEqual(Buffer.concat([pcm, Buffer.from([5, 6])]));
     expect(socketEvents.slice(0, -1).every(({ commit }) => !commit)).toBe(true);
     expect(socketEvents.at(-1).commit).toBe(true);
     expect(spawn).toHaveBeenNthCalledWith(
@@ -6523,7 +6520,7 @@ describe("SessionChatController", () => {
   });
 
   describe("speech cleanup styles", () => {
-    const createRecordingHarness = async (cleanupResponse) => {
+    const createRecordingHarness = async (cleanupResponse, cleanupStyle) => {
       const audioPath = join(
         tmpdir(),
         `tau-session-listen-style-${Date.now()}-${Math.random()}.wav`,
@@ -6555,10 +6552,54 @@ describe("SessionChatController", () => {
         });
         return await Promise.race([cleanupResponse(request), aborted]);
       });
+      const cleanupSockets = [];
+      const webSocketFactory = vi.fn((url) => {
+        expect(url).toBe("wss://api.openai.com/v1/responses");
+        const socket = new EventEmitter();
+        const abortController = new AbortController();
+        socket.terminate = vi.fn(() => abortController.abort());
+        socket.close = vi.fn();
+        socket.send = vi.fn((data) => {
+          const body = JSON.parse(data);
+          if (body.generate === false) {
+            queueMicrotask(() =>
+              socket.emit(
+                "message",
+                JSON.stringify({
+                  type: "response.completed",
+                  response: { id: "warmup", status: "completed", output: [] },
+                }),
+              ),
+            );
+            return;
+          }
+          const request = { body, signal: abortController.signal };
+          cleanupRequests.push(request);
+          void cleanupResponse(request).then(async (response) => {
+            socket.emit(
+              "message",
+              JSON.stringify(
+                response.ok
+                  ? {
+                      type: "response.completed",
+                      response: await response.json(),
+                    }
+                  : { type: "error" },
+              ),
+            );
+          });
+        });
+        cleanupSockets.push(socket);
+        queueMicrotask(() => socket.emit("open"));
+        return socket;
+      });
       const harness = await createControllerHarness({
         deps: createMockDeps(spawn),
-        config: { apiKeys: { elevenlabs: "eleven-key", openai: "openai-key" } },
-        speechToTextDeps: { fetchImpl },
+        config: {
+          apiKeys: { elevenlabs: "eleven-key", openai: "openai-key" },
+          speech: { cleanupStyle },
+        },
+        speechToTextDeps: { fetchImpl, webSocketFactory },
       });
       const editor = new CustomEditor(createUiTheme("plain"));
       const handlers = harness.controller.getInputHandlers();
@@ -6580,7 +6621,7 @@ describe("SessionChatController", () => {
         finish: vi.fn(async () => "um so fix the bug"),
         abort: vi.fn(),
       }));
-      return { ...harness, audioPath, editor, cleanupRequests };
+      return { ...harness, audioPath, editor, cleanupRequests, cleanupSockets };
     };
     const cleanedResponse = (text) =>
       Response.json({
@@ -6588,9 +6629,36 @@ describe("SessionChatController", () => {
         output: [{ type: "message", content: [{ type: "output_text", text }] }],
       });
 
+    it("warms the configured default and resets a per-recording override on the next capture", async () => {
+      const { controller, view, editor, audioPath, cleanupSockets, cleanupRequests } =
+        await createRecordingHarness(async () => cleanedResponse("Cleaned."), "default");
+      try {
+        await controller.onUserInput("/listen");
+        await flush();
+        expect(view.status.editor.recordingStyle).toBe("default");
+        expect(cleanupSockets).toHaveLength(1);
+        expect(JSON.parse(cleanupSockets[0].send.mock.calls[0][0]).generate).toBe(false);
+        expect(cleanupRequests).toEqual([]);
+        editor.handleInput("\t");
+        expect(view.status.editor.recordingStyle).toBe("off");
+        expect(cleanupSockets[0].terminate).toHaveBeenCalledOnce();
+        await controller.cancelListenCapture();
+        await writeFile(audioPath, Buffer.alloc(2048, 1));
+        await controller.onUserInput("/listen");
+        await flush();
+        expect(view.status.editor.recordingStyle).toBe("default");
+        expect(cleanupSockets).toHaveLength(2);
+        await controller.cancelListenCapture();
+        expect(cleanupSockets[1].terminate).toHaveBeenCalledOnce();
+      } finally {
+        await controller.dispose();
+        await rm(audioPath, { force: true });
+      }
+    });
+
     it("cycles the style with Tab only while recording and applies it on stop", async () => {
       const cleanup = Promise.withResolvers();
-      const { controller, view, session, editor, audioPath, cleanupRequests } =
+      const { controller, view, session, editor, audioPath, cleanupRequests, cleanupSockets } =
         await createRecordingHarness(() => cleanup.promise);
       try {
         controller.start();
@@ -6607,6 +6675,16 @@ describe("SessionChatController", () => {
         editor.handleInput("\t");
         expect(view.status.editor.recordingStyle).toBe("default");
         expect(editor.getText()).toBe("draft ");
+        await flush();
+        expect(cleanupSockets).toHaveLength(2);
+        expect(cleanupSockets[0].terminate).toHaveBeenCalledOnce();
+        expect(JSON.parse(cleanupSockets[1].send.mock.calls[0][0])).toMatchObject({
+          generate: false,
+          input: [],
+          store: false,
+        });
+        expect(cleanupRequests).toEqual([]);
+        expect(controller.createSpeechTranscription).toHaveBeenCalledOnce();
 
         editor.handleInput("\r");
         await waitUntil(() => cleanupRequests.length === 1);
@@ -6615,6 +6693,7 @@ describe("SessionChatController", () => {
         expect(editor.getText()).toBe("draft um so fix the bug");
         expect(view.editorEnabledUpdates.at(-1)).toBe(false);
         editor.handleInput("\t");
+        expect(cleanupRequests[0].body.previous_response_id).toBe("warmup");
         expect(cleanupRequests[0].body.model).toBe("gpt-6.1-terra");
         expect(JSON.parse(cleanupRequests[0].body.input).transcript).toBe("um so fix the bug");
         expect(session.submit).not.toHaveBeenCalled();

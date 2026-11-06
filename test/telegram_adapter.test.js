@@ -2906,7 +2906,7 @@ describe("telegram adapter", () => {
         );
         const request = interactionCall[1].body;
         expect(request.get("model_id")).toBe("scribe_v2");
-        expect(request.get("no_verbatim")).toBe("true");
+        expect(request.get("no_verbatim")).toBe("false");
         expect(request.has("language_code")).toBe(false);
         expect(request.get("file").type).toBe("audio/ogg");
       } finally {

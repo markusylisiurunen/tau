@@ -49,7 +49,7 @@ Cover what the assignment needs:
 
 - **Goal:** the result you need and the decision or work it feeds into.
 - **Context:** relevant facts, evidence, settled decisions, and the reasons behind constraints the agent might otherwise undo. Include anything that exists only in your conversation and that the agent needs. For a review, keep back your own reasoning, as described above.
-- **Scope and authority:** what to inspect or change, what to leave alone, and whether the work is read-only. State whether it may commit or act outside the workspace. Never grant more authority than you have. Tau subagents cannot spawn their own subagents.
+- **Scope and authority:** what to inspect or change, what to leave alone, and whether the work is read-only. State whether it may commit or act outside the workspace. Never grant more authority than you have. This includes delegation: a subagent starts its own subagents only when its assignment allows it, so say whether it may. Tau supports two levels below the main agent. A native Tau subagent at the first level can start subagents, but one at the second level and a Claude Code worker cannot.
 - **Starting points:** exact paths, commands, interfaces, or sources. Give the working directory when it differs from yours.
 - **Completion:** what to return, how to verify it, and which cases to report instead of resolving.
 
@@ -78,6 +78,8 @@ When requirements or a contract change, tell the affected agents before they con
 - **Interrupt** when the agent must stop its current work, for example before it makes edits that are no longer wanted. An interrupt also discards pending input, so send the new instructions after it has stopped.
 
 Stopping an agent does not undo its file edits or external actions, so inspect the current state before giving its scope to someone else.
+
+An agent you started may have started its own subagents. You can manage all your descendants, and they count toward the session's limit on running agents. They can keep working after their parent goes idle, and by default an interrupt stops only the agent you name, not its subagents. To stop a branch, interrupt the whole subtree. Before you treat delegated work as finished or stopped, check the state of every descendant in its branch.
 
 When an agent reports a case outside its agreed scope, make the decision yourself before widening the assignment. Agents share the workspace. Do not overwrite another agent's edits to make integration easier.
 

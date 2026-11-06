@@ -280,6 +280,8 @@ const TELEGRAM_REASONING_EFFORTS = [
   "xhigh",
 ] as const satisfies readonly SessionProtocolReasoningEffort[];
 const NO_ACTIVE_SESSION_MESSAGE = "no active session. use /new.";
+const TELEGRAM_NO_REASONING_EFFORT_MESSAGE =
+  "no reasoning efforts are available through Telegram for this session.";
 
 const MIME_EXTENSION_BY_TYPE: Record<string, string> = {
   "application/pdf": ".pdf",
@@ -321,6 +323,13 @@ type TelegramCommandHandler = (
   sourceMessageId?: number,
 ) => Promise<void>;
 
+type TelegramPersonaChoice = {
+  key: string;
+  id: string | null;
+  label: string;
+  overrides?: SessionProtocolPersonaOverrides;
+};
+
 type TelegramCommandDefinition = {
   command: `/${string}`;
   description: string;
@@ -335,6 +344,17 @@ function splitCommandText(text: string): string[] {
     .split(/\s+/)
     .map((part) => part.trim())
     .filter(Boolean);
+}
+
+// Command text reaches handlers with its whitespace collapsed, so identifiers are compared the same
+// way. Identifiers that become indistinguishable stay reachable through the picker.
+function findByCommandValue<T>(
+  items: readonly T[],
+  identifierOf: (item: T) => string,
+  value: string,
+): T | undefined {
+  const matches = items.filter((item) => splitCommandText(identifierOf(item)).join(" ") === value);
+  return matches.length === 1 ? matches[0] : undefined;
 }
 
 function stripCommandMention(command: string): string {
@@ -691,23 +711,24 @@ function getTelegramSessionCostTotal(snapshot: SessionProtocolSnapshot): number 
   return snapshot.costTotal;
 }
 
-function supportsReasoningEffort(
+function getSupportedReasoningEfforts(
   snapshot: SessionProtocolSnapshot,
-  reasoning: SessionProtocolReasoningEffort,
-): boolean {
+): (typeof TELEGRAM_REASONING_EFFORTS)[number][] {
   if (!snapshot.bootstrap.model.reasoning) {
-    return false;
+    return [];
   }
 
   const persona = snapshot.catalog.personas.find(
     (candidate) => candidate.id === snapshot.settings.personaId,
   );
   if (!persona) {
-    return false;
+    return [];
   }
 
   const allowed = persona.allowedReasoningLevels;
-  return !allowed || allowed.length === 0 || allowed.includes(reasoning);
+  return TELEGRAM_REASONING_EFFORTS.filter(
+    (reasoning) => !allowed || allowed.length === 0 || allowed.includes(reasoning),
+  );
 }
 
 function formatTelegramSessionCost(total: number): string {
@@ -1302,7 +1323,7 @@ class TelegramAdapterImpl {
     {
       token: string;
       sessionId: string;
-      personas: { id: string | null; label: string; overrides?: SessionProtocolPersonaOverrides }[];
+      personas: TelegramPersonaChoice[];
       text: string;
     }
   >();
@@ -1314,6 +1335,7 @@ class TelegramAdapterImpl {
       prompts: SessionProtocolSnapshot["catalog"]["prompts"];
     }
   >();
+  private readonly effortPickers = new Map<number, { token: string; sessionId: string }>();
   private readonly activeSessionsByChat = new Map<number, string>();
   private readonly sessionsByChat = new Map<number, Set<string>>();
   private readonly chatsBySession = new Map<string, Set<number>>();
@@ -1456,6 +1478,11 @@ class TelegramAdapterImpl {
         handler: async (chatId, args) => this.handlePersona(chatId, args),
       },
       {
+        command: "/effort",
+        description: "choose the reasoning effort for future turns",
+        handler: async (chatId, args) => this.handleEffort(chatId, args),
+      },
+      {
         command: "/prompt",
         description: "add a saved prompt without starting a turn",
         handler: async (chatId, args) => this.handlePrompt(chatId, args),
@@ -1487,14 +1514,6 @@ class TelegramAdapterImpl {
         handler: async (chatId, args) => this.handleTtsPreference(chatId, false, args),
       },
     ];
-
-    for (const reasoning of TELEGRAM_REASONING_EFFORTS) {
-      definitions.push({
-        command: `/effort_${reasoning}`,
-        description: `set reasoning effort to ${reasoning}`,
-        handler: async (chatId, args) => this.handleSetReasoning(chatId, reasoning, args),
-      });
-    }
 
     for (const projectId of this.allowedProjectIds) {
       definitions.push({
@@ -2167,6 +2186,10 @@ class TelegramAdapterImpl {
       await this.handlePersonaCallback(chatId, callbackData, messageId);
       return true;
     }
+    if (callbackData.startsWith("effort:")) {
+      await this.handleEffortCallback(chatId, callbackData, messageId);
+      return true;
+    }
     if (callbackData.startsWith("prompt:")) {
       await this.handlePromptCallback(chatId, callbackData, messageId);
       return true;
@@ -2257,11 +2280,30 @@ class TelegramAdapterImpl {
     }
   }
 
-  private async handlePersona(chatId: number, args: string[]): Promise<void> {
-    if (args.length > 0) {
-      await this.reply(chatId, "use /persona to choose a persona.");
-      return;
+  private getPersonaChoices(snapshot: SessionProtocolSnapshot): TelegramPersonaChoice[] {
+    if (this.presets === undefined) {
+      return snapshot.catalog.personas.map((persona) => ({
+        key: persona.id,
+        id: persona.id,
+        label: persona.label || persona.id,
+      }));
     }
+    return Object.entries(this.presets).map(([key, preset]) =>
+      preset.source === "workspace"
+        ? { key, id: null, label: preset.label }
+        : {
+            key,
+            id: preset.persona,
+            label: preset.label,
+            overrides: {
+              reasoning: preset.reasoning,
+              autoCompactThresholdTokens: preset.autoCompactThresholdTokens,
+            },
+          },
+    );
+  }
+
+  private async handlePersona(chatId: number, args: string[]): Promise<void> {
     if (this.presets !== undefined && Object.keys(this.presets).length === 0) {
       await this.reply(chatId, "this bot has no presets configured.");
       return;
@@ -2274,24 +2316,22 @@ class TelegramAdapterImpl {
         await this.reply(chatId, "the session is still preparing.");
         return;
       }
-      const catalog = snapshot.catalog.personas;
-      const personas =
-        this.presets === undefined
-          ? catalog.map((persona) => ({ id: persona.id, label: persona.label || persona.id }))
-          : Object.values(this.presets).map((preset) =>
-              preset.source === "workspace"
-                ? { id: null, label: preset.label }
-                : {
-                    id: preset.persona,
-                    label: preset.label,
-                    overrides: {
-                      reasoning: preset.reasoning,
-                      autoCompactThresholdTokens: preset.autoCompactThresholdTokens,
-                    },
-                  },
-            );
+      const personas = this.getPersonaChoices(snapshot);
       if (personas.length === 0) {
         await this.reply(chatId, "this bot has no presets configured.");
+        return;
+      }
+      if (args.length > 0) {
+        const value = args.join(" ");
+        const persona = findByCommandValue(personas, (choice) => choice.key, value);
+        if (!persona) {
+          await this.reply(
+            chatId,
+            `this session has no persona or preset called ${value}. use /persona to see the choices.`,
+          );
+          return;
+        }
+        await this.applyPersona(chatId, session.id, persona);
         return;
       }
       this.personaPickers.set(chatId, {
@@ -2360,10 +2400,19 @@ class TelegramAdapterImpl {
     }
     const persona = picker.personas[index];
     if (!persona) return;
+    await this.applyPersona(chatId, picker.sessionId, persona, messageId);
+  }
+
+  private async applyPersona(
+    chatId: number,
+    sessionId: string,
+    persona: TelegramPersonaChoice,
+    pickerMessageId?: number,
+  ): Promise<void> {
     let snapshot: SessionProtocolSnapshot;
     try {
       snapshot = await this.getSessionManagerForChat(chatId).setPersona(
-        picker.sessionId,
+        sessionId,
         persona.id,
         persona.overrides,
       );
@@ -2372,15 +2421,35 @@ class TelegramAdapterImpl {
       return;
     }
     this.personaPickers.delete(chatId);
-    const text = `switched to ${persona.label}. this session is using ${snapshot.bootstrap.model.name || snapshot.bootstrap.model.id} with ${snapshot.settings.reasoning ?? "none"} reasoning.`;
-    await this.sendWithRetry((signal) => this.api.editMessage(chatId, messageId, text, { signal }));
+    await this.sendSelectionResult(
+      chatId,
+      `switched to ${persona.label}. this session is using ${snapshot.bootstrap.model.name || snapshot.bootstrap.model.id} with ${snapshot.settings.reasoning ?? "none"} reasoning.`,
+      pickerMessageId,
+    );
+  }
+
+  // A picker's result replaces its message and removes the buttons, and a typed choice gets a reply.
+  private async sendSelectionResult(
+    chatId: number,
+    text: string,
+    pickerMessageId?: number,
+  ): Promise<void> {
+    if (pickerMessageId === undefined) {
+      await this.reply(chatId, text);
+      return;
+    }
+    for (const [index, chunk] of splitTelegramMessage(text).entries()) {
+      if (index === 0) {
+        await this.sendWithRetry((signal) =>
+          this.api.editMessage(chatId, pickerMessageId, chunk, { signal }),
+        );
+      } else {
+        await this.reply(chatId, chunk);
+      }
+    }
   }
 
   private async handlePrompt(chatId: number, args: string[]): Promise<void> {
-    if (args.length > 0) {
-      await this.reply(chatId, "use /prompt to choose a saved prompt.");
-      return;
-    }
     const session = await this.requireActiveSession(chatId);
     if (!session) return;
     try {
@@ -2392,6 +2461,19 @@ class TelegramAdapterImpl {
       const prompts = snapshot.catalog.prompts;
       if (prompts.length === 0) {
         await this.reply(chatId, "this session has no saved prompts.");
+        return;
+      }
+      if (args.length > 0) {
+        const value = args.join(" ");
+        const prompt = findByCommandValue(prompts, (candidate) => candidate.id, value);
+        if (!prompt) {
+          await this.reply(
+            chatId,
+            `this session has no saved prompt called ${value}. use /prompt to see the choices.`,
+          );
+          return;
+        }
+        await this.applyPrompt(chatId, session.id, prompt.id);
         return;
       }
       this.promptPickers.set(chatId, { token: randomUUID(), sessionId: session.id, prompts });
@@ -2456,56 +2538,124 @@ class TelegramAdapterImpl {
     }
     const prompt = picker.prompts[index];
     if (!prompt) return;
+    await this.applyPrompt(chatId, picker.sessionId, prompt.id, messageId);
+  }
+
+  private async applyPrompt(
+    chatId: number,
+    sessionId: string,
+    promptId: string,
+    pickerMessageId?: number,
+  ): Promise<void> {
     let text: string;
     try {
-      text = await this.getSessionManagerForChat(chatId).recordPrompt(picker.sessionId, prompt.id);
+      text = await this.getSessionManagerForChat(chatId).recordPrompt(sessionId, promptId);
     } catch (error) {
       await this.reply(chatId, this.formatManagerError(error));
       return;
     }
     this.promptPickers.delete(chatId);
-    const chunks = splitTelegramMessage(
+    await this.sendSelectionResult(
+      chatId,
       `added this prompt to the conversation. send a message when you’re ready for Tau to respond.\n\n${text}`,
+      pickerMessageId,
     );
-    for (const [index, chunk] of chunks.entries()) {
-      if (index === 0) {
-        await this.sendWithRetry((signal) =>
-          this.api.editMessage(chatId, messageId, chunk, { signal }),
-        );
-      } else {
-        await this.reply(chatId, chunk);
+  }
+
+  private async handleEffort(chatId: number, args: string[]): Promise<void> {
+    const session = await this.requireActiveSession(chatId);
+    if (!session) return;
+    if (args.length > 0) {
+      await this.applyEffort(chatId, session.id, args.join(" "));
+      return;
+    }
+    try {
+      const snapshot = await this.getSessionManagerForChat(chatId).getSessionSnapshot(session.id);
+      if (!snapshot) {
+        await this.reply(chatId, "the session is still preparing.");
+        return;
       }
+      const efforts = getSupportedReasoningEfforts(snapshot);
+      if (efforts.length === 0) {
+        await this.reply(chatId, TELEGRAM_NO_REASONING_EFFORT_MESSAGE);
+        return;
+      }
+      const token = randomUUID();
+      this.effortPickers.set(chatId, { token, sessionId: session.id });
+      await this.reply(
+        chatId,
+        `choose the reasoning effort for future turns. this session is using ${snapshot.settings.reasoning ?? "none"}.`,
+        {
+          replyMarkup: {
+            inline_keyboard: [
+              efforts.map((effort) => ({
+                text: effort,
+                callback_data: `effort:${token}:select:${effort}`,
+              })),
+            ],
+          },
+        },
+      );
+    } catch (error) {
+      await this.reply(chatId, this.formatManagerError(error));
     }
   }
 
-  private async handleSetReasoning(
+  private async handleEffortCallback(
     chatId: number,
-    reasoning: (typeof TELEGRAM_REASONING_EFFORTS)[number],
-    args: string[],
+    data: string,
+    messageId?: number,
   ): Promise<void> {
-    if (args.length > 0) {
-      await this.reply(chatId, `usage: /effort_${reasoning}`);
+    const match = /^effort:([^:]+):select:([a-z]+)$/.exec(data);
+    const picker = this.effortPickers.get(chatId);
+    if (
+      !match?.[2] ||
+      !picker ||
+      picker.token !== match[1] ||
+      this.getActiveSession(chatId)?.id !== picker.sessionId ||
+      messageId === undefined
+    ) {
+      await this.reply(chatId, "this effort picker has expired. use /effort to open a new one.");
       return;
     }
+    await this.applyEffort(chatId, picker.sessionId, match[2], messageId);
+  }
 
-    const session = await this.requireActiveSession(chatId);
-    if (!session) {
-      return;
-    }
-
+  // The persona can change while a picker is open, so every choice is checked against the current
+  // snapshot.
+  private async applyEffort(
+    chatId: number,
+    sessionId: string,
+    value: string,
+    pickerMessageId?: number,
+  ): Promise<void> {
     try {
       const sessionManager = this.getSessionManagerForChat(chatId);
-      const snapshot = await sessionManager.getSessionSnapshot(session.id);
+      const snapshot = await sessionManager.getSessionSnapshot(sessionId);
       if (!snapshot) {
-        throw new TelegramSessionManagerError("not_ready", "session is still preparing");
-      }
-      if (!supportsReasoningEffort(snapshot, reasoning)) {
-        await this.reply(chatId, `reasoning effort ${reasoning} is not supported by this session.`);
+        await this.reply(chatId, "the session is still preparing.");
         return;
       }
-
-      await sessionManager.setReasoning(session.id, reasoning);
-      await this.reply(chatId, `reasoning effort set to ${reasoning}.`);
+      const efforts = getSupportedReasoningEfforts(snapshot);
+      if (efforts.length === 0) {
+        await this.reply(chatId, TELEGRAM_NO_REASONING_EFFORT_MESSAGE);
+        return;
+      }
+      const reasoning = efforts.find((effort) => effort === value);
+      if (!reasoning) {
+        await this.reply(
+          chatId,
+          `reasoning effort ${value} is not available through Telegram for this session. use /effort to see the choices.`,
+        );
+        return;
+      }
+      await sessionManager.setReasoning(sessionId, reasoning);
+      this.effortPickers.delete(chatId);
+      await this.sendSelectionResult(
+        chatId,
+        `reasoning effort set to ${reasoning} for future turns.`,
+        pickerMessageId,
+      );
     } catch (error) {
       await this.reply(chatId, this.formatManagerError(error));
     }

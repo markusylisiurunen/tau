@@ -16,7 +16,7 @@ Cowork reads workflow configuration from the trusted default branch, never from 
 
 ## Using Cowork through GitHub
 
-The default mention is `@markustherobot`, although the service can configure a different one. The mention must be the first non-whitespace content in a comment, and the sender must be allowed by the service.
+The default mention is `@markustherobot`, although the service can configure a different one. The mention must be the first non-whitespace content in a comment, review summary, or inline review comment, and the sender must be allowed by the service.
 
 | Context | Comment after the mention                                          | Behavior                                                                   |
 | ------- | ------------------------------------------------------------------ | -------------------------------------------------------------------------- |
@@ -33,6 +33,8 @@ The default mention is `@markustherobot`, although the service can configure a d
 Ordinary messages may follow the mention on the same line. Commands must be the only token on their line after the mention; guidance starts on a later line, optionally after a blank line. Bare keywords are ordinary conversation. There is no explanation restart command.
 
 The agent receives the request with the leading mention and recognized command removed and surrounding whitespace trimmed. Internal formatting stays unchanged. Agent-starting commands without guidance use “Run the selected workflow. No additional instructions were provided.” The original comment ID and URL remain available separately.
+
+Submitting a GitHub review hands its requests to the PR conversation in one turn. The review starts work when its summary or any of its inline comments begins with the mention. Nothing runs while the review is pending. A single inline comment or thread reply is its own review, so it starts its own turn. The agent sees the whole review, but only tagged text defines the work. For example, if two inline comments are tagged and a third is not, the agent handles the two requests and reads the third as context. A tagged summary such as “address all comments in this review” brings every comment in that review into scope, but not findings from earlier reviews. Questions leave the branch and thread status unchanged, and verified changes resolve their threads. Replies go in the requested threads, and a tagged summary gets one top-level response. A slash command in a tagged summary or tagged inline comment rejects the whole review, so start commands from a top-level PR comment. Review summaries trigger work only when the service's GitHub webhook subscribes to pull request review events.
 
 The PR that `/implement` opens uses its title and description as the lasting record of the whole change, including the behavior decisions the agent made where the issue discussion left room. Open questions, assumptions to confirm, and verification failures or gaps go in one separate PR comment. This rule is part of the implementation workflow's execution contract, so append and replacement prompts cannot change it.
 

@@ -35,6 +35,7 @@ import { TOOL_NAME_BASH } from "../core/tools/tool_names.js";
 import { REASONING_LEVELS, type ReasoningEffort } from "../core/types.js";
 import { formatAdaptiveNumber, formatCwd, formatTokenWindow } from "../core/utils/format.js";
 import { extractAssistantText } from "../core/utils/messages.js";
+import { cleanupSpeechTranscript, type SpeechCleanupStyle } from "../core/utils/speech_cleanup.js";
 import {
   getSpeechToTextRecordingMaxDurationMs,
   getSpeechToTextStreamingSampleRate,
@@ -109,6 +110,8 @@ import {
   LISTEN_CAPTURE_START_TIMEOUT_MS,
   LISTEN_RECORDING_MIN_BYTES,
   type ListenRecording,
+  nextListenCleanupStyle,
+  type RetainedListenAudio,
   readListenAudio,
   resolveSpeechToTextCredentials,
   startListenAudioCapture,
@@ -201,10 +204,11 @@ export class SessionChatController {
   private lastEmptySubmitAt?: number;
   private disposed = false;
   private listenRecording?: ListenRecording;
-  private retainedListenAudio?: { audioPath: string; durationMs: number };
+  private retainedListenAudio?: RetainedListenAudio;
   private listenTransition?: Promise<void>;
   private listenStartupAbortController?: AbortController;
   private activeListenTranscription?: ListenRecording["transcription"];
+  private activeListenCleanup?: AbortController;
   private listenActivityLabel?: string;
   private listenPreview?: ReturnType<ChatView["beginEditorTextPreview"]>;
   private editorHiddenSystemMessages: string[] = [];
@@ -299,6 +303,7 @@ export class SessionChatController {
     this.subagentActivitiesUnsubscribe?.();
     this.listenStartupAbortController?.abort(LISTEN_CAPTURE_START_CANCELLED);
     this.activeListenTranscription?.abort();
+    this.activeListenCleanup?.abort();
     if (this.listenTransition) {
       await this.listenTransition;
     }
@@ -365,6 +370,7 @@ export class SessionChatController {
       onCtrlP: () => void this.cyclePersonality(),
       onCtrlS: () => void this.stashEditorToClipboard(),
       onToggleRecording: () => void this.toggleListenCapture(),
+      onCycleRecordingStyle: () => this.cycleListenCleanupStyle(),
       recordingShortcut: this.config.speech.recordingShortcut,
       onDisabledSubmit: (mode) => {
         if (this.listenRecording && !this.listenTransition) {
@@ -846,6 +852,7 @@ export class SessionChatController {
     ) {
       this.listenStartupAbortController?.abort(LISTEN_CAPTURE_START_CANCELLED);
       this.activeListenTranscription?.abort();
+      this.activeListenCleanup?.abort();
       this.endListenPreview();
       this.listenActivityLabel = undefined;
       if (this.listenRecording) {
@@ -915,6 +922,13 @@ export class SessionChatController {
     }
 
     await this.startListenCaptureFromCommand();
+  }
+
+  private cycleListenCleanupStyle(): void {
+    const recording = this.listenRecording;
+    if (!recording) return;
+    recording.cleanupStyle = nextListenCleanupStyle(recording.cleanupStyle);
+    this.refreshStatus();
   }
 
   private async startListenCaptureFromCommand(): Promise<void> {
@@ -1037,6 +1051,7 @@ export class SessionChatController {
         abortController,
         completion,
         transcription,
+        cleanupStyle: "off",
       };
       recording.maxDurationTimeout = setTimeout(() => {
         if (this.listenRecording !== recording || this.listenTransition) return;
@@ -1124,8 +1139,7 @@ export class SessionChatController {
         SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS,
       );
       const transcribed = await this.transcribeListenAudioFile(
-        recording.audioPath,
-        durationMs,
+        { audioPath: recording.audioPath, durationMs, cleanupStyle: recording.cleanupStyle },
         recording.transcription,
       );
       if (mode && transcribed && !this.disposed) this.view.submitEditor(mode);
@@ -1151,7 +1165,7 @@ export class SessionChatController {
     }
 
     await this.runListenTransition(async () => {
-      await this.transcribeListenAudioFile(retainedAudio.audioPath, retainedAudio.durationMs);
+      await this.transcribeListenAudioFile(retainedAudio);
     });
   }
 
@@ -1215,10 +1229,10 @@ export class SessionChatController {
   }
 
   private async transcribeListenAudioFile(
-    audioPath: string,
-    durationMs: number,
+    recording: RetainedListenAudio,
     transcription?: ListenRecording["transcription"],
   ): Promise<boolean> {
+    const { audioPath } = recording;
     if (this.disposed) {
       transcription?.abort();
       if (this.retainedListenAudio?.audioPath === audioPath) {
@@ -1230,9 +1244,9 @@ export class SessionChatController {
     if (!this.listenPreview) this.beginListenPreview();
     const preview = this.listenPreview!;
     try {
-      if (durationMs > SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS) {
+      if (recording.durationMs > SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS) {
         transcription?.abort();
-        this.retainedListenAudio = { audioPath, durationMs };
+        this.retainedListenAudio = recording;
         this.view.addTranscriptNotice("failed to transcribe speech", "error", [
           "audio is longer than 20 minutes",
           `recording retained at ${audioPath}`,
@@ -1277,12 +1291,13 @@ export class SessionChatController {
       }
 
       let activeTranscription = transcription;
+      let text: string;
       this.listenActivityLabel = "transcribing voice input";
       this.refreshStatus();
       try {
         activeTranscription ??= this.createSpeechTranscription("file");
         this.activeListenTranscription = activeTranscription;
-        const text = await activeTranscription.finish({
+        text = await activeTranscription.finish({
           audio,
           mimeType: "audio/wav",
         });
@@ -1297,14 +1312,9 @@ export class SessionChatController {
           ]);
         }
         if (this.listenPreview !== preview) return false;
-        preview.commit(text);
-        if (text.trim() && !this.editorHiddenSystemMessages.includes(TRANSCRIPTION_GUIDANCE)) {
-          this.editorHiddenSystemMessages.push(TRANSCRIPTION_GUIDANCE);
-        }
-        return Boolean(text.trim());
       } catch (error) {
         if (this.listenPreview !== preview) return false;
-        this.retainedListenAudio = { audioPath, durationMs };
+        this.retainedListenAudio = recording;
         this.view.addTranscriptNotice("failed to transcribe speech", "error", [
           (error as Error).message,
           `recording retained at ${audioPath}`,
@@ -1319,6 +1329,17 @@ export class SessionChatController {
         this.listenActivityLabel = undefined;
         this.refreshStatus();
       }
+
+      const cleanup = await this.cleanupListenTranscript(text, recording.cleanupStyle, preview);
+      if (!cleanup || this.listenPreview !== preview) return false;
+      preview.commit(cleanup.text);
+      if (
+        cleanup.text.trim() &&
+        !this.editorHiddenSystemMessages.includes(TRANSCRIPTION_GUIDANCE)
+      ) {
+        this.editorHiddenSystemMessages.push(TRANSCRIPTION_GUIDANCE);
+      }
+      return !cleanup.failed && Boolean(cleanup.text.trim());
     } finally {
       if (this.listenPreview !== preview) {
         if (this.retainedListenAudio?.audioPath === audioPath) {
@@ -1328,6 +1349,45 @@ export class SessionChatController {
       } else {
         this.endListenPreview();
       }
+    }
+  }
+
+  private async cleanupListenTranscript(
+    transcript: string,
+    style: SpeechCleanupStyle,
+    preview: ReturnType<ChatView["beginEditorTextPreview"]>,
+  ): Promise<{ text: string; failed: boolean } | undefined> {
+    if (style === "off" || !transcript.trim()) return { text: transcript, failed: false };
+    preview.update(transcript);
+    const abortController = new AbortController();
+    this.activeListenCleanup = abortController;
+    this.listenActivityLabel = "cleaning up voice input";
+    this.refreshStatus();
+    try {
+      const text = await cleanupSpeechTranscript({
+        transcript,
+        style,
+        apiKey: getOpenAIApiKey(this.config, this.deps.env.env()),
+        vocabulary: composeSpeechVocabulary(
+          this.snapshot.catalog.speechVocabulary,
+          this.config.speech.personalVocabulary,
+        ),
+        signal: abortController.signal,
+        fetchImpl: this.speechToTextDeps?.fetchImpl,
+      });
+      if (abortController.signal.aborted || this.listenPreview !== preview) return undefined;
+      return { text, failed: false };
+    } catch (error) {
+      if (abortController.signal.aborted || this.listenPreview !== preview) return undefined;
+      this.view.addTranscriptNotice("failed to clean up speech", "error", [
+        (error as Error).message,
+        "inserted the transcript without cleanup",
+      ]);
+      return { text: transcript, failed: true };
+    } finally {
+      if (this.activeListenCleanup === abortController) this.activeListenCleanup = undefined;
+      this.listenActivityLabel = undefined;
+      this.refreshStatus();
     }
   }
 
@@ -2743,7 +2803,9 @@ export class SessionChatController {
             duration: this.getTurnDurationString(),
           },
       editor: {
-        mode: this.getInputMode(),
+        ...(this.listenRecording
+          ? { mode: "recording", recordingStyle: this.listenRecording.cleanupStyle }
+          : { mode: this.getInputMode() }),
         personaName: this.getCurrentPersonaSnapshot()?.label ?? this.snapshot.settings.personaId,
         reasoningLabel: this.snapshot.settings.reasoning ?? "none",
         reasoning:
@@ -2755,8 +2817,7 @@ export class SessionChatController {
     });
   }
 
-  private getInputMode(): ChatInputMode {
-    if (this.listenRecording) return "recording";
+  private getInputMode(): Exclude<ChatInputMode, "recording"> {
     if (this.isBashIncognito) return "bash_incognito";
     if (this.isBashMode) return "bash";
     return "normal";

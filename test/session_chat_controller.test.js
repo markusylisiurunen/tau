@@ -6217,7 +6217,7 @@ describe("SessionChatController", () => {
     const spawn = vi.fn();
     const { session, view, controller } = await createControllerHarness({
       deps: createMockDeps(spawn, "linux"),
-      config: { apiKeys: { google: "gemini-key" } },
+      config: { apiKeys: { elevenlabs: "eleven-key" } },
     });
     controller.start();
 
@@ -6280,26 +6280,30 @@ describe("SessionChatController", () => {
     },
   );
 
-  it("replaces Gemini previews and keeps editing locked until the live transcript finishes draining", async () => {
-    const audioPath = join(tmpdir(), `tau-session-listen-gemini-${Date.now()}.wav`);
+  it("replaces Scribe previews and keeps editing locked until the live transcript finishes draining", async () => {
+    const audioPath = join(tmpdir(), `tau-session-listen-scribe-${Date.now()}.wav`);
     const pcm = Buffer.from([1, 2, 3, 4]);
     const socket = new EventEmitter();
     const socketEvents = [];
     const audioSent = Promise.withResolvers();
-    const streamEndSent = Promise.withResolvers();
+    const commitSent = Promise.withResolvers();
     socket.send = vi.fn((data, callback) => {
       const event = JSON.parse(data);
       socketEvents.push(event);
       callback?.();
-      if (event.realtimeInput?.audio) audioSent.resolve();
-      if (event.realtimeInput?.audioStreamEnd) streamEndSent.resolve();
-      if (event.setup) {
-        queueMicrotask(() => socket.emit("message", JSON.stringify({ setupComplete: {} })));
-      }
+      if (event.commit) commitSent.resolve();
+      else audioSent.resolve();
     });
     socket.close = vi.fn();
     socket.terminate = vi.fn();
-    const webSocketFactory = vi.fn(() => socket);
+    const webSocketFactory = vi.fn(() => {
+      queueMicrotask(() =>
+        socket.emit("message", JSON.stringify({ message_type: "session_started" })),
+      );
+      return socket;
+    });
+    const emitTranscript = (type, text) =>
+      socket.emit("message", JSON.stringify({ message_type: `${type}_transcript`, text }));
     const fetchImpl = vi.fn();
     const spawn = vi.fn(async (command, _args, options = {}) => {
       if (command === "mktemp") {
@@ -6339,7 +6343,7 @@ describe("SessionChatController", () => {
       session,
       deps: createMockDeps(spawn),
       config: {
-        apiKeys: { google: "gemini-key" },
+        apiKeys: { elevenlabs: "eleven-key" },
       },
       speechToTextDeps: { webSocketFactory, fetchImpl },
     });
@@ -6351,39 +6355,27 @@ describe("SessionChatController", () => {
       expect(view.status.editor.mode).toBe("recording");
       await writeFile(audioPath, Buffer.alloc(2048, 1));
 
-      socket.emit("open");
       await audioSent.promise;
-      expect(socketEvents).toHaveLength(2);
-      for (const text of [
-        "English",
-        "English.\nSuomeksi myös.",
-        "Revised English.\nSuomeksi myös.",
+      expect(socketEvents).toHaveLength(1);
+      for (const [type, text, preview] of [
+        ["partial", "English", "English"],
+        ["committed", "English.", "English."],
+        ["partial", "Suomeksi myös", "English. Suomeksi myös"],
       ]) {
-        socket.emit(
-          "message",
-          JSON.stringify({ serverContent: { interimInputTranscription: { text } } }),
-        );
-        expect(editor.getText()).toBe(prefix + text + suffix);
+        emitTranscript(type, text);
+        expect(editor.getText()).toBe(prefix + preview + suffix);
         const previewCursor = editor.getCursor();
         for (const key of ["x", "\x1b[D", "\r", "\x7f", "\x1b[200~paste\x1b[201~"])
           editor.handleInput(key);
-        expect(editor.getText()).toBe(prefix + text + suffix);
+        expect(editor.getText()).toBe(prefix + preview + suffix);
         expect(editor.getCursor()).toEqual(previewCursor);
       }
       controller.getInputHandlers().onToggleRecording();
-      await streamEndSent.promise;
+      await commitSent.promise;
       expect(view.editorEnabledUpdates.at(-1)).toBe(false);
-      expect(editor.getText()).toBe(`${prefix}Revised English.\nSuomeksi myös.${suffix}`);
-      socket.emit(
-        "message",
-        JSON.stringify({
-          serverContent: {
-            inputTranscription: { text: "session transcript" },
-            generationComplete: true,
-          },
-        }),
-      );
-      expect(editor.getText()).toBe(`${prefix}session transcript${suffix}`);
+      expect(editor.getText()).toBe(`${prefix}English. Suomeksi myös${suffix}`);
+      emitTranscript("committed", "Suomeksi myös.");
+      expect(editor.getText()).toBe(`${prefix}English. Suomeksi myös.${suffix}`);
       expect(view.editorEnabledUpdates.at(-1)).toBe(false);
       await vi.advanceTimersByTimeAsync(1999);
       expect(view.editorEnabledUpdates.at(-1)).toBe(false);
@@ -6403,27 +6395,18 @@ describe("SessionChatController", () => {
       }
     }
 
+    const finalText = "English. Suomeksi myös.";
     expect(view.editorEnabledUpdates).toContain(true);
-    expect(editor.getText()).toBe(`${prefix}session transcript${suffix}`);
-    expect(editor.getCursor()).toEqual({ line: 1, col: 7 + "session transcript".length });
+    expect(editor.getText()).toBe(`${prefix}${finalText}${suffix}`);
+    expect(editor.getCursor()).toEqual({ line: 1, col: 7 + finalText.length });
     editor.handleInput("\x1b[45;5u");
     expect(editor.getText()).toBe(prefix + suffix);
     expect(editor.getCursor()).toEqual(cursor);
-    expect(socketEvents).toHaveLength(4);
-    expect(socketEvents[2]).toEqual({
-      realtimeInput: {
-        audio: {
-          data: Buffer.from([5, 6]).toString("base64"),
-          mimeType: "audio/pcm;rate=16000",
-        },
-      },
-    });
-    expect(socketEvents[3]).toEqual({ realtimeInput: { audioStreamEnd: true } });
-    expect(socketEvents[0].setup.inputAudioTranscription.mode).toBe("VERBATIM");
-    expect(socketEvents[1].realtimeInput.audio).toEqual({
-      data: pcm.toString("base64"),
-      mimeType: "audio/pcm;rate=16000",
-    });
+    expect(socketEvents.map(({ audio_base_64, commit }) => ({ audio_base_64, commit }))).toEqual([
+      { audio_base_64: pcm.toString("base64"), commit: false },
+      { audio_base_64: Buffer.from([5, 6]).toString("base64"), commit: false },
+      { audio_base_64: expect.any(String), commit: true },
+    ]);
     expect(spawn).toHaveBeenNthCalledWith(
       2,
       "ffmpeg",
@@ -6483,6 +6466,7 @@ describe("SessionChatController", () => {
         audioPath,
         startedAt: Date.now() - 1000,
         stopRequested: false,
+        cleanupStyle: "off",
         abortController,
         completion: capture.promise,
         transcription,
@@ -6540,6 +6524,177 @@ describe("SessionChatController", () => {
     }
   });
 
+  describe("speech cleanup styles", () => {
+    const createRecordingHarness = async (cleanupResponse) => {
+      const audioPath = join(
+        tmpdir(),
+        `tau-session-listen-style-${Date.now()}-${Math.random()}.wav`,
+      );
+      await writeFile(audioPath, Buffer.alloc(2048, 1));
+      const spawn = vi.fn(async (command, _args, options = {}) => {
+        if (command === "mktemp") return createSpawnResult({ stdout: `${audioPath}\n` });
+        if (command === "ffmpeg") {
+          const stdout = new EventEmitter();
+          options.onSpawn({ stdout });
+          queueMicrotask(() => stdout.emit("data", Buffer.from([1, 2])));
+          return await new Promise((resolve) => {
+            options.signal.addEventListener("abort", () => {
+              resolve(createSpawnResult({ aborted: true }));
+            });
+          });
+        }
+        throw new Error(`unexpected command: ${command}`);
+      });
+      const cleanupRequests = [];
+      const fetchImpl = vi.fn(async (input, options) => {
+        expect(String(input)).toBe("https://api.openai.com/v1/responses");
+        const request = { body: JSON.parse(options.body), signal: options.signal };
+        cleanupRequests.push(request);
+        const aborted = new Promise((_resolve, reject) => {
+          options.signal.addEventListener("abort", () => reject(options.signal.reason), {
+            once: true,
+          });
+        });
+        return await Promise.race([cleanupResponse(request), aborted]);
+      });
+      const harness = await createControllerHarness({
+        deps: createMockDeps(spawn),
+        config: { apiKeys: { elevenlabs: "eleven-key", openai: "openai-key" } },
+        speechToTextDeps: { fetchImpl },
+      });
+      const editor = new CustomEditor(createUiTheme("plain"));
+      const handlers = harness.controller.getInputHandlers();
+      editor.onDisabledTab = handlers.onCycleRecordingStyle;
+      editor.onDisabledSubmit = handlers.onDisabledSubmit;
+      editor.beforeSubmit = handlers.beforeSubmit;
+      editor.onChange = handlers.onChange;
+      editor.onSubmit = handlers.onSubmit;
+      editor.onQueueSubmit = handlers.onQueueSubmit;
+      harness.view.beginEditorTextPreview = () => editor.beginTextPreview();
+      harness.view.getEditorText = () => editor.getText();
+      harness.view.setEditorInputEnabled = (enabled) => {
+        harness.view.editorEnabledUpdates.push(enabled);
+        editor.setInputEnabled(enabled);
+      };
+      harness.view.submitEditor = vi.fn((mode) => editor.submit(mode));
+      harness.controller.createSpeechTranscription = vi.fn(() => ({
+        appendAudio: vi.fn(),
+        finish: vi.fn(async () => "um so fix the bug"),
+        abort: vi.fn(),
+      }));
+      return { ...harness, audioPath, editor, cleanupRequests };
+    };
+    const cleanedResponse = (text) =>
+      Response.json({
+        status: "completed",
+        output: [{ type: "message", content: [{ type: "output_text", text }] }],
+      });
+
+    it("cycles the style with Tab only while recording and applies it on stop", async () => {
+      const cleanup = Promise.withResolvers();
+      const { controller, view, session, editor, audioPath, cleanupRequests } =
+        await createRecordingHarness(() => cleanup.promise);
+      try {
+        controller.start();
+        controller.getInputHandlers().onCycleRecordingStyle();
+        expect(view.status.editor).toEqual(expect.objectContaining({ mode: "normal" }));
+        expect(view.status.editor).not.toHaveProperty("recordingStyle");
+        editor.setText("draft ");
+        await controller.onUserInput("/listen");
+        expect(view.status.editor).toMatchObject({ mode: "recording", recordingStyle: "off" });
+        editor.handleInput("\t");
+        expect(view.status.editor.recordingStyle).toBe("default");
+        editor.handleInput("\t");
+        expect(view.status.editor.recordingStyle).toBe("off");
+        editor.handleInput("\t");
+        expect(view.status.editor.recordingStyle).toBe("default");
+        expect(editor.getText()).toBe("draft ");
+
+        editor.handleInput("\r");
+        await waitUntil(() => cleanupRequests.length === 1);
+        expect(view.status.editor.mode).toBe("normal");
+        expect(view.status.footer).toEqual({ type: "activity", label: expect.any(String) });
+        expect(editor.getText()).toBe("draft um so fix the bug");
+        expect(view.editorEnabledUpdates.at(-1)).toBe(false);
+        editor.handleInput("\t");
+        expect(cleanupRequests[0].body.model).toBe("gpt-6.1-terra");
+        expect(JSON.parse(cleanupRequests[0].body.input).transcript).toBe("um so fix the bug");
+        expect(session.submit).not.toHaveBeenCalled();
+
+        cleanup.resolve(cleanedResponse("So, fix the bug."));
+        await controller.listenTransition;
+        await waitUntil(() => session.submit.mock.calls.length === 1);
+        expect(stripTauUserDisplayText(session.submit.mock.calls[0][0])).toBe(
+          "draft So, fix the bug.",
+        );
+        expect(view.status.footer.type).toBe("regular");
+        expect(view.transcriptNotices).toEqual([]);
+
+        await controller.toggleListenCapture();
+        expect(view.status.editor).toMatchObject({ mode: "recording", recordingStyle: "off" });
+        await controller.cancelListenCapture();
+      } finally {
+        await controller.dispose();
+        await rm(audioPath, { force: true });
+      }
+    });
+
+    it("keeps the transcript and does not submit when cleanup fails", async () => {
+      const { controller, view, session, editor, audioPath } = await createRecordingHarness(
+        async () => new Response(null, { status: 500 }),
+      );
+      try {
+        await controller.onUserInput("/listen");
+        editor.handleInput("\t");
+        editor.handleInput("\r");
+        await waitUntil(() => controller.listenTransition === undefined);
+        expect(editor.getText()).toBe("um so fix the bug");
+        expect(view.editorEnabledUpdates.at(-1)).toBe(true);
+        expect(view.transcriptNotices).toEqual([
+          expect.objectContaining({ text: "failed to clean up speech", tone: "error" }),
+        ]);
+        expect(controller.retainedListenAudio).toBeUndefined();
+        expect(view.submitEditor).not.toHaveBeenCalled();
+        expect(session.submit).not.toHaveBeenCalled();
+        expect(controller.editorHiddenSystemMessages).toHaveLength(1);
+      } finally {
+        await controller.dispose();
+        await rm(audioPath, { force: true });
+      }
+    });
+
+    it.each(["interrupt", "dispose"])(
+      "drops a pending cleanup on %s without inserting stale text",
+      async (action) => {
+        const cleanup = Promise.withResolvers();
+        const { controller, view, session, editor, audioPath, cleanupRequests } =
+          await createRecordingHarness(() => cleanup.promise);
+        try {
+          editor.setText("draft");
+          await controller.onUserInput("/listen");
+          editor.handleInput("\t");
+          controller.getInputHandlers().onToggleRecording();
+          await waitUntil(() => cleanupRequests.length === 1);
+          await controller[action]();
+          expect(cleanupRequests[0].signal.aborted).toBe(true);
+          expect(editor.getText()).toBe("draft");
+          cleanup.resolve(cleanedResponse("Stale."));
+          await controller.listenTransition;
+          await flush();
+          expect(editor.getText()).toBe("draft");
+          expect(view.editorEnabledUpdates.at(-1)).toBe(true);
+          expect(view.transcriptNotices).toEqual([]);
+          expect(controller.editorHiddenSystemMessages).toEqual([]);
+          expect(session.submit).not.toHaveBeenCalled();
+          await expect(readFile(audioPath)).rejects.toMatchObject({ code: "ENOENT" });
+        } finally {
+          await controller.dispose();
+          await rm(audioPath, { force: true });
+        }
+      },
+    );
+  });
+
   it("finishes voice input at its recording limit", async () => {
     const audioPath = join(tmpdir(), `tau-session-listen-limit-${Date.now()}.wav`);
     await writeFile(audioPath, Buffer.alloc(2048, 1));
@@ -6567,7 +6722,7 @@ describe("SessionChatController", () => {
     const { session, view, controller } = await createControllerHarness({
       targetLabel: "in-process",
       deps: createMockDeps(spawn),
-      config: { apiKeys: { google: "key" } },
+      config: { apiKeys: { elevenlabs: "key" } },
     });
     controller.createSpeechTranscription = vi.fn(() => transcription);
 
@@ -6606,10 +6761,13 @@ describe("SessionChatController", () => {
     try {
       editor.setText("typed ");
       controller.beginListenPreview();
-      await controller.transcribeListenAudioFile(audioPath, 1000, {
-        finish: async () => "dictated",
-        abort() {},
-      });
+      await controller.transcribeListenAudioFile(
+        { audioPath, durationMs: 1000, cleanupStyle: "off" },
+        {
+          finish: async () => "dictated",
+          abort() {},
+        },
+      );
       if (clearDraft) editor.setText("");
       editor.handleInput(" and edited");
       controller.isStreaming = method !== "submit";
@@ -6647,7 +6805,10 @@ describe("SessionChatController", () => {
       controller.beginListenPreview();
       const preview = controller.listenPreview;
       preview.update("provisional");
-      const task = controller.transcribeListenAudioFile(audioPath, 1000, transcription);
+      const task = controller.transcribeListenAudioFile(
+        { audioPath, durationMs: 1000, cleanupStyle: "off" },
+        transcription,
+      );
       await waitUntil(() => controller.activeListenTranscription === transcription);
       result.reject(new Error("disconnected"));
       await task;
@@ -6695,7 +6856,10 @@ describe("SessionChatController", () => {
         const preview = controller.listenPreview;
         preview.update("English.\nSuomeksi. ");
         const task = controller.runListenTransition(() =>
-          controller.transcribeListenAudioFile(audioPath, 1000, transcription),
+          controller.transcribeListenAudioFile(
+            { audioPath, durationMs: 1000, cleanupStyle: "off" },
+            transcription,
+          ),
         );
         await waitUntil(() => controller.activeListenTranscription === transcription);
         editor.handleInput("x");
@@ -6734,6 +6898,7 @@ describe("SessionChatController", () => {
     controller.retainedListenAudio = {
       audioPath,
       durationMs: SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS + 1,
+      cleanupStyle: "off",
     };
     controller.createSpeechTranscription = vi.fn();
 
@@ -6756,86 +6921,92 @@ describe("SessionChatController", () => {
   });
 
   it.each([
-    ["failure", "service unavailable"],
-    ["malformed transcript", "transcription result was malformed"],
-  ])("retains voice input after %s and retries it into the editor", async (outcome, error) => {
-    const audioPath = join(tmpdir(), `tau-session-listen-${outcome}-${Date.now()}.wav`);
-    await writeFile(audioPath, Buffer.alloc(2048, 1));
-    let interactionCount = 0;
-    const fetchMock = vi.fn(async (input, options = {}) => {
-      const url = String(input);
-      if (url.endsWith("/upload/v1beta/files")) {
-        return new Response(null, {
-          headers: { "x-goog-upload-url": "https://upload.example.test/audio" },
-        });
-      }
-      if (url === "https://upload.example.test/audio") {
-        return new Response(
-          JSON.stringify({
-            file: { name: "files/audio", uri: "https://example.test/audio" },
-          }),
-        );
-      }
-      if (url.endsWith("/interactions")) {
-        interactionCount += 1;
-        if (interactionCount === 1 && outcome === "failure") throw new Error(error);
-        return new Response(
-          JSON.stringify({
-            steps: [
+    ["network failure", "service unavailable"],
+    ["HTTP failure", "ElevenLabs transcription failed (HTTP 503)"],
+  ])(
+    "retains voice input and its style after %s and retries it into the editor",
+    async (outcome, error) => {
+      const audioPath = join(tmpdir(), `tau-session-listen-retry-${Date.now()}.wav`);
+      await writeFile(audioPath, Buffer.alloc(2048, 1));
+      let transcriptionCount = 0;
+      const cleanupInputs = [];
+      const fetchMock = vi.fn(async (input, options = {}) => {
+        const url = String(input);
+        if (url === "https://api.elevenlabs.io/v1/speech-to-text") {
+          transcriptionCount += 1;
+          if (transcriptionCount === 1) {
+            if (outcome === "network failure") throw new Error(error);
+            return new Response(null, { status: 503 });
+          }
+          return Response.json({ text: "recovered transcript" });
+        }
+        if (url === "https://api.openai.com/v1/responses") {
+          const body = JSON.parse(options.body);
+          if (body.model !== "gpt-6.1-terra") return new Response(null, { status: 500 });
+          cleanupInputs.push(JSON.parse(body.input));
+          return Response.json({
+            status: "completed",
+            output: [
               {
-                type: "model_output",
-                content: [
-                  {
-                    type: "text",
-                    text: interactionCount === 1 ? null : "recovered transcript",
-                  },
-                ],
+                type: "message",
+                content: [{ type: "output_text", text: "Recovered transcript." }],
               },
             ],
-          }),
-        );
-      }
-      if (options.method === "DELETE") return new Response(null, { status: 204 });
-      throw new Error(`unexpected request: ${url}`);
-    });
-    const webSocketFactory = vi.fn();
-    const { session, view, controller } = await createControllerHarness({
-      targetLabel: "in-process",
-      deps: createMockDeps(),
-      config: { apiKeys: { google: "gemini-key" } },
-      speechToTextDeps: { fetchImpl: fetchMock, webSocketFactory },
-    });
-    controller.listenRecording = {
-      audioPath,
-      startedAt: Date.now(),
-      stopRequested: false,
-      abortController: new AbortController(),
-      completion: Promise.resolve(),
-    };
-
-    try {
-      await controller.stopListenCapture();
-      await expect(readFile(audioPath)).resolves.toHaveLength(2048);
-      expect(view.transcriptNotices.at(-1)).toEqual({
-        text: "failed to transcribe speech",
-        tone: "error",
-        content: [
-          error,
-          `recording retained at ${audioPath}`,
-          "run /listen retry to try again, or /listen discard to delete it",
-        ],
+          });
+        }
+        throw new Error(`unexpected request: ${url}`);
       });
+      const webSocketFactory = vi.fn();
+      const { view, controller } = await createControllerHarness({
+        targetLabel: "in-process",
+        deps: createMockDeps(),
+        config: {
+          apiKeys: { elevenlabs: "eleven-key", openai: "openai-key" },
+          speech: { personalVocabulary: ["Tau"] },
+        },
+        speechToTextDeps: { fetchImpl: fetchMock, webSocketFactory },
+      });
+      controller.listenRecording = {
+        audioPath,
+        startedAt: Date.now(),
+        stopRequested: false,
+        cleanupStyle: "default",
+        abortController: new AbortController(),
+        completion: Promise.resolve(),
+      };
 
-      await controller.onUserInput("/listen retry");
-      expect(view.editorText).toBe("recovered transcript");
-      await expect(readFile(audioPath)).rejects.toMatchObject({ code: "ENOENT" });
-    } finally {
-      await rm(audioPath, { force: true });
-    }
+      try {
+        await controller.stopListenCapture();
+        await expect(readFile(audioPath)).resolves.toHaveLength(2048);
+        expect(controller.retainedListenAudio).toMatchObject({
+          audioPath,
+          cleanupStyle: "default",
+        });
+        expect(cleanupInputs).toEqual([]);
+        expect(view.transcriptNotices.at(-1)).toEqual({
+          text: "failed to transcribe speech",
+          tone: "error",
+          content: [
+            error,
+            `recording retained at ${audioPath}`,
+            "run /listen retry to try again, or /listen discard to delete it",
+          ],
+        });
 
-    expect(interactionCount).toBe(2);
-    expect(webSocketFactory).not.toHaveBeenCalled();
-  });
+        await controller.onUserInput("/listen retry");
+        expect(view.editorText).toBe("Recovered transcript.");
+        await expect(readFile(audioPath)).rejects.toMatchObject({ code: "ENOENT" });
+      } finally {
+        await rm(audioPath, { force: true });
+      }
+
+      expect(transcriptionCount).toBe(2);
+      expect(cleanupInputs).toEqual([
+        { transcript: "recovered transcript", vocabulary: expect.arrayContaining(["Tau"]) },
+      ]);
+      expect(webSocketFactory).not.toHaveBeenCalled();
+    },
+  );
 
   it("discards retained voice input only when requested", async () => {
     const audioPath = join(tmpdir(), `tau-session-listen-discard-${Date.now()}.wav`);
@@ -6844,7 +7015,7 @@ describe("SessionChatController", () => {
       targetLabel: "in-process",
       deps: createMockDeps(),
     });
-    controller.retainedListenAudio = { audioPath, durationMs: 1_000 };
+    controller.retainedListenAudio = { audioPath, durationMs: 1_000, cleanupStyle: "off" };
 
     try {
       await controller.onUserInput("/listen discard");
@@ -6877,20 +7048,10 @@ describe("SessionChatController", () => {
       }
       throw new Error(`unexpected command: ${command}`);
     });
-    const sockets = [];
-    const webSocketFactory = vi.fn(() => {
-      const socket = new EventEmitter();
-      socket.send = vi.fn((_data, callback) => callback?.());
-      socket.close = vi.fn();
-      socket.terminate = vi.fn();
-      sockets.push(socket);
-      return socket;
-    });
-    const readSentVocabulary = async (socket) => {
-      socket.emit("open");
-      await waitUntil(() => socket.send.mock.calls.length > 0);
-      return JSON.parse(socket.send.mock.calls[0][0]).setup.inputAudioTranscription
-        .customVocabulary;
+    const webSocketFactory = createIdleSpeechWebSocketFactory();
+    const readSentVocabulary = async (index) => {
+      await waitUntil(() => webSocketFactory.mock.calls.length > index);
+      return new URL(webSocketFactory.mock.calls[index][0]).searchParams.getAll("keyterms");
     };
     const session = new FakeSession(
       createProtocolSnapshot({ catalog: { speechVocabulary: ["Session", "Shared"] } }),
@@ -6899,7 +7060,7 @@ describe("SessionChatController", () => {
       session,
       deps: createMockDeps(spawn),
       config: {
-        apiKeys: { google: "gemini-key" },
+        apiKeys: { elevenlabs: "eleven-key" },
         speech: { personalVocabulary: ["Shared", "Personal"] },
       },
       speechToTextDeps: { webSocketFactory },
@@ -6911,19 +7072,11 @@ describe("SessionChatController", () => {
         catalog: { ...session.snapshotValue.catalog, speechVocabulary: ["Reloaded"] },
       });
       await controller.onUserInput("/reload");
-      await expect(readSentVocabulary(sockets[0])).resolves.toEqual([
-        "Session",
-        "Shared",
-        "Personal",
-      ]);
+      await expect(readSentVocabulary(0)).resolves.toEqual(["Session", "Shared", "Personal"]);
 
       await controller.cancelListenCapture();
       await controller.onUserInput("/listen");
-      await expect(readSentVocabulary(sockets[1])).resolves.toEqual([
-        "Reloaded",
-        "Shared",
-        "Personal",
-      ]);
+      await expect(readSentVocabulary(1)).resolves.toEqual(["Reloaded", "Shared", "Personal"]);
       await controller.dispose();
     } finally {
       await rm(audioPath, { force: true });
@@ -6957,11 +7110,15 @@ describe("SessionChatController", () => {
       targetLabel: "in-process",
       deps: createMockDeps(spawn),
       config: {
-        apiKeys: { google: "gemini-key" },
+        apiKeys: { elevenlabs: "eleven-key" },
       },
       speechToTextDeps: { webSocketFactory: createIdleSpeechWebSocketFactory() },
     });
-    controller.retainedListenAudio = { audioPath: retainedPath, durationMs: 1_000 };
+    controller.retainedListenAudio = {
+      audioPath: retainedPath,
+      durationMs: 1_000,
+      cleanupStyle: "off",
+    };
 
     try {
       await controller.onUserInput("/listen");
@@ -7003,10 +7160,14 @@ describe("SessionChatController", () => {
     const { view, controller } = await createControllerHarness({
       targetLabel: "in-process",
       deps: createMockDeps(spawn),
-      config: { apiKeys: { google: "gemini-key" } },
+      config: { apiKeys: { elevenlabs: "eleven-key" } },
       speechToTextDeps: { webSocketFactory: createIdleSpeechWebSocketFactory() },
     });
-    controller.retainedListenAudio = { audioPath: retainedPath, durationMs: 1_000 };
+    controller.retainedListenAudio = {
+      audioPath: retainedPath,
+      durationMs: 1_000,
+      cleanupStyle: "off",
+    };
 
     if (outcome === "timeout") vi.useFakeTimers();
     try {
@@ -7025,6 +7186,7 @@ describe("SessionChatController", () => {
       expect(controller.retainedListenAudio).toEqual({
         audioPath: retainedPath,
         durationMs: 1_000,
+        cleanupStyle: "off",
       });
       if (error) {
         expect(view.transcriptNotices.at(-1)).toEqual({
@@ -7075,6 +7237,7 @@ describe("SessionChatController", () => {
       audioPath,
       startedAt: Date.now(),
       stopRequested: false,
+      cleanupStyle: "off",
       abortController,
       completion: capture.promise,
       transcription,
@@ -7129,6 +7292,7 @@ describe("SessionChatController", () => {
       audioPath,
       startedAt: Date.now(),
       stopRequested: false,
+      cleanupStyle: "off",
       abortController: new AbortController(),
       completion: Promise.resolve(),
       transcription,
@@ -7166,7 +7330,7 @@ describe("SessionChatController", () => {
     const spawn = vi.fn(() => created.promise);
     const { view, controller } = await createControllerHarness({
       deps: createMockDeps(spawn),
-      config: { apiKeys: { google: "key" } },
+      config: { apiKeys: { elevenlabs: "key" } },
     });
     view.editorText = "draft";
     try {
@@ -7204,7 +7368,7 @@ describe("SessionChatController", () => {
       });
       const { view, session, controller } = await createControllerHarness({
         deps: createMockDeps(),
-        config: { apiKeys: { google: "key" } },
+        config: { apiKeys: { elevenlabs: "key" } },
         speechToTextDeps: { fetchImpl },
       });
       view.editorText = "draft";
@@ -7221,12 +7385,13 @@ describe("SessionChatController", () => {
             audioPath,
             startedAt: Date.now(),
             stopRequested: false,
+            cleanupStyle: "off",
             abortController,
             completion: capture.promise,
             transcription,
           };
         } else {
-          controller.retainedListenAudio = { audioPath, durationMs: 1000 };
+          controller.retainedListenAudio = { audioPath, durationMs: 1000, cleanupStyle: "off" };
           retry = controller.onUserInput("/listen retry");
           await waitUntil(() => requestSignal !== undefined);
         }
@@ -7263,7 +7428,7 @@ describe("SessionChatController", () => {
       targetLabel: "in-process",
       deps: createMockDeps(),
     });
-    controller.retainedListenAudio = { audioPath, durationMs: 1_000 };
+    controller.retainedListenAudio = { audioPath, durationMs: 1_000, cleanupStyle: "off" };
 
     try {
       await controller.dispose();

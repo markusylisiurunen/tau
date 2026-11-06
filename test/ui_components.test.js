@@ -1429,6 +1429,18 @@ test("RewindPickerComponent confirms and cancels selection", () => {
   expect(cancelled).toBe(true);
 });
 
+test("CustomEditor routes Tab to the disabled-input handler only while input is disabled", () => {
+  const editor = new CustomEditor(createUiTheme("plain"));
+  editor.onDisabledTab = vi.fn();
+  editor.setText("draft");
+  editor.handleInput("\t");
+  expect(editor.onDisabledTab).not.toHaveBeenCalled();
+  editor.setInputEnabled(false);
+  editor.handleInput("\t");
+  expect(editor.onDisabledTab).toHaveBeenCalledOnce();
+  expect(editor.getText()).toBe("draft");
+});
+
 test("recording shortcuts distinguish presses, double taps, and bracketed paste", () => {
   vi.useFakeTimers();
   try {

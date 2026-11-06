@@ -4,6 +4,7 @@ import { resolveThemeTokensForAppearance, type ThemeDefinition } from "../core/c
 import type { RecordingShortcut } from "../core/config/schema.js";
 import type { SubagentEvent } from "../core/subagents/types.js";
 import type { ReasoningEffort } from "../core/types.js";
+import type { SpeechCleanupStyle } from "../core/utils/speech_cleanup.js";
 import type {
   SessionProtocolFeedbackTone,
   SessionProtocolPendingUserMessage,
@@ -35,14 +36,18 @@ import type { ToolUiModel } from "./ui/tool_ui_model.js";
 
 export type ChatInputMode = "normal" | "bash" | "bash_incognito" | "recording";
 
+export type ChatViewEditorStatus = {
+  personaName: string;
+  reasoningLabel: string;
+  reasoning?: ReasoningEffort;
+} & (
+  | { mode: Exclude<ChatInputMode, "recording"> }
+  | { mode: "recording"; recordingStyle: SpeechCleanupStyle }
+);
+
 export type ChatViewStatus = {
   footer: FooterStatus;
-  editor: {
-    mode: ChatInputMode;
-    personaName: string;
-    reasoningLabel: string;
-    reasoning?: ReasoningEffort;
-  };
+  editor: ChatViewEditorStatus;
 };
 
 export type ChatViewInputHandlers = {
@@ -52,6 +57,7 @@ export type ChatViewInputHandlers = {
   onCtrlP?: () => void;
   onCtrlS?: () => void;
   onToggleRecording?: () => void;
+  onCycleRecordingStyle?: () => void;
   recordingShortcut?: RecordingShortcut;
   onEscape?: () => void;
   onAltUp?: () => void;
@@ -402,6 +408,7 @@ export class TuiChatView implements ChatView {
     this.editor.onSubmit = handlers.onSubmit;
     this.editor.onQueueSubmit = handlers.onQueueSubmit;
     this.editor.onDisabledSubmit = handlers.onDisabledSubmit;
+    this.editor.onDisabledTab = handlers.onCycleRecordingStyle;
   }
 
   setAutocompleteProvider(provider: AutocompleteProvider): void {
@@ -468,9 +475,10 @@ export class TuiChatView implements ChatView {
     if (state.mode === "recording") {
       this.editor.setHeader(
         `${this.getRecordingIndicator()} recording (${this.getRecordingDurationLabel()})`,
-        "",
+        state.recordingStyle,
         {
           leftStyle: this.editor.borderColor,
+          rightStyle: state.recordingStyle === "off" ? undefined : this.editor.borderColor,
         },
       );
       return;

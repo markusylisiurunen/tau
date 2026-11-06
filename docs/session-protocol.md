@@ -144,7 +144,7 @@ catalog.mcp:
 
 A listed server may not be connected yet, because servers connect on first use. Connection settings and credentials are never included. The host sets this field when it loads the session, and it stays the same until the host loads the session again.
 
-`catalog.speechVocabulary` holds the session's merged [`speech.vocabulary`](config-reference.md#speech) terms. The list has at most 100 terms and at most 10,000 Unicode characters in total. Each term is trimmed and non-empty, has at most 100 Unicode characters, and contains no angle brackets or line breaks. Clients that transcribe speech use these terms for this session. The host resolves them again on load, reload, and persona changes.
+`catalog.speechVocabulary` holds the session's merged [`speech.vocabulary`](config-reference.md#speech) terms. The list has at most 1,000 terms and at most 50,000 Unicode characters in total. Each term is trimmed and non-empty, has at most 50 Unicode characters and 5 words, and contains no line breaks or any of the characters `<`, `>`, `{`, `}`, `[`, `]`, and `\`. Clients that transcribe speech use these terms for this session. The host resolves them again on load, reload, and persona changes.
 
 `bootstrap.prompt.subagentSystemPrompt` is present when subagents can be started. It holds the base prompt, and Tau adds each native subagent's role section when it starts that subagent. Each catalog persona has a `subagentLaunchModels` allowlist. Subagent records have task titles and IDs; there are no worker types. Each record in `agents` also has `parentId`, the ID of the agent that started it, and `depth`, which is 1 or 2. A subagent of the main agent has depth 1, and its `parentId` is the session ID.
 

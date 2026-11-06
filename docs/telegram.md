@@ -79,6 +79,7 @@ Each `bots.<id>` object supports:
 | `allowedChatIds` | No | Integer chat IDs allowed to interact with the bot; also opts groups in. |
 | `defaultProjectId` | No | Initial project preference, and must be allowed for this bot. |
 | `systemMessage` | No | Additional instruction for turns from this bot. |
+| `speechCleanupStyle` | No | `off` or `default`. Cleans up voice note transcripts for this bot with the [`default` style](tui.md#cleanup-styles). Defaults to `off`. |
 
 The runner retries failed polling after 1,000 ms and uses a 30-second Telegram long-poll timeout.
 
@@ -201,7 +202,9 @@ Sending a file only queues it, and its caption is kept as metadata. The next tex
 
 Files are stored in the execution environment's temporary directory, so system cleanup can remove them. Queued files and group context are cleared on shutdown. Treat file contents and metadata as untrusted.
 
-Voice transcription uses Gemini with `GEMINI_API_KEY`, or else `apiKeys.google`. Optional spelling hints use GPT-6 Luna (reasoning disabled) with OpenAI credentials. The session's [`speech.vocabulary`](config-reference.md#speech) terms, then the runner's global terms, precede extracted hints and work without OpenAI credentials or conversation context. Without a selected session, Tau does not download or transcribe audio. Transcription fails if the session is not ready. Gemini transcribes verbatim with `gemini-3.5-transcribe`, using English (`en-US`) and Finnish (`fi-FI`) hints, and Tau tries to delete the uploaded file afterward. Receiving files needs no Google key. See [credentials](credentials.md).
+Voice transcription uses ElevenLabs Scribe v2 with `ELEVENLABS_API_KEY`, or else `apiKeys.elevenlabs`. Scribe detects the spoken language and transcribes in non-verbatim mode, which leaves out filler words and false starts. Optional spelling hints use GPT-6 Luna (reasoning disabled) with OpenAI credentials. The session's [`speech.vocabulary`](config-reference.md#speech) terms, then the runner's global terms, precede extracted hints and work without OpenAI credentials or conversation context. Without a selected session, Tau does not download or transcribe audio. Transcription fails if the session is not ready. Receiving files needs no ElevenLabs key. See [credentials](credentials.md).
+
+When the bot's `speechCleanupStyle` is `default`, GPT-6.1 Terra (reasoning disabled) cleans up each transcript before it is echoed and submitted. Cleanup needs OpenAI credentials. If cleanup fails, the bot uses the transcript without cleanup. It also sends a warning, except for group audio being collected silently as context.
 
 `/tts_on` rewrites text with `gpt-6-luna` (reasoning disabled) and generates speech with Eleven v4 Turbo. It requires both OpenAI and ElevenLabs credentials and runner `ffmpeg` with Opus. Voice notes use brisk delivery and 1.15× speed. See [`speech` configuration](config-reference.md#speech) for default and custom voice selection. Source and rewritten text are limited to 10,000 Unicode characters each, and audio to 32 MiB. Rewriting times out after one minute and the whole job after five. Jobs are not saved. On failure, the bot sends `voice response failed. please try again.`; the text reply is unaffected and details go to the logs.
 
@@ -248,7 +251,7 @@ Do not verify bot tokens, provider keys, Access secrets, transcript contents, or
 
 **A message sent during work changes direction.** While a turn is running, a new message steers it instead of waiting in a queue. Wait for the turn to finish before sending an unrelated task, or use `/interrupt` first.
 
-**Audio or an attachment fails.** The reply or runner log names the step that failed: download, saving, format, or transcription. Check that Telegram can deliver the file to the bot, the type is supported, the runner can write to its temporary directory, and Gemini accepts the media type. Transcription needs `GEMINI_API_KEY` or `apiKeys.google` for the runner process; restart the runner after setting it. Changing a workspace's environment does not affect the runner. Do not log media or transcripts to debug this.
+**Audio or an attachment fails.** The reply or runner log names the step that failed: download, saving, format, or transcription. Check that Telegram can deliver the file to the bot, the type is supported, the runner can write to its temporary directory, and ElevenLabs accepts the media type. Transcription needs `ELEVENLABS_API_KEY` or `apiKeys.elevenlabs` for the runner process; restart the runner after setting it. Changing a workspace's environment does not affect the runner. Do not log media or transcripts to debug this.
 
 **Voice replies fail.** `/tts_on` needs OpenAI and ElevenLabs credentials and `ffmpeg` with Opus on the runner. Check [`speech.voiceId`](config-reference.md#speech) if a configured voice is unavailable.
 

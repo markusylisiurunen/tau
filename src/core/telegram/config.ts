@@ -8,6 +8,7 @@ import {
   type TelegramProjectConfig as SchemaTelegramProjectConfig,
 } from "../config/schema.js";
 import { ReasoningEffortSchema } from "../types.js";
+import { speechCleanupStyleSchema } from "../utils/speech_cleanup.js";
 
 export type TelegramBotConfig = SchemaTelegramBotConfig;
 export type TelegramProjectConfig = SchemaTelegramProjectConfig;
@@ -95,6 +96,7 @@ const telegramBotSchema = z
     allowedChatIds: idListSchema.optional(),
     defaultProjectId: nonEmptyStringSchema.optional(),
     systemMessage: nonEmptyStringSchema.optional(),
+    speechCleanupStyle: speechCleanupStyleSchema.optional(),
   })
   .strict();
 

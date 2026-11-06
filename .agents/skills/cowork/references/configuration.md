@@ -8,7 +8,7 @@
 - `issue-implement`
 - `pull-request-review`
 - `pull-request-deslop`
-- `pull-request-fix` (the persistent PR conversation, including submitted diff feedback)
+- `pull-request-fix` (the persistent PR conversation, including submitted GitHub reviews and diff feedback)
 - `pull-request-explain`
 - `pull-request-diff` (the hosted discussion)
 
@@ -75,6 +75,8 @@ Hooks keep the service's `TMPDIR`, which points to the `/agent-tmp` volume. The 
 Hooks come from the trusted default branch. Cowork takes a snapshot of `activate` and `idle` before running `init`, so later branch changes cannot replace those scripts. A retained workspace keeps these pinned hooks.
 
 `activate` and `idle` can encounter a dirty worktree, a different branch, or missing component directories. Detect the files needed for setup, preserve tracked and untracked work, and never reset, clean, stash, or switch branches as lifecycle housekeeping. Failed runs can be retried, so make idle cleanup idempotent.
+
+Cowork asks Tau to keep a persistent session's live runtime loaded for three days after each request, so idle subagents from earlier requests can be reused. This is best effort. If Tau restarts or unloads the runtime anyway, its subagents are lost, and the next request resumes the saved session without them. The three days are separate from the 14-day expiry of the conversation and workspace. `idle` does not wait for this retention or for running subagents and background jobs, so it can remove state they still use. Limit `idle` to state that later turns can recreate.
 
 A trusted hook can still execute untrusted worktree code indirectly. For example, `npm ci` can run scripts from the checked-out `package.json`. Use `--ignore-scripts` where appropriate, or use an isolated runner for untrusted branches. Do not run a program from the worktree just because it exists.
 

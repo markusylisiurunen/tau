@@ -23,11 +23,11 @@
     },
     ".agents/skills/cowork/references/configuration.md": {
       "type": "file",
-      "hash": "db746ce13f543237d194c38983c3a76e7ae184fcf2a6ff80a3fc73a0a4b55ab0"
+      "hash": "8036b8ea1d2ebf803066128f0d5caf205f8edfbf9ff489ebc8d9972ec61dea71"
     },
     ".agents/skills/cowork/SKILL.md": {
       "type": "file",
-      "hash": "e0f61e7790bbdbc1809520003ae8be601bc4fc84b2daaff1e9c6d96f2fe62592"
+      "hash": "21be877d050ec341834012b47d11f21663308bd4b7f1c08fdd150003f8d6ed67"
     },
     ".agents/skills/decision-review/SKILL.md": {
       "type": "file",
@@ -295,7 +295,7 @@
     },
     ".tau/skills/subagents/SKILL.md": {
       "type": "file",
-      "hash": "4b720625c4f7cc460cfcc77dc05484c8eb84711f97a9bd34dcc4c90ee783befb"
+      "hash": "7a7f4ac0d839e4523a794a136439e861211a84e15ac1b7fb7567d3bf28e37d24"
     },
     "AGENTS.md": {
       "type": "section",

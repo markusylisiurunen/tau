@@ -191,7 +191,7 @@
     },
     ".cowork/config.json": {
       "type": "file",
-      "hash": "a68c88a79cf0055bb426317f192651aa90d44e23291254a3e2a504ad2d126b79"
+      "hash": "214a8e772981b6a015013a1d220b147c8a2e70a9b7e977d02366d25e355e1c8d"
     },
     ".cowork/prompts/issue-implement.append.md": {
       "type": "file",

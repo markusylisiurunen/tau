@@ -225,8 +225,10 @@ describe("session_protocol", () => {
       [""],
       ["<term>"],
       ["a\nb"],
-      ["語".repeat(101)],
-      Array(101).fill("term"),
+      ["語".repeat(51)],
+      ["one two three four five six"],
+      ["bad[term]"],
+      Array(1001).fill("term"),
     ]) {
       expect(
         validateSessionProtocolResult("session.snapshot", {
@@ -235,7 +237,7 @@ describe("session_protocol", () => {
         }).ok,
       ).toBe(false);
     }
-    const speechVocabulary = Array.from({ length: 100 }, (_, i) => `${i}${"語".repeat(98)}`);
+    const speechVocabulary = Array.from({ length: 1000 }, (_, i) => `${i}${"語".repeat(47)}`);
     expect(
       validateSessionProtocolResult("session.snapshot", {
         ...snapshot,

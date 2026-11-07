@@ -125,6 +125,27 @@ describe("FileSessionStore", () => {
     });
   });
 
+  it("normalizes version 15 vocabulary for Scribe without changing the conversation", async () => {
+    await withTempStore(async (store, directory) => {
+      await mkdir(directory, { recursive: true });
+      const snapshot = createSnapshot("old-vocabulary", "keep this conversation");
+      snapshot.catalog.speechVocabulary = [
+        "Tau",
+        "a".repeat(100),
+        "bad[term]",
+        "one two three four five six",
+        "valid term",
+      ];
+      await writeFile(
+        join(directory, `${Buffer.from(snapshot.sessionId).toString("base64url")}.json`),
+        JSON.stringify({ format: STORED_SESSION_DOCUMENT_FORMAT, version: 15, snapshot }),
+      );
+      const loaded = await store.loadSession(snapshot.sessionId);
+      expect(loaded.catalog.speechVocabulary).toEqual(["Tau", "valid term"]);
+      expect(loaded.messages).toEqual(snapshot.messages);
+    });
+  });
+
   it("persists, loads, and lists snapshots", async () => {
     await withTempStore(async (store) => {
       await expect(

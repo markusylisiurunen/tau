@@ -57,6 +57,7 @@ export class CustomEditor extends Editor {
   public beforeSubmit?: (text: string) => boolean;
   public onQueueSubmit?: (text: string) => void;
   public onDisabledSubmit?: (mode: EditorSubmissionMode) => void;
+  public onDisabledTab?: () => void;
 
   constructor(theme: Theme) {
     super(theme.editorTheme);
@@ -203,6 +204,7 @@ export class CustomEditor extends Editor {
       else if (matchesKey(data, Key.escape)) this.onEscape?.();
       else if (matchesKey(data, Key.enter)) this.onDisabledSubmit?.("steer");
       else if (matchesKey(data, Key.ctrl(Key.enter))) this.onDisabledSubmit?.("queue");
+      else if (matchesKey(data, Key.tab)) this.onDisabledTab?.();
       return;
     }
     const previousText = this.getText();

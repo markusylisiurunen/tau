@@ -47,6 +47,28 @@ describe("telegram cli", () => {
     ).rejects.toThrow();
   });
 
+  it.each([undefined, "off", "default"])(
+    "loads bot speech cleanup style %s",
+    (speechCleanupStyle) => {
+      const { path } = writeConfig({
+        bots: { bot: { botToken: "token", startup: { source: "workspace" }, speechCleanupStyle } },
+        projects: {},
+      });
+      expect(loadTelegramConfig(path).bots.bot.speechCleanupStyle).toBe(speechCleanupStyle);
+    },
+  );
+
+  it.each(["unknown", true, null])(
+    "rejects invalid speech cleanup style %j",
+    (speechCleanupStyle) => {
+      const { path } = writeConfig({
+        bots: { bot: { botToken: "token", startup: { source: "workspace" }, speechCleanupStyle } },
+        projects: {},
+      });
+      expect(() => loadTelegramConfig(path)).toThrow();
+    },
+  );
+
   it("loads bot environments without expanding or trimming values", () => {
     const env = { GH_CONFIG_DIR: "/bot/gh", GH_TOKEN: "", VALUE: " $HOME " };
     const { path } = writeConfig({

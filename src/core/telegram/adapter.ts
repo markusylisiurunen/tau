@@ -12,6 +12,7 @@ import { formatAutoCompactThreshold, parseAutoCompactThreshold } from "../comman
 import type { TelegramBotConfig, TelegramProjectConfig } from "../config/schema.js";
 import { getEffectiveAutoCompactThresholdTokens } from "../session/auto_compaction_threshold.js";
 import { formatAdaptiveNumber, formatTokenWindow } from "../utils/format.js";
+import { cleanupSpeechTranscript, type SpeechCleanupStyle } from "../utils/speech_cleanup.js";
 import {
   createSpeechToTextTranscription,
   SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS,
@@ -159,7 +160,7 @@ export type TelegramAdapterOptions = {
   systemMessage?: string;
   allowedUserIds?: number[];
   allowedChatIds?: number[];
-  geminiApiKey?: string;
+  speechCleanupStyle?: SpeechCleanupStyle;
   openAIApiKey?: string;
   elevenLabsApiKey?: string;
   speechVoiceId?: string;
@@ -1299,7 +1300,7 @@ class TelegramAdapterImpl {
   private readonly allowedUserIds?: Set<number>;
   private readonly allowedChatIds?: Set<number>;
   private readonly botUsername: string;
-  private readonly geminiApiKey?: string;
+  private readonly speechCleanupStyle: SpeechCleanupStyle;
   private readonly openAIApiKey?: string;
   private readonly elevenLabsApiKey?: string;
   private readonly speechVoiceId?: string;
@@ -1379,7 +1380,7 @@ class TelegramAdapterImpl {
         ? new Set(options.allowedChatIds)
         : undefined;
     this.botUsername = options.botUsername;
-    this.geminiApiKey = options.geminiApiKey?.trim() || undefined;
+    this.speechCleanupStyle = options.speechCleanupStyle ?? "off";
     this.openAIApiKey = options.openAIApiKey?.trim() || undefined;
     this.elevenLabsApiKey = options.elevenLabsApiKey?.trim() || undefined;
     this.speechVoiceId = options.speechVoiceId;
@@ -2264,8 +2265,11 @@ class TelegramAdapterImpl {
       await this.reply(chatId, `usage: ${command}`);
       return;
     }
-    if (enabled && !this.geminiApiKey) {
-      await this.reply(chatId, "set GEMINI_API_KEY or apiKeys.google to enable voice responses.");
+    if (enabled && !this.elevenLabsApiKey) {
+      await this.reply(
+        chatId,
+        "set ELEVENLABS_API_KEY or apiKeys.elevenlabs to enable voice responses.",
+      );
       return;
     }
 
@@ -2987,11 +2991,11 @@ class TelegramAdapterImpl {
   }
 
   private getSpeechToTextApiKey(): string | undefined {
-    return this.geminiApiKey;
+    return this.elevenLabsApiKey;
   }
 
   private getSpeechToTextApiKeyErrorMessage(action: string): string {
-    return `set GEMINI_API_KEY or apiKeys.google to ${action}`;
+    return `set ELEVENLABS_API_KEY or apiKeys.elevenlabs to ${action}`;
   }
 
   private async transcribeTelegramVoice(
@@ -3024,15 +3028,16 @@ class TelegramAdapterImpl {
       if (options.sessionId && !snapshot) {
         throw new Error("session is not ready for speech input");
       }
+      const vocabulary = composeSpeechVocabulary(
+        snapshot?.catalog.speechVocabulary ?? [],
+        this.personalSpeechVocabulary ?? [],
+      );
       const transcription = createSpeechToTextTranscription({
         mode: "file",
         apiKey,
         openAIApiKey: this.openAIApiKey,
         context: snapshot ? collectSpeechToTextContext(snapshot) : undefined,
-        vocabulary: composeSpeechVocabulary(
-          snapshot?.catalog.speechVocabulary ?? [],
-          this.personalSpeechVocabulary ?? [],
-        ),
+        vocabulary,
         deps: {
           ...this.speechToTextDeps,
           fetchImpl: this.fetchImpl,
@@ -3046,6 +3051,30 @@ class TelegramAdapterImpl {
           },
           { signal: this.abortController.signal },
         );
+        try {
+          transcript = await cleanupSpeechTranscript({
+            transcript,
+            style: this.speechCleanupStyle,
+            context: snapshot ? collectSpeechToTextContext(snapshot) : undefined,
+            apiKey: this.openAIApiKey,
+            vocabulary,
+            signal: this.abortController.signal,
+            fetchImpl: this.fetchImpl,
+          });
+        } catch (error) {
+          this.abortController.signal.throwIfAborted();
+          if (!options.silent) {
+            await this.reply(
+              chatId,
+              `speech cleanup failed; using the original transcript: ${this.formatManagerError(error)}`,
+            ).catch((error) => {
+              this.log("warn", "failed to send speech cleanup warning", {
+                chatId,
+                cause: this.formatManagerError(error),
+              });
+            });
+          }
+        }
       } finally {
         transcription.abort();
       }

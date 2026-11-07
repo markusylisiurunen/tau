@@ -76,10 +76,18 @@ function createJsonResponse(payload, status = 200) {
   });
 }
 
-function createGeminiTranscriptionFetchMock(transcript) {
+function createScribeTranscriptionFetchMock(transcript, cleanup = "Cleaned transcript.") {
   return vi.fn(async (input, options = {}) => {
     const url = getRequestUrl(input);
     if (url === "https://api.openai.com/v1/responses") {
+      if (JSON.parse(options.body).model === "gpt-6.1-terra") {
+        return cleanup === null
+          ? createJsonResponse({}, 503)
+          : createJsonResponse({
+              status: "completed",
+              output: [{ type: "message", content: [{ type: "output_text", text: cleanup }] }],
+            });
+      }
       return createJsonResponse({
         status: "completed",
         output: [
@@ -91,33 +99,10 @@ function createGeminiTranscriptionFetchMock(transcript) {
         ],
       });
     }
-    if (url === "https://generativelanguage.googleapis.com/upload/v1beta/files") {
-      return new Response(null, {
-        headers: { "x-goog-upload-url": "https://upload.example.test/telegram-audio" },
-      });
+    if (url === "https://api.elevenlabs.io/v1/speech-to-text") {
+      return createJsonResponse({ text: transcript });
     }
-    if (url === "https://upload.example.test/telegram-audio") {
-      return createJsonResponse({
-        file: {
-          name: "files/telegram-audio",
-          uri: "https://generativelanguage.googleapis.com/v1beta/files/telegram-audio",
-        },
-      });
-    }
-    if (url === "https://generativelanguage.googleapis.com/v1beta/interactions") {
-      return createJsonResponse({
-        steps: [
-          {
-            type: "model_output",
-            content: [{ type: "text", text: transcript }],
-          },
-        ],
-      });
-    }
-    if (url.endsWith("/v1beta/files/telegram-audio") && options.method === "DELETE") {
-      return new Response(null, { status: 204 });
-    }
-    throw new Error(`unexpected Gemini transcription request: ${url}`);
+    throw new Error(`unexpected Scribe transcription request: ${url}`);
   });
 }
 
@@ -573,7 +558,6 @@ describe("telegram adapter", () => {
       sessionManager: managerHarness.manager,
       projectPreferences,
       api: apiHarness.api,
-      geminiApiKey: "gemini-key",
       elevenLabsApiKey: "eleven-key",
       openAIApiKey: "openai-key",
       generateVoice,
@@ -718,7 +702,6 @@ describe("telegram adapter", () => {
       sessionManager: managerHarness.manager,
       projectPreferences: createTtsPreferences(vi.fn((id) => id === ownerId)),
       api: apiHarness.api,
-      geminiApiKey: "gemini-key",
       elevenLabsApiKey: "eleven-key",
       openAIApiKey: "openai-key",
       generateVoice,
@@ -794,7 +777,6 @@ describe("telegram adapter", () => {
       sessionManager: managerHarness.manager,
       projectPreferences: createTtsPreferences(vi.fn((id) => id === ownerId)),
       api: apiHarness.api,
-      geminiApiKey: "gemini-key",
       elevenLabsApiKey: "eleven-key",
       openAIApiKey: "openai-key",
       generateVoice,
@@ -862,7 +844,6 @@ describe("telegram adapter", () => {
       sessionManager: managerHarness.manager,
       projectPreferences: createTtsPreferences(vi.fn((id) => id === ownerId)),
       api: apiHarness.api,
-      geminiApiKey: "gemini-key",
       elevenLabsApiKey: "eleven-key",
       openAIApiKey: "openai-key",
       generateVoice: vi.fn(async () => Buffer.from("voice")),
@@ -919,7 +900,6 @@ describe("telegram adapter", () => {
       sessionManager: managerHarness.manager,
       projectPreferences: createTtsPreferences(vi.fn((id) => id === ownerId)),
       api: apiHarness.api,
-      geminiApiKey: "gemini-key",
       elevenLabsApiKey: "eleven-key",
       openAIApiKey: "openai-key",
       generateVoice: vi.fn(async () => Buffer.from("voice")),
@@ -970,7 +950,6 @@ describe("telegram adapter", () => {
       sessionManager: managerHarness.manager,
       projectPreferences: createTtsPreferences(vi.fn((id) => id === ownerId && enabled)),
       api: apiHarness.api,
-      geminiApiKey: "gemini-key",
       elevenLabsApiKey: "eleven-key",
       openAIApiKey: "openai-key",
       generateVoice: vi.fn(async () => await voice.promise),
@@ -1732,18 +1711,17 @@ describe("telegram adapter", () => {
       ],
     ]);
     const managerHarness = createSessionManagerHarness();
-    const geminiFetch = createGeminiTranscriptionFetchMock("transcribed audio");
+    const scribeFetch = createScribeTranscriptionFetchMock("transcribed audio");
     const adapter = await startAdapter({
       allowedChatIds: [groupChatId],
-      geminiApiKey: "gemini-key",
       personalSpeechVocabulary: ["Personal"],
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
-      fetchImpl: geminiFetch,
+      fetchImpl: scribeFetch,
     });
     try {
       await waitFor(() => apiHarness.api.getUpdates.mock.calls.length > 1);
-      expect(geminiFetch).not.toHaveBeenCalled();
+      expect(scribeFetch).not.toHaveBeenCalled();
       expect(apiHarness.api.downloadFile).not.toHaveBeenCalled();
       expect(managerHarness.manager.getSessionSnapshot).not.toHaveBeenCalled();
       expect(managerHarness.manager.sendMessage).not.toHaveBeenCalled();
@@ -1752,145 +1730,147 @@ describe("telegram adapter", () => {
     }
   });
 
-  it("includes group attachments and audio transcripts as pending context messages", async () => {
-    const groupChatId = -1002;
-    const apiHarness = createApiHarness([
-      [
-        {
-          update_id: 1,
-          message: {
-            chat: { id: groupChatId, type: "group" },
-            from: { id: 7, first_name: "Ada", username: "ada" },
-            photo: [{ file_id: "photo-1", file_size: 123, width: 100, height: 100 }],
-          },
-        },
-        {
-          update_id: 2,
-          message: {
-            chat: { id: groupChatId, type: "group" },
-            from: { id: 8, first_name: "Alan", username: "alan" },
-            caption: "second image",
-            photo: [{ file_id: "photo-2", file_size: 234, width: 100, height: 100 }],
-          },
-        },
-        {
-          update_id: 3,
-          message: {
-            chat: { id: groupChatId, type: "group" },
-            from: { id: 9, first_name: "Katherine", username: "kat" },
-            voice: { duration: 1, file_id: "voice-1", mime_type: "audio/ogg" },
-          },
-        },
-        {
-          update_id: 4,
-          message: {
-            chat: { id: groupChatId, type: "group" },
-            from: { id: 10, first_name: "Margaret", username: "margaret" },
-            text: "normal context",
-          },
-        },
-        {
-          update_id: 5,
-          message: {
-            chat: { id: groupChatId, type: "group" },
-            from: { id: 12, first_name: "Edsger", username: "edsger" },
-            document: {
-              file_id: "exe-1",
-              file_name: "tool.exe",
-              mime_type: "application/octet-stream",
+  it.each(["off", "default"])(
+    "includes group attachments and audio transcripts as pending context messages with cleanup %s",
+    async (speechCleanupStyle) => {
+      const groupChatId = -1002;
+      const apiHarness = createApiHarness([
+        [
+          {
+            update_id: 1,
+            message: {
+              chat: { id: groupChatId, type: "group" },
+              from: { id: 7, first_name: "Ada", username: "ada" },
+              photo: [{ file_id: "photo-1", file_size: 123, width: 100, height: 100 }],
             },
           },
-        },
-        {
-          update_id: 6,
-          message: {
-            message_id: 603,
-            chat: { id: groupChatId, type: "group" },
-            from: { id: 11, first_name: "Grace", username: "grace" },
-            text: "@tau_bot summarize",
+          {
+            update_id: 2,
+            message: {
+              chat: { id: groupChatId, type: "group" },
+              from: { id: 8, first_name: "Alan", username: "alan" },
+              caption: "second image",
+              photo: [{ file_id: "photo-2", file_size: 234, width: 100, height: 100 }],
+            },
           },
-        },
-      ],
-    ]);
-    apiHarness.api.downloadFile.mockImplementation(async (fileId) => {
-      apiHarness.downloadFileCalls.push(fileId);
-      return Buffer.from(`${fileId} bytes`);
-    });
-    const geminiFetch = createGeminiTranscriptionFetchMock("transcribed audio");
-    const managerHarness = createSessionManagerHarness(
-      [
-        createManagedSession({
-          id: "s-group",
-          snapshot: createStatusSnapshot({
-            catalog: { ...createStatusSnapshot().catalog, speechVocabulary: ["ProjectOnly"] },
-          }),
-          state: "waiting-input",
-        }),
-      ],
-      { defaultOwnerId: ownerIdForChat(groupChatId) },
-    );
-
-    const adapter = await startAdapter({
-      allowedChatIds: [groupChatId],
-      geminiApiKey: "gemini-key",
-      personalSpeechVocabulary: ["Personal"],
-      elevenLabsApiKey: "eleven-key",
-      openAIApiKey: "openai-key",
-      sessionManager: managerHarness.manager,
-      api: apiHarness.api,
-      fetchImpl: geminiFetch,
-    });
-
-    try {
-      await waitFor(() => managerHarness.manager.sendMessage.mock.calls.length === 1);
-      const interaction = geminiFetch.mock.calls.find(([input]) =>
-        getRequestUrl(input).endsWith("/interactions"),
-      );
-      expect(
-        JSON.parse(interaction[1].body).generation_config.transcription_config.custom_vocabulary,
-      ).toEqual(["ProjectOnly", "Personal"]);
-      expect(managerHarness.manager.getSessionSnapshot).toHaveBeenCalledWith("s-group");
-      const text = managerHarness.manager.sendMessage.mock.calls[0][1];
-      expect(text).toContain('1. sender: {"user-id":7,"name":"Ada","username":"ada"}');
-      const attachments = splitTauUserText(text).hiddenSystemBlocks.filter(({ text }) =>
-        text.includes("The user attached this file."),
-      );
-      expect(
-        attachments.map(({ text }) => ({
-          filename: JSON.parse(/^filename: (.+)$/m.exec(text)[1]),
-          sender: JSON.parse(/^sender: (.+)$/m.exec(text)[1]),
-        })),
-      ).toEqual([
-        { filename: "photo.jpg", sender: { "user-id": 7, name: "Ada", username: "ada" } },
-        { filename: "photo.jpg", sender: { "user-id": 8, name: "Alan", username: "alan" } },
-        { filename: "voice.ogg", sender: { "user-id": 9, name: "Katherine", username: "kat" } },
-        { filename: "tool.exe", sender: { "user-id": 12, name: "Edsger", username: "edsger" } },
+          {
+            update_id: 3,
+            message: {
+              chat: { id: groupChatId, type: "group" },
+              from: { id: 9, first_name: "Katherine", username: "kat" },
+              voice: { duration: 1, file_id: "voice-1", mime_type: "audio/ogg" },
+            },
+          },
+          {
+            update_id: 4,
+            message: {
+              chat: { id: groupChatId, type: "group" },
+              from: { id: 10, first_name: "Margaret", username: "margaret" },
+              text: "normal context",
+            },
+          },
+          {
+            update_id: 5,
+            message: {
+              chat: { id: groupChatId, type: "group" },
+              from: { id: 12, first_name: "Edsger", username: "edsger" },
+              document: {
+                file_id: "exe-1",
+                file_name: "tool.exe",
+                mime_type: "application/octet-stream",
+              },
+            },
+          },
+          {
+            update_id: 6,
+            message: {
+              message_id: 603,
+              chat: { id: groupChatId, type: "group" },
+              from: { id: 11, first_name: "Grace", username: "grace" },
+              text: "@tau_bot summarize",
+            },
+          },
+        ],
       ]);
-      expect(splitTauUserText(text).displayText).not.toContain("path:");
-      expect(text).toContain('mime: "image/jpeg"');
-      expect(text).toContain('2. sender: {"user-id":8,"name":"Alan","username":"alan"}');
-      expect(splitTauUserText(text).displayText).not.toContain("second image");
-      expect(text).toContain('caption: "second image"');
-      expect(text).toContain('3. sender: {"user-id":9,"name":"Katherine","username":"kat"}');
-      expect(text).toContain('   audio_transcript: "transcribed audio"');
-      expect(text).toContain(`<system>${TELEGRAM_AUDIO_TRANSCRIPTION_SYSTEM_MESSAGE}</system>`);
-      expect(text).toContain('4. sender: {"user-id":10,"name":"Margaret","username":"margaret"}');
-      expect(text).toContain('   text: "normal context"');
-      expect(text).toContain('5. sender: {"user-id":12,"name":"Edsger","username":"edsger"}');
-
-      expect(text).toContain("<telegram-trigger-message>");
-      expect(text).toContain('text: "summarize"');
-      expect(apiHarness.downloadFileCalls).toEqual(["photo-1", "photo-2", "voice-1", "exe-1"]);
-      expect(text).toContain('filename: "tool.exe"');
-      expect(text).toContain('filename: "voice.ogg"');
-      expect(geminiFetch.mock.calls.map(([input]) => getRequestUrl(input))).toContain(
-        "https://generativelanguage.googleapis.com/v1beta/interactions",
+      apiHarness.api.downloadFile.mockImplementation(async (fileId) => {
+        apiHarness.downloadFileCalls.push(fileId);
+        return Buffer.from(`${fileId} bytes`);
+      });
+      const scribeFetch = createScribeTranscriptionFetchMock("transcribed audio", null);
+      const managerHarness = createSessionManagerHarness(
+        [
+          createManagedSession({
+            id: "s-group",
+            snapshot: createStatusSnapshot({
+              catalog: { ...createStatusSnapshot().catalog, speechVocabulary: ["ProjectOnly"] },
+            }),
+            state: "waiting-input",
+          }),
+        ],
+        { defaultOwnerId: ownerIdForChat(groupChatId) },
       );
-      expect(apiHarness.sendMessages).toEqual([]);
-    } finally {
-      await adapter.close();
-    }
-  });
+
+      const adapter = await startAdapter({
+        speechCleanupStyle,
+        allowedChatIds: [groupChatId],
+        personalSpeechVocabulary: ["Personal"],
+        elevenLabsApiKey: "eleven-key",
+        openAIApiKey: "openai-key",
+        sessionManager: managerHarness.manager,
+        api: apiHarness.api,
+        fetchImpl: scribeFetch,
+      });
+
+      try {
+        await waitFor(() => managerHarness.manager.sendMessage.mock.calls.length === 1);
+        expect(apiHarness.sendMessages).toEqual([]);
+        const interaction = scribeFetch.mock.calls.find(([input]) =>
+          getRequestUrl(input).endsWith("/speech-to-text"),
+        );
+        expect(interaction[1].body.getAll("keyterms")).toEqual(["ProjectOnly", "Personal"]);
+        expect(managerHarness.manager.getSessionSnapshot).toHaveBeenCalledWith("s-group");
+        const text = managerHarness.manager.sendMessage.mock.calls[0][1];
+        expect(text).toContain('1. sender: {"user-id":7,"name":"Ada","username":"ada"}');
+        const attachments = splitTauUserText(text).hiddenSystemBlocks.filter(({ text }) =>
+          text.includes("The user attached this file."),
+        );
+        expect(
+          attachments.map(({ text }) => ({
+            filename: JSON.parse(/^filename: (.+)$/m.exec(text)[1]),
+            sender: JSON.parse(/^sender: (.+)$/m.exec(text)[1]),
+          })),
+        ).toEqual([
+          { filename: "photo.jpg", sender: { "user-id": 7, name: "Ada", username: "ada" } },
+          { filename: "photo.jpg", sender: { "user-id": 8, name: "Alan", username: "alan" } },
+          { filename: "voice.ogg", sender: { "user-id": 9, name: "Katherine", username: "kat" } },
+          { filename: "tool.exe", sender: { "user-id": 12, name: "Edsger", username: "edsger" } },
+        ]);
+        expect(splitTauUserText(text).displayText).not.toContain("path:");
+        expect(text).toContain('mime: "image/jpeg"');
+        expect(text).toContain('2. sender: {"user-id":8,"name":"Alan","username":"alan"}');
+        expect(splitTauUserText(text).displayText).not.toContain("second image");
+        expect(text).toContain('caption: "second image"');
+        expect(text).toContain('3. sender: {"user-id":9,"name":"Katherine","username":"kat"}');
+        expect(text).toContain('   audio_transcript: "transcribed audio"');
+        expect(text).toContain(`<system>${TELEGRAM_AUDIO_TRANSCRIPTION_SYSTEM_MESSAGE}</system>`);
+        expect(text).toContain('4. sender: {"user-id":10,"name":"Margaret","username":"margaret"}');
+        expect(text).toContain('   text: "normal context"');
+        expect(text).toContain('5. sender: {"user-id":12,"name":"Edsger","username":"edsger"}');
+
+        expect(text).toContain("<telegram-trigger-message>");
+        expect(text).toContain('text: "summarize"');
+        expect(apiHarness.downloadFileCalls).toEqual(["photo-1", "photo-2", "voice-1", "exe-1"]);
+        expect(text).toContain('filename: "tool.exe"');
+        expect(text).toContain('filename: "voice.ogg"');
+        expect(scribeFetch.mock.calls.map(([input]) => getRequestUrl(input))).toContain(
+          "https://api.elevenlabs.io/v1/speech-to-text",
+        );
+        expect(apiHarness.sendMessages).toEqual([]);
+      } finally {
+        await adapter.close();
+      }
+    },
+  );
 
   it("requires allowedChatIds before processing group mentions", async () => {
     const apiHarness = createApiHarness([
@@ -2757,16 +2737,15 @@ describe("telegram adapter", () => {
       { defaultOwnerId: ownerIdForChat(210) },
     );
 
-    const geminiFetch = createGeminiTranscriptionFetchMock("ship the fix");
+    const scribeFetch = createScribeTranscriptionFetchMock("ship the fix");
 
     const adapter = await startAdapter({
-      geminiApiKey: "gemini-key",
       personalSpeechVocabulary: ["tau", "Personal"],
       elevenLabsApiKey: "eleven-key",
       openAIApiKey: "openai-key",
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
-      fetchImpl: geminiFetch,
+      fetchImpl: scribeFetch,
     });
 
     try {
@@ -2793,15 +2772,13 @@ describe("telegram adapter", () => {
       expect(apiHarness.sendMessages).toEqual([
         expect.objectContaining({ chatId: 210, text: "transcribed: ship the fix" }),
       ]);
-      expect(geminiFetch.mock.calls.map(([input]) => getRequestUrl(input))).toContain(
-        "https://generativelanguage.googleapis.com/v1beta/interactions",
+      expect(scribeFetch.mock.calls.map(([input]) => getRequestUrl(input))).toContain(
+        "https://api.elevenlabs.io/v1/speech-to-text",
       );
-      const interaction = geminiFetch.mock.calls.find(([input]) =>
-        getRequestUrl(input).endsWith("/interactions"),
+      const interaction = scribeFetch.mock.calls.find(([input]) =>
+        getRequestUrl(input).endsWith("/speech-to-text"),
       );
-      expect(
-        JSON.parse(interaction[1].body).generation_config.transcription_config.custom_vocabulary,
-      ).toEqual(["Tau", "ChatRuntime", "Personal"]);
+      expect(interaction[1].body.getAll("keyterms")).toEqual(["Tau", "ChatRuntime", "Personal"]);
       await waitFor(() =>
         apiHarness.setMessageReactions.some(
           (entry) => entry.chatId === 210 && entry.messageId === 902,
@@ -2840,7 +2817,6 @@ describe("telegram adapter", () => {
       { defaultOwnerId: ownerIdForChat(211) },
     );
     const adapter = await startAdapter({
-      geminiApiKey: "gemini-key",
       elevenLabsApiKey: "eleven-key",
       openAIApiKey: "openai-key",
       sessionManager: managerHarness.manager,
@@ -2861,68 +2837,97 @@ describe("telegram adapter", () => {
     }
   });
 
-  it("transcribes voice messages with Gemini", async () => {
-    const apiHarness = createApiHarness([
-      [
-        {
-          update_id: 1,
-          message: {
-            chat: { id: 211, type: "private" },
-            from: { id: 7 },
-            voice: {
-              duration: 1,
-              file_id: "voice-456",
-              mime_type: "audio/ogg",
+  it.each([
+    ["off", "Cleaned transcript."],
+    ["default", "Cleaned transcript."],
+    ["default", null],
+    ["default", null, true],
+  ])(
+    "transcribes voice messages with Scribe and style %s (cleanup %s)",
+    async (style, cleanup, warningFails) => {
+      const apiHarness = createApiHarness([
+        [
+          {
+            update_id: 1,
+            message: {
+              chat: { id: 211, type: "private" },
+              from: { id: 7 },
+              voice: {
+                duration: 1,
+                file_id: "voice-456",
+                mime_type: "audio/ogg",
+              },
             },
           },
-        },
-      ],
-    ]);
+        ],
+      ]);
 
-    const managerHarness = createSessionManagerHarness(
-      [
-        createManagedSession({
-          id: "s22",
-          state: "waiting-input",
-        }),
-      ],
-      { defaultOwnerId: ownerIdForChat(211) },
-    );
-
-    const geminiFetch = createGeminiTranscriptionFetchMock("use google transcription");
-
-    const adapter = await startAdapter({
-      geminiApiKey: "gemini-key",
-      elevenLabsApiKey: "eleven-key",
-      openAIApiKey: "openai-key",
-      sessionManager: managerHarness.manager,
-      api: apiHarness.api,
-      fetchImpl: geminiFetch,
-    });
-
-    try {
-      await waitFor(() => managerHarness.manager.sendMessage.mock.calls.length === 1);
-      expect(apiHarness.downloadFileCalls).toEqual(["voice-456"]);
-      expect(managerHarness.manager.sendMessage).toHaveBeenCalledWith(
-        "s22",
-        transcribedTelegramUserText("use google transcription"),
-        { mode: "auto" },
+      const managerHarness = createSessionManagerHarness(
+        [
+          createManagedSession({
+            id: "s22",
+            state: "waiting-input",
+            snapshot: createStatusSnapshot({
+              messages: [
+                {
+                  id: "context-user",
+                  state: "committed",
+                  message: { role: "user", content: "We are discussing Scribe.", timestamp: 1 },
+                },
+              ],
+            }),
+          }),
+        ],
+        { defaultOwnerId: ownerIdForChat(211) },
       );
-      const interactionCall = geminiFetch.mock.calls.find(
-        ([input]) =>
-          getRequestUrl(input) === "https://generativelanguage.googleapis.com/v1beta/interactions",
-      );
-      const request = JSON.parse(interactionCall[1].body);
-      expect(request.model).toBe("gemini-3.5-transcribe");
-      expect(request.generation_config.transcription_config).toEqual({
-        language_codes: ["en-US", "fi-FI"],
-        mode: { type: "verbatim" },
+
+      const scribeFetch = createScribeTranscriptionFetchMock("original transcript", cleanup);
+      if (warningFails) apiHarness.api.sendMessage.mockRejectedValueOnce(new Error("unavailable"));
+
+      const adapter = await startAdapter({
+        elevenLabsApiKey: "eleven-key",
+        speechCleanupStyle: style,
+        openAIApiKey: "openai-key",
+        sessionManager: managerHarness.manager,
+        api: apiHarness.api,
+        fetchImpl: scribeFetch,
       });
-      expect(request.input[0].mime_type).toBe("audio/ogg");
-    } finally {
-      await adapter.close();
-    }
-  });
+
+      try {
+        await waitFor(() => managerHarness.manager.sendMessage.mock.calls.length === 1);
+        expect(apiHarness.downloadFileCalls).toEqual(["voice-456"]);
+        expect(managerHarness.manager.sendMessage).toHaveBeenCalledWith(
+          "s22",
+          transcribedTelegramUserText(
+            style === "default" && cleanup !== null ? cleanup : "original transcript",
+          ),
+          { mode: "auto" },
+        );
+        const cleanupCalls = scribeFetch.mock.calls.filter(
+          ([url, request]) =>
+            url.includes("openai") && JSON.parse(request.body).model === "gpt-6.1-terra",
+        );
+        expect(cleanupCalls).toHaveLength(style === "default" ? 1 : 0);
+        if (style === "default") {
+          expect(JSON.parse(JSON.parse(cleanupCalls[0][1].body).input).context).toBe(
+            "user: We are discussing Scribe.",
+          );
+        }
+        if (style === "default" && cleanup === null && !warningFails)
+          expect(apiHarness.sendMessages.length).toBeGreaterThan(0);
+        const interactionCall = scribeFetch.mock.calls.find(
+          ([input]) => getRequestUrl(input) === "https://api.elevenlabs.io/v1/speech-to-text",
+        );
+        const request = interactionCall[1].body;
+        expect(request.get("model_id")).toBe("scribe_v2");
+        expect(request.get("no_verbatim")).toBe("false");
+        expect(request.has("language_code")).toBe(false);
+        expect(request.get("file").type).toBe("audio/ogg");
+      } finally {
+        await adapter.close();
+      }
+    },
+  );
 
   it.each([
     {
@@ -4676,7 +4681,6 @@ describe("telegram adapter", () => {
     const adapter = await startAdapter({
       sessionManager: managerHarness.manager,
       projectPreferences: createTtsPreferences(vi.fn((id) => id === ownerId)),
-      geminiApiKey: "gemini-key",
       elevenLabsApiKey: "eleven-key",
       openAIApiKey: "openai-key",
       generateVoice: vi.fn(async () => Buffer.from("OggS voice")),

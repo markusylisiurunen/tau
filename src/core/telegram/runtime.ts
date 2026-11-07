@@ -20,7 +20,6 @@ export type TelegramRuntimeDependencies = {
 
 export type StartTelegramRuntimeOptions = {
   config: TelegramConfig;
-  geminiApiKey?: string;
   openAIApiKey?: string;
   elevenLabsApiKey?: string;
   speechVoiceId?: string;
@@ -220,7 +219,7 @@ export async function startTelegramRuntime(
         presets: botConfig.presets,
         allowedUserIds: botConfig.allowedUserIds,
         allowedChatIds: botConfig.allowedChatIds,
-        geminiApiKey: options.geminiApiKey,
+        speechCleanupStyle: botConfig.speechCleanupStyle,
         openAIApiKey: options.openAIApiKey,
         elevenLabsApiKey: options.elevenLabsApiKey,
         speechVoiceId: options.speechVoiceId,

@@ -1,4 +1,8 @@
 import { getEffectiveAutoCompactThresholdTokens } from "../core/session/auto_compaction_threshold.js";
+import {
+  normalizeSpeechToTextKeywords,
+  SPEECH_TO_TEXT_MAX_VOCABULARY_CHARACTERS,
+} from "../core/utils/speech_to_text_keywords.js";
 import { formatTauHiddenSystemBlock } from "../core/utils/user_metadata.js";
 import type { SessionProtocolSnapshot } from "../protocol/session_protocol.js";
 import {
@@ -7,7 +11,7 @@ import {
 } from "../protocol/session_protocol.js";
 
 export const STORED_SESSION_DOCUMENT_FORMAT = "tau-session" as const;
-export const STORED_SESSION_DOCUMENT_VERSION = 15 as const;
+export const STORED_SESSION_DOCUMENT_VERSION = 16 as const;
 export const LEGACY_SESSION_MODEL_CONTEXT_KEY = "legacy-v3";
 
 export type StoredSessionDocument = {
@@ -34,6 +38,7 @@ const storedSessionMigrations = new Map<number, StoredSessionMigration>([
   [12, migrateStoredSessionV12ToV13],
   [13, migrateStoredSessionV13ToV14],
   [14, migrateStoredSessionV14ToV15],
+  [15, migrateStoredSessionV15ToV16],
 ]);
 
 export class UnsupportedStoredSessionVersionError extends Error {
@@ -100,6 +105,22 @@ function decodeStoredSessionDocument(value: unknown): {
     version: value.version as number,
     snapshot: value.snapshot,
   };
+}
+
+function migrateStoredSessionV15ToV16(value: unknown): unknown {
+  if (!isRecord(value)) throw new Error("stored session snapshot must be an object");
+  const snapshot = structuredClone(value);
+  if (
+    isRecord(snapshot.catalog) &&
+    Array.isArray(snapshot.catalog.speechVocabulary) &&
+    snapshot.catalog.speechVocabulary.every((term) => typeof term === "string")
+  ) {
+    snapshot.catalog.speechVocabulary = normalizeSpeechToTextKeywords(
+      snapshot.catalog.speechVocabulary,
+      { maxTotalCharacters: SPEECH_TO_TEXT_MAX_VOCABULARY_CHARACTERS },
+    );
+  }
+  return snapshot;
 }
 
 function migrateStoredSessionV13ToV14(value: unknown): unknown {

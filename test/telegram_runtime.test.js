@@ -281,12 +281,12 @@ describe("telegram runtime", () => {
           "bot-one": {
             botToken: "token-1",
             startup: { source: "workspace" },
+            speechCleanupStyle: "default",
             allowedProjectIds: ["alpha"],
           },
         },
       }),
       createSessionClient: vi.fn(),
-      geminiApiKey: "gemini-key",
       elevenLabsApiKey: "eleven-key",
       openAIApiKey: "openai-key",
       speechVoiceId: "custom-voice",
@@ -298,6 +298,7 @@ describe("telegram runtime", () => {
           events.push(`start-telegram:${options.botToken}:${options.botId}`);
           expect(Object.keys(options.projects)).toEqual(["alpha"]);
           expect(options.elevenLabsApiKey).toBe("eleven-key");
+          expect(options.speechCleanupStyle).toBe("default");
           expect(options.openAIApiKey).toBe("openai-key");
           expect(options.speechVoiceId).toBe("custom-voice");
           options.onLog?.({

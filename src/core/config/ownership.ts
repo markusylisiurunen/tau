@@ -26,6 +26,7 @@ const CONFIG_FIELD_OWNERS = {
 
 const SPEECH_FIELD_OWNERS = {
   voiceId: "client",
+  cleanupStyle: "client",
   recordingShortcut: "client",
   vocabulary: "session",
 } as const satisfies Record<keyof NonNullable<Config["speech"]>, "client" | "session">;
@@ -80,11 +81,12 @@ export function toHostConfig(config: Config): HostConfig {
 }
 
 export function toClientConfig(config: Config, personalVocabulary: string[]): ClientConfig {
-  const { voiceId, recordingShortcut } = config.speech ?? {};
+  const { voiceId, recordingShortcut, cleanupStyle } = config.speech ?? {};
   return {
     ...pickOwnedFields(config, ["process", "client"]),
     speech: {
       ...(voiceId !== undefined ? { voiceId } : {}),
+      ...(cleanupStyle !== undefined ? { cleanupStyle } : {}),
       ...(recordingShortcut !== undefined ? { recordingShortcut } : {}),
       personalVocabulary,
     },

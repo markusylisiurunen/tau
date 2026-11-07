@@ -51,13 +51,13 @@ Features check the environment variable first, then global configuration:
 | Feature | Resolution order |
 | --- | --- |
 | Exa web search and fetch | `EXA_API_KEY`, then `apiKeys.exa` |
-| Google image generation, speech-to-text, and Telegram transcription | `GEMINI_API_KEY`, then `apiKeys.google` |
+| Google image generation | `GEMINI_API_KEY`, then `apiKeys.google` |
 | Mistral PDF OCR | `MISTRAL_API_KEY`, then `apiKeys.mistral` |
 | OpenRouter decisions and chat | `OPENROUTER_API_KEY`, then `apiKeys.openrouter` |
-| OpenAI image generation, speech rewriting, and transcription spelling hints | `OPENAI_API_KEY`, then `apiKeys.openai` |
-| ElevenLabs speech generation, `/speak` synthesis, Telegram voice synthesis, and voice listing | `ELEVENLABS_API_KEY`, then `apiKeys.elevenlabs` |
+| OpenAI image generation, speech rewriting, transcription spelling hints, and transcript cleanup | `OPENAI_API_KEY`, then `apiKeys.openai` |
+| ElevenLabs speech generation, `/speak` synthesis, Telegram voice synthesis, voice listing, speech-to-text, and Telegram transcription | `ELEVENLABS_API_KEY`, then `apiKeys.elevenlabs` |
 
-`web.discover` does not require Exa. `web.search` and `web.fetch` do. `/speak` and Telegram `/tts_on` voice responses require OpenAI for text rewriting and ElevenLabs for synthesis. `/listen` and incoming Telegram voice notes use Google, with optional OpenAI spelling hints. PDF OCR through `tau tool pdf-unpack` uses Mistral.
+`web.discover` does not require Exa. `web.search` and `web.fetch` do. `/speak` and Telegram `/tts_on` voice responses require OpenAI for text rewriting and ElevenLabs for synthesis. `/listen` and incoming Telegram voice notes use ElevenLabs, with optional OpenAI spelling hints and transcript cleanup. PDF OCR through `tau tool pdf-unpack` uses Mistral.
 
 Set these on the process that runs the feature. For example, `/speak` in an attached TUI reads `OPENAI_API_KEY` and `ELEVENLABS_API_KEY` on the client machine, while a session that uses a Google model reads its key on the host.
 

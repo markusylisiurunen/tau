@@ -9,6 +9,7 @@ import { runHistoryCommand } from "../dist/core/history/cli.js";
 import { resolveHistoryRemoteTarget } from "../dist/core/history/config.js";
 import { HistoryManager } from "../dist/core/history/history_manager.js";
 import { LocalHistoryStore } from "../dist/core/history/local_history_store.js";
+import { backfillHistorySearch } from "../dist/core/history/migrations.js";
 import {
   RemoteHistoryClient,
   RemoteHistoryError,
@@ -65,6 +66,16 @@ const HISTORY_DIGEST_SCHEDULE_MIGRATION_SQL = readFileSync(
 );
 const HISTORY_RECENT_SESSIONS_MIGRATION_SQL = readFileSync(
   new URL("../dist/history/worker/migrations/0004_recent_sessions.sql", import.meta.url),
+  "utf8",
+);
+
+const HISTORY_EXTERNAL_CONTENT_MIGRATION_SQL = readFileSync(
+  new URL("../dist/history/worker/migrations/0005_external_content.sql", import.meta.url),
+  "utf8",
+);
+
+const HISTORY_SEARCH_CUTOVER_MIGRATION_SQL = readFileSync(
+  new URL("../dist/history/worker/migrations/0006_external_content_cutover.sql", import.meta.url),
   "utf8",
 );
 
@@ -207,6 +218,8 @@ function initializeHistoryD1(harness) {
   harness.sqlite.exec(HISTORY_PARENT_SESSION_MIGRATION_SQL);
   harness.sqlite.exec(HISTORY_DIGEST_SCHEDULE_MIGRATION_SQL);
   harness.sqlite.exec(HISTORY_RECENT_SESSIONS_MIGRATION_SQL);
+  harness.sqlite.exec(HISTORY_EXTERNAL_CONTENT_MIGRATION_SQL);
+  harness.sqlite.exec(HISTORY_SEARCH_CUTOVER_MIGRATION_SQL);
 }
 
 async function callHistoryWorker(path, body, harness, origin = "https://history.example.com") {
@@ -1246,6 +1259,225 @@ describe("session history", () => {
     }
   });
 
+  it("resumes a bounded search backfill after a committed copy and mirrors concurrent changes", async () => {
+    const sqlite = new DatabaseSync(":memory:");
+    try {
+      for (const sql of [
+        HISTORY_INITIAL_MIGRATION_SQL,
+        HISTORY_PARENT_SESSION_MIGRATION_SQL,
+        HISTORY_DIGEST_SCHEDULE_MIGRATION_SQL,
+        HISTORY_RECENT_SESSIONS_MIGRATION_SQL,
+      ])
+        sqlite.exec(sql);
+      sqlite.exec(`
+        INSERT INTO sessions (session_id, attributes_json, created_at, updated_at) VALUES ('existing', '{}', 1, 1);
+        WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x + 1 FROM n WHERE x < 1100)
+        INSERT INTO entries (session_id, position, entry_id, timestamp, payload_json, search_text)
+        SELECT 'existing', x, 'entry-' || x, 1, '{}', replace(hex(zeroblob(4000)), '00', 'word ') FROM n;
+      `);
+      sqlite.exec(HISTORY_EXTERNAL_CONTENT_MIGRATION_SQL);
+      sqlite.exec("BEGIN");
+      expect(() => sqlite.exec(HISTORY_SEARCH_CUTOVER_MIGRATION_SQL)).toThrow();
+      sqlite.exec("ROLLBACK");
+      await expect(
+        backfillHistorySearch(
+          async (sql) => {
+            if (sql.startsWith("UPDATE history_search_backfill"))
+              throw new Error("interrupted after copy");
+            return sqlite.prepare(sql).all();
+          },
+          () => {},
+        ),
+      ).rejects.toThrow("interrupted after copy");
+      expect(
+        sqlite.prepare("SELECT through_rowid FROM history_search_backfill").get().through_rowid,
+      ).toBe(0);
+      const copied = sqlite.prepare("SELECT COUNT(*) AS count FROM entries_external").get().count;
+      expect(copied).toBeGreaterThan(0);
+      expect(copied).toBeLessThan(512);
+      expect(
+        sqlite
+          .prepare(
+            "SELECT SUM(length(payload_json) + length(search_text)) AS bytes FROM entries_external",
+          )
+          .get().bytes,
+      ).toBeLessThanOrEqual(8 * 1024 * 1024);
+      sqlite.exec(`
+        UPDATE entries SET search_text = 'updated copy' WHERE position = 1;
+        DELETE FROM entries WHERE position IN (2, 1000);
+        INSERT INTO entries (session_id, position, entry_id, timestamp, payload_json, search_text)
+        VALUES ('existing', 1101, 'live', 2, '{}', 'live append');
+      `);
+      let changedDuringCopy = false;
+      await backfillHistorySearch(
+        async (sql) => {
+          if (sql.startsWith("INSERT INTO entries_external") && !changedDuringCopy) {
+            changedDuringCopy = true;
+            sqlite.exec(
+              "UPDATE entries SET search_text = 'changed during copy' WHERE position = 3",
+            );
+          }
+          return sqlite.prepare(sql).all();
+        },
+        () => {},
+      );
+      const fields = "session_id, position, entry_id, timestamp, payload_json, search_text";
+      expect(
+        sqlite.prepare(`SELECT ${fields} FROM entries_external ORDER BY position`).all(),
+      ).toEqual(sqlite.prepare(`SELECT ${fields} FROM entries ORDER BY position`).all());
+      sqlite.exec(`BEGIN; ${HISTORY_SEARCH_CUTOVER_MIGRATION_SQL} COMMIT;`);
+      const matches = (query) =>
+        sqlite
+          .prepare(
+            "SELECT entry_id FROM entries_search_fts WHERE entries_search_fts MATCH ? ORDER BY rowid",
+          )
+          .all(query);
+      expect(matches("updated")).toEqual([{ entry_id: "entry-1" }]);
+      expect(matches("changed")).toEqual([{ entry_id: "entry-3" }]);
+      expect(matches("live")).toEqual([{ entry_id: "live" }]);
+      sqlite.exec(
+        "INSERT INTO entries_search_fts(entries_search_fts, rank) VALUES ('integrity-check', 1)",
+      );
+      const queries = [];
+      await backfillHistorySearch(
+        async (sql) => {
+          queries.push(sql);
+          return sqlite.prepare(sql).all();
+        },
+        () => {},
+      );
+      expect(queries).toHaveLength(1);
+    } finally {
+      sqlite.close();
+    }
+  });
+
+  it("migrates existing transcripts to external content and keeps search atomic with replication", async () => {
+    const harness = createSqliteD1Harness();
+    const { sqlite, database } = harness;
+    try {
+      sqlite.exec(HISTORY_INITIAL_MIGRATION_SQL);
+      sqlite.exec(HISTORY_PARENT_SESSION_MIGRATION_SQL);
+      sqlite.exec(HISTORY_DIGEST_SCHEDULE_MIGRATION_SQL);
+      sqlite.exec(HISTORY_RECENT_SESSIONS_MIGRATION_SQL);
+      sqlite.exec(`
+        INSERT INTO sessions (session_id, attributes_json, created_at, updated_at)
+        VALUES ('existing', '{"source":"test"}', 1, 2);
+        INSERT INTO attributes VALUES ('existing', 'source', 'test');
+        INSERT INTO operations VALUES ('already-applied', 'existing', 2);
+      `);
+      const entries = [
+        createTextEntry("one", "user", "keep this phrase", 1),
+        createTextEntry("two", "assistant", "remove this phrase", 2),
+      ];
+      for (const [index, entry] of entries.entries()) {
+        sqlite
+          .prepare(`INSERT INTO entries
+          (rowid, session_id, position, entry_id, timestamp, payload_json, search_text)
+          VALUES (?, 'existing', ?, ?, ?, ?, ?)`)
+          .run(
+            10 + index * 10,
+            index + 1,
+            entry.id,
+            entry.timestamp,
+            JSON.stringify(entry),
+            entry.content,
+          );
+        // Legacy FTS rowids need not match the transcript table's rowids.
+        sqlite
+          .prepare(`INSERT INTO entries_fts (rowid, session_id, entry_id, position, text)
+          VALUES (?, 'existing', ?, ?, ?)`)
+          .run(index + 1, entry.id, index + 1, entry.content);
+      }
+      sqlite.exec("UPDATE sessions SET transcript_revision = 1");
+      const before = sqlite.prepare("SELECT * FROM sessions").get();
+      sqlite.exec(`BEGIN; ${HISTORY_EXTERNAL_CONTENT_MIGRATION_SQL} COMMIT;`);
+      await backfillHistorySearch(
+        async (sql) => sqlite.prepare(sql).all(),
+        () => {},
+      );
+      sqlite.exec(`BEGIN; ${HISTORY_SEARCH_CUTOVER_MIGRATION_SQL} COMMIT;`);
+      expect(sqlite.prepare("SELECT * FROM sessions").get()).toEqual(before);
+      expect(sqlite.prepare("SELECT * FROM attributes").all()).toEqual([
+        { session_id: "existing", key: "source", value: "test" },
+      ]);
+      expect(sqlite.prepare("SELECT * FROM operations").all()).toEqual([
+        { operation_id: "already-applied", session_id: "existing", applied_at: 2 },
+      ]);
+      sqlite.exec("VACUUM");
+      expect(sqlite.prepare("SELECT id FROM entries ORDER BY position").all()).toEqual([
+        { id: 10 },
+        { id: 20 },
+      ]);
+      const read = await callHistoryWorker("/v1/read", { sessionId: "existing" }, harness);
+      expect((await read.json()).entries).toEqual(entries);
+      const search = async (query) => {
+        const response = await callHistoryWorker("/v1/search", { query }, harness);
+        expect(response.status).toBe(200);
+        return (await response.json()).sessions;
+      };
+      expect((await search('"this phrase"'))[0].snippets).toEqual([
+        "keep this phrase",
+        "remove this phrase",
+      ]);
+      expect(
+        sqlite
+          .prepare("SELECT name FROM sqlite_master WHERE name = 'entries_search_fts_content'")
+          .all(),
+      ).toEqual([]);
+      expect(() =>
+        sqlite.prepare("INSERT INTO entries_fts (text) VALUES ('legacy writer')"),
+      ).toThrow();
+
+      const append = {
+        id: "append",
+        sessionId: "existing",
+        type: "append",
+        entries: [createTextEntry("three", "user", "unique append", 3)],
+      };
+      expect(await applyOperation(database, append)).toBe(true);
+      expect(await applyOperation(database, append)).toBe(false);
+      expect(await applyOperation(database, { ...append, id: "duplicate" })).toBe(true);
+      expect((await search("unique"))[0].snippets).toEqual([
+        expect.stringContaining("unique append"),
+      ]);
+      await applyOperation(database, {
+        id: "rewind",
+        sessionId: "existing",
+        type: "truncate",
+        afterEntryId: "one",
+      });
+      expect(await search("remove")).toEqual([]);
+      expect(await search("unique")).toEqual([]);
+      expect(await search("keep")).toHaveLength(1);
+      sqlite.exec("UPDATE entries SET search_text = 'replacement phrase' WHERE entry_id = 'one'");
+      expect(await search("keep")).toEqual([]);
+      expect((await search("replacement"))[0].snippets).toEqual(["replacement phrase"]);
+
+      sqlite.exec(`CREATE TRIGGER fail_operation BEFORE INSERT ON operations
+        WHEN new.operation_id = 'fail' BEGIN SELECT RAISE(ABORT, 'test failure'); END;`);
+      await expect(applyOperation(database, { ...append, id: "fail" })).rejects.toThrow();
+      expect(await search("unique")).toEqual([]);
+      expect(sqlite.prepare("SELECT COUNT(*) AS count FROM entries").get().count).toBe(1);
+      await applyOperation(database, {
+        id: "clear",
+        sessionId: "existing",
+        type: "truncate",
+        afterEntryId: null,
+      });
+      expect(await search("replacement")).toEqual([]);
+      await applyOperation(database, { ...append, id: "append-again" });
+      expect((await search("unique"))[0].snippets).toEqual([
+        expect.stringContaining("unique append"),
+      ]);
+      sqlite.exec(
+        "INSERT INTO entries_search_fts(entries_search_fts, rank) VALUES ('integrity-check', 1)",
+      );
+    } finally {
+      sqlite.close();
+    }
+  });
+
   it("applies official D1 migrations before history Worker deployment", async () => {
     const root = mkdtempSync(join(tmpdir(), "tau-history-setup-test-"));
     const binDirectory = join(root, "bin");
@@ -1262,6 +1494,10 @@ describe("session history", () => {
         'appendFileSync(process.env.TEST_CALLS, args.join(" ") + "\\n");',
         'if (args[0] === "d1" && args[1] === "list") {',
         '  console.log(process.env.TEST_FRESH === "1" ? "[]" : JSON.stringify([{ name: "tau-history", uuid: "database-id" }]));',
+        "  process.exit(0);",
+        "}",
+        'if (args[0] === "d1" && args[1] === "execute") {',
+        "  console.log(JSON.stringify([{ success: true, results: [] }]));",
         "  process.exit(0);",
         "}",
         'if (args[0] === "d1" && args[1] === "create") process.exit(0);',
@@ -1282,6 +1518,7 @@ describe("session history", () => {
         '  if (!existsSync(join(process.cwd(), "migrations", "0002_parent_session.sql"))) process.exit(38);',
         '  if (!existsSync(join(process.cwd(), "migrations", "0003_digest_schedule.sql"))) process.exit(39);',
         '  if (!existsSync(join(process.cwd(), "migrations", "0004_recent_sessions.sql"))) process.exit(40);',
+        '  if (!existsSync(join(process.cwd(), "migrations", "0005_external_content.sql"))) process.exit(41);',
         '  const sql = readFileSync(migration, "utf8");',
         '  if (sql.includes("DROP TABLE IF EXISTS history_schema_migrations")) process.exit(34);',
         '  if (args[0] === "d1" && process.env.TEST_FAIL_MIGRATION === "1") process.exit(35);',
@@ -1314,6 +1551,8 @@ describe("session history", () => {
       expect(readFileSync(callsPath, "utf8").trim().split("\n")).toEqual([
         "d1 list --json",
         "d1 migrations apply tau-history --remote",
+        "d1 execute tau-history --remote --json --command SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'history_search_backfill'",
+        "d1 migrations apply tau-history --remote",
         "deploy",
         "secret put API_KEY",
         "secret put VIEWER_PASSWORD",
@@ -1331,6 +1570,8 @@ describe("session history", () => {
         "d1 list --json",
         "d1 create tau-history",
         "d1 info tau-history --json",
+        "d1 migrations apply tau-history --remote",
+        "d1 execute tau-history --remote --json --command SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'history_search_backfill'",
         "d1 migrations apply tau-history --remote",
         "deploy",
         "secret put API_KEY",
@@ -1360,6 +1601,8 @@ describe("session history", () => {
         "d1 info tau-history --json",
         "d1 migrations apply tau-history --remote",
         "d1 list --json",
+        "d1 migrations apply tau-history --remote",
+        "d1 execute tau-history --remote --json --command SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'history_search_backfill'",
         "d1 migrations apply tau-history --remote",
         "deploy",
         "secret put API_KEY",
@@ -2282,7 +2525,7 @@ describe("session history", () => {
         .run("session-2", "repository", "github.com/example/alpha,github.com/example/beta");
 
       const insertMatch = harness.sqlite.prepare(
-        "INSERT INTO entries_fts (session_id, entry_id, position, text) VALUES (?, ?, ?, ?)",
+        "INSERT INTO entries (session_id, entry_id, position, search_text, timestamp, payload_json) VALUES (?, ?, ?, ?, 1, '{}')",
       );
       for (let position = 1; position <= 250; position += 1) {
         insertMatch.run("session-1", `session-1-entry-${position}`, position, "history");
@@ -2346,7 +2589,7 @@ describe("session history", () => {
         "INSERT INTO sessions (session_id, attributes_json, created_at, updated_at) VALUES ('session-1', '{}', 1, 1)",
       );
       const insert = harness.sqlite.prepare(
-        "INSERT INTO entries_fts (session_id, entry_id, position, text) VALUES (?, ?, ?, ?)",
+        "INSERT INTO entries (session_id, entry_id, position, search_text, timestamp, payload_json) VALUES (?, ?, ?, ?, 1, '{}')",
       );
       for (const [position, label] of [
         [30, "fourth"],
@@ -2405,11 +2648,11 @@ describe("session history", () => {
       );
       harness.sqlite
         .prepare(
-          "INSERT INTO entries_fts (session_id, entry_id, position, text) VALUES (?, ?, ?, ?)",
+          "INSERT INTO entries (session_id, entry_id, position, search_text, timestamp, payload_json) VALUES (?, ?, ?, ?, 1, '{}')",
         )
         .run("session-1", "entry-1", 1, text);
       const excerpt = harness.sqlite.prepare(
-        "SELECT snippet(entries_fts, 3, '', '', '…', ?) AS text FROM entries_fts WHERE entries_fts MATCH 'needle'",
+        "SELECT snippet(entries_search_fts, 3, '', '', '…', ?) AS text FROM entries_search_fts WHERE entries_search_fts MATCH 'needle'",
       );
       expect([...excerpt.get(tokens * 2).text].length).toBeGreaterThan(360);
       const expected = excerpt.get(tokens).text;
@@ -2434,7 +2677,7 @@ describe("session history", () => {
       );
       harness.sqlite
         .prepare(
-          "INSERT INTO entries_fts (session_id, entry_id, position, text) VALUES (?, ?, ?, ?)",
+          "INSERT INTO entries (session_id, entry_id, position, search_text, timestamp, payload_json) VALUES (?, ?, ?, ?, 1, '{}')",
         )
         .run("session-1", "entry-1", 1, `${"前".repeat(10000)} needle ${"x".repeat(10000)}`);
       const response = await callHistoryWorker("/v1/search", { query: "needle" }, harness);

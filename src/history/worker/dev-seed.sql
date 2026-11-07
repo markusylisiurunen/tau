@@ -1,4 +1,3 @@
-DELETE FROM entries_fts WHERE session_id LIKE 'local-history-%';
 DELETE FROM sessions_fts WHERE session_id LIKE 'local-history-%';
 DELETE FROM entries WHERE session_id LIKE 'local-history-%';
 DELETE FROM attributes WHERE session_id LIKE 'local-history-%';
@@ -82,8 +81,6 @@ INSERT INTO entries (session_id, position, entry_id, timestamp, payload_json, se
     '{"id":"demo-image-response","sourceIds":["demo-image-response"],"type":"assistant","timestamp":1787673930000,"content":"The screenshot is now represented as an image attachment, while Markdown copies use a compact [image image/png] marker instead of embedding base64 data."}',
     'The screenshot is now represented as an image attachment while Markdown copies use a compact image marker instead of embedding base64 data.'
   );
-INSERT INTO entries_fts (session_id, entry_id, position, text)
-SELECT session_id, entry_id, position, search_text FROM entries WHERE session_id = 'local-history-demo';
 INSERT INTO sessions_fts (session_id, title, summary) VALUES (
   'local-history-demo',
   'Refine the private history viewer',
@@ -171,9 +168,6 @@ INSERT INTO entries (session_id, position, entry_id, timestamp, payload_json, se
     '{"id":"orphan-assistant","sourceIds":["orphan-assistant"],"type":"assistant","timestamp":1787673100000,"content":"The parent session has not been replicated."}',
     'The parent session has not been replicated.'
   );
-INSERT INTO entries_fts (session_id, entry_id, position, text)
-SELECT session_id, entry_id, position, search_text FROM entries
-WHERE session_id IN ('local-history-demo-renderer', 'local-history-demo-contrast', 'local-history-demo-tests', 'local-history-orphan');
 INSERT INTO sessions_fts (session_id, title, summary)
 SELECT session_id, digest_title, digest_summary FROM sessions
 WHERE session_id IN ('local-history-demo-renderer', 'local-history-demo-contrast', 'local-history-orphan');

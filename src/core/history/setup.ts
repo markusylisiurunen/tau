@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnWithCapture } from "../utils/spawn_capture.js";
-import { HISTORY_MIGRATION_NAMES } from "./migrations.js";
+import {
+  backfillHistorySearch,
+  HISTORY_MIGRATION_NAMES,
+  HISTORY_SEARCH_CUTOVER_MIGRATION,
+} from "./migrations.js";
 
 const WORKER_NAME = "tau-history";
 const DATABASE_NAME = "tau-history";
@@ -186,23 +190,56 @@ function databaseId(database: D1DatabaseInfo): string {
   throw new Error("Wrangler returned D1 database data without an ID");
 }
 
-async function applyHistoryMigrations(
+export async function applyHistoryMigrations(
   directory: string,
   env: NodeJS.ProcessEnv,
   stdout: (line: string) => void,
+  target: { databaseName: string; remote: boolean; persistTo?: string } = {
+    databaseName: DATABASE_NAME,
+    remote: true,
+  },
 ): Promise<void> {
-  stdout(`applying D1 migrations for ${DATABASE_NAME}...`);
-  await runWrangler(["d1", "migrations", "apply", DATABASE_NAME, "--remote"], {
-    cwd: directory,
-    env,
-  });
-  stdout(`applied D1 migrations for ${DATABASE_NAME}`);
+  const flags = [target.remote ? "--remote" : "--local"];
+  if (target.persistTo) flags.push("--persist-to", target.persistTo);
+  const apply = async () => {
+    await runWrangler(["d1", "migrations", "apply", target.databaseName, ...flags], {
+      cwd: directory,
+      env,
+    });
+  };
+  stdout(`applying D1 migrations for ${target.databaseName}...`);
+  writeHistoryMigrations(directory, false);
+  await apply();
+  await backfillHistorySearch(async (sql) => {
+    const result = await runWrangler(
+      ["d1", "execute", target.databaseName, ...flags, "--json", "--command", sql],
+      { cwd: directory, env },
+    );
+    const statements = JSON.parse(result.output) as Array<{
+      success: boolean;
+      results: Record<string, unknown>[];
+    }>;
+    if (
+      !Array.isArray(statements) ||
+      statements.length === 0 ||
+      statements.some(
+        (statement) => statement.success !== true || !Array.isArray(statement.results),
+      )
+    ) {
+      throw new Error("invalid D1 history migration result");
+    }
+    return statements.flatMap((statement) => statement.results);
+  }, stdout);
+  writeHistoryMigrations(directory, true);
+  await apply();
+  stdout(`applied D1 migrations for ${target.databaseName}`);
 }
 
-function writeHistoryMigrations(directory: string): void {
+function writeHistoryMigrations(directory: string, includeCutover: boolean): void {
   const migrationsDirectory = join(directory, "migrations");
   mkdirSync(migrationsDirectory, { recursive: true });
   for (const name of HISTORY_MIGRATION_NAMES) {
+    if (!includeCutover && name === HISTORY_SEARCH_CUTOVER_MIGRATION) continue;
     const source = fileURLToPath(
       new URL(`../../history/worker/migrations/${name}`, import.meta.url),
     );
@@ -229,7 +266,6 @@ function writeWorkerProject(
   for (const name of ["viewer.css", "viewer.js"]) {
     copyFileSync(join(dirname(workerPath), name), join(dirname(destination), name));
   }
-  writeHistoryMigrations(directory);
   writeFileSync(
     join(directory, "wrangler.json"),
     JSON.stringify(

@@ -12,7 +12,6 @@ Tau loads this file into every session in the repository, so each line costs con
 - Match the wording's strength to how firmly the rule must hold. Recurring agent mistakes earn more space and firmer wording.
 - Leave out what capable agents do by default and how to use general-purpose tools.
 - Keep the map at directory level. A line that needs editing whenever the code changes belongs in the code.
-- Stay below 4,000 tokens, at 6 bytes per token.
 
 ## Breaking changes are expected
 

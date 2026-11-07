@@ -175,7 +175,7 @@ function createSqliteD1Harness(options = {}) {
         async all() {
           options.beforeQuery?.(query);
           const results = sqlite.prepare(query).all(...this.values);
-          options.afterQuery?.(query, results);
+          options.afterQuery?.(query, results, this.values);
           return { results };
         },
         async run() {
@@ -2114,7 +2114,7 @@ describe("session history", () => {
     const snippetQuery = boundedHarness.prepared.find((statement) =>
       statement.query.includes("WITH ranked_snippets"),
     );
-    expect(snippetQuery.values).toHaveLength(77);
+    expect(snippetQuery.values).toHaveLength(78);
 
     const oversizedEntry = await callHistoryWorker(
       "/v1/operations",
@@ -2331,9 +2331,13 @@ describe("session history", () => {
 
   it("bounds snippet text in the database and preserves per-session entry ordering", async () => {
     let snippetRows;
+    let snippetPlan;
     const harness = createSqliteD1Harness({
-      afterQuery(query, rows) {
-        if (query.includes("WITH ranked_snippets")) snippetRows = rows;
+      afterQuery(query, rows, values) {
+        if (query.includes("WITH ranked_snippets")) {
+          snippetRows = rows;
+          snippetPlan = harness.sqlite.prepare(`EXPLAIN QUERY PLAN ${query}`).all(...values);
+        }
       },
     });
     try {
@@ -2366,6 +2370,7 @@ describe("session history", () => {
       const { sessions } = await response.json();
       expect(sessions).toHaveLength(1);
       expect(snippetRows).toHaveLength(3);
+      expect(snippetPlan.some((row) => row.detail === "MATERIALIZE snippet_excerpts")).toBe(true);
       expect(sessions[0].snippets).toEqual(snippetRows.map((row) => row.match_text));
       for (const [index, label] of ["first", "second", "third"].entries()) {
         const snippet = snippetRows[index].match_text;
@@ -2374,6 +2379,47 @@ describe("session history", () => {
         expect([...snippet].length).toBeLessThanOrEqual(360);
         expect(Buffer.byteLength(snippet)).toBeLessThanOrEqual(1440);
       }
+    } finally {
+      harness.sqlite.close();
+    }
+  });
+
+  it.each([
+    [16, 0],
+    [8, 100],
+  ])("retains formatted-record context with a %i-token excerpt", async (tokens, padding) => {
+    const harness = createSqliteD1Harness();
+    try {
+      initializeHistoryD1(harness);
+      harness.sqlite.exec(
+        "INSERT INTO sessions (session_id, attributes_json, created_at, updated_at) VALUES ('session-1', '{}', 1, 1)",
+      );
+      const text = JSON.stringify(
+        Array.from({ length: 21 }, (_, index) => ({
+          id: index === 10 ? "needle" : `item-${index}`,
+          kind: `tool_result${"x".repeat(padding)}`,
+          status: "completed",
+        })),
+        null,
+        4,
+      );
+      harness.sqlite
+        .prepare(
+          "INSERT INTO entries_fts (session_id, entry_id, position, text) VALUES (?, ?, ?, ?)",
+        )
+        .run("session-1", "entry-1", 1, text);
+      const excerpt = harness.sqlite.prepare(
+        "SELECT snippet(entries_fts, 3, '', '', '…', ?) AS text FROM entries_fts WHERE entries_fts MATCH 'needle'",
+      );
+      expect([...excerpt.get(tokens * 2).text].length).toBeGreaterThan(360);
+      const expected = excerpt.get(tokens).text;
+      expect([...expected].length).toBeLessThanOrEqual(360);
+      const response = await callHistoryWorker("/v1/search", { query: "needle" }, harness);
+      expect(response.status).toBe(200);
+      const { sessions } = await response.json();
+      expect(sessions[0].snippets).toEqual([expected]);
+      expect(sessions[0].snippets[0]).toContain("needle");
+      expect(sessions[0].snippets[0]).toContain("tool_result");
     } finally {
       harness.sqlite.close();
     }

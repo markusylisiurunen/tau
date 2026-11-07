@@ -713,19 +713,30 @@ async function search(
            FROM entries_fts
            WHERE entries_fts MATCH ?
              AND session_id IN (${sessionIds.map(() => "?").join(", ")})
+         ), snippet_excerpts AS MATERIALIZED (
+           SELECT ranked.entry_rowid, ranked.session_id, ranked.snippet_rank,
+                  substr(snippet(entries_fts, 3, '', '', '…', 32), 1, 361) AS excerpt
+           FROM ranked_snippets ranked
+           -- Keep ranked rows outermost so snippet extraction uses rowid lookups.
+           CROSS JOIN entries_fts ON entries_fts.rowid = ranked.entry_rowid
+           WHERE ranked.snippet_rank <= 3 AND entries_fts MATCH ?
          )
-         SELECT ranked.session_id,
-                CASE WHEN length(snippet(entries_fts, 3, '', '', '…', 32)) <= 360
-                  THEN snippet(entries_fts, 3, '', '', '…', 32)
-                  ELSE substr(snippet(entries_fts, 3, '', '', '…', 1), 1, 360)
-                END AS match_text
-         FROM ranked_snippets ranked
-         -- Keep ranked rows outermost so snippet extraction uses rowid lookups.
-         CROSS JOIN entries_fts ON entries_fts.rowid = ranked.entry_rowid
-         WHERE ranked.snippet_rank <= 3 AND entries_fts MATCH ?
-         ORDER BY ranked.session_id, ranked.snippet_rank`,
+         SELECT session_id,
+                CASE WHEN length(excerpt) <= 360 THEN excerpt ELSE (
+                  SELECT CASE
+                    WHEN length(snippet(entries_fts, 3, '', '', '…', 16)) <= 360
+                      THEN snippet(entries_fts, 3, '', '', '…', 16)
+                    WHEN length(snippet(entries_fts, 3, '', '', '…', 8)) <= 360
+                      THEN snippet(entries_fts, 3, '', '', '…', 8)
+                    ELSE substr(snippet(entries_fts, 3, '', '', '…', 1), 1, 360)
+                  END
+                  FROM entries_fts
+                  WHERE rowid = snippet_excerpts.entry_rowid AND entries_fts MATCH ?
+                ) END AS match_text
+         FROM snippet_excerpts
+         ORDER BY session_id, snippet_rank`,
       )
-      .bind(ftsQuery, ...sessionIds, ftsQuery)
+      .bind(ftsQuery, ...sessionIds, ftsQuery, ftsQuery)
       .all<{ session_id: string; match_text: string }>();
     const sessionsById = new Map(
       sessions.map((session) => [String(session.sessionId), session] as const),

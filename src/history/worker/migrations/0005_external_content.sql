@@ -10,6 +10,7 @@ CREATE TABLE entries_external (
   UNIQUE (session_id, entry_id),
   UNIQUE (session_id, position)
 );
+-- Cutover renames the table; SQLite rewrites views but not FTS content names.
 CREATE VIEW entries_search AS
 SELECT id, session_id, entry_id, position, search_text AS text FROM entries_external;
 CREATE VIRTUAL TABLE entries_search_fts USING fts5(

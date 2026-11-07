@@ -56,7 +56,10 @@ export async function setupHistoryService(options: HistorySetupOptions): Promise
   const temporaryDirectory = mkdtempSync(join(tmpdir(), "tau-history-"));
   try {
     writeWorkerProject(temporaryDirectory, { domain, zoneName, databaseId });
-    await applyHistoryMigrations(temporaryDirectory, env, stdout);
+    await applyHistoryMigrations(temporaryDirectory, env, stdout, {
+      databaseName: DATABASE_NAME,
+      remote: true,
+    });
     stdout(`deploying Worker ${WORKER_NAME} with Wrangler...`);
     await runWrangler(["deploy"], { cwd: temporaryDirectory, env });
     await runWrangler(["secret", "put", "API_KEY"], {
@@ -194,13 +197,10 @@ export async function applyHistoryMigrations(
   directory: string,
   env: NodeJS.ProcessEnv,
   stdout: (line: string) => void,
-  target: { databaseName: string; remote: boolean; persistTo?: string } = {
-    databaseName: DATABASE_NAME,
-    remote: true,
-  },
+  target: { databaseName: string } & ({ remote: true } | { remote: false; persistTo: string }),
 ): Promise<void> {
   const flags = [target.remote ? "--remote" : "--local"];
-  if (target.persistTo) flags.push("--persist-to", target.persistTo);
+  if (!target.remote) flags.push("--persist-to", target.persistTo);
   const apply = async () => {
     await runWrangler(["d1", "migrations", "apply", target.databaseName, ...flags], {
       cwd: directory,
@@ -239,7 +239,7 @@ function writeHistoryMigrations(directory: string, includeCutover: boolean): voi
   const migrationsDirectory = join(directory, "migrations");
   mkdirSync(migrationsDirectory, { recursive: true });
   for (const name of HISTORY_MIGRATION_NAMES) {
-    if (!includeCutover && name === HISTORY_SEARCH_CUTOVER_MIGRATION) continue;
+    if (!includeCutover && name === HISTORY_SEARCH_CUTOVER_MIGRATION) break;
     const source = fileURLToPath(
       new URL(`../../history/worker/migrations/${name}`, import.meta.url),
     );

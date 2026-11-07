@@ -14,7 +14,6 @@ DROP TRIGGER entries_external_update;
 DROP TABLE entries_fts;
 DROP TABLE entries;
 ALTER TABLE entries_external RENAME TO entries;
-CREATE INDEX entries_order ON entries(session_id, position);
 DROP TABLE history_search_backfill;
 
 CREATE TRIGGER sessions_digest_schedule

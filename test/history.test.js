@@ -1501,6 +1501,8 @@ describe("session history", () => {
         "  process.exit(0);",
         "}",
         'if (args[0] === "d1" && args[1] === "execute") {',
+        '  if (existsSync(join(process.cwd(), "migrations", "0006_external_content_cutover.sql"))) process.exit(42);',
+        '  if (process.env.TEST_FAIL_BACKFILL === "1") process.exit(43);',
         "  console.log(JSON.stringify([{ success: true, results: [] }]));",
         "  process.exit(0);",
         "}",
@@ -1523,6 +1525,8 @@ describe("session history", () => {
         '  if (!existsSync(join(process.cwd(), "migrations", "0003_digest_schedule.sql"))) process.exit(39);',
         '  if (!existsSync(join(process.cwd(), "migrations", "0004_recent_sessions.sql"))) process.exit(40);',
         '  if (!existsSync(join(process.cwd(), "migrations", "0005_external_content.sql"))) process.exit(41);',
+        '  const backfillStarted = readFileSync(process.env.TEST_CALLS, "utf8").includes("d1 execute");',
+        '  if (existsSync(join(process.cwd(), "migrations", "0006_external_content_cutover.sql")) !== backfillStarted) process.exit(44);',
         '  const sql = readFileSync(migration, "utf8");',
         '  if (sql.includes("DROP TABLE IF EXISTS history_schema_migrations")) process.exit(34);',
         '  if (args[0] === "d1" && process.env.TEST_FAIL_MIGRATION === "1") process.exit(35);',
@@ -1580,6 +1584,22 @@ describe("session history", () => {
         "deploy",
         "secret put API_KEY",
         "secret put VIEWER_PASSWORD",
+      ]);
+
+      writeFileSync(callsPath, "");
+      await expect(
+        setupHistoryService({
+          domain: "history.example.com",
+          zoneName: "example.com",
+          apiKey: "test-key",
+          env: { ...baseEnv, TEST_FAIL_BACKFILL: "1" },
+          stdout: () => {},
+        }),
+      ).rejects.toThrow();
+      expect(readFileSync(callsPath, "utf8").trim().split("\n")).toEqual([
+        "d1 list --json",
+        "d1 migrations apply tau-history --remote",
+        "d1 execute tau-history --remote --json --command SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'history_search_backfill'",
       ]);
 
       writeFileSync(callsPath, "");

@@ -5,7 +5,7 @@ import { expect, it, vi } from "vitest";
 vi.mock("../dist/history/worker/viewer.js", () => ({ default: "" }));
 vi.mock("../dist/history/worker/viewer.css", () => ({ default: "" }));
 
-import { selectDigestCandidate } from "../dist/history/worker/index.js";
+import historyWorker, { selectDigestCandidate } from "../dist/history/worker/index.js";
 
 const oldSelection = `SELECT s.session_id, s.digest_failure_count
   FROM sessions s
@@ -39,37 +39,42 @@ const measurementWorker = `
   };
 `;
 
+function createMeasurementDatabase() {
+  const worker = new Miniflare({
+    workers: [
+      {
+        config: {
+          name: "measurement",
+          compatibilityDate: "2026-08-01",
+          manifest: {
+            mainModule: "measurement.mjs",
+            modulesRoot: import.meta.dirname,
+            modules: { "measurement.mjs": { type: "esm", contents: measurementWorker } },
+          },
+          env: {
+            DB: { type: "durable-object", worker: "measurement", exportName: "Measurement" },
+          },
+          exports: { Measurement: { type: "durable-object", storage: "sqlite" } },
+        },
+      },
+    ],
+  });
+  const execute = async (query, values = []) => {
+    const response = await worker.dispatchFetch("http://measurement/", {
+      method: "POST",
+      body: JSON.stringify({ query, values }),
+    });
+    if (!response.ok) throw new Error(await response.text());
+    return await response.json();
+  };
+  return { worker, execute };
+}
+
 it("bounds maintenance reads independently of inactive transcript size", async () => {
   const now = 1_800_000_000_000;
   const measurements = [];
   for (const scale of [1, 10]) {
-    const worker = new Miniflare({
-      workers: [
-        {
-          config: {
-            name: "measurement",
-            compatibilityDate: "2026-08-01",
-            manifest: {
-              mainModule: "measurement.mjs",
-              modulesRoot: import.meta.dirname,
-              modules: { "measurement.mjs": { type: "esm", contents: measurementWorker } },
-            },
-            env: {
-              DB: { type: "durable-object", worker: "measurement", exportName: "Measurement" },
-            },
-            exports: { Measurement: { type: "durable-object", storage: "sqlite" } },
-          },
-        },
-      ],
-    });
-    const execute = async (query, values = []) => {
-      const response = await worker.dispatchFetch("http://measurement/", {
-        method: "POST",
-        body: JSON.stringify({ query, values }),
-      });
-      if (!response.ok) throw new Error(await response.text());
-      return await response.json();
-    };
+    const { worker, execute } = createMeasurementDatabase();
     const select = async () => {
       let measured;
       const candidate = await selectDigestCandidate(
@@ -158,3 +163,72 @@ it("bounds maintenance reads independently of inactive transcript size", async (
   }
   console.log("history maintenance rows read", JSON.stringify(measurements));
 }, 120_000);
+
+it("bounds snippet payloads without adding a second full-text scan", async () => {
+  const { worker, execute } = createMeasurementDatabase();
+  try {
+    for (const migration of [
+      "0001_initial",
+      "0002_parent_session",
+      "0003_digest_schedule",
+      "0004_recent_sessions",
+    ]) {
+      await execute(
+        readFileSync(
+          new URL(`../dist/history/worker/migrations/${migration}.sql`, import.meta.url),
+          "utf8",
+        ),
+      );
+    }
+    const entries = 10000;
+    await execute(`
+      INSERT INTO sessions (session_id, attributes_json, created_at, updated_at)
+      VALUES ('selected', '{}', 1, 1);
+      WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x + 1 FROM n WHERE x < ${entries})
+      INSERT INTO entries_fts (session_id, entry_id, position, text)
+      SELECT CASE WHEN x <= 41 THEN 'selected' ELSE 'other' END, 'entry-' || x, x, 'needle' FROM n;
+    `);
+    await execute("UPDATE entries_fts SET text = ? WHERE CAST(position AS INTEGER) <= 3", [
+      `${"prefix ".repeat(30000)}needle ${"suffix ".repeat(30000)}`,
+    ]);
+    let snippets;
+    const response = await historyWorker.fetch(
+      new Request("https://history.example.com/v1/search", {
+        method: "POST",
+        headers: { authorization: "Bearer secret", "content-type": "application/json" },
+        body: JSON.stringify({ query: "needle" }),
+      }),
+      {
+        API_KEY: "secret",
+        DB: {
+          prepare(query) {
+            return {
+              bind(...values) {
+                return {
+                  async all() {
+                    const measured = await execute(query, values);
+                    if (query.includes("WITH ranked_snippets")) snippets = measured;
+                    return measured;
+                  },
+                };
+              },
+            };
+          },
+        },
+      },
+      {},
+    );
+    expect(response.status).toBe(200);
+    const { sessions } = await response.json();
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].snippets).toHaveLength(3);
+    expect(snippets.rowsRead).toBeLessThan(entries + 500);
+    expect(snippets.results).toHaveLength(3);
+    for (const row of snippets.results) {
+      expect(row.match_text).toContain("needle");
+      expect(Buffer.byteLength(row.match_text)).toBeLessThanOrEqual(1440);
+    }
+  } finally {
+    await worker.dispose();
+  }
+}, 30_000);

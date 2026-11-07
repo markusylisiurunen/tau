@@ -38,3 +38,39 @@ jobs:
       - run: npm publish --tag "$NPM_TAG"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  deploy-history:
+    if: vars.HISTORY_DEPLOY_ENABLED == 'true'
+    needs: publish
+    runs-on: ubuntu-latest
+    environment: history
+    concurrency:
+      group: history-deployment
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm install --global npm@12
+      - run: npm ci --strict-allow-scripts && (cd src/diff_tool/app && npm ci --strict-allow-scripts)
+      - run: npm run build
+
+      - name: deploy history service
+        run: |
+          export PATH="$PWD/node_modules/.bin:$PATH"
+          node scripts/deploy-history.js
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TAU_HISTORY_DOMAIN: ${{ secrets.TAU_HISTORY_DOMAIN }}
+          TAU_HISTORY_ZONE_NAME: ${{ secrets.TAU_HISTORY_ZONE_NAME }}
+          TAU_HISTORY_API_KEY: ${{ secrets.TAU_HISTORY_API_KEY }}
+          TAU_HISTORY_VIEWER_PASSWORD: ${{ secrets.TAU_HISTORY_VIEWER_PASSWORD }}

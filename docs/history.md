@@ -188,6 +188,8 @@ To upgrade without losing parent links:
 1. Upgrade Tau on the machine you use for setup, then run `tau history setup` with the existing API key and viewer password. Setup deploys the Worker from the installed Tau release and applies new D1 migrations.
 2. Upgrade and restart each host. Until a host restarts on the new release, its remote searches and reads fail.
 
+To deploy the service automatically after each release, see [Deploy history from GitHub releases](history-deployment.md).
+
 ## Replication and outages
 
 Replication starts locally:

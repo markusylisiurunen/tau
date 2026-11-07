@@ -363,6 +363,7 @@ describe("speech cleanup", () => {
         style: "default",
         apiKey: "key",
         vocabulary: ["Tau"],
+        context: { messages: [{ role: "user", text: "We are fixing Tau." }] },
         fetchImpl,
       }),
     ).toBe("Korjaa Tau. Use 5 tests.");
@@ -371,8 +372,43 @@ describe("speech cleanup", () => {
     expect(JSON.parse(body.input)).toEqual({
       transcript: "korjaa Tau use five tests",
       vocabulary: ["Tau"],
+      context: "user: We are fixing Tau.",
     });
     expect(body.store).toBe(false);
+  });
+
+  it.each([
+    undefined,
+    { messages: [] },
+    {
+      messages: [
+        { role: "user", text: "old context ".repeat(6000) },
+        { role: "assistant", text: `${"ä中🙂".repeat(6000)} newest context` },
+      ],
+    },
+  ])("bounds cleanup context and favors the newest text", async (context) => {
+    const fetchImpl = vi.fn(async () =>
+      json({
+        status: "completed",
+        output: [{ type: "message", content: [{ type: "output_text", text: "done" }] }],
+      }),
+    );
+    await cleanupSpeechTranscript({
+      transcript: "unchanged",
+      vocabulary: ["Tau"],
+      style: "default",
+      apiKey: "key",
+      context,
+      fetchImpl,
+    });
+    const input = JSON.parse(JSON.parse(fetchImpl.mock.calls[0][1].body).input);
+    expect(Buffer.byteLength(input.context, "utf8")).toBeLessThanOrEqual(8192 * 6);
+    expect(input.context).not.toContain("�");
+    expect(input.transcript).toBe("unchanged");
+    if (context?.messages.length) {
+      expect(input.context).toMatch(/newest context$/);
+      expect(input.context).not.toContain("old context");
+    } else expect(input.context).toBe("");
   });
 
   it.each([
@@ -414,7 +450,11 @@ describe("prepared speech cleanup", () => {
 
   it("prepares instructions without generating and continues on the same socket", async () => {
     const { socket, prepared, emit, warm, factory } = prepare();
-    const result = prepared.finish({ transcript: "original", vocabulary: ["Tau"] });
+    const result = prepared.finish({
+      transcript: "original",
+      vocabulary: ["Tau"],
+      context: { messages: [{ role: "assistant", text: "Use Scribe." }] },
+    });
     expect(socket.send).not.toHaveBeenCalled();
     socket.emit("open");
     const warmRequest = JSON.parse(socket.send.mock.calls[0][0]);
@@ -433,7 +473,11 @@ describe("prepared speech cleanup", () => {
       store: false,
     });
     expect(finalRequest).not.toHaveProperty("generate");
-    expect(JSON.parse(finalRequest.input)).toEqual({ transcript: "original", vocabulary: ["Tau"] });
+    expect(JSON.parse(finalRequest.input)).toEqual({
+      transcript: "original",
+      vocabulary: ["Tau"],
+      context: "assistant: Use Scribe.",
+    });
     emit({
       type: "response.completed",
       response: {

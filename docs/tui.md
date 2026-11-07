@@ -261,7 +261,7 @@ Transcription needs `ELEVENLABS_API_KEY` or `apiKeys.elevenlabs`, and cleanup ne
 
 `speech.cleanupStyle` sets each recording's initial style (`off` by default). Tab switches it for that recording. With `off`, Tau keeps the raw transcript.
 
-With `default`, Tau prepares the OpenAI connection and cleanup instructions while you speak. After transcription, GPT-6.1 Terra (reasoning disabled) removes fillers and false starts, fixes punctuation and grammar, applies explicit spoken corrections, writes numbers as numerals, and formats spoken lists. The model is instructed to preserve your wording, languages, names, facts, identifiers, and paths without summarizing or translating.
+With `default`, Tau connects to OpenAI while you speak. Then GPT-6.1 Terra (reasoning disabled) removes fillers and false starts, fixes punctuation and grammar, applies explicit spoken corrections, writes numbers as numerals, and formats spoken lists. It is instructed to keep your wording, languages, names, facts, identifiers, and paths without summarizing or translating, and to use [recent conversation](config-reference.md#speech) only to fix misheard words.
 
 If cleanup fails, Tau reports it and inserts the uncleaned transcript. After Enter or Ctrl+Enter, the text stays in the editor for review instead of being submitted.
 

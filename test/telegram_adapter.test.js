@@ -2867,6 +2867,15 @@ describe("telegram adapter", () => {
           createManagedSession({
             id: "s22",
             state: "waiting-input",
+            snapshot: createStatusSnapshot({
+              messages: [
+                {
+                  id: "context-user",
+                  state: "committed",
+                  message: { role: "user", content: "We are discussing Scribe.", timestamp: 1 },
+                },
+              ],
+            }),
           }),
         ],
         { defaultOwnerId: ownerIdForChat(211) },
@@ -2899,6 +2908,11 @@ describe("telegram adapter", () => {
             url.includes("openai") && JSON.parse(request.body).model === "gpt-6.1-terra",
         );
         expect(cleanupCalls).toHaveLength(style === "default" ? 1 : 0);
+        if (style === "default") {
+          expect(JSON.parse(JSON.parse(cleanupCalls[0][1].body).input).context).toBe(
+            "user: We are discussing Scribe.",
+          );
+        }
         if (style === "default" && cleanup === null && !warningFails)
           expect(apiHarness.sendMessages.length).toBeGreaterThan(0);
         const interactionCall = scribeFetch.mock.calls.find(

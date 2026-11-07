@@ -3055,6 +3055,7 @@ class TelegramAdapterImpl {
           transcript = await cleanupSpeechTranscript({
             transcript,
             style: this.speechCleanupStyle,
+            context: snapshot ? collectSpeechToTextContext(snapshot) : undefined,
             apiKey: this.openAIApiKey,
             vocabulary,
             signal: this.abortController.signal,

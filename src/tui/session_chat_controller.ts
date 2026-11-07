@@ -1388,6 +1388,7 @@ export class SessionChatController {
     try {
       const input = {
         transcript,
+        context: collectSpeechToTextContext(this.snapshot),
         vocabulary: composeSpeechVocabulary(
           this.snapshot.catalog.speechVocabulary,
           this.config.speech.personalVocabulary,

@@ -7057,6 +7057,13 @@ describe("SessionChatController", () => {
         },
         speechToTextDeps: { fetchImpl: fetchMock, webSocketFactory },
       });
+      controller.snapshot.messages = [
+        {
+          id: "context-user",
+          state: "committed",
+          message: { role: "user", content: "We are discussing Scribe.", timestamp: 1 },
+        },
+      ];
       controller.listenRecording = {
         audioPath,
         startedAt: Date.now(),
@@ -7093,7 +7100,11 @@ describe("SessionChatController", () => {
 
       expect(transcriptionCount).toBe(2);
       expect(cleanupInputs).toEqual([
-        { transcript: "recovered transcript", vocabulary: expect.arrayContaining(["Tau"]) },
+        {
+          transcript: "recovered transcript",
+          vocabulary: expect.arrayContaining(["Tau"]),
+          context: "user: We are discussing Scribe.",
+        },
       ]);
       expect(webSocketFactory).not.toHaveBeenCalled();
     },

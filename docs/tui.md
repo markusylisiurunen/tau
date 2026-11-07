@@ -49,10 +49,11 @@ Useful keys beyond those above: Ctrl+P cycles personas, Shift+Tab cycles reasoni
 
 Speech works on macOS and needs `ffmpeg` (`brew install ffmpeg`). The TUI process reads the credentials, including when attached to a remote host.
 
-- `/listen` or Ctrl+Y dictates into the editor with live transcription. Enter submits while recording, and Ctrl+Y stops without submitting. It needs `GEMINI_API_KEY`. If transcription fails, the recording stays on disk, and `/listen retry` or `/listen discard` handles it.
+- `/listen` or Ctrl+Y dictates into the editor with live transcription. Enter submits while recording, and Ctrl+Y stops without submitting. It needs `ELEVENLABS_API_KEY`. If transcription fails, the recording stays on disk, and `/listen retry` or `/listen discard` handles it.
+- Tab while recording switches cleanup on or off for that recording, starting from `speech.cleanupStyle`. Cleanup needs `OPENAI_API_KEY`. It removes fillers and false starts and fixes punctuation, keeping your wording, and it sees your vocabulary and the recent conversation to fix misheard words. If cleanup fails, the raw transcript stays in the editor without being submitted.
 - `/speak` reads the last response aloud, and `/auto-speak` reads each final answer. Both need `OPENAI_API_KEY` for rewriting and `ELEVENLABS_API_KEY` for audio.
 
-Configure the voice, shortcut, and vocabulary in `speech`. A configured voice has no fallback, and without one Tau uses its default voices. See [configuration](configuration.md).
+Configure the voice, shortcut, cleanup style, and vocabulary in `speech`. A configured voice has no fallback, and without one Tau uses its default voices. See [configuration](configuration.md).
 
 ## Exporting a response
 

@@ -27,6 +27,7 @@ type Config = {
       key: string; // one printable character, "ctrl+y", or "f1" to "f12"
       gesture: "press" | "double-tap";
     };
+    cleanupStyle?: "off" | "default"; // TUI dictation cleanup, default "off"
     vocabulary?: string[]; // spelling hints for transcription
   };
   markdownExport?: {
@@ -96,7 +97,7 @@ An invalid value produces a warning and is skipped, so a broader value may stay 
 | `subagents`, `modelSystemNotices`, `speech.vocabulary` in a project | `/reload` while idle |
 | `defaultPersona` | Applies to new sessions |
 | `mcpServers` | New session, or reopen the session after the host unloads it |
-| `defaultTheme`, `voiceId`, `recordingShortcut`, `markdownExport`, client tools | Restart the client |
+| `defaultTheme`, `voiceId`, `recordingShortcut`, `cleanupStyle`, `markdownExport`, client tools | Restart the client |
 | `apiKeys`, `history`, `flySprites`, host environment variables | Restart the host |
 | Telegram configuration | Restart the runner |
 

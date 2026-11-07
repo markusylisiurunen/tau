@@ -67,7 +67,7 @@ label: release summary
 Summarize the changes since the previous release, and call out any migration steps.
 ```
 
-In the TUI, `/prompt:release-summary` fills the editor without sending. In Telegram, `/prompt` opens a picker. Tau reads the body each time you use the prompt, but you need `/reload` after adding, removing, or renaming one.
+In the TUI, `/prompt:release-summary` fills the editor without sending. In Telegram, `/prompt` opens a picker, and `/prompt release-summary` adds the prompt directly. Tau reads the body each time you use the prompt, but you need `/reload` after adding, removing, or renaming one.
 
 ## Hidden system blocks
 

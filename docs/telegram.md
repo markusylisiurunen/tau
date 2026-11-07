@@ -56,6 +56,7 @@ type Bot = {
   allowedProjectIds?: string[]; // missing: all projects
   defaultProjectId?: string;
   systemMessage?: string; // added to each turn from this bot
+  speechCleanupStyle?: "off" | "default"; // clean up voice transcripts, default "off"
   autoCompactThresholdTokens?: number;
   env?: Record<string, string>; // see Bot environments
 };
@@ -128,7 +129,7 @@ Each session works in a project:
 }
 ```
 
-If a bot allows one project, Tau selects it automatically. Otherwise the chat picks one with `/use_<projectId>` or gets `defaultProjectId`. Telegram allows 100 commands per bot, which leaves room for 87 project commands. Relative `workspaceRoot` and `directory` paths resolve from the config file's directory.
+If a bot allows one project, Tau selects it automatically. Otherwise the chat picks one with `/use_<projectId>` or gets `defaultProjectId`. Telegram allows 100 commands per bot, which leaves room for 90 project commands. Relative `workspaceRoot` and `directory` paths resolve from the config file's directory.
 
 Sessions read `~/.config/tau` and the `.tau` directories above the workspace as usual. A project's `.tau/config.json` can start [MCP servers](mcp.md) on the runner machine, so review what you add as a project.
 
@@ -147,13 +148,15 @@ A repository can include an executable `.tau/scripts/provision` with a shebang. 
 | `/new` | Replace the active session using the preferred project. |
 | `/use_<projectId>` | Select the project for future `/new` sessions. |
 | `/status` | Show session state, project, model, reasoning, context use, and cost. |
-| `/persona` | Apply a persona or preset while idle, keeping the conversation. |
-| `/effort_low`, `/effort_medium`, `/effort_high`, `/effort_xhigh` | Set reasoning for future turns. |
-| `/prompt` | Add a saved prompt to the conversation without starting a turn. |
+| `/persona [key]` | Apply a persona or preset while idle, keeping the conversation. |
+| `/effort [level]` | Set reasoning for future turns, also during a turn. |
+| `/prompt [id]` | Add a saved prompt to the conversation without starting a turn. |
 | `/auto_compact [tokens\|default]` | Show or set the compaction threshold. |
 | `/compact` | Compact while idle. |
 | `/interrupt` | Interrupt the running turn. |
 | `/tts_on`, `/tts_off` | Turn voice replies on or off. |
+
+`/persona`, `/effort`, and `/prompt` show buttons when sent alone. With a value they apply it directly, as in `/persona astra`, `/effort low`, or `/prompt release-summary`. A persona value is the preset key when the bot has `presets`, and otherwise the persona ID, never the button label. Values are case-sensitive.
 
 In groups, commands must mention the bot, as in `/status@tau_engineering_bot`.
 
@@ -163,7 +166,7 @@ A message sent while Tau is working steers the running turn. Telegram has no way
 
 The bot accepts documents, photos, videos, and audio, up to 20 MiB per file, 100 MiB per turn, and 32 files per turn. Sending a file only queues it, and the next text or voice message starts a turn with the file paths. Files go to the temporary directory of the execution environment, where system cleanup can remove them.
 
-Voice notes up to 20 minutes are transcribed with `GEMINI_API_KEY`. `/tts_on` needs OpenAI and ElevenLabs keys and `ffmpeg` with Opus on the runner. See [models and credentials](models-and-credentials.md).
+Voice notes up to 20 minutes are transcribed with `ELEVENLABS_API_KEY`. With `speechCleanupStyle: "default"`, the transcript is also cleaned up as in the [TUI](tui.md#speech), which needs OpenAI credentials, and the raw transcript is used if cleanup fails. `/tts_on` needs OpenAI and ElevenLabs keys and `ffmpeg` with Opus on the runner. See [models and credentials](models-and-credentials.md).
 
 The agent can send files back with these tools, which take `{ path, caption? }`:
 

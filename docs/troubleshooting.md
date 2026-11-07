@@ -5,7 +5,7 @@ Most problems come from a setting on the wrong machine or a change that has not 
 ## Inspecting state
 
 - `tau --debug --persona <id>` prints what a new local session would load, including the full prompt, and exits. Keep the output private. It cannot inspect a remote host.
-- `/help` shows the loaded skills, context files, and client tools of the current session.
+- `/help` shows the loaded skills and context files of the current session.
 - `/reload` reports configuration warnings for the current session.
 - `!!pwd`, `!!printf '%s\n' "$HOME"`, and `!!command -v git` show what the agent sees, without using context.
 - `tau auth list` shows Codex accounts on the host.

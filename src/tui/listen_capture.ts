@@ -6,7 +6,7 @@ import { getElevenLabsApiKey, getOpenAIApiKey } from "../core/config/index.js";
 import type { ApiKeysConfig } from "../core/config/schema.js";
 import type { CoreDeps } from "../core/runtime/deps.js";
 import type { SpawnCaptureResult } from "../core/utils/spawn_capture.js";
-import { type SpeechCleanupStyle, speechCleanupStyleSchema } from "../core/utils/speech_cleanup.js";
+import type { SpeechCleanupStyle } from "../core/utils/speech_cleanup.js";
 import {
   createSpeechToTextTranscription,
   type SpeechToTextDependencies,
@@ -159,11 +159,6 @@ export type RetainedListenAudio = {
   durationMs: number;
   cleanupStyle: SpeechCleanupStyle;
 };
-
-export function nextListenCleanupStyle(style: SpeechCleanupStyle): SpeechCleanupStyle {
-  const styles = speechCleanupStyleSchema.options;
-  return styles[(styles.indexOf(style) + 1) % styles.length]!;
-}
 
 export type SpeechToTextCredentials = {
   elevenLabsApiKey: string;

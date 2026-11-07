@@ -37,6 +37,7 @@ import { formatAdaptiveNumber, formatCwd, formatTokenWindow } from "../core/util
 import { extractAssistantText } from "../core/utils/messages.js";
 import {
   cleanupSpeechTranscript,
+  nextSpeechCleanupStyle,
   type PreparedSpeechCleanup,
   prepareSpeechCleanup,
   type SpeechCleanupStyle,
@@ -115,7 +116,6 @@ import {
   LISTEN_CAPTURE_START_TIMEOUT_MS,
   LISTEN_RECORDING_MIN_BYTES,
   type ListenRecording,
-  nextListenCleanupStyle,
   type RetainedListenAudio,
   readListenAudio,
   resolveSpeechToTextCredentials,
@@ -933,7 +933,7 @@ export class SessionChatController {
   private cycleListenCleanupStyle(): void {
     const recording = this.listenRecording;
     if (!recording) return;
-    recording.cleanupStyle = nextListenCleanupStyle(recording.cleanupStyle);
+    recording.cleanupStyle = nextSpeechCleanupStyle(recording.cleanupStyle);
     this.prepareListenCleanup(recording.cleanupStyle);
     this.refreshStatus();
   }
@@ -1386,18 +1386,22 @@ export class SessionChatController {
     this.listenActivityLabel = "cleaning up voice input";
     this.refreshStatus();
     try {
-      const text = await cleanupSpeechTranscript({
+      const input = {
         transcript,
-        style,
-        apiKey: getOpenAIApiKey(this.config, this.deps.env.env()),
         vocabulary: composeSpeechVocabulary(
           this.snapshot.catalog.speechVocabulary,
           this.config.speech.personalVocabulary,
         ),
         signal: abortController.signal,
-        fetchImpl: this.speechToTextDeps?.fetchImpl,
-        prepared: this.preparedListenCleanup,
-      });
+      };
+      const text = this.preparedListenCleanup
+        ? await this.preparedListenCleanup.finish(input)
+        : await cleanupSpeechTranscript({
+            ...input,
+            style,
+            apiKey: getOpenAIApiKey(this.config, this.deps.env.env()),
+            fetchImpl: this.speechToTextDeps?.fetchImpl,
+          });
       if (abortController.signal.aborted || this.listenPreview !== preview) return undefined;
       return { text, failed: false };
     } catch (error) {

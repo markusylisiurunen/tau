@@ -5,6 +5,11 @@ import type { SpeechToTextWebSocket, SpeechToTextWebSocketFactory } from "./spee
 export const speechCleanupStyleSchema = z.enum(["off", "default"]);
 export type SpeechCleanupStyle = z.infer<typeof speechCleanupStyleSchema>;
 
+export function nextSpeechCleanupStyle(style: SpeechCleanupStyle): SpeechCleanupStyle {
+  const styles = speechCleanupStyleSchema.options;
+  return styles[(styles.indexOf(style) + 1) % styles.length]!;
+}
+
 const CLEANUP_INSTRUCTIONS = `Clean up a speech transcript with minimal changes.
 
 Remove filler sounds, accidental repeated words, and abandoned false starts. Correct punctuation, capitalization, and grammar. Keep the speaker's wording, sentence order, tone, and level of formality. Preserve hedges, uncertainty, questions, names, numbers, and all facts. Resolve an explicit spoken correction by keeping the corrected version.
@@ -39,12 +44,10 @@ export async function cleanupSpeechTranscript(options: {
   vocabulary: string[];
   signal?: AbortSignal;
   fetchImpl?: typeof fetch;
-  prepared?: PreparedSpeechCleanup;
 }): Promise<string> {
   if (options.style === "off" || !options.transcript.trim()) return options.transcript;
   if (!options.apiKey?.trim())
     throw new Error("set OPENAI_API_KEY or apiKeys.openai to clean up speech");
-  if (options.prepared) return await options.prepared.finish(options);
   const response = await (options.fetchImpl ?? fetch)("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {

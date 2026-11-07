@@ -1,196 +1,73 @@
 # Tools
 
-Tools let an agent act, not just answer. Tools come from different places: the host provides tools selected by the persona, attached clients can add their own, and a few are always present. Where a tool comes from explains why it is available in one session and missing in another.
+The agent's tools come from three places:
 
-A turn keeps the tool set it started with. Persona changes, reloads, and clients attaching or detaching apply from the next turn.
+- **Persona-selected tools** act on the execution environment or host services. The persona's `tools` list selects them.
+- **`tau_docs`** is always present and reads this manual.
+- **[Client tools](client-tools.md)** come from attached clients, such as the TUI's `diff_review` and `prefill_input`.
 
-## Tool categories
+A tool runs with the permissions of the machine behind it, and nothing limits it to the repository. See [security](security.md).
 
-There are three kinds of tools:
+## Tool names
 
-| Category | Owner and availability |
+| Name in `tools` | Gives the agent |
 | --- | --- |
-| Persona-selected host tools | The host provides them, and they act on the execution environment or host services. The active persona's `tools` list selects them. |
-| Built-in tools | Always present, whatever the persona selects. `tau_docs` is available to main agents and subagents. |
-| Client tools | An attached client offers and runs them. Examples are the TUI's `diff_review` and `prefill_input`, and configured command client tools. |
+| `bash` | `bash`, its job tools, and `tau.bash` |
+| `write`, `edit` | File tools |
+| `view_image` | Shows an image to the model |
+| `web` | `tau.web`: search, fetch, and discovery (search and fetch need an Exa key) |
+| `history` | `tau.history`: read-only [transcript search](history.md) |
+| `mcp` | `tau.mcp`: [MCP servers](mcp.md) |
+| `models` | `tau.models`: standalone OpenRouter calls |
+| `agents` | `tau.agents` and `wait_for_agents`: [subagents](subagents.md) |
 
-A tool schema tells the model how to call a tool. It grants no operating-system permissions. Host tools run with the permissions of the execution environment or the host service behind them. Client tools run with the permissions of their client, and can also ask to run commands in the execution environment. See [ownership and scope](ownership-and-scope.md) and [client tools](client-tools.md).
+Names starting with `tau.` are APIs inside the [`code` tool](code-mode.md), which Tau adds when at least one of them is available.
 
-## Persona tool selection
+## Bash
 
-A custom persona can list exactly which tools it uses:
+Each call runs a fresh non-interactive login Bash, so `cd`, variables, and aliases do not carry over, but file changes do. Commands have no terminal and no stdin, so anything that prompts fails or hangs until the timeout. Git is set up to never prompt, and output color and pagers are off.
 
-```yaml
-tools:
-  - bash
-  - write
-  - edit
-  - view_image
-  - web
+Foreground calls time out after 60 seconds unless the call sets `timeout`. Long output reaches the model as a preview of its beginning and end, and the full text may be saved to a temporary file. The agent can raise the limit with `maxOutputTokens`, up to 16,384 on its own and up to 65,536 when you ask.
+
+In a local execution environment, commands do not inherit variables whose names end in `_KEY`, `_SECRET`, `_TOKEN`, or `_PASSWORD`, or the name `API_KEY`. This filter works on names only, so do not rely on it to protect secrets.
+
+## Background jobs
+
+With `background: true`, a command returns a job ID right away and keeps running:
+
+```js
+bash({ command: "npm run dev", background: true });
+list_bash_jobs();
+read_bash_job({ id });
+wait_for_bash_jobs({ ids: [id], timeout: 60000 });
+stop_bash_job({ id });
 ```
 
-The selectable names are:
+Jobs suit services and work the agent does not need to wait for. They have no time limit and survive turns, interruption, and clients detaching. A finished job never starts a turn by itself. Each job belongs to the agent that started it.
 
-```text
-bash
-write
-edit
-view_image
-web
-history
-mcp
-models
-agents
-```
+Jobs stop when the session closes or the host shuts down, and they are not recovered after a restart. A process that daemonizes itself or runs in tmux is not stopped. An unknown job ID does not prove that the command stopped.
 
-A custom persona that omits `tools` gets all of these names. Built-in personas get the same set.
+Each agent can have 64 job records, and each job keeps the last 24 MiB of output.
 
-`web`, `history`, `mcp`, and `models` are not separate tools. Each enables a namespace inside the single `code` tool. `bash` enables both the Bash tools and `tau.bash` inside `code`. `agents` enables `tau.agents` inside `code` and the `wait_for_agents` tool, which together start and manage [subagents](subagents.md). Tau adds `code` and its [job tools](code-mode.md#background-code-jobs) whenever at least one usable capability is selected; `code` itself cannot be listed. A namespace the persona does not select is missing from the `code` API and its documentation.
+## File and image tools
 
-An empty list turns off every selectable tool:
+`write` creates or replaces a whole file. `edit` replaces one exact piece of text, which must match exactly once. Neither reads files, so the agent reads with Bash. Relative paths start from the working directory, and absolute paths work wherever the OS allows.
 
-```yaml
-tools: []
-```
-
-`tau_docs` stays available. The list also has no effect on client tools, which attached clients offer on their own.
-
-Missing credentials can make calls fail, but do not remove the tool. Persona configuration is covered in [personas](personas.md).
-
-## Tau documentation
-
-`tau_docs` reads the documentation shipped with the running Tau version. A persona cannot disable it, and every subagent has it too.
-
-The tool takes one exact Markdown path, such as `tools.md`. It cannot search or list pages. Start with:
-
-```text
-index.md
-```
-
-Then follow the links on that page. The tool's description also lists the built-in command-line tools, each with a short summary and its page, so agents can open a tool's page directly without reading the index first. Whether those tools work depends on what is installed in the execution environment. Unknown paths are rejected. The documentation describes supported behavior, not a particular session's effective configuration. When the answer depends on local state, inspect the configuration or use debug output.
-
-## Execution-environment tools
-
-### Bash
-
-`bash` runs a command in a fresh non-interactive login Bash in the execution environment. Each call starts a new shell, so shell variables, aliases, functions, `cd`, and other shell state do not carry over to the next call. Changes to files and other side effects do persist.
-
-Tau starts Bash with `-lc` and the execution environment's `HOME`. A login shell can read `/etc/profile` and then the first available `~/.bash_profile`, `~/.bash_login`, or `~/.profile`. It reads `BASH_ENV` when set. `.bashrc` is otherwise loaded only when a login file sources it. Tau does not suppress anything startup files do, so they must not print output, read stdin, require a terminal, or exit the shell.
-
-There is no TTY, and `bash` calls from the agent have no stdin. Commands that prompt, open an editor, or need a terminal hang until the timeout or fail. Use non-interactive flags, and pass `workingDirectory` instead of relying on an earlier `cd`.
-
-Tau sets `NO_COLOR=1`, `FORCE_COLOR=0`, `TERM=dumb`, and `PAGER=cat` so output is predictable. It also makes Git non-interactive: no terminal or askpass prompts, no editors, no pagers, and SSH in batch mode. These values override inherited ones and anything set by login startup files. A command can still set its own environment variables explicitly. Authentication must therefore work without prompts.
-
-Agents are told to choose the mode that avoids needless waiting. Background mode fits when the agent can do other useful work meanwhile, such as reading code while tests run. If the agent would only wait for the result, a foreground call with a suitable `timeout` is better than starting a background job and waiting for it right away. How long a command takes does not decide the mode by itself.
-
-Background mode also fits a service that must keep running, or work that must survive turns and interruptions. Starting several independent jobs and then waiting for them is a valid way to run work in parallel. This is guidance for the agent; Tau does not enforce it.
-
-The default foreground timeout is 60 seconds. Tau captures at most 24 MiB of combined stdout and stderr, and keeps the end when there is more. By default the result the model sees is limited to about 8,192 estimated tokens. Longer output is replaced by a preview of about 2,048 tokens that keeps the beginning and end, with a notice. The command has still run in full, with all its side effects.
-
-A narrower command is better than a higher limit. When more output is really needed, the agent can set `maxOutputTokens` between 8,192 and 16,384 on its own. Values above 16,384, up to 65,536, require an explicit user request. When output is truncated, Tau may save it to a temporary file in the execution environment and report the path.
-
-In a local execution environment, Tau removes inherited environment variables whose names end in `_KEY`, `_SECRET`, `_TOKEN`, or `_PASSWORD`, and `API_KEY`, before running commands. Hosted environments start from their own environment. Variables set explicitly for the environment still apply. Do not print credentials or whole environments.
-
-The TUI commands `!<command>` and `!!<command>` run the same way, in a fresh login shell. `!` adds the result to the model's context and `!!` does not. They allow more output into context than an agent's tool call, but capture is still limited.
-
-With `background: true`, `bash` starts the command and returns a job ID right away, without waiting for it to exit. Background jobs have no time limit, and combining `background: true` with `timeout` or `maxOutputTokens` is invalid. Jobs keep running across turns and interruptions.
-
-Each job belongs to the agent that started it, and only that agent can list, read, wait for, or stop it. The main agent, each subagent, and each ephemeral thread have separate jobs. A subagent keeps its jobs across follow-up messages. An ephemeral thread, including a fork, starts with no jobs.
-
-Enabling `bash` also enables `list_bash_jobs`, `read_bash_job`, `stop_bash_job`, and `wait_for_bash_jobs`. These cannot be listed separately in a persona. Each job appears as a block of labeled lines: `id`, `status`, `command`, `cwd`, and, once the command has exited, `exit_code` and any terminating `signal`. Read, stop, and wait add the job's output after an `--- output ---` line. List never includes output. For example:
-
-```text
-id: <job id>
-status: running
-command: "npm test"
-cwd: "/work/app"
-output: truncated; showing beginning and end
-
---- output ---
-<beginning and end of output>
-```
-
-Stop terminates the job's process group, kills it if it has not exited after a grace period, and waits until it has stopped. Tau keeps up to 64 job records for each agent and drops the oldest finished one when needed. Starting a job fails if all 64 are still running.
-
-Each job keeps the last 24 MiB of combined output. Read, stop, and wait return that output within a budget of 8,192 estimated tokens for the whole response by default, divided evenly among the requested jobs. `maxOutputTokens` sets this budget, from 1 to 65,536. When a job's output exceeds its share, the result shows the beginning and the end. The `output: truncated` line means only that this response shows part of the output. A separate `capture: truncated` line means the job produced more than 24 MiB, so its earliest output is lost.
-
-When a job with output finishes, Tau writes all of its retained text to a temporary file in the execution environment. Later results that include output give the file's path as `text_log`, so the agent can read or search it instead of raising the budget or running the command again. A running job has no text log. If the file cannot be written, the result shows `text_log: unavailable`.
-
-`read_bash_job`, `stop_bash_job`, and `wait_for_bash_jobs` accept `includeOutput`, which defaults to `true`. With `false`, the result has only the labeled job lines. It leaves out output, truncation lines, the text log, and execution error messages.
-
-`wait_for_bash_jobs({ids, timeout?, includeOutput?, maxOutputTokens?})` returns when any of the jobs exits or the wait times out. Jobs that already finished return immediately. The timeout is a positive integer in milliseconds, defaults to 60,000, and can be at most 300,000. A timeout counts as a successful result. It starts with a note that the jobs are still running, followed by their current blocks, and does not stop the jobs. Interrupting the wait leaves them running too. A job finishing never starts an agent turn by itself.
-
-Jobs survive client disconnects while the host is running, and keep an idle session from being unloaded until they finish. Closing the session normally or shutting down the host stops the jobs of every agent in the session. Job records are not saved or recovered, and an old ID fails with a clear error. An unknown ID does not mean the command never ran, that its side effects were undone, or that it has stopped. Agents are told to check running processes and output before starting such a command again. Cleanup does not cover processes that daemonize themselves, tmux sessions, or processes left behind by a host crash or forced kill.
-
-### Write and edit
-
-`write` creates or overwrites a UTF-8 file, creating missing parent directories. Relative paths resolve from the session's working directory. It replaces the whole file, so use it for new files or deliberate full rewrites.
-
-`edit` performs one exact textual replacement in an existing UTF-8 file. `oldText` must be non-empty and match exactly once, including whitespace and newlines. Zero matches and multiple matches are rejected without changing the file. Read the current section first and make `oldText` more specific when necessary.
-
-Neither tool reads files. To inspect text, use a focused Bash command such as `sed` or `cat`, or a language-specific tool. Both tools accept absolute paths and are limited only by the execution environment's file permissions. Tau does not restrict them to the repository.
-
-### View image
-
-`view_image` reads an image from the execution environment and shows it to a model that accepts images. Tau's built-in instructions tell the agent to use it only when the user explicitly asks to view or analyze an image.
-
-Supported formats are JPEG, PNG, and WebP, and the source file can be at most 50 MiB. An image is returned unchanged if both dimensions are at most 4,096 pixels and it is at most 3.5 MiB. A larger image is scaled down to fit within 4,096 pixels, keeping its aspect ratio; images are never scaled up. To meet the size limit, Tau tries lossless encoding first, then lossy compression, and reduces dimensions further only if needed. Transparency is kept. If a valid image still cannot fit the limit, the call fails. Relative paths resolve from the session's working directory.
+`view_image` accepts JPEG, PNG, and WebP files up to 50 MiB and shrinks large images. The agent uses it only when you ask.
 
 ## Command-line tools
 
-`tau tool` provides standalone utilities for people and agents, usable from any shell, inside or outside Tau. Files, configuration, credentials, and required programs must be on the machine that runs the command. Agents run these commands through Bash.
+`tau tool` provides standalone utilities that work in any shell. Agents run them through Bash. Their files and credentials must be on the machine running the command.
 
-| Command | Purpose | Guide |
-| --- | --- | --- |
-| `tau tool pdf-unpack` | Extract OCR Markdown and page-image patches from a PDF using Mistral. | [PDF unpacking](pdf-unpacking.md) |
-| `tau tool image-generate` | Generate or edit an image using Google or OpenAI. | [Image generation](image-generation.md) |
-| `tau tool speech-generate` | Generate narration or dialogue using ElevenLabs and assemble a WAV. | [Speech generation](speech-generation.md) |
-| `tau tool openrouter` | Typed decisions and standalone text/media analysis. | [OpenRouter](openrouter.md) |
+| Command | Purpose |
+| --- | --- |
+| `tau tool pdf-unpack` | [OCR a PDF](pdf-unpacking.md) with Mistral. |
+| `tau tool image-generate` | [Generate or edit an image](image-generation.md) with Google or OpenAI. |
+| `tau tool speech-generate` | [Generate narration or dialogue](speech-generation.md) with ElevenLabs. |
+| `tau tool openrouter` | [Typed decisions and text or media analysis](openrouter.md). |
 
-Each guide covers setup, input, examples, outputs, and failures. Run `tau tool --help` to list commands, or `tau tool <command> --help` for one command. Agents can read the same guides with `tau_docs`.
+`tau tool <command> --help` lists a command's flags.
 
-## Code-mode composition
+## Checking what a session has
 
-`code` runs a JavaScript program, inline or from a saved file, that combines the enabled capabilities. It can also run the program as a background job. See [code mode](code-mode.md) for input, output, limits, background code jobs, and each capability.
-
-## Subagent tools
-
-A subagent gets each of `bash`, `write`, `edit`, `view_image`, `web`, `history`, `mcp`, and `models` that its parent also has, plus `tau_docs`. A native Tau subagent at depth 1 also gets `agents` when its parent has it. Subagents at depth 2 and Claude Code subagents never get it, and no subagent gets client tools. Its Bash and file tools start in the subagent's working directory. [Subagents](subagents.md#tools) has the details.
-
-## Client-owned tools
-
-The TUI offers `diff_review` and `prefill_input` unless client tools are disabled. `diff_review` reads repository state from the execution environment and runs the review interface on the TUI machine. `prefill_input` puts a draft in an empty TUI editor. It never sends the text and refuses to overwrite an existing draft.
-
-Configured command client tools also belong to the client. They run processes on the client machine, and can run limited commands in the execution environment when the work belongs on the session machine. This matters with remote attachment, where the TUI and its tools may be on a laptop while the host and execution environment are elsewhere. See [client tools](client-tools.md) for configuration, protocol helpers, and limits, and [TUI](tui.md) for diff-tool configuration.
-
-### Sending files to Telegram
-
-Telegram provides four client tools, each accepting `{ path, caption? }` and delivering to the current chat:
-
-| Tool | Delivery | Supported files | Maximum size |
-| --- | --- | --- | --- |
-| `send_photo_to_telegram` | In-chat photo | JPEG/PNG; width plus height at most 10,000 pixels, aspect ratio at most 20 | 10,000,000 bytes |
-| `send_video_to_telegram` | Playable video | MPEG4 | 50,000,000 bytes |
-| `send_audio_to_telegram` | Audio player | MP3/M4A | 50,000,000 bytes |
-| `send_document_to_telegram` | Original file attachment | Any type, including PDF, CSV, ZIP, WAV, and original-quality images | 50,000,000 bytes |
-
-Paths may be absolute or relative to the session's working directory. Captions are plain text of at most 1,024 UTF-16 code units. Documents keep their original bytes and filename, while photos go through Telegram's own photo processing. File contents never enter the model's context or the session history.
-
-Files are read in chunks of at most 8,000,000 bytes. A file that is not a regular file, is empty, is too large, or changes during the transfer is rejected. The tools do not inspect codecs, convert files, or try another delivery method. Telegram checks media compatibility, including photo dimensions. Convert unsupported media before sending, or send it as a document.
-
-Read errors, cancellation, and Telegram delivery errors fail the tool call. Each call has five minutes and is never retried automatically, because an interrupted upload may already have reached Telegram.
-
-The runner holds the upload credentials, and the recipient is always the session's bot and chat; the agent cannot choose another. These tools are not affected by `enabledClientTools` and do not exist in TUI sessions or subagents. Viewing an image with `view_image` does not send it to Telegram. Automatic voice replies through `/tts_on` are separate from these tools.
-
-## When a tool is missing or fails
-
-First work out where the tool should come from:
-
-- For a host tool, check the active persona's `tools`, the host configuration, and service credentials.
-- For a tool inside a subagent, check the main persona's `tools` against the list of tools subagents can receive.
-- For a client tool, confirm that an attached, observing client offers it and that client tools are not disabled.
-- If `tau_docs` is missing, something is wrong with the Tau installation or version; no persona setting removes it.
-
-Then check which machine the error comes from. A path on the TUI machine may not exist in the execution environment. A command in the host's `PATH` may be missing from the execution environment's login shell. Errors from a client tool's own process come from the client machine, while `executionEnvironment.exec` errors come from the session machine.
-
-Use `tau --debug --persona <id>` to see the host tool schemas for a new local session. `/reload` reloads configuration and persona content in an idle session, but it does not restart or refresh tools that an attached client offers. See [troubleshooting](troubleshooting.md) and [security](security.md) for boundary-specific checks.
+`tau --debug --persona <id>` prints the tool schemas of a new local session. A turn keeps the tools it started with, so persona changes, reloads, and clients attaching apply from the next turn.

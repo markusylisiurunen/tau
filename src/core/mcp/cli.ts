@@ -59,7 +59,7 @@ export const mcpHelp = [
   "Login prints an authorization URL to open manually. --scope adds to the existing grant.",
   "--all requests every scope advertised by the authorization server.",
   "Logout removes local OAuth credentials; it does not revoke the grant at the service.",
-  "See credentials.md in the Tau documentation for remote-host login.",
+  "See mcp.md in the Tau documentation for remote-host login.",
 ].join("\n");
 
 export async function runMcpCommand(options: {

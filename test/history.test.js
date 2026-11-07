@@ -31,7 +31,6 @@ vi.mock("../dist/history/worker/viewer.css", () => ({
 
 import historyWorker, {
   applyOperation,
-  boundedSnippet,
   digestRetryDelayMs,
   formatDigestEntry,
   generateDigest,
@@ -62,6 +61,10 @@ const HISTORY_PARENT_SESSION_MIGRATION_SQL = readFileSync(
 
 const HISTORY_DIGEST_SCHEDULE_MIGRATION_SQL = readFileSync(
   new URL("../dist/history/worker/migrations/0003_digest_schedule.sql", import.meta.url),
+  "utf8",
+);
+const HISTORY_RECENT_SESSIONS_MIGRATION_SQL = readFileSync(
+  new URL("../dist/history/worker/migrations/0004_recent_sessions.sql", import.meta.url),
   "utf8",
 );
 
@@ -171,7 +174,9 @@ function createSqliteD1Harness(options = {}) {
         },
         async all() {
           options.beforeQuery?.(query);
-          return { results: sqlite.prepare(query).all(...this.values) };
+          const results = sqlite.prepare(query).all(...this.values);
+          options.afterQuery?.(query, results, this.values);
+          return { results };
         },
         async run() {
           options.beforeQuery?.(query);
@@ -201,6 +206,7 @@ function initializeHistoryD1(harness) {
   harness.sqlite.exec(HISTORY_INITIAL_MIGRATION_SQL);
   harness.sqlite.exec(HISTORY_PARENT_SESSION_MIGRATION_SQL);
   harness.sqlite.exec(HISTORY_DIGEST_SCHEDULE_MIGRATION_SQL);
+  harness.sqlite.exec(HISTORY_RECENT_SESSIONS_MIGRATION_SQL);
 }
 
 async function callHistoryWorker(path, body, harness, origin = "https://history.example.com") {
@@ -1275,6 +1281,7 @@ describe("session history", () => {
         "  if (!existsSync(migration)) process.exit(33);",
         '  if (!existsSync(join(process.cwd(), "migrations", "0002_parent_session.sql"))) process.exit(38);',
         '  if (!existsSync(join(process.cwd(), "migrations", "0003_digest_schedule.sql"))) process.exit(39);',
+        '  if (!existsSync(join(process.cwd(), "migrations", "0004_recent_sessions.sql"))) process.exit(40);',
         '  const sql = readFileSync(migration, "utf8");',
         '  if (sql.includes("DROP TABLE IF EXISTS history_schema_migrations")) process.exit(34);',
         '  if (args[0] === "d1" && process.env.TEST_FAIL_MIGRATION === "1") process.exit(35);',
@@ -2107,7 +2114,7 @@ describe("session history", () => {
     const snippetQuery = boundedHarness.prepared.find((statement) =>
       statement.query.includes("WITH ranked_snippets"),
     );
-    expect(snippetQuery.values).toHaveLength(76);
+    expect(snippetQuery.values).toHaveLength(78);
 
     const oversizedEntry = await callHistoryWorker(
       "/v1/operations",
@@ -2322,12 +2329,152 @@ describe("session history", () => {
     }
   });
 
-  it("centers remote snippets on a matched term when the full query phrase is absent", () => {
-    const text = `START ${"prefix ".repeat(80)}database details ${"middle ".repeat(80)}migration plan`;
-    const snippet = boundedSnippet(text, "database migration");
+  it("bounds snippet text in the database and preserves per-session entry ordering", async () => {
+    let snippetRows;
+    let snippetPlan;
+    const harness = createSqliteD1Harness({
+      afterQuery(query, rows, values) {
+        if (query.includes("WITH ranked_snippets")) {
+          snippetRows = rows;
+          snippetPlan = harness.sqlite.prepare(`EXPLAIN QUERY PLAN ${query}`).all(...values);
+        }
+      },
+    });
+    try {
+      initializeHistoryD1(harness);
+      harness.sqlite.exec(
+        "INSERT INTO sessions (session_id, attributes_json, created_at, updated_at) VALUES ('session-1', '{}', 1, 1)",
+      );
+      const insert = harness.sqlite.prepare(
+        "INSERT INTO entries_fts (session_id, entry_id, position, text) VALUES (?, ?, ?, ?)",
+      );
+      for (const [position, label] of [
+        [30, "fourth"],
+        [20, "third"],
+        [10, "second"],
+        [2, "first"],
+      ]) {
+        insert.run(
+          "session-1",
+          `entry-${position}`,
+          position,
+          `START ${"前文 ".repeat(40000)}database ${label} migration ${"suffix ".repeat(10000)}`,
+        );
+      }
+      const response = await callHistoryWorker(
+        "/v1/search",
+        { query: "database migration" },
+        harness,
+      );
+      expect(response.status).toBe(200);
+      const { sessions } = await response.json();
+      expect(sessions).toHaveLength(1);
+      expect(snippetRows).toHaveLength(3);
+      expect(snippetPlan.some((row) => row.detail === "MATERIALIZE snippet_excerpts")).toBe(true);
+      expect(sessions[0].snippets).toEqual(snippetRows.map((row) => row.match_text));
+      for (const [index, label] of ["first", "second", "third"].entries()) {
+        const snippet = snippetRows[index].match_text;
+        expect(snippet).toContain(`database ${label} migration`);
+        expect(snippet).not.toContain("START");
+        expect([...snippet].length).toBeLessThanOrEqual(360);
+        expect(Buffer.byteLength(snippet)).toBeLessThanOrEqual(1440);
+      }
+    } finally {
+      harness.sqlite.close();
+    }
+  });
 
-    expect(snippet).toContain("database details");
-    expect(snippet).not.toContain("START");
+  it.each([
+    [16, 0],
+    [8, 100],
+  ])("retains formatted-record context with a %i-token excerpt", async (tokens, padding) => {
+    const harness = createSqliteD1Harness();
+    try {
+      initializeHistoryD1(harness);
+      harness.sqlite.exec(
+        "INSERT INTO sessions (session_id, attributes_json, created_at, updated_at) VALUES ('session-1', '{}', 1, 1)",
+      );
+      const text = JSON.stringify(
+        Array.from({ length: 21 }, (_, index) => ({
+          id: index === 10 ? "needle" : `item-${index}`,
+          kind: `tool_result${"x".repeat(padding)}`,
+          status: "completed",
+        })),
+        null,
+        4,
+      );
+      harness.sqlite
+        .prepare(
+          "INSERT INTO entries_fts (session_id, entry_id, position, text) VALUES (?, ?, ?, ?)",
+        )
+        .run("session-1", "entry-1", 1, text);
+      const excerpt = harness.sqlite.prepare(
+        "SELECT snippet(entries_fts, 3, '', '', '…', ?) AS text FROM entries_fts WHERE entries_fts MATCH 'needle'",
+      );
+      expect([...excerpt.get(tokens * 2).text].length).toBeGreaterThan(360);
+      const expected = excerpt.get(tokens).text;
+      expect([...expected].length).toBeLessThanOrEqual(360);
+      const response = await callHistoryWorker("/v1/search", { query: "needle" }, harness);
+      expect(response.status).toBe(200);
+      const { sessions } = await response.json();
+      expect(sessions[0].snippets).toEqual([expected]);
+      expect(sessions[0].snippets[0]).toContain("needle");
+      expect(sessions[0].snippets[0]).toContain("tool_result");
+    } finally {
+      harness.sqlite.close();
+    }
+  });
+
+  it("keeps a matching token visible when surrounding tokens exceed the snippet bound", async () => {
+    const harness = createSqliteD1Harness();
+    try {
+      initializeHistoryD1(harness);
+      harness.sqlite.exec(
+        "INSERT INTO sessions (session_id, attributes_json, created_at, updated_at) VALUES ('session-1', '{}', 1, 1)",
+      );
+      harness.sqlite
+        .prepare(
+          "INSERT INTO entries_fts (session_id, entry_id, position, text) VALUES (?, ?, ?, ?)",
+        )
+        .run("session-1", "entry-1", 1, `${"前".repeat(10000)} needle ${"x".repeat(10000)}`);
+      const response = await callHistoryWorker("/v1/search", { query: "needle" }, harness);
+      expect(response.status).toBe(200);
+      const { sessions } = await response.json();
+      expect(sessions[0].snippets).toHaveLength(1);
+      expect(sessions[0].snippets[0]).toContain("needle");
+      expect([...sessions[0].snippets[0]].length).toBeLessThanOrEqual(360);
+    } finally {
+      harness.sqlite.close();
+    }
+  });
+
+  it("lists recent sessions through the ordering index without sorting the collection", async () => {
+    let listingPlan;
+    const harness = createSqliteD1Harness({
+      afterQuery(query) {
+        if (query.includes("ORDER BY s.updated_at DESC")) {
+          listingPlan = harness.sqlite.prepare(`EXPLAIN QUERY PLAN ${query}`).all(3, 0);
+        }
+      },
+    });
+    try {
+      initializeHistoryD1(harness);
+      harness.sqlite.exec(`
+        WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x + 1 FROM n WHERE x < 5300)
+        INSERT INTO sessions (session_id, attributes_json, created_at, updated_at)
+        SELECT printf('session-%05d', x), '{}', 1, x / 2 FROM n;
+      `);
+      const response = await callHistoryWorker("/v1/search", { limit: 2 }, harness);
+      expect(response.status).toBe(200);
+      expect((await response.json()).sessions.map((session) => session.sessionId)).toEqual([
+        "session-05300",
+        "session-05298",
+      ]);
+      expect(listingPlan.some((row) => row.detail.includes("sessions_recent"))).toBe(true);
+      expect(listingPlan.some((row) => row.detail.includes("TEMP B-TREE"))).toBe(false);
+    } finally {
+      harness.sqlite.close();
+    }
   });
 
   it("rejects stale digest writes after the transcript changes", async () => {

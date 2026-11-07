@@ -704,8 +704,8 @@ async function search(
     const snippets = await database
       .prepare(
         `WITH ranked_snippets AS (
-           SELECT session_id,
-                  text AS match_text,
+           SELECT rowid AS entry_rowid,
+                  session_id,
                   ROW_NUMBER() OVER (
                     PARTITION BY session_id
                     ORDER BY CAST(position AS INTEGER), entry_id
@@ -713,13 +713,30 @@ async function search(
            FROM entries_fts
            WHERE entries_fts MATCH ?
              AND session_id IN (${sessionIds.map(() => "?").join(", ")})
+         ), snippet_excerpts AS MATERIALIZED (
+           SELECT ranked.entry_rowid, ranked.session_id, ranked.snippet_rank,
+                  substr(snippet(entries_fts, 3, '', '', '…', 32), 1, 361) AS excerpt
+           FROM ranked_snippets ranked
+           -- Keep ranked rows outermost so snippet extraction uses rowid lookups.
+           CROSS JOIN entries_fts ON entries_fts.rowid = ranked.entry_rowid
+           WHERE ranked.snippet_rank <= 3 AND entries_fts MATCH ?
          )
-         SELECT session_id, match_text
-         FROM ranked_snippets
-         WHERE snippet_rank <= 3
+         SELECT session_id,
+                CASE WHEN length(excerpt) <= 360 THEN excerpt ELSE (
+                  SELECT CASE
+                    WHEN length(snippet(entries_fts, 3, '', '', '…', 16)) <= 360
+                      THEN snippet(entries_fts, 3, '', '', '…', 16)
+                    WHEN length(snippet(entries_fts, 3, '', '', '…', 8)) <= 360
+                      THEN snippet(entries_fts, 3, '', '', '…', 8)
+                    ELSE substr(snippet(entries_fts, 3, '', '', '…', 1), 1, 360)
+                  END
+                  FROM entries_fts
+                  WHERE rowid = snippet_excerpts.entry_rowid AND entries_fts MATCH ?
+                ) END AS match_text
+         FROM snippet_excerpts
          ORDER BY session_id, snippet_rank`,
       )
-      .bind(ftsQuery, ...sessionIds)
+      .bind(ftsQuery, ...sessionIds, ftsQuery, ftsQuery)
       .all<{ session_id: string; match_text: string }>();
     const sessionsById = new Map(
       sessions.map((session) => [String(session.sessionId), session] as const),
@@ -727,7 +744,7 @@ async function search(
     for (const row of snippets.results) {
       const session = sessionsById.get(String(row.session_id));
       if (!session || typeof row.match_text !== "string") continue;
-      (session.snippets as string[]).push(boundedSnippet(row.match_text, query));
+      (session.snippets as string[]).push(row.match_text);
     }
   }
 
@@ -1869,19 +1886,6 @@ function stableJson(value: Record<string, string>): string {
   return JSON.stringify(
     Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b))),
   );
-}
-
-export function boundedSnippet(text: string, query: string): string {
-  const normalizedText = text.toLowerCase();
-  const exactIndex = normalizedText.indexOf(query.toLowerCase());
-  const termIndexes = searchTerms(query)
-    .map((term) => normalizedText.indexOf(term.toLowerCase()))
-    .filter((index) => index >= 0);
-  const index =
-    exactIndex >= 0 ? exactIndex : termIndexes.length > 0 ? Math.min(...termIndexes) : 0;
-  const start = Math.max(0, index - 120);
-  const end = Math.min(text.length, start + 360);
-  return `${start > 0 ? "…" : ""}${text.slice(start, end)}${end < text.length ? "…" : ""}`;
 }
 
 function buildFtsQuery(query: string): string {

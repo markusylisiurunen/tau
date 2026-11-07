@@ -164,7 +164,7 @@ A message sent while Tau is working steers the running turn. Telegram has no way
 
 ## Files and voice
 
-The bot accepts documents, photos, videos, and audio, up to 20 MiB per file, 100 MiB per turn, and 32 files per turn. Sending a file only queues it, and the next text or voice message starts a turn with the file paths. Files go to the temporary directory of the execution environment, where system cleanup can remove them.
+The bot accepts documents, photos, videos, and audio, up to 20 MiB per file, 100 MiB per turn, and 32 files per turn. Sending a file only queues it, and the next text or voice message starts a turn with the file paths. Files go to a temporary directory on the runner machine, where system cleanup can remove them.
 
 Voice notes up to 20 minutes are transcribed with `ELEVENLABS_API_KEY`. With `speechCleanupStyle: "default"`, the transcript is also cleaned up as in the [TUI](tui.md#speech), which needs OpenAI credentials, and the raw transcript is used if cleanup fails. `/tts_on` needs OpenAI and ElevenLabs keys and `ffmpeg` with Opus on the runner. See [models and credentials](models-and-credentials.md).
 

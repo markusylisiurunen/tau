@@ -1397,6 +1397,10 @@ describe("session history", () => {
         () => {},
       );
       sqlite.exec(`BEGIN; ${HISTORY_SEARCH_CUTOVER_MIGRATION_SQL} COMMIT;`);
+      const columns = sqlite.prepare("PRAGMA table_info(entries)").all();
+      expect(columns.find((column) => column.name === "search_text").cid).toBeLessThan(
+        columns.find((column) => column.name === "payload_json").cid,
+      );
       expect(sqlite.prepare("SELECT * FROM sessions").get()).toEqual(before);
       expect(sqlite.prepare("SELECT * FROM attributes").all()).toEqual([
         { session_id: "existing", key: "source", value: "test" },

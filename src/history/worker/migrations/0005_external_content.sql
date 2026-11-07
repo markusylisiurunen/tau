@@ -5,8 +5,8 @@ CREATE TABLE entries_external (
   position INTEGER NOT NULL,
   entry_id TEXT NOT NULL,
   timestamp INTEGER NOT NULL,
-  payload_json TEXT NOT NULL,
   search_text TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
   UNIQUE (session_id, entry_id),
   UNIQUE (session_id, position)
 );

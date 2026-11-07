@@ -14,39 +14,37 @@ describe("composeSpeechVocabulary", () => {
   });
 
   it("gives session terms priority under the term limit", () => {
-    const sessionTerms = Array.from({ length: 100 }, (_, index) => `session-${index}`);
+    const sessionTerms = Array.from({ length: 1000 }, (_, index) => `session-${index}`);
     expect(composeSpeechVocabulary(sessionTerms, ["Personal"])).toEqual(sessionTerms);
   });
 });
 
 describe("speech-to-text transcription", () => {
-  it("returns the live transcript without a quiet delay when the final activity covers the recording", async () => {
+  it("returns the live transcript after draining the final Scribe segment", async () => {
     vi.useFakeTimers();
     const socket = new EventEmitter();
     socket.send = vi.fn((_data, callback) => callback?.());
     socket.close = vi.fn();
     socket.terminate = vi.fn();
+    const factory = vi.fn(() => socket);
     const transcription = createListenTranscription({
       mode: "streaming",
-      credentials: { googleApiKey: "key" },
+      credentials: { elevenLabsApiKey: "key" },
       vocabulary: ["Tau"],
-      speechToTextDeps: { webSocketFactory: () => socket },
+      speechToTextDeps: { webSocketFactory: factory },
     });
     const emit = (event) => socket.emit("message", JSON.stringify(event));
     try {
       socket.emit("open");
       await vi.advanceTimersByTimeAsync(0);
-      expect(
-        JSON.parse(socket.send.mock.calls[0][0]).setup.inputAudioTranscription.customVocabulary,
-      ).toEqual(["Tau"]);
-      emit({ setupComplete: {} });
+      expect(new URL(factory.mock.calls[0][0]).searchParams.getAll("keyterms")).toEqual(["Tau"]);
+      emit({ message_type: "session_started" });
       transcription.appendAudio(Buffer.alloc(32000));
-      emit({ serverContent: { interimInputTranscription: { text: "the last" } } });
+      emit({ message_type: "partial_transcript", text: "the last" });
       const completion = transcription.finish({ audio: Buffer.alloc(32000) });
-      await vi.advanceTimersByTimeAsync(0);
-      emit({ serverContent: { inputTranscription: { text: "the last word" } } });
-      emit({ serverContent: { generationComplete: true } });
-      emit({ voiceActivity: { type: "ACTIVITY_END", audioOffset: "1s" } });
+      await vi.advanceTimersByTimeAsync(1500);
+      emit({ message_type: "committed_transcript", text: "the last word" });
+      await vi.advanceTimersByTimeAsync(2000);
       expect(socket.close).toHaveBeenCalledTimes(1);
       await expect(completion).resolves.toBe("the last word");
     } finally {
@@ -55,7 +53,7 @@ describe("speech-to-text transcription", () => {
     }
   });
 
-  it("aborts an active Gemini file upload", async () => {
+  it("aborts an active Scribe file request", async () => {
     let requestSignal;
     const fetchMock = vi.fn(
       async (_url, options) =>

@@ -5054,6 +5054,37 @@ describe("LocalSessionHost", () => {
     }
   });
 
+  it("recovers version 15 sessions with historical speech vocabulary", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "tau-scribe-recovery-"));
+    const host = createHost(new FileSessionStore({ directory }));
+    let recoveredHost;
+    try {
+      const session = await host.createSession(localCreateInput);
+      await session.record({ text: "saved conversation" });
+      const snapshot = await session.snapshot();
+      await host.shutdown();
+      const legacy = structuredClone(snapshot);
+      legacy.catalog.speechVocabulary = ["Tau", "a".repeat(100), "bad[term]"];
+      writeFileSync(
+        join(directory, `${Buffer.from(snapshot.sessionId).toString("base64url")}.json`),
+        JSON.stringify({ format: STORED_SESSION_DOCUMENT_FORMAT, version: 15, snapshot: legacy }),
+      );
+      const store = new FileSessionStore({ directory });
+      expect((await store.loadSession(snapshot.sessionId)).catalog.speechVocabulary).toEqual([
+        "Tau",
+      ]);
+      recoveredHost = createHost(store);
+      const recovered = await recoveredHost.observeSession(snapshot.sessionId);
+      const observed = await recovered.snapshot();
+      expect(observed.messages).toEqual(snapshot.messages);
+      expect(observed.catalog.speechVocabulary).not.toContain("a".repeat(100));
+    } finally {
+      await recoveredHost?.shutdown();
+      await host.shutdown();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("loads version 14 worker ancestry and prompt context before recovering live-only workers", async () => {
     const directory = mkdtempSync(join(tmpdir(), "tau-nested-recovery-"));
     const host = createHost(new FileSessionStore({ directory }));

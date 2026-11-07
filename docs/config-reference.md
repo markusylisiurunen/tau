@@ -22,7 +22,7 @@ Project and global content can change which persona ids exist. A configured defa
 | --- | --- | --- | --- | --- |
 | `apiKeys` | Object of string values | Global only | Provider-keyed map | Owning host or feature process; restart after changes |
 | `defaultPersona` | Non-empty string | Global, project | Most-specific wins | Session host; new session |
-| `speech` | Object with optional `voiceId`, `recordingShortcut`, and `vocabulary` | Global, project | Merge by field; vocabulary is additive | `voiceId` and `recordingShortcut`: TUI client or Telegram runner; process restart. `vocabulary`: session host; `/reload` or new session. Global `vocabulary` terms are also read by the client; process restart |
+| `speech` | Object with optional `voiceId`, `recordingShortcut`, `cleanupStyle`, and `vocabulary` | Global, project | Merge by field; vocabulary is additive | `voiceId`, `recordingShortcut`, and `cleanupStyle`: client; process restart. `vocabulary`: session host; `/reload` or new session. Global `vocabulary` terms are also read by the client; process restart |
 | `defaultTheme` | Non-empty string | Global, project | Most-specific wins | TUI client; client restart |
 | `markdownExport` | Object with `url` and optional `token`, `tokenEnv` | Global only | One global object | TUI client; client restart |
 | `clientTools` | Array of objects | Global only | One global definition list | Owning client; TUI restart or new Telegram session client |
@@ -155,6 +155,18 @@ For terminal recording, `recordingShortcut` replaces Ctrl+Y. Its required `key` 
 
 A double tap must arrive within 300 ms. For printable double-tap bindings, an unmatched first tap inserts the character after that delay; another key inserts it immediately before processing the new input. A single-press binding reserves its character, so it can no longer be typed. Bracketed paste never triggers recording. Keyboard auto-repeat can count as repeated taps. Recording shortcuts apply only to the TUI, not Telegram.
 
+For terminal dictation, `cleanupStyle` sets the initial [cleanup style](tui.md#cleanup-styles) for each recording. It accepts `"off"` (the default) or `"default"`. Tab changes the style for the current recording only. Enabling cleanup prepares the OpenAI connection and instructions during recording.
+
+```json
+{
+  "speech": {
+    "cleanupStyle": "default"
+  }
+}
+```
+
+Telegram uses its separate per-bot `speechCleanupStyle` setting.
+
 For dictation, `vocabulary` supplies spelling hints for recurring names, identifiers, and short phrases:
 
 ```json
@@ -165,11 +177,11 @@ For dictation, `vocabulary` supplies spelling hints for recurring names, identif
 }
 ```
 
-Define personal terms in `~/.config/tau/config.json` and project terms in `.tau/config.json`. Tau combines the nearest project's entries first, then parent projects, then global entries, preserving each list's order. An omitted list or `[]` adds nothing and does not clear inherited terms. Entries are trimmed and deduplicated case-insensitively, preserving the first spelling. Invalid entries produce a configuration warning: each entry must be a non-empty string of at most 100 Unicode characters, without angle brackets or internal line breaks.
+Define personal terms in `~/.config/tau/config.json` and project terms in `.tau/config.json`. Tau combines the nearest project's entries first, then parent projects, then global entries, preserving each list's order. An omitted list or `[]` adds nothing and does not clear inherited terms. Entries are trimmed and deduplicated case-insensitively, preserving the first spelling. Invalid entries produce a configuration warning. Each entry must be a non-empty string of at most 50 Unicode characters and 5 words, without line breaks or any of the characters `<`, `>`, `{`, `}`, `[`, `]`, and `\`.
 
-Tau appends keywords extracted from the recent conversation after configured terms. The combined list is limited to 100 terms and 10,000 Unicode characters, so explicit project terms take priority. These are Tau's limits. [Gemini's custom vocabulary](https://ai.google.dev/gemini-api/docs/transcribe) supports up to 1,000 terms and recommends up to 100 for best results; it cannot be combined with speaker diarization or word-level timestamps, which Tau does not request.
+Tau appends keywords extracted from the recent conversation after configured terms. The combined list is limited to 1,000 terms and 50,000 Unicode characters, so explicit project terms take priority. Live dictation sends only the first 50 terms that have at most 20 characters, because ElevenLabs limits realtime hints more strictly. Recording retries and Telegram audio send the full list. For file transcription, [ElevenLabs charges](https://elevenlabs.io/docs/api-reference/speech-to-text/convert) 20% more when keyterms are present, and bills a request with more than 100 terms for at least 20 seconds of audio.
 
-Vocabulary goes directly to Gemini as transcription hints for live dictation, recording retries, and Telegram audio. It does not instruct the model to insert words or replace text afterward. Configured terms still work without conversation context, without OpenAI credentials, or when keyword extraction fails. With no vocabulary configured, Tau uses only context-derived hints.
+Vocabulary goes directly to ElevenLabs Scribe as keyterms for live dictation, recording retries, and Telegram audio. It does not instruct the model to insert words or replace text afterward. When speech cleanup is on in the [TUI](tui.md#cleanup-styles) or [Telegram](telegram.md#bots-and-access-control), the cleanup model also receives the terms, only to correct spelling. It gets recent conversation too: the session's last two user messages and the agent's final replies after them, without tool calls or results. This context is limited to about 8,192 tokens, keeping the newest text. The model is instructed to use this context only to fix words that were likely misheard. It is told not to add facts, answer the dictated request, or turn a vague reference into a guessed name, and to keep the transcript's word when unsure. Configured terms still work without conversation context, without OpenAI credentials, or when keyword extraction fails. With no vocabulary configured, Tau uses only context-derived hints.
 
 Without an override, Tau looks up Maisie (`QtY3JBOUKEB5xzrRfOKc`) before synthesis and tries Caleb (`AaOhDHYJ1XLZk74lXhdE`) only if ElevenLabs reports that Maisie was not found. If neither is available, speech fails. A configured voice is the only voice Tau tries. If it is unavailable, speech fails without falling back to a default.
 
@@ -177,7 +189,7 @@ Authentication, permission, rate-limit, and network errors during voice lookup d
 
 Speech uses Eleven v4 Turbo, the delivery note `[Brisk but relaxed, speaking naturally to a colleague]`, and a 1.15× tempo adjustment. GPT-6 Luna rewrites the text with reasoning disabled before ElevenLabs synthesis, so both OpenAI and ElevenLabs credentials are required. Voice Library API access may require a paid ElevenLabs plan, and shared voices can become unavailable.
 
-`voiceId` and `recordingShortcut` come from the client's own configuration. The TUI reads them from its startup directory's configuration, also when attached to a remote host, and Telegram reads `voiceId` from the runner's startup configuration. Restart the respective process after changes. `voiceId` does not affect the explicit voices supplied to `tau tool speech-generate`.
+`voiceId`, `recordingShortcut`, and `cleanupStyle` come from the client's own configuration. The TUI reads them from its startup directory's configuration, also when attached to a remote host, and Telegram reads `voiceId` from the runner's startup configuration. Restart the respective process after changes. `voiceId` does not affect the explicit voices supplied to `tau tool speech-generate`.
 
 Vocabulary follows the session. The host resolves it from the global and project levels of the session's working directory, on the execution environment. The client that transcribes the audio then adds the terms from its own global configuration, after the session's terms. Project configuration in the client's startup directory is not used. For example:
 

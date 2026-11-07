@@ -222,31 +222,29 @@ The agent can use `diff_review` with `workingDirectory` to review another direct
 
 ### Dictation
 
-`/listen` and Ctrl+Y work only on macOS. Recording uses the local `ffmpeg` with AVFoundation audio input. It stops when you press Ctrl+Y again or after 9 minutes, which leaves time to finish within Gemini's 10-minute live session. Startup fails if the microphone gives no audio within 15 seconds.
+`/listen` and Ctrl+Y work only on macOS. Recording uses the local `ffmpeg` with AVFoundation audio input. It stops when you press Ctrl+Y again or after 9 minutes. Startup fails if the microphone gives no audio within 15 seconds.
 
 - Enter or Ctrl+Enter while recording stops capture, finishes transcription, and submits the editor text. While a turn is running, Enter steers and Ctrl+Enter queues, as usual.
 - Ctrl+Y, or reaching the time limit, finishes transcription and inserts the transcript at the cursor without submitting it.
+- Tab cycles the [cleanup style](#cleanup-styles) for this recording.
 
 The shortcut can be changed with [`speech.recordingShortcut`](config-reference.md#speech), including single-press or double-tap printable keys such as `§`. The editor hint shows the configured gesture. Starting a recording stops speech playback.
 
-While you speak, Gemini shows a live preview in muted italics at the cursor. During pauses, Gemini finalizes segments of speech while recording continues. Tau keeps finalized segments and replaces only the current preview. After recording stops:
+While you speak, ElevenLabs Scribe shows a live preview in muted italics at the cursor. Pauses finalize segments while recording continues. Tau keeps finalized segments and replaces only the current preview.
 
-- Tau tells Gemini the audio has ended. It finishes right away if a finalized segment ends exactly at the end of the audio and generation is complete.
-- Otherwise it keeps receiving results until two seconds pass with no updates. If new speech is detected after stopping, Tau signals the end of audio again to flush it.
-- The final transcript comes from the live stream. Normal recordings are not uploaded again for a second transcription.
-- Unfinished speech must be finalized before Tau accepts the result. Finalization has a 30-second deadline, and Escape cancels the wait.
+After sending the remaining audio, Tau asks Scribe to finalize without adding silence. Tau finishes on the first finalized segment after that request, or after two seconds using the latest text, even if unfinished. Later segments can be lost. The result comes from the live stream.
 
-The final transcript replaces the preview in normal text, without duplication. An empty transcript inserts nothing. Tau does not detect silence locally, and the end of one speech segment does not count as the end of the recording.
+The final transcript replaces the preview in normal text, without duplication. An empty transcript inserts nothing.
 
 A submitted draft that contains dictation carries hidden guidance saying that some or all of the message may have been transcribed from speech and may contain errors. The guidance survives edits and is removed when the draft is emptied.
 
-The editor is locked from the start of recording until finalization. Escape cancels voice input at any stage: startup, recording, microphone shutdown, transcription, or retry. Cancelling removes the preview at once, restores the original draft, and unlocks the editor without inserting or submitting anything. The cancelled recording is deleted once pending file work finishes. A failure also restores the original draft. A recording or retry cannot start while another editor update is pending.
+The editor is locked from the start of recording until transcription and cleanup finish. Escape cancels voice input at any stage: startup, recording, microphone shutdown, transcription, cleanup, or retry. Cancelling removes the preview at once, restores the original draft, and unlocks the editor without inserting or submitting anything. The cancelled recording is deleted once pending file work finishes. A transcription failure also restores the original draft. A recording or retry cannot start while another editor update is pending.
 
-For live transcription, GPT-6 Luna, with reasoning disabled, extracts spelling hints from the recent conversation while recording starts. Tau buffers audio until the transcription session is ready, then streams it. Gemini uses `gemini-3.5-transcribe-live` in verbatim mode with English (`en-US`) and Finnish (`fi-FI`) language hints. Missing OpenAI credentials or a failed hint extraction do not stop transcription. The session's [`speech.vocabulary`](config-reference.md#speech) terms, followed by the terms in the TUI's own global configuration, take priority over extracted hints and remain available when extraction fails.
+At recording startup, GPT-6 Luna (reasoning disabled) extracts spelling hints from the recent conversation. Tau buffers audio until Scribe v2 Realtime is ready, then sends it at up to twice real time to catch up. Scribe detects the language and retains fillers and false starts. Transcription works without OpenAI credentials or hint extraction. Configured [`speech.vocabulary`](config-reference.md#speech) terms take priority: session terms first, then the TUI's global terms, then extracted hints. Live transcription uses only short hints.
 
 If transcription fails, Tau keeps the local WAV file and reports its path:
 
-- `/listen retry` transcribes the same audio again with Gemini and the current conversation context. Gemini uploads the file for `gemini-3.5-transcribe` verbatim transcription with the same language hints, and Tau tries to delete the uploaded file afterward. Recordings longer than 20 minutes are rejected instead of being sent.
+- `/listen retry` transcribes the same audio again with Scribe v2, the current conversation, all hints, and the recording's cleanup style. Recordings over 20 minutes are rejected.
 - `/listen discard` deletes the file.
 
 Tau keeps at most one failed recording. A new recording deletes it only once the new capture is producing audio. Exiting leaves the file at the reported path so you can recover it.
@@ -257,7 +255,15 @@ Install `ffmpeg`:
 brew install ffmpeg
 ```
 
-Transcription uses Gemini and needs `GEMINI_API_KEY` or `apiKeys.google`. The TUI process reads these credentials, also when attached to a remote host.
+Transcription needs `ELEVENLABS_API_KEY` or `apiKeys.elevenlabs`, and cleanup needs `OPENAI_API_KEY` or `apiKeys.openai`. The TUI reads them, also when attached to a remote host.
+
+### Cleanup styles
+
+`speech.cleanupStyle` sets each recording's initial style (`off` by default). Tab switches it for that recording. With `off`, Tau keeps the raw transcript.
+
+With `default`, Tau connects to OpenAI while you speak. Then GPT-6.1 Terra (reasoning disabled) removes fillers and false starts, fixes punctuation and grammar, applies explicit spoken corrections, writes numbers as numerals, and formats spoken lists. It is instructed to keep your wording, languages, names, facts, identifiers, and paths without summarizing or translating, and to use [recent conversation](config-reference.md#speech) only to fix misheard words.
+
+If cleanup fails, Tau reports it and inserts the uncleaned transcript. After Enter or Ctrl+Enter, the text stays in the editor for review instead of being submitted.
 
 ### Reading responses aloud
 

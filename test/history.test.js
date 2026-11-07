@@ -39,6 +39,7 @@ import historyWorker, {
   readSessionTree,
   refreshDigestIfNeeded,
   runAi,
+  selectDigestCandidate,
   selectHistoryReadPage,
 } from "../dist/history/worker/index.js";
 import {
@@ -56,6 +57,11 @@ const HISTORY_INITIAL_MIGRATION_SQL = readFileSync(
 );
 const HISTORY_PARENT_SESSION_MIGRATION_SQL = readFileSync(
   new URL("../dist/history/worker/migrations/0002_parent_session.sql", import.meta.url),
+  "utf8",
+);
+
+const HISTORY_DIGEST_SCHEDULE_MIGRATION_SQL = readFileSync(
+  new URL("../dist/history/worker/migrations/0003_digest_schedule.sql", import.meta.url),
   "utf8",
 );
 
@@ -146,7 +152,7 @@ function createD1Harness(options = {}) {
   return { database, prepared };
 }
 
-function createSqliteD1Harness() {
+function createSqliteD1Harness(options = {}) {
   const sqlite = new DatabaseSync(":memory:");
   const database = {
     async exec(query) {
@@ -160,12 +166,15 @@ function createSqliteD1Harness() {
           return this;
         },
         async first() {
+          options.beforeQuery?.(query);
           return sqlite.prepare(query).get(...this.values) ?? null;
         },
         async all() {
+          options.beforeQuery?.(query);
           return { results: sqlite.prepare(query).all(...this.values) };
         },
         async run() {
+          options.beforeQuery?.(query);
           sqlite.prepare(query).run(...this.values);
           return { success: true };
         },
@@ -191,6 +200,7 @@ function createSqliteD1Harness() {
 function initializeHistoryD1(harness) {
   harness.sqlite.exec(HISTORY_INITIAL_MIGRATION_SQL);
   harness.sqlite.exec(HISTORY_PARENT_SESSION_MIGRATION_SQL);
+  harness.sqlite.exec(HISTORY_DIGEST_SCHEDULE_MIGRATION_SQL);
 }
 
 async function callHistoryWorker(path, body, harness, origin = "https://history.example.com") {
@@ -1264,6 +1274,7 @@ describe("session history", () => {
         '  const migration = join(process.cwd(), "migrations", "0001_initial.sql");',
         "  if (!existsSync(migration)) process.exit(33);",
         '  if (!existsSync(join(process.cwd(), "migrations", "0002_parent_session.sql"))) process.exit(38);',
+        '  if (!existsSync(join(process.cwd(), "migrations", "0003_digest_schedule.sql"))) process.exit(39);',
         '  const sql = readFileSync(migration, "utf8");',
         '  if (sql.includes("DROP TABLE IF EXISTS history_schema_migrations")) process.exit(34);',
         '  if (args[0] === "d1" && process.env.TEST_FAIL_MIGRATION === "1") process.exit(35);',
@@ -2393,6 +2404,251 @@ describe("session history", () => {
     }
   });
 
+  it.each([0, -1])("schedules newly appended entries with timestamp %s", async (timestamp) => {
+    const harness = createSqliteD1Harness();
+    try {
+      initializeHistoryD1(harness);
+      await applyOperation(harness.database, {
+        id: "create",
+        sessionId: "nonpositive",
+        type: "create",
+        session: { sessionId: "nonpositive", attributes: {}, createdAt: 1 },
+      });
+      const append = {
+        id: "append",
+        sessionId: "nonpositive",
+        type: "append",
+        entries: [createTextEntry("one", "user", "first", timestamp)],
+      };
+      await applyOperation(harness.database, append);
+      const metadata = () =>
+        harness.sqlite
+          .prepare("SELECT updated_at, transcript_revision, digest_due_at FROM sessions")
+          .get();
+      expect(metadata()).toEqual({
+        updated_at: 1,
+        transcript_revision: 1,
+        digest_due_at: 600_001,
+      });
+      expect(await selectDigestCandidate(harness.database, 600_000)).toBeUndefined();
+      expect(await selectDigestCandidate(harness.database, 600_001)).toEqual({
+        sessionId: "nonpositive",
+        failureCount: 0,
+      });
+      await applyOperation(harness.database, { ...append, id: "duplicate" });
+      expect(metadata()).toEqual({
+        updated_at: 1,
+        transcript_revision: 1,
+        digest_due_at: 600_001,
+      });
+    } finally {
+      harness.sqlite.close();
+    }
+  });
+
+  it("backfills indexed digest deadlines and maintains them atomically with replication", async () => {
+    const harness = createSqliteD1Harness();
+    const now = 1_800_000_000_000;
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(now);
+    try {
+      harness.sqlite.exec(HISTORY_INITIAL_MIGRATION_SQL);
+      harness.sqlite.exec(HISTORY_PARENT_SESSION_MIGRATION_SQL);
+      for (const sessionId of ["empty", "pending", "current", "retry", "tail"]) {
+        await applyOperation(harness.database, {
+          id: `create-${sessionId}`,
+          sessionId,
+          type: "create",
+          session: { sessionId, attributes: {}, createdAt: now - 3_600_000 },
+        });
+        if (sessionId === "empty") continue;
+        await applyOperation(harness.database, {
+          id: `append-${sessionId}`,
+          sessionId,
+          type: "append",
+          entries: [createTextEntry("one", "user", "first", now - 3_600_000)],
+        });
+      }
+      harness.sqlite.exec(`
+        UPDATE sessions SET digest_through_entry_id = 'one' WHERE session_id IN ('current', 'tail');
+        UPDATE sessions SET digest_next_attempt_at = ${now + 900000} WHERE session_id = 'retry';
+      `);
+      await applyOperation(harness.database, {
+        id: "append-tail-second",
+        sessionId: "tail",
+        type: "append",
+        entries: [createTextEntry("two", "assistant", "second", now - 3_600_000)],
+      });
+      harness.sqlite.exec(HISTORY_DIGEST_SCHEDULE_MIGRATION_SQL);
+      const deadlines = () =>
+        harness.sqlite
+          .prepare("SELECT session_id, digest_due_at FROM sessions ORDER BY session_id")
+          .all();
+      expect(deadlines()).toEqual([
+        { session_id: "current", digest_due_at: null },
+        { session_id: "empty", digest_due_at: null },
+        { session_id: "pending", digest_due_at: now - 3_000_000 },
+        { session_id: "retry", digest_due_at: now + 900_000 },
+        { session_id: "tail", digest_due_at: now + 39_600_000 },
+      ]);
+      expect(await selectDigestCandidate(harness.database, now)).toEqual({
+        sessionId: "pending",
+        failureCount: 0,
+      });
+      const duplicate = {
+        id: "duplicate",
+        sessionId: "current",
+        type: "append",
+        entries: [createTextEntry("one", "user", "first", now)],
+      };
+      await applyOperation(harness.database, duplicate);
+      expect(await applyOperation(harness.database, duplicate)).toBe(false);
+      expect(deadlines()[0].digest_due_at).toBeNull();
+      await applyOperation(harness.database, {
+        id: "truncate-tail",
+        sessionId: "tail",
+        type: "truncate",
+        afterEntryId: "one",
+      });
+      expect(deadlines().at(-1).digest_due_at).toBe(now + 600_000);
+      await applyOperation(harness.database, {
+        id: "truncate-empty",
+        sessionId: "tail",
+        type: "truncate",
+        afterEntryId: null,
+      });
+      expect(deadlines().at(-1).digest_due_at).toBeNull();
+      await applyOperation(harness.database, {
+        id: "append-after-truncate",
+        sessionId: "tail",
+        type: "append",
+        entries: [createTextEntry("three", "user", "new", now)],
+      });
+      expect(deadlines().at(-1).digest_due_at).toBe(now + 600_000);
+      expect(await selectDigestCandidate(harness.database, now + 599_999)).toEqual({
+        sessionId: "pending",
+        failureCount: 0,
+      });
+    } finally {
+      nowSpy.mockRestore();
+      harness.sqlite.close();
+    }
+  });
+
+  it.each([false, true])(
+    "preserves scheduler errors when lease cleanup fails (persistent=%s)",
+    async (persistent) => {
+      vi.useFakeTimers();
+      const original = new Error("candidate selection overloaded");
+      const cleanup = new Error("lease cleanup overloaded");
+      const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+      let selectFails = true;
+      let releases = 0;
+      const harness = createSqliteD1Harness({
+        beforeQuery(query) {
+          if (selectFails && query.includes("WHERE digest_due_at <=")) throw original;
+          if (query.includes("SET claimed_at = NULL")) {
+            releases += 1;
+            if (persistent || releases < 4) throw cleanup;
+          }
+        },
+      });
+      try {
+        initializeHistoryD1(harness);
+        const run = historyWorker.scheduled({}, { DB: harness.database, AI: { run: vi.fn() } }, {});
+        const rejected = expect(run).rejects.toBe(original);
+        await vi.runAllTimersAsync();
+        await rejected;
+        expect(releases).toBe(4);
+        expect(errorLog.mock.calls.map(([line]) => JSON.parse(line).event)).toContain(
+          "history_digest_scheduler_failed",
+        );
+        const lease = () =>
+          harness.sqlite.prepare("SELECT claimed_at FROM digest_worker_lease").get().claimed_at;
+        if (persistent) {
+          expect(lease()).not.toBeNull();
+          expect(errorLog.mock.calls.map(([line]) => JSON.parse(line).event)).toContain(
+            "history_digest_lease_release_failed",
+          );
+        } else {
+          expect(lease()).toBeNull();
+          selectFails = false;
+          await historyWorker.scheduled({}, { DB: harness.database, AI: { run: vi.fn() } }, {});
+          expect(lease()).toBeNull();
+        }
+      } finally {
+        harness.sqlite.close();
+        errorLog.mockRestore();
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("logs a digest failure before retry persistence fails and recovers an expired lease", async () => {
+    const original = new Error("provider unavailable");
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    let persistFails = true;
+    const harness = createSqliteD1Harness({
+      beforeQuery(query) {
+        if (persistFails && query.includes("SET digest_failure_count = ?"))
+          throw new Error("database overloaded");
+      },
+    });
+    try {
+      initializeHistoryD1(harness);
+      await applyOperation(harness.database, {
+        id: "create",
+        sessionId: "retry",
+        type: "create",
+        session: { sessionId: "retry", attributes: {}, createdAt: 1 },
+      });
+      await applyOperation(harness.database, {
+        id: "append",
+        sessionId: "retry",
+        type: "append",
+        entries: [createTextEntry("one", "user", "first", 2)],
+      });
+      await expect(
+        historyWorker.scheduled(
+          {},
+          {
+            DB: harness.database,
+            AI: {
+              run: vi.fn(async () => {
+                throw original;
+              }),
+            },
+          },
+          {},
+        ),
+      ).rejects.toBe(original);
+      expect(errorLog.mock.calls.map(([line]) => JSON.parse(line).event)).toEqual([
+        "history_digest_refresh_failed",
+        "history_digest_retry_record_failed",
+        "history_digest_scheduler_failed",
+      ]);
+      persistFails = false;
+      harness.sqlite
+        .prepare("UPDATE digest_worker_lease SET claimed_at = ?")
+        .run(Date.now() - 30 * 60 * 1000);
+      await historyWorker.scheduled(
+        {},
+        {
+          DB: harness.database,
+          AI: { run: vi.fn(async () => aiResponse('{"title":"Recovered","summary":"Recovered"}')) },
+        },
+        {},
+      );
+      expect(await selectDigestCandidate(harness.database, Date.now())).toBeUndefined();
+      expect(
+        harness.sqlite.prepare("SELECT digest_through_entry_id FROM sessions").get()
+          .digest_through_entry_id,
+      ).toBe("one");
+    } finally {
+      harness.sqlite.close();
+      errorLog.mockRestore();
+    }
+  });
+
   it("leases one scheduled digest at a time", async () => {
     const harness = createSqliteD1Harness();
     try {
@@ -2429,6 +2685,25 @@ describe("session history", () => {
         { waitUntil: vi.fn() },
       );
       await firstStarted.promise;
+
+      const upload = await callHistoryWorker(
+        "/v1/operations",
+        {
+          operations: [
+            {
+              id: "upload-during-maintenance",
+              sessionId: "scheduled-4",
+              type: "append",
+              entries: [
+                createTextEntry("concurrent-upload", "user", "uploaded during generation", 3),
+              ],
+            },
+          ],
+        },
+        harness,
+      );
+      expect(upload.status).toBe(200);
+      expect(await upload.json()).toEqual({ applied: 1 });
 
       const overlappingAi = { run: vi.fn() };
       await historyWorker.scheduled(
@@ -3201,6 +3476,7 @@ describe("history parent links", () => {
         "INSERT INTO sessions (session_id, attributes_json, created_at, updated_at) VALUES ('existing', '{}', 1, 2)",
       );
       harness.sqlite.exec(HISTORY_PARENT_SESSION_MIGRATION_SQL);
+      harness.sqlite.exec(HISTORY_DIGEST_SCHEDULE_MIGRATION_SQL);
 
       const response = await callHistoryWorker("/v1/search", {}, harness);
       await expect(response.json()).resolves.toMatchObject({

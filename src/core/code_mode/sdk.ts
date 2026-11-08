@@ -25,9 +25,7 @@ A program launched with \`background: true\` runs as a code job and has no overa
 
 ## Saved programs and preloads
 
-Pass \`file\` to run a saved .js program in place of inline \`code\`. Any program can run library files first by naming them in \`// @preload path/to/library.js\` lines among its opening comments. The rest of the line is the path, without quotes. Relative paths resolve from the directory of the file that declares them, or from the current working directory for inline code. Directives after the first statement are ignored. Each file can be up to 1 MiB.
-
-Each file runs as its own async script in the same sandbox, with the same input and capabilities, and all files share the program's deadline, request limits, and output budget. Top-level declarations stay private to their file, so a library shares helpers through \`globalThis\`: \`globalThis.helpers ??= {}; helpers.format = (value) => String(value);\` lets the program call \`helpers.format(input)\`. Libraries can preload other files. Dependencies run first, in declaration order, and each file runs once. Circular preloads fail. If a file throws, later files do not run, and earlier side effects stay. Nothing carries over between programs.
+Pass \`file\` to run a saved .js program in place of inline \`code\`. Any program can run library files first by naming them in \`// @preload ./lib/helpers.js\` lines among its opening comments. Relative paths resolve from the directory of the file that declares them, or from the current working directory for inline code. Each file runs once, after its own preloads, in the same sandbox with the same input and capabilities, and all files share the program's limits. Top-level declarations stay private to each file, so a library shares helpers through \`globalThis\`, as in \`globalThis.helpers ??= {}; helpers.format = (value) => String(value);\`. Circular preloads fail, and a file that throws stops the files after it.
 
 ## Composing programs
 

@@ -121,7 +121,7 @@ printText(helpers.report(project, limit));
 
 `input` is any JSON value up to 16 KiB.
 
-To share helpers between programs, put them in a library file and preload it. `// @preload <path>` lines in a program's opening comments name `.js` files to run before it. The rest of the line is the path, without quotes. A relative path is resolved from the directory of the file that declares it, or from the working directory for inline code. Directives after the first statement are ignored. Tau reads the program and its preloads when the call starts, and each file can be up to 1 MiB.
+To share code between programs, put it in a library file and name it in a `// @preload <path>` line among the program's opening comments. A relative path resolves from the directory of the file that declares it, or from the working directory for inline code. Preloaded files run first in the same sandbox, with the same input and capabilities, and share the program's limits. Top-level declarations stay private to each file, so a library shares functions through `globalThis`:
 
 ```js
 // lib/report.js
@@ -129,7 +129,7 @@ globalThis.helpers ??= {};
 helpers.report = (project, limit) => `${project}: first ${limit} items`;
 ```
 
-Each file runs as its own async script in the same sandbox, with the same input and capabilities. All files share the program's deadline, request limits, and output budget. Top-level declarations stay private to their file, so a library shares functions through `globalThis`. A library can preload other files. Dependencies run before the files that preload them, in the order declared, and each file runs once. Circular preloads fail before anything runs. If a file throws, later files do not run, and earlier side effects stay.
+A library can preload other files. Each file runs once, after its own preloads, and can be up to 1 MiB. Circular preloads fail before anything runs, and a file that throws stops the files after it.
 
 ## Output
 

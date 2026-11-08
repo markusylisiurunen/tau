@@ -30,7 +30,10 @@ export class CodeJobRegistry {
     source: string;
     cwd: string;
     backend: ToolExecutionBackend;
-    program: Pick<ExecuteTauCodeModeOptions, "name" | "documentation" | "api" | "code"> & {
+    program: Pick<
+      ExecuteTauCodeModeOptions,
+      "name" | "documentation" | "api" | "code" | "sourceName" | "preloads"
+    > & {
       input?: TauCodeModeJsonValue;
     };
     signal: AbortSignal;

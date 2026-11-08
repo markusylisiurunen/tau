@@ -23,6 +23,14 @@ A foreground program has a 5-minute deadline by default. Set \`timeout\` in mill
 
 A program launched with \`background: true\` runs as a code job and has no overall deadline, but each capability call keeps its own time limit. The launch accepts neither \`timeout\` nor \`maxOutputTokens\`. The job keeps its printed text and images. Read them with \`read_code_job\` or \`wait_for_code_jobs\`, which take their own \`maxOutputTokens\`. Stop a job with \`stop_code_job\`.
 
+## Saved programs and preloads
+
+Run a saved JavaScript program with \`file\`, or supply inline \`code\`. Both can declare dependencies with standalone \`// @preload path/to/library.js\` lines in the initial comment header, before any JavaScript statements. The rest of each directive line is an unquoted path, including spaces. File headers resolve paths relative to that file; inline headers use the current working directory.
+
+Dependencies may declare their own preloads. Tau reads all sources before execution, runs dependencies before dependents in declaration order, and executes each normalized absolute path once per run. Cycles fail. Each file is limited to 1 MiB, with at most 64 files, 8 MiB of total source, and 16 dependency levels. Symlink aliases are distinct paths.
+
+Each source runs as a separate async script in the same sandbox, with the same input, capabilities, execution deadline, and output limits. Local declarations stay private. Share helpers explicitly, for example \`globalThis.helpers ??= {}; helpers.format = (value) => String(value);\`. The main script can then call \`helpers.format(input)\`. State is fresh on each run. A failing preload stops execution; earlier side effects are not undone.
+
 ## Composing programs
 
 Use a program when keeping intermediate data in JavaScript makes the task clearer: pass one call's result into another, combine independent evidence, or reduce a large response to the relevant facts. A single direct tool call is fine when composition adds nothing. Only enabled capabilities are callable, and their use restrictions still apply inside a program.

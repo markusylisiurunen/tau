@@ -486,3 +486,29 @@ it.each([32, 33])("enforces the concurrent bridge budget at %s requests", async 
   expect(ping.mock.calls.length).toBeLessThanOrEqual(32);
   if (count === 32) expect(ping).toHaveBeenCalledTimes(32);
 });
+
+it("includes preloads in the execution deadline and cancels their capability calls", async () => {
+  let requestSignal;
+  const main = vi.fn();
+  const result = await runTauCodeMode({
+    ...createDefinition({
+      api: {
+        pause: async (_args, context) => {
+          requestSignal = context.signal;
+          await new Promise((_, reject) =>
+            context.signal.addEventListener("abort", () => reject(context.signal.reason), {
+              once: true,
+            }),
+          );
+        },
+        main,
+      },
+    }),
+    preloads: [{ sourceName: "slow.js", code: "await linear.pause();" }],
+    code: "await linear.main();",
+    timeoutMs: 1000,
+  });
+  expect(result.status).toBe("timed-out");
+  expect(requestSignal.aborted).toBe(true);
+  expect(main).not.toHaveBeenCalled();
+});

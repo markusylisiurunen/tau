@@ -4,6 +4,7 @@ import {
   type TauCodeModeApi,
   type TauCodeModeJsonValue,
   type TauCodeModeRuntimeResult,
+  type TauCodeModeSource,
 } from "../../code_mode/runtime.js";
 import type { ToolActivity } from "./activity.js";
 import { buildBashPresentation } from "./bash.js";
@@ -22,6 +23,8 @@ export type ParsedCodeModeArguments =
   | {
       ok: true;
       code: string;
+      sourceName?: string;
+      preloads?: TauCodeModeSource[];
       maxOutputTokens: number;
       timeoutMs: number;
       subject: string;
@@ -34,6 +37,8 @@ export type CodeModeToolImplementation = {
   execute(input: {
     context: ToolExecutionContext;
     code: string;
+    sourceName?: string;
+    preloads?: TauCodeModeSource[];
     input?: TauCodeModeJsonValue;
     maxOutputTokens: number;
     timeoutMs: number;
@@ -45,6 +50,8 @@ export function executeInternalCodeMode(options: {
   documentation: string;
   api: TauCodeModeApi;
   code: string;
+  sourceName?: string;
+  preloads?: TauCodeModeSource[];
   input?: TauCodeModeJsonValue;
   maxOutputTokens: number;
   backend: ToolExecutionBackend;
@@ -56,6 +63,8 @@ export function executeInternalCodeMode(options: {
     documentation: options.documentation,
     api: options.api,
     code: options.code,
+    sourceName: options.sourceName,
+    preloads: options.preloads,
     input: options.input,
     maxOutputTokens: options.maxOutputTokens,
     signal: options.signal,
@@ -121,6 +130,8 @@ export async function executeCodeModeTool(
         const runtime = await implementation.execute({
           context,
           code: parsed.code,
+          sourceName: parsed.sourceName,
+          preloads: parsed.preloads,
           input: parsed.input,
           maxOutputTokens: parsed.maxOutputTokens,
           timeoutMs: parsed.timeoutMs,

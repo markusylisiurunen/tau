@@ -117,7 +117,21 @@ code({
 const { project, limit } = input;
 ```
 
-A saved program is a single file of at most 1 MiB and cannot import other files. `input` is any JSON value up to 16 KiB.
+`input` is any JSON value up to 16 KiB. To reuse helpers, declare preloads in the initial comment header, before any JavaScript statements:
+
+```js
+// audit.js
+// @preload ./lib/report.js
+printText(helpers.report(input));
+
+// lib/report.js (a separate file)
+globalThis.helpers ??= {};
+helpers.report = (value) => JSON.stringify(value);
+```
+
+Each directive takes an unquoted `.js` path, relative to the declaring file (or the working directory for inline code). Libraries can declare dependencies too. Tau reads all sources before execution, then runs dependencies before dependents in declaration order, once per normalized absolute path per run. Cycles fail; symlink aliases count as distinct paths.
+
+Each file runs as a separate async script in the same sandbox. Local declarations stay private; use an explicit global namespace to share helpers. Preloads share the program's input, capabilities, execution deadline, and output limits. A failure stops execution without undoing earlier side effects. Sources are limited to 1 MiB per file, 64 files, 8 MiB in total, and 16 dependency levels.
 
 ## Output
 

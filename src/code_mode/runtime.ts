@@ -103,8 +103,12 @@ export type TauCodeModeDefinition = {
   persistOutput?: TauCodeModePersistOutput;
 };
 
+export type TauCodeModeSource = { code: string; sourceName: string };
+
 export type ExecuteTauCodeModeOptions = TauCodeModeDefinition & {
   code: string;
+  sourceName?: string;
+  preloads?: TauCodeModeSource[];
   maxOutputTokens?: number;
   signal?: AbortSignal;
   invocation?: TauCodeModeInvocation | null;
@@ -244,6 +248,8 @@ export async function runTauCodeMode(
       sandboxRunnerUrl,
       workerData: {
         code: options.code,
+        sourceName: options.sourceName ?? "inline code",
+        preloads: options.preloads ?? [],
         inputJson: JSON.stringify(options.input ?? null),
         docs,
         imageMethodId,

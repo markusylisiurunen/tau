@@ -77,6 +77,51 @@ it("loads saved JavaScript once through the backend and exposes JSON input witho
   }
 });
 
+it.each([false, true])(
+  "runs preloads in the same sandbox for file and inline programs (background: %s)",
+  async (background) => {
+    const backend = createLocalToolExecutionBackend();
+    const files = {
+      "/remote/workflow.js":
+        '// @preload lib/helpers.js\nconst local = "main"; printText(helpers.format(input));',
+      "/remote/lib/helpers.js":
+        '// @preload shared.js\nconst local = "helper"; await Promise.resolve(); helpers.format = (value) => value + helpers.suffix;',
+      "/remote/lib/shared.js":
+        'globalThis.helpers = { suffix: ":" + typeof process + ":" + typeof require + ":" + typeof fetch + ":" + typeof tau.bash.run };',
+    };
+    vi.spyOn(backend, "readFileBinary").mockImplementation(async (path) => ({
+      content: Buffer.from(files[path]),
+    }));
+    const jobs = new CodeJobRegistry();
+    const tool = createCodeToolDefinition({
+      backend,
+      cwd: "/remote",
+      config: {},
+      allowedTools: ["bash"],
+      bashJobs: new BashJobRegistry(),
+      codeJobs: jobs,
+    });
+    try {
+      for (const source of [{ file: "workflow.js" }, { code: files["/remote/workflow.js"] }]) {
+        const result = await call(tool, { ...source, background, input: "result" });
+        expect(result.outcome).toBe("succeeded");
+        if (background) await jobs.waitForIdle();
+        const output = background ? (await jobs.inspect()).text : text(result);
+        expect(output).toContain("result:undefined:undefined:undefined:function");
+      }
+      files["/remote/lib/helpers.js"] = 'throw new Error("preload failure");';
+      const result = await call(tool, { file: "workflow.js", background });
+      if (background) await jobs.waitForIdle();
+      else expect(result.outcome).toBe("failed");
+      const output = background ? (await jobs.inspect()).text : text(result);
+      expect(output).toContain("/remote/lib/helpers.js");
+      expect(output).toContain("preload failure");
+    } finally {
+      await jobs.dispose();
+    }
+  },
+);
+
 it("keeps live output and capability ownership after launch, and cancels waits independently", async () => {
   const jobs = new CodeJobRegistry();
   const backend = createLocalToolExecutionBackend();

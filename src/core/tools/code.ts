@@ -1,4 +1,3 @@
-import { resolve } from "node:path";
 import type { Tool } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { z } from "zod";
@@ -30,6 +29,7 @@ import {
   executeCodeModeTool,
   executeInternalCodeMode,
 } from "./code_mode.js";
+import { loadCodeProgram } from "./code_preloads.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import { buildToolRunPresentation } from "./presentation.js";
 import { type AgentTool, createTextToolOutcome, executeTool } from "./registry.js";
@@ -138,7 +138,7 @@ export function createCodeToolDefinition(options: {
         file: Type.Optional(
           Type.String({
             description:
-              "Path to a saved .js program, absolute or relative to the current working directory. The file is read once when the call starts, can be at most 1 MiB, and runs with the same capabilities and limits as inline code. Supply exactly one of code or file.",
+              "Path to a saved .js program, absolute or relative to the current working directory. The file and any files it names with // @preload are read when the call starts. Each file can be at most 1 MiB. The program runs with the same capabilities and limits as inline code. Supply exactly one of code or file.",
           }),
         ),
         input: Type.Optional(
@@ -165,11 +165,13 @@ export function createCodeToolDefinition(options: {
   };
   const implementation: CodeModeToolImplementation = {
     schema,
-    execute: async ({ code, input, maxOutputTokens, timeoutMs, context }) => {
+    execute: async ({ code, sourceName, preloads, input, maxOutputTokens, timeoutMs, context }) => {
       return await executeInternalCodeMode({
         name: "tau",
         ...sdkFor(context.assistantMessageId),
         code,
+        sourceName,
+        preloads,
         input,
         maxOutputTokens,
         backend: options.backend,
@@ -200,15 +202,12 @@ export function createCodeToolDefinition(options: {
       const source = "file" in args ? args.file : "inline code";
       try {
         context.signal.throwIfAborted();
-        const code =
-          "code" in args
-            ? args.code
-            : (
-                await options.backend.readFileBinary(resolve(options.cwd, args.file), {
-                  maxBytes: 1024 * 1024,
-                })
-              ).content.toString("utf8");
-        if (!code.trim()) throw new Error("Program source must not be empty.");
+        const program = await loadCodeProgram({
+          backend: options.backend,
+          cwd: options.cwd,
+          source: args,
+          signal: context.signal,
+        });
         context.signal.throwIfAborted();
         if (args.background) {
           const id = options.codeJobs.start({
@@ -219,7 +218,7 @@ export function createCodeToolDefinition(options: {
             program: {
               name: "tau",
               ...sdkFor(context.assistantMessageId),
-              code,
+              ...program,
               input: args.input,
             },
           });
@@ -243,7 +242,7 @@ export function createCodeToolDefinition(options: {
         }
         return executeCodeModeTool(implementation, call, context, {
           ok: true,
-          code,
+          ...program,
           input: args.input,
           subject,
           timeoutMs: args.timeout ?? CODE_DEFAULT_TIMEOUT_MS,

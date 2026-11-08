@@ -23,6 +23,10 @@ A foreground program has a 5-minute deadline by default. Set \`timeout\` in mill
 
 A program launched with \`background: true\` runs as a code job and has no overall deadline, but each capability call keeps its own time limit. The launch accepts neither \`timeout\` nor \`maxOutputTokens\`. The job keeps its printed text and images. Read them with \`read_code_job\` or \`wait_for_code_jobs\`, which take their own \`maxOutputTokens\`. Stop a job with \`stop_code_job\`.
 
+## Saved programs and preloads
+
+Pass \`file\` to run a saved .js program in place of inline \`code\`. Any program can run library files first by naming them in \`// @preload ./lib/helpers.js\` lines among its opening comments. Relative paths resolve from the directory of the file that declares them, or from the current working directory for inline code. Each file runs once, after its own preloads, in the same sandbox with the same input and capabilities, and all files share the program's limits. Top-level declarations stay private to each file, so a library shares helpers through \`globalThis\`, as in \`globalThis.helpers ??= {}; helpers.format = (value) => String(value);\`. Circular preloads fail, and a file that throws stops the files after it.
+
 ## Composing programs
 
 Use a program when keeping intermediate data in JavaScript makes the task clearer: pass one call's result into another, combine independent evidence, or reduce a large response to the relevant facts. A single direct tool call is fine when composition adds nothing. Only enabled capabilities are callable, and their use restrictions still apply inside a program.

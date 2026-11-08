@@ -11,6 +11,12 @@ if (
   workerData === null ||
   typeof workerData.code !== "string" ||
   typeof workerData.docs !== "string" ||
+  (workerData.sourceName !== undefined && typeof workerData.sourceName !== "string") ||
+  !Array.isArray(workerData.preloads) ||
+  workerData.preloads.some(
+    (source) =>
+      !source || typeof source.code !== "string" || typeof source.sourceName !== "string",
+  ) ||
   !Number.isSafeInteger(workerData.imageMethodId) ||
   workerData.imageMethodId < 0 ||
   !Array.isArray(workerData.apis) ||
@@ -257,10 +263,21 @@ compartment.evaluate(String.raw`
 })();
 `);
 
+let sourceName = workerData.sourceName;
 try {
-  await compartment.evaluate("(async () => {\n" + workerData.code + "\n})()");
+  for (const source of [
+    ...workerData.preloads,
+    { code: workerData.code, sourceName: workerData.sourceName },
+  ]) {
+    sourceName = source.sourceName;
+    await compartment.evaluate("(async () => {\n" + source.code + "\n})()");
+  }
 } catch (error) {
-  writeOutput("stderr", error instanceof Error ? error.stack || error.message : String(error));
+  writeOutput(
+    "stderr",
+    (sourceName ? sourceName + ": " : "") +
+      (error instanceof Error ? error.stack || error.message : String(error)),
+  );
   process.exitCode = 1;
 } finally {
   flushOutput(true);

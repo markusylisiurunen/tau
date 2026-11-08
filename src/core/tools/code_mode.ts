@@ -7,6 +7,7 @@ import {
 } from "../../code_mode/runtime.js";
 import type { ToolActivity } from "./activity.js";
 import { buildBashPresentation } from "./bash.js";
+import type { CodeProgram } from "./code_preloads.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import { writeOutputFile } from "./output_file.js";
 import { buildToolRunPresentation } from "./presentation.js";
@@ -19,43 +20,46 @@ import {
 } from "./registry.js";
 
 export type ParsedCodeModeArguments =
-  | {
+  | (CodeProgram & {
       ok: true;
-      code: string;
       maxOutputTokens: number;
       timeoutMs: number;
       subject: string;
       input?: TauCodeModeJsonValue;
-    }
+    })
   | { ok: false; error: string; subject: string };
 
 export type CodeModeToolImplementation = {
   schema: Tool;
-  execute(input: {
-    context: ToolExecutionContext;
-    code: string;
-    input?: TauCodeModeJsonValue;
-    maxOutputTokens: number;
-    timeoutMs: number;
-  }): Promise<TauCodeModeRuntimeResult>;
+  execute(
+    input: CodeProgram & {
+      context: ToolExecutionContext;
+      input?: TauCodeModeJsonValue;
+      maxOutputTokens: number;
+      timeoutMs: number;
+    },
+  ): Promise<TauCodeModeRuntimeResult>;
 };
 
-export function executeInternalCodeMode(options: {
-  name: string;
-  documentation: string;
-  api: TauCodeModeApi;
-  code: string;
-  input?: TauCodeModeJsonValue;
-  maxOutputTokens: number;
-  backend: ToolExecutionBackend;
-  signal: AbortSignal;
-  timeoutMs: number;
-}): Promise<TauCodeModeRuntimeResult> {
+export function executeInternalCodeMode(
+  options: CodeProgram & {
+    name: string;
+    documentation: string;
+    api: TauCodeModeApi;
+    input?: TauCodeModeJsonValue;
+    maxOutputTokens: number;
+    backend: ToolExecutionBackend;
+    signal: AbortSignal;
+    timeoutMs: number;
+  },
+): Promise<TauCodeModeRuntimeResult> {
   return runTauCodeMode({
     name: options.name,
     documentation: options.documentation,
     api: options.api,
     code: options.code,
+    sourceName: options.sourceName,
+    preloads: options.preloads,
     input: options.input,
     maxOutputTokens: options.maxOutputTokens,
     signal: options.signal,
@@ -121,6 +125,8 @@ export async function executeCodeModeTool(
         const runtime = await implementation.execute({
           context,
           code: parsed.code,
+          sourceName: parsed.sourceName,
+          preloads: parsed.preloads,
           input: parsed.input,
           maxOutputTokens: parsed.maxOutputTokens,
           timeoutMs: parsed.timeoutMs,

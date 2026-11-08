@@ -77,6 +77,51 @@ it("loads saved JavaScript once through the backend and exposes JSON input witho
   }
 });
 
+it.each([false, true])(
+  "runs preloads in the same sandbox for saved foreground and inline background programs (background: %s)",
+  async (background) => {
+    const backend = createLocalToolExecutionBackend();
+    const files = {
+      "/remote/workflow.js":
+        '// @preload lib/helpers.js\nconst local = "main"; printText(helpers.format(input));',
+      "/remote/lib/helpers.js":
+        '// @preload shared.js\nconst local = "helper"; await Promise.resolve(); helpers.format = (value) => value + helpers.suffix;',
+      "/remote/lib/shared.js":
+        'globalThis.helpers = { suffix: ":" + typeof process + ":" + typeof require + ":" + typeof fetch + ":" + typeof tau.bash.run };',
+    };
+    vi.spyOn(backend, "readFileBinary").mockImplementation(async (path) => ({
+      content: Buffer.from(files[path]),
+    }));
+    const jobs = new CodeJobRegistry();
+    const tool = createCodeToolDefinition({
+      backend,
+      cwd: "/remote",
+      config: {},
+      allowedTools: ["bash"],
+      bashJobs: new BashJobRegistry(),
+      codeJobs: jobs,
+    });
+    try {
+      const source = background ? { code: files["/remote/workflow.js"] } : { file: "workflow.js" };
+      const success = await call(tool, { ...source, background, input: "result" });
+      expect(success.outcome).toBe("succeeded");
+      if (background) await jobs.waitForIdle();
+      expect(background ? (await jobs.inspect()).text : text(success)).toContain(
+        "result:undefined:undefined:undefined:function",
+      );
+      files["/remote/lib/helpers.js"] = 'throw new Error("preload failure");';
+      const result = await call(tool, { file: "workflow.js", background });
+      if (background) await jobs.waitForIdle();
+      else expect(result.outcome).toBe("failed");
+      const output = background ? (await jobs.inspect()).text : text(result);
+      expect(output).toContain("/remote/lib/helpers.js");
+      expect(output).toContain("preload failure");
+    } finally {
+      await jobs.dispose();
+    }
+  },
+);
+
 it("keeps live output and capability ownership after launch, and cancels waits independently", async () => {
   const jobs = new CodeJobRegistry();
   const backend = createLocalToolExecutionBackend();
@@ -92,6 +137,8 @@ it("keeps live output and capability ownership after launch, and cancels waits i
     source: "workflow.js",
     signal: turn.signal,
     program: {
+      sourceName: "inline code",
+      preloads: [],
       name: "tau",
       documentation: "test",
       code: 'printText("progress"); await tau.pause(); printText("unexpected");',
@@ -160,6 +207,8 @@ it("retains ordered images, failure output and a log independent of the shared r
       source: "inline code",
       signal: signal(),
       program: {
+        sourceName: "inline code",
+        preloads: [],
         name: "tau",
         documentation: "test",
         api: { image: () => image },
@@ -211,6 +260,8 @@ it("bounds capture independently of inspection budgets and reports lost text", a
     source: "inline code",
     signal: signal(),
     program: {
+      sourceName: "inline code",
+      preloads: [],
       name: "tau",
       documentation: "test",
       api: { unused: () => null },
@@ -249,6 +300,8 @@ it("bounds images in combined inspections without discarding retained job images
       source: "inline code",
       signal: signal(),
       program: {
+        sourceName: "inline code",
+        preloads: [],
         name: "tau",
         documentation: "test",
         api: { image: () => image },
@@ -326,6 +379,8 @@ it.each([false, true])(
       source: "workflow.js",
       signal: signal(),
       program: {
+        sourceName: "inline code",
+        preloads: [],
         name: "tau",
         documentation: "test",
         api: {
@@ -386,6 +441,8 @@ it("releases discarded agents only after their code and subsequently launched Ba
     source: "inline code",
     signal: signal(),
     program: {
+      sourceName: "inline code",
+      preloads: [],
       name: "tau",
       documentation: "test",
       code: "await tau.start();",

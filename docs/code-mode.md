@@ -114,10 +114,22 @@ code({
 });
 
 // audit.js
+// @preload ./lib/report.js
 const { project, limit } = input;
+printText(helpers.report(project, limit));
 ```
 
-A saved program is a single file of at most 1 MiB and cannot import other files. `input` is any JSON value up to 16 KiB.
+`input` is any JSON value up to 16 KiB.
+
+To share code between programs, put it in a library file and name it in a `// @preload <path>` line among the program's opening comments. A relative path resolves from the directory of the file that declares it, or from the working directory for inline code. Preloaded files run first in the same sandbox, with the same input and capabilities, and share the program's limits. Top-level declarations stay private to each file, so a library shares functions through `globalThis`:
+
+```js
+// lib/report.js
+globalThis.helpers ??= {};
+helpers.report = (project, limit) => `${project}: first ${limit} items`;
+```
+
+A library can preload other files. Each file runs once, after its own preloads, and can be up to 1 MiB. Circular preloads fail before anything runs, and a file that throws stops the files after it.
 
 ## Output
 

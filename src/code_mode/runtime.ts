@@ -103,6 +103,8 @@ export type TauCodeModeDefinition = {
   persistOutput?: TauCodeModePersistOutput;
 };
 
+export type TauCodeModeSource = { code: string; sourceName: string };
+
 export type ExecuteTauCodeModeOptions = TauCodeModeDefinition & {
   code: string;
   maxOutputTokens?: number;
@@ -185,6 +187,8 @@ export async function executeTauCodeMode(
 
 export async function runTauCodeMode(
   options: Omit<ExecuteTauCodeModeOptions, "timeoutMs"> & {
+    sourceName?: string;
+    preloads?: TauCodeModeSource[];
     timeoutMs?: number | null;
     input?: TauCodeModeJsonValue;
     output?: CodeModeOutput;
@@ -244,6 +248,8 @@ export async function runTauCodeMode(
       sandboxRunnerUrl,
       workerData: {
         code: options.code,
+        sourceName: options.sourceName,
+        preloads: options.preloads ?? [],
         inputJson: JSON.stringify(options.input ?? null),
         docs,
         imageMethodId,

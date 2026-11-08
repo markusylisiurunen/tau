@@ -80,3 +80,36 @@ it("stops reading dependencies when cancellation arrives during a backend read",
   await expect(load({ file: "main.js" })).rejects.toThrow();
   expect(readFileBinary).toHaveBeenCalledTimes(1);
 });
+
+it.each([false, true])(
+  "enforces dependency depth regardless of declaration order (leaf-first: %s)",
+  async (leafFirst) => {
+    const paths = Array.from({ length: 17 }, (_, i) => `${i}.js`);
+    const files = Object.fromEntries(
+      paths.map((path, i) => [
+        `/remote/${path}`,
+        i + 1 < paths.length ? `// @preload ${paths[i + 1]}` : "// leaf",
+      ]),
+    );
+    const { load } = loader(files);
+    const declarations = leafFirst ? paths.toReversed() : paths;
+    await expect(
+      load({ code: declarations.map((path) => `// @preload ${path}`).join("\n") }),
+    ).rejects.toThrow();
+    delete files["/remote/0.js"];
+    const result = await load({
+      code: declarations
+        .filter((path) => path !== "0.js")
+        .map((path) => `// @preload ${path}`)
+        .join("\n"),
+    });
+    expect(result.preloads).toHaveLength(16);
+  },
+);
+
+it("ignores comments whose first word is not the preload directive", async () => {
+  const { load, readFileBinary } = loader({});
+  const result = await load({ code: "// @preload-y.js\n// @preloads.js\nprintText('ok');" });
+  expect(result.preloads).toEqual([]);
+  expect(readFileBinary).not.toHaveBeenCalled();
+});

@@ -7,6 +7,8 @@ const MAX_TOTAL_BYTES = 8 * MAX_FILE_BYTES;
 const MAX_FILES = 64;
 const MAX_DEPTH = 16;
 
+export type CodeProgram = { code: string; sourceName: string; preloads: TauCodeModeSource[] };
+
 function preloadPaths(code: string): string[] {
   const paths: string[] = [];
   let remaining = code.trimStart();
@@ -14,9 +16,9 @@ function preloadPaths(code: string): string[] {
     if (remaining.startsWith("//")) {
       const end = remaining.search(/[\r\n\u2028\u2029]/);
       const comment = end < 0 ? remaining.slice(2) : remaining.slice(2, end);
-      if (/^\s*@preload\b/.test(comment)) {
-        const path = comment.replace(/^\s*@preload\b/, "").trim();
-        if (!path.endsWith(".js") || /[\0\r\n\u2028\u2029]/.test(path)) {
+      if (/^\s*@preload(?:\s|$)/.test(comment)) {
+        const path = comment.replace(/^\s*@preload(?:\s|$)/, "").trim();
+        if (!path.endsWith(".js") || /\0/.test(path)) {
           throw new Error("invalid @preload path: expected a .js file path");
         }
         paths.push(path);
@@ -38,19 +40,19 @@ export async function loadCodeProgram(options: {
   cwd: string;
   source: { code: string } | { file: string };
   signal: AbortSignal;
-}): Promise<{ code: string; sourceName: string; preloads: TauCodeModeSource[] }> {
+}): Promise<CodeProgram> {
   const preloads: TauCodeModeSource[] = [];
-  const visited = new Set<string>();
+  const heights = new Map<string, number>();
   const active = new Set<string>();
   let totalBytes = 0;
 
-  async function visit(path: string, depth: number): Promise<void> {
+  async function visit(path: string, depth: number): Promise<number> {
     options.signal.throwIfAborted();
     if (active.has(path)) throw new Error(`cyclic @preload dependency: ${path}`);
-    if (visited.has(path)) return;
-    if (depth > MAX_DEPTH) throw new Error("@preload nesting exceeds 16 levels");
-    if (visited.size >= MAX_FILES) throw new Error("program exceeds 64 source files");
-    visited.add(path);
+    const height = heights.get(path);
+    if (depth + (height ?? 0) > MAX_DEPTH) throw new Error("@preload nesting exceeds 16 levels");
+    if (height !== undefined) return height;
+    if (heights.size + active.size >= MAX_FILES) throw new Error("program exceeds 64 source files");
     active.add(path);
     try {
       const result = await options.backend.readFileBinary(path, { maxBytes: MAX_FILE_BYTES });
@@ -58,8 +60,10 @@ export async function loadCodeProgram(options: {
       totalBytes += result.content.byteLength;
       if (totalBytes > MAX_TOTAL_BYTES) throw new Error("program source exceeds 8 MiB");
       const code = result.content.toString("utf8");
-      await dependencies(code, dirname(path), depth);
+      const height = await dependencies(code, dirname(path), depth);
+      heights.set(path, height);
       preloads.push({ code, sourceName: path });
+      return height;
     } catch (error) {
       throw new Error(`${path}: ${error instanceof Error ? error.message : String(error)}`, {
         cause: error,
@@ -69,8 +73,12 @@ export async function loadCodeProgram(options: {
     }
   }
 
-  async function dependencies(code: string, cwd: string, depth: number): Promise<void> {
-    for (const path of preloadPaths(code)) await visit(resolve(cwd, path), depth + 1);
+  async function dependencies(code: string, cwd: string, depth: number): Promise<number> {
+    let height = 0;
+    for (const path of preloadPaths(code)) {
+      height = Math.max(height, 1 + (await visit(resolve(cwd, path), depth + 1)));
+    }
+    return height;
   }
 
   options.signal.throwIfAborted();

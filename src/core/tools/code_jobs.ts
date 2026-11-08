@@ -8,6 +8,7 @@ import {
 import { SESSION_PROTOCOL_MAX_CLIENT_TOOL_IMAGES } from "../../protocol/session_protocol.js";
 import { truncateForTokens } from "../utils/truncate.js";
 import { MAX_JOBS, waitForJobs } from "./background_jobs.js";
+import type { CodeProgram } from "./code_preloads.js";
 import { DEFAULT_COMMAND_CAPTURE_BYTES, type ToolExecutionBackend } from "./execution_backend.js";
 import { JobOutput } from "./job_output.js";
 
@@ -30,12 +31,10 @@ export class CodeJobRegistry {
     source: string;
     cwd: string;
     backend: ToolExecutionBackend;
-    program: Pick<
-      ExecuteTauCodeModeOptions,
-      "name" | "documentation" | "api" | "code" | "sourceName" | "preloads"
-    > & {
-      input?: TauCodeModeJsonValue;
-    };
+    program: Pick<ExecuteTauCodeModeOptions, "name" | "documentation" | "api"> &
+      CodeProgram & {
+        input?: TauCodeModeJsonValue;
+      };
     signal: AbortSignal;
   }): string {
     options.signal.throwIfAborted();

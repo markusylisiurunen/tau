@@ -36,6 +36,15 @@ function getTextContent(result) {
 }
 
 describe("public code-mode runtime", () => {
+  it("preserves unlabeled errors for SDK programs", async () => {
+    await expect(
+      executeTauCodeMode({
+        ...createDefinition(),
+        code: 'throw new Error("sdk-failure");',
+      }),
+    ).rejects.toThrow(/^sdk-failure/);
+  });
+
   it("passes SDK output budgets to the runtime", async () => {
     const tool = createTauCodeModeClientTool({
       ...createDefinition(),

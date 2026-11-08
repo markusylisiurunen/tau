@@ -138,7 +138,7 @@ export function createCodeToolDefinition(options: {
         file: Type.Optional(
           Type.String({
             description:
-              "Path to a saved .js program, absolute or relative to the current working directory. The file and its // @preload path.js header dependencies are read before execution. Paths in headers are relative to the declaring file. Each file can be at most 1 MiB and runs with the same capabilities and limits as inline code. Supply exactly one of code or file.",
+              "Path to a saved .js program, absolute or relative to the current working directory. The file and any files it names with // @preload are read when the call starts. Each file can be at most 1 MiB. The program runs with the same capabilities and limits as inline code. Supply exactly one of code or file.",
           }),
         ),
         input: Type.Optional(

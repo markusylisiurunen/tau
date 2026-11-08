@@ -137,6 +137,8 @@ it("keeps live output and capability ownership after launch, and cancels waits i
     source: "workflow.js",
     signal: turn.signal,
     program: {
+      sourceName: "inline code",
+      preloads: [],
       name: "tau",
       documentation: "test",
       code: 'printText("progress"); await tau.pause(); printText("unexpected");',
@@ -205,6 +207,8 @@ it("retains ordered images, failure output and a log independent of the shared r
       source: "inline code",
       signal: signal(),
       program: {
+        sourceName: "inline code",
+        preloads: [],
         name: "tau",
         documentation: "test",
         api: { image: () => image },
@@ -256,6 +260,8 @@ it("bounds capture independently of inspection budgets and reports lost text", a
     source: "inline code",
     signal: signal(),
     program: {
+      sourceName: "inline code",
+      preloads: [],
       name: "tau",
       documentation: "test",
       api: { unused: () => null },
@@ -294,6 +300,8 @@ it("bounds images in combined inspections without discarding retained job images
       source: "inline code",
       signal: signal(),
       program: {
+        sourceName: "inline code",
+        preloads: [],
         name: "tau",
         documentation: "test",
         api: { image: () => image },
@@ -371,6 +379,8 @@ it.each([false, true])(
       source: "workflow.js",
       signal: signal(),
       program: {
+        sourceName: "inline code",
+        preloads: [],
         name: "tau",
         documentation: "test",
         api: {
@@ -431,6 +441,8 @@ it("releases discarded agents only after their code and subsequently launched Ba
     source: "inline code",
     signal: signal(),
     program: {
+      sourceName: "inline code",
+      preloads: [],
       name: "tau",
       documentation: "test",
       code: "await tau.start();",

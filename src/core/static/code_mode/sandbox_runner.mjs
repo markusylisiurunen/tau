@@ -11,7 +11,7 @@ if (
   workerData === null ||
   typeof workerData.code !== "string" ||
   typeof workerData.docs !== "string" ||
-  typeof workerData.sourceName !== "string" ||
+  (workerData.sourceName !== undefined && typeof workerData.sourceName !== "string") ||
   !Array.isArray(workerData.preloads) ||
   workerData.preloads.some(
     (source) =>
@@ -275,7 +275,8 @@ try {
 } catch (error) {
   writeOutput(
     "stderr",
-    sourceName + ": " + (error instanceof Error ? error.stack || error.message : String(error)),
+    (sourceName ? sourceName + ": " : "") +
+      (error instanceof Error ? error.stack || error.message : String(error)),
   );
   process.exitCode = 1;
 } finally {

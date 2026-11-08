@@ -114,24 +114,22 @@ code({
 });
 
 // audit.js
+// @preload ./lib/report.js
 const { project, limit } = input;
+printText(helpers.report(project, limit));
 ```
 
-`input` is any JSON value up to 16 KiB. To reuse helpers, declare preloads in the initial comment header, before any JavaScript statements:
+`input` is any JSON value up to 16 KiB.
+
+To share helpers between programs, put them in a library file and preload it. `// @preload <path>` lines in a program's opening comments name `.js` files to run before it. The rest of the line is the path, without quotes. A relative path is resolved from the directory of the file that declares it, or from the working directory for inline code. Directives after the first statement are ignored. Tau reads the program and its preloads when the call starts, and each file can be up to 1 MiB.
 
 ```js
-// audit.js
-// @preload ./lib/report.js
-printText(helpers.report(input));
-
-// lib/report.js (a separate file)
+// lib/report.js
 globalThis.helpers ??= {};
-helpers.report = (value) => JSON.stringify(value);
+helpers.report = (project, limit) => `${project}: first ${limit} items`;
 ```
 
-Each directive takes an unquoted `.js` path, relative to the declaring file (or the working directory for inline code). Libraries can declare dependencies too. Tau reads all sources before execution, then runs dependencies before dependents in declaration order, once per normalized absolute path per run. Cycles fail; symlink aliases count as distinct paths.
-
-Each file runs as a separate async script in the same sandbox. Local declarations stay private; use an explicit global namespace to share helpers. Preloads share the program's input, capabilities, execution deadline, and output limits. A failure stops execution without undoing earlier side effects. Sources are limited to 1 MiB per file, 64 files, 8 MiB in total, and 16 dependency levels.
+Each file runs as its own async script in the same sandbox, with the same input and capabilities. All files share the program's deadline, request limits, and output budget. Top-level declarations stay private to their file, so a library shares functions through `globalThis`. A library can preload other files. Dependencies run before the files that preload them, in the order declared, and each file runs once. Circular preloads fail before anything runs. If a file throws, later files do not run, and earlier side effects stay.
 
 ## Output
 

@@ -4,10 +4,10 @@ import {
   type TauCodeModeApi,
   type TauCodeModeJsonValue,
   type TauCodeModeRuntimeResult,
-  type TauCodeModeSource,
 } from "../../code_mode/runtime.js";
 import type { ToolActivity } from "./activity.js";
 import { buildBashPresentation } from "./bash.js";
+import type { CodeProgram } from "./code_preloads.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import { writeOutputFile } from "./output_file.js";
 import { buildToolRunPresentation } from "./presentation.js";
@@ -20,44 +20,39 @@ import {
 } from "./registry.js";
 
 export type ParsedCodeModeArguments =
-  | {
+  | (CodeProgram & {
       ok: true;
-      code: string;
-      sourceName?: string;
-      preloads?: TauCodeModeSource[];
       maxOutputTokens: number;
       timeoutMs: number;
       subject: string;
       input?: TauCodeModeJsonValue;
-    }
+    })
   | { ok: false; error: string; subject: string };
 
 export type CodeModeToolImplementation = {
   schema: Tool;
-  execute(input: {
-    context: ToolExecutionContext;
-    code: string;
-    sourceName?: string;
-    preloads?: TauCodeModeSource[];
-    input?: TauCodeModeJsonValue;
-    maxOutputTokens: number;
-    timeoutMs: number;
-  }): Promise<TauCodeModeRuntimeResult>;
+  execute(
+    input: CodeProgram & {
+      context: ToolExecutionContext;
+      input?: TauCodeModeJsonValue;
+      maxOutputTokens: number;
+      timeoutMs: number;
+    },
+  ): Promise<TauCodeModeRuntimeResult>;
 };
 
-export function executeInternalCodeMode(options: {
-  name: string;
-  documentation: string;
-  api: TauCodeModeApi;
-  code: string;
-  sourceName?: string;
-  preloads?: TauCodeModeSource[];
-  input?: TauCodeModeJsonValue;
-  maxOutputTokens: number;
-  backend: ToolExecutionBackend;
-  signal: AbortSignal;
-  timeoutMs: number;
-}): Promise<TauCodeModeRuntimeResult> {
+export function executeInternalCodeMode(
+  options: CodeProgram & {
+    name: string;
+    documentation: string;
+    api: TauCodeModeApi;
+    input?: TauCodeModeJsonValue;
+    maxOutputTokens: number;
+    backend: ToolExecutionBackend;
+    signal: AbortSignal;
+    timeoutMs: number;
+  },
+): Promise<TauCodeModeRuntimeResult> {
   return runTauCodeMode({
     name: options.name,
     documentation: options.documentation,

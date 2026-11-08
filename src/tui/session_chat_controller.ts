@@ -607,16 +607,16 @@ export class SessionChatController {
     if (this.snapshot.catalog.skills.length > 0) {
       parts.push(`${this.snapshot.catalog.skills.length} skills`);
     }
+    if (this.configuredClientToolNames.length > 0) {
+      const count = this.configuredClientToolNames.length;
+      parts.push(`${count} client tool${count === 1 ? "" : "s"}`);
+    }
     const { mcp } = this.snapshot.catalog;
     if (mcp.status === "unavailable") {
       parts.push("MCP unavailable");
     } else if (mcp.servers.length > 0) {
       const count = mcp.servers.length;
       parts.push(`${count} MCP server${count === 1 ? "" : "s"}`);
-    }
-    if (this.configuredClientToolNames.length > 0) {
-      const count = this.configuredClientToolNames.length;
-      parts.push(`${count} client tool${count === 1 ? "" : "s"}`);
     }
     return parts.join(" · ");
   }
@@ -644,7 +644,8 @@ export class SessionChatController {
     }
 
     if (this.configuredClientToolNames.length > 0) {
-      lines.push("", "client tools:", { names: this.configuredClientToolNames });
+      const names = [...this.configuredClientToolNames].sort((a, b) => a.localeCompare(b));
+      lines.push("", "client tools:", { names });
     }
 
     const { mcp } = this.snapshot.catalog;

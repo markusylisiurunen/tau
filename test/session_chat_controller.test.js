@@ -980,7 +980,7 @@ describe("SessionChatController", () => {
     ]);
     expect(body[body.indexOf("skills:") + 1]).toEqual({ names: ["alpha", "bravo", "zulu"] });
     expect(body[body.indexOf("MCP servers:") + 1]).toEqual({ names: ["a-server", "z-server"] });
-    expect(body[body.indexOf("client tools:") + 1]).toEqual({ names: ["review", "browser"] });
+    expect(body[body.indexOf("client tools:") + 1]).toEqual({ names: ["browser", "review"] });
     await controller.dispose();
   });
 

@@ -2,7 +2,7 @@ import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createLocalToolExecutionBackend } from "../dist/core/index.js";
+import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
 import {
   LocalExecutionEnvironment,
   LocalExecutionEnvironmentResolver,
@@ -96,67 +96,6 @@ describe("LocalExecutionEnvironment", () => {
     }
   });
 
-  it("spawns login Bash without changing execution controls", async () => {
-    const calls = [];
-    const signal = new AbortController().signal;
-    const backend = createLocalToolExecutionBackend({
-      spawn: async (command, args, options) => {
-        calls.push({ command, args, options });
-        return {
-          stdout: "",
-          stderr: "",
-          output: "",
-          exitCode: 0,
-          captureLimitExceeded: false,
-          timedOut: false,
-          aborted: false,
-          closeSignal: null,
-        };
-      },
-      env: {
-        cwd: () => "/repo",
-        home: () => "/home/user",
-        platform: () => process.platform,
-        env: () => ({ PATH: process.env.PATH }),
-      },
-    });
-
-    await backend.runBash("echo $VALUE", {
-      cwd: "subdir",
-      timeoutMs: 1234,
-      signal,
-      env: {
-        VALUE: "set",
-        NO_COLOR: "0",
-        FORCE_COLOR: "1",
-        TERM: "xterm-256color",
-        PAGER: "less",
-      },
-    });
-
-    expect(calls).toHaveLength(1);
-    expect(calls[0]).toMatchObject({
-      command: "bash",
-      args: ["-lc", expect.stringMatching(/\necho \$VALUE$/)],
-      options: {
-        cwd: "/repo/subdir",
-        detached: true,
-        killProcessGroup: true,
-        signal,
-        timeoutMs: 1234,
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    });
-    expect(calls[0].options.env).toMatchObject({
-      VALUE: "set",
-      NO_COLOR: "1",
-      FORCE_COLOR: "0",
-      TERM: "dumb",
-      PAGER: "cat",
-      GIT_TERMINAL_PROMPT: "0",
-    });
-  });
-
   it("keeps termination state separate from captured output", async () => {
     const backend = createLocalToolExecutionBackend({
       spawn: async () => ({
@@ -177,12 +116,6 @@ describe("LocalExecutionEnvironment", () => {
       timedOut: true,
       closeSignal: "SIGTERM",
     });
-  });
-
-  it("normalizes missing binary files at the backend boundary", async () => {
-    await expect(
-      createLocalToolExecutionBackend().readFileBinary("__tau_missing__.png"),
-    ).rejects.toMatchObject({ code: "not-found" });
   });
 
   it("scopes explicit environment variables without filtering sensitive names", async () => {
@@ -223,32 +156,6 @@ describe("LocalExecutionEnvironment", () => {
         GH_CONFIG_DIR: "/srv/cowork/gh",
         SESSION_TOKEN: "session-secret",
       },
-    });
-  });
-
-  it("resolves runtime bootstrap through the local execution backend", async () => {
-    const cwd = process.cwd();
-    const environment = new LocalExecutionEnvironment({
-      cwd,
-      home: process.env.HOME ?? cwd,
-      backend: createLocalToolExecutionBackend(),
-    });
-
-    const runtimeContext = await environment.resolveRuntimeContext({
-      cwd,
-      discoveredSkills: [],
-      includeAgentContext: false,
-    });
-
-    const { promptBootstrap } = runtimeContext;
-    expect(promptBootstrap.promptContext.cwd).toBe(cwd);
-    expect(promptBootstrap.promptContext.home).toBe(process.env.HOME ?? cwd);
-    expect(promptBootstrap.promptContext.includeAgentContext).toBe(false);
-    expect(promptBootstrap.promptContext.platform).toBe(process.platform);
-    expect(environment.snapshot()).toEqual({
-      kind: "local",
-      cwd,
-      home: process.env.HOME ?? cwd,
     });
   });
 

@@ -184,6 +184,40 @@ afterEach(() => {
 });
 
 describe("diff review bridge", () => {
+  it("rejects unauthorized reads and mutations without disrupting the authorized client", async () => {
+    const createThread = vi.fn(() => createThreadSession());
+    const bridge = createDiffReviewBridge({ snapshot: createSnapshot(), createThread });
+    await bridge.start();
+    const client = await connectClient(bridge);
+    const unauthorized = await connectClient(bridge);
+    try {
+      await expect(unauthorized.send("read", "session.get_context")).resolves.toMatchObject({
+        ok: false,
+        error: { code: "not_initialized" },
+      });
+      await expect(
+        unauthorized.send("wrong-token", "initialize", { token: "wrong" }),
+      ).resolves.toMatchObject({ ok: false, error: { code: "unauthorized" } });
+      await expect(
+        unauthorized.send("mutate", "thread.submit_message", { message: "run this" }),
+      ).resolves.toMatchObject({ ok: false, error: { code: "not_initialized" } });
+      expect(createThread).not.toHaveBeenCalled();
+      await expect(
+        client.send("initialize", "initialize", { token: bridge.launchEnvironment.TAU_DIFF_TOKEN }),
+      ).resolves.toMatchObject({ ok: true });
+      await expect(client.send("context", "session.get_context")).resolves.toMatchObject({
+        ok: true,
+        result: { sessionId: bridge.sessionId },
+      });
+    } finally {
+      await bridge.close();
+      client.rl.close();
+      client.socket.destroy();
+      unauthorized.rl.close();
+      unauthorized.socket.destroy();
+    }
+  });
+
   it("launches the client-local diff tool from a client-local cwd", async () => {
     const toolLauncher = vi.fn(async () => {});
     const bridge = createDiffReviewBridge({
@@ -1134,41 +1168,6 @@ describe("diff review bridge", () => {
       await vi.advanceTimersByTimeAsync(60_000);
 
       await expect(resultPromise).resolves.toEqual({
-        status: "cancelled",
-        reason: "tool_disconnected",
-      });
-    } finally {
-      await bridge.close();
-    }
-  });
-
-  it("cancels the review when the initialized client disconnects", async () => {
-    const bridge = createDiffReviewBridge({
-      snapshot: createSnapshot(),
-      persona: personas[0],
-      config: {},
-      createThread: () =>
-        createThreadSession({
-          async submitMessage(message) {
-            return message;
-          },
-          interrupt() {
-            return true;
-          },
-        }),
-    });
-
-    await bridge.start();
-    const client = await connectClient(bridge);
-
-    try {
-      await client.send("init", "initialize", {
-        token: bridge.launchEnvironment.TAU_DIFF_TOKEN,
-      });
-      client.rl.close();
-      client.socket.destroy();
-
-      await expect(bridge.result).resolves.toEqual({
         status: "cancelled",
         reason: "tool_disconnected",
       });

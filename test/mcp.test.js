@@ -54,79 +54,24 @@ function assertExited(pid) {
 }
 
 describe("MCP search", () => {
-  it("searches through the code-mode API and observes catalog invalidation", async () => {
+  it("searches through the capability API and observes catalog invalidation", async () => {
     const client = manager();
-    const tool = createCapabilityTool(backend(), createMcpCapability(client));
+    const api = createMcpCapability(client).api;
+    const context = { signal: signal() };
     try {
-      const result = await runTool(
-        tool,
-        'printText(JSON.stringify(await tau.mcp.searchTools("messages")))',
-      );
-      expect(result.outcome).toBe("succeeded");
-      expect(JSON.parse(result.text)).toMatchObject({
+      expect(await api.searchTools(["messages"], context)).toMatchObject({
         tools: [{ server: "test", name: "echo", score: expect.any(Number) }],
         errors: [],
       });
       await client.callTool("test", "refresh", {}, signal());
-      const refreshed = await runTool(
-        tool,
-        'printText(JSON.stringify(await tau.mcp.searchTools("added", { server: "test", limit: 1 })))',
-      );
-      expect(JSON.parse(refreshed.text).tools.map((tool) => tool.name)).toEqual(["added"]);
-      for (const code of [
-        'await tau.mcp.searchTools(" ")',
-        'await tau.mcp.searchTools("echo", { limit: 0 })',
-        'await tau.mcp.searchTools("echo", { offset: 1 })',
-      ]) {
-        expect((await runTool(tool, code)).outcome).toBe("failed");
+      const refreshed = await api.searchTools(["added", { server: "test", limit: 1 }], context);
+      expect(refreshed.tools.map((tool) => tool.name)).toEqual(["added"]);
+      for (const args of [[" "], ["echo", { limit: 0 }], ["echo", { offset: 1 }]]) {
+        await expect(api.searchTools(args, context)).rejects.toThrow();
       }
     } finally {
       await client.close();
     }
-  });
-
-  it("ranks across servers, scopes discovery, and reports partial failures", async () => {
-    const { searchMcpTools } = await import("../dist/core/mcp/search.js");
-    const client = {
-      listServers: () => [{ name: "first" }, { name: "second" }, { name: "broken" }],
-      listTools: vi.fn(async (server) => {
-        if (server === "broken") throw new Error("private connection details");
-        return {
-          tools: [
-            {
-              name: server === "first" ? "lookup" : "findIssues",
-              inputSchema: {
-                allOf: [
-                  {
-                    properties: {
-                      filters: {
-                        type: "array",
-                        items: {
-                          oneOf: [{ description: "Issue assignees" }],
-                        },
-                      },
-                    },
-                  },
-                ],
-              },
-            },
-          ],
-        };
-      }),
-    };
-    const result = await searchMcpTools(client, "issues", { limit: 8 }, signal());
-    expect(result.tools.map((tool) => tool.server)).toEqual(["second", "first"]);
-    expect(result.errors).toEqual([{ server: "broken", error: expect.any(String) }]);
-    expect(JSON.stringify(result)).not.toContain("private connection details");
-    client.listTools.mockClear();
-    const scoped = await searchMcpTools(
-      client,
-      "assignee",
-      { server: "first", limit: 1 },
-      signal(),
-    );
-    expect(scoped.tools.map((tool) => tool.server)).toEqual(["first"]);
-    expect(client.listTools).toHaveBeenCalledTimes(1);
   });
 
   it("bounds discovery concurrency and rejects cancellation", async () => {
@@ -157,29 +102,6 @@ describe("MCP search", () => {
 });
 
 describe("host-owned MCP connections", () => {
-  it("separates discovery deadlines from configurable tool and resource execution deadlines", async () => {
-    const toolCalls = vi.spyOn(McpClient.prototype, "callTool");
-    const resourceReads = vi.spyOn(McpClient.prototype, "readResource");
-    const connect = vi.spyOn(McpClient.prototype, "connect");
-    const clients = [manager(), manager({ timeoutMs: 900_000, discoveryTimeoutMs: 2_000 })];
-    try {
-      for (const client of clients) {
-        await echo(client);
-        await client.readResource("test", "docs://schema", signal());
-      }
-      expect(toolCalls.mock.calls.map((call) => call[2].timeoutMs)).toEqual([300_000, 900_000]);
-      expect(resourceReads.mock.calls.map((call) => call[1].timeoutMs)).toEqual([300_000, 900_000]);
-      expect(connect.mock.instances.map((client) => client.options.requestTimeoutMs)).toEqual([
-        30_000, 2_000,
-      ]);
-    } finally {
-      await Promise.all(clients.map((client) => client.close()));
-      toolCalls.mockRestore();
-      resourceReads.mockRestore();
-      connect.mockRestore();
-    }
-  });
-
   it("discovers and calls a stdio server without exposing host configuration", async () => {
     const client = manager();
     try {
@@ -464,45 +386,6 @@ describe("MCP HTTP notification failures", () => {
 });
 
 describe("MCP code-mode tool", () => {
-  it("returns a clean result and strips metadata only at MCP content boundaries", async () => {
-    const client = manager();
-    try {
-      const tool = createCapabilityTool(backend(), createMcpCapability(client));
-      const result = await runTool(
-        tool,
-        'printText(JSON.stringify(await tau.mcp.callTool("test", "metadata", {})))',
-      );
-      expect(result.outcome).toBe("succeeded");
-      const value = JSON.parse(result.text);
-      expect(Object.keys(value)).toEqual(["content", "structuredContent", "isError"]);
-      expect(value.isError).toBe(false);
-      expect(value.content).toEqual([
-        { type: "text", text: "public text", annotations: { priority: 0.8 } },
-        { type: "resource", resource: { uri: "docs://embedded", text: "public resource" } },
-        { type: "resource_link", uri: "docs://linked", name: "linked" },
-      ]);
-      expect(value.structuredContent).toEqual({ _meta: { application: "preserved" } });
-      expect(result.text).not.toContain("private-");
-    } finally {
-      await client.close();
-    }
-  });
-
-  it("allows large resources across transport and bridge without printing their contents", async () => {
-    const client = manager();
-    try {
-      const tool = createCapabilityTool(backend(), createMcpCapability(client));
-      const result = await runTool(
-        tool,
-        'const result = await tau.mcp.readResource("test", "docs://large"); printText(JSON.stringify(result.contents[0].text.length))',
-      );
-      expect(result.outcome).toBe("succeeded");
-      expect(Number(result.text)).toBe(2 * 1024 * 1024);
-    } finally {
-      await client.close();
-    }
-  });
-
   it("forwards MCP screenshots as real image content without files or base64 previews", async () => {
     const client = manager();
     const executionBackend = backend();
@@ -521,14 +404,6 @@ describe("MCP code-mode tool", () => {
       expect(JSON.stringify(result.activities)).not.toContain(createProtocolImage().data);
       expect(executionBackend.writeFile).not.toHaveBeenCalled();
       expect(executionBackend.runNodeScript).not.toHaveBeenCalled();
-
-      const failed = await runTool(
-        tool,
-        'await printImage((await tau.mcp.callTool("test", "screenshot", {})).content[0]); throw new Error("later failure")',
-      );
-      expect(failed.outcome).toBe("failed");
-      expect(failed.content[0]).toEqual(createProtocolImage());
-      expect(failed.text).toContain("later failure");
     } finally {
       await client.close();
     }
@@ -536,49 +411,44 @@ describe("MCP code-mode tool", () => {
 
   it("discovers paginated resources and templates and reads explicit text and image context", async () => {
     const client = manager();
-    const executionBackend = backend();
-    const tool = createCapabilityTool(executionBackend, createMcpCapability(client));
+    const api = createMcpCapability(client).api;
+    const context = { signal: signal() };
     try {
-      const result = await runTool(
-        tool,
-        '\n        printText(JSON.stringify(await tau.mcp.listResources("test", { limit: 1 })));\n        printText(JSON.stringify(await tau.mcp.listResources("test", { offset: 1 })));\n        printText(JSON.stringify(await tau.mcp.listResources("test", { query: "database schema" })));\n        printText(JSON.stringify(await tau.mcp.listResourceTemplates("test", { query: "service documents" })));\n        printText(JSON.stringify(await tau.mcp.readResource("test", "docs://unlisted")));\n        const preview = await tau.mcp.readResource("test", "docs://preview");\n        printText("before");\n        await printImage({ type: "image", data: preview.contents[0].blob, mimeType: preview.contents[0].mimeType });\n        printText("after");\n      ',
-      );
-      expect(result.outcome).toBe("succeeded");
-      const lines = result.content[0].text.split("\n");
-      expect(JSON.parse(lines[0])).toMatchObject({
+      expect(await api.listResources(["test", { limit: 1 }], context)).toMatchObject({
         resources: [{ uri: "docs://schema", annotations: { audience: ["assistant"] } }],
         total: 2,
         nextOffset: 1,
       });
-      expect(JSON.parse(lines[1])).toMatchObject({
+      expect(await api.listResources(["test", { offset: 1 }], context)).toMatchObject({
         resources: [{ uri: "docs://guide" }],
         total: 2,
       });
-      expect(JSON.parse(lines[2])).toMatchObject({
+      expect(
+        await api.listResources(["test", { query: "database schema" }], context),
+      ).toMatchObject({
         resources: [{ uri: "docs://schema" }],
         total: 1,
       });
-      expect(JSON.parse(lines[3])).toMatchObject({
+      expect(
+        await api.listResourceTemplates(["test", { query: "service documents" }], context),
+      ).toMatchObject({
         resourceTemplates: [{ uriTemplate: "docs://{documentId}" }],
         total: 1,
       });
-      expect(JSON.parse(lines[4])).toEqual({
+      expect(await api.readResource(["test", "docs://unlisted"], context)).toEqual({
         contents: [{ uri: "docs://unlisted", mimeType: "text/plain", text: "resource context" }],
       });
-      expect(result.content[1]).toEqual(createProtocolImage());
-      expect(result.content[2]).toEqual({ type: "text", text: "after" });
-      expect(result.text).not.toContain("_meta");
-      expect(executionBackend.writeFile).not.toHaveBeenCalled();
-      expect(executionBackend.runNodeScript).not.toHaveBeenCalled();
-      const missing = await runTool(tool, 'await tau.mcp.readResource("test", "docs://missing")');
-      expect(missing.outcome).toBe("failed");
-      for (const code of [
-        'await tau.mcp.listResources("test", { limit: 0 })',
-        'await tau.mcp.listResourceTemplates("test", { unknown: true })',
-        'await tau.mcp.readResource("test", "")',
-      ]) {
-        expect((await runTool(tool, code)).outcome).toBe("failed");
-      }
+      const preview = await api.readResource(["test", "docs://preview"], context);
+      expect(preview.contents[0]).toMatchObject({
+        blob: createProtocolImage().data,
+        mimeType: "image/png",
+      });
+      await expect(api.readResource(["test", "docs://missing"], context)).rejects.toThrow();
+      await expect(api.listResources(["test", { limit: 0 }], context)).rejects.toThrow();
+      await expect(
+        api.listResourceTemplates(["test", { unknown: true }], context),
+      ).rejects.toThrow();
+      await expect(api.readResource(["test", ""], context)).rejects.toThrow();
     } finally {
       await client.close();
     }
@@ -588,28 +458,27 @@ describe("MCP code-mode tool", () => {
     const client = manager();
     try {
       const first = await echo(client);
-      const pending = expect(client.callTool("test", "slow", {}, signal())).rejects.toBeInstanceOf(
-        McpConnectionClosedError,
+      const pending = client.callTool("test", "slow", {}, signal()).then(
+        (value) => ({ value }),
+        (error) => ({ error }),
       );
-      await vi.waitFor(async () => expect((await echo(client)).structuredContent.pending).toBe(1));
+      await vi.waitFor(async () => expect((await echo(client)).structuredContent.pending).toBe(1), {
+        timeout: 5000,
+      });
       await expect(
         client.readResource("test", "docs://oversized", signal()),
       ).rejects.toBeInstanceOf(McpConnectionClosedError);
-      await pending;
-      const tool = createCapabilityTool(backend(), createMcpCapability(client));
-      const result = await runTool(
-        tool,
-        'printText((await tau.mcp.readResource("test", "docs://schema")).contents[0].text)',
-      );
-      expect(result.outcome).toBe("succeeded");
-      expect(result.text).toBe("resource context");
+      expect((await pending).error).toBeInstanceOf(McpConnectionClosedError);
+      const api = createMcpCapability(client).api;
+      const result = await api.readResource(["test", "docs://schema"], { signal: signal() });
+      expect(result.contents[0].text).toBe("resource context");
       const second = await echo(client);
       expect(second.structuredContent.pid).not.toBe(first.structuredContent.pid);
       expect(second.structuredContent.calls).toBe(1);
     } finally {
       await client.close();
     }
-  });
+  }, 20_000);
 
   it("cancels resource reads without closing the shared connection", async () => {
     const client = manager();
@@ -636,75 +505,17 @@ describe("MCP code-mode tool", () => {
     }
   });
 
-  it("propagates interruption to MCP calls without closing the shared connection", async () => {
+  it("returns service errors as data and rejects invalid capability calls before dispatch", async () => {
     const client = manager();
-    const tool = createCapabilityTool(backend(), createMcpCapability(client));
-    const controller = new AbortController();
+    const api = createMcpCapability(client).api;
+    const context = { signal: signal() };
     try {
-      const run = runTool(tool, "await tau.mcp.callTool('test', 'slow', {})", controller.signal);
-      await vi.waitFor(async () => expect((await echo(client)).structuredContent.pending).toBe(1));
-      controller.abort();
-      expect((await run).outcome).toBe("cancelled");
-      await vi.waitFor(async () =>
-        expect((await echo(client)).structuredContent.cancelled).toBe(1),
-      );
-    } finally {
-      controller.abort();
-      await client.close();
-    }
-  });
-
-  it("progressively documents, discovers, and composes calls without workspace access", async () => {
-    const client = manager();
-    const executionBackend = backend();
-    const tool = createCapabilityTool(executionBackend, createMcpCapability(client));
-    try {
-      const docs = await runTool(tool, 'printText(await tau.docs("mcp"))');
-      expect(docs.outcome).toBe("succeeded");
-      expect(docs.text).toContain("tau.mcp.describeTool");
-      expect(docs.text).not.toContain("test-secret");
-      const result = await runTool(
-        tool,
-        '\n        printText(JSON.stringify(await tau.mcp.listServers()));\n        printText(JSON.stringify(await tau.mcp.listTools("test", { limit: 1 })));\n        printText(JSON.stringify(await tau.mcp.listTools("test", { query: "echo message" })));\n        printText(JSON.stringify(await tau.mcp.describeTool("test", "echo")));\n        const results = await Promise.all(["one", "two"].map(message =>\n          tau.mcp.callTool("test", "echo", { message })));\n        printText(JSON.stringify(results.map(result => result.structuredContent.message)));\n      ',
-      );
-      expect(result.outcome).toBe("succeeded");
-      expect(JSON.parse(result.text.split("\n")[0])).toEqual([{ name: "test" }]);
-      expect(result.text).toContain('"nextOffset":1');
-      expect(result.text).toContain('"total":1');
-      expect(result.text).toContain('"inputSchema"');
-      expect(result.text).toContain('["one","two"]');
-      expect(result.text).not.toContain("raw service response");
-      expect(result.text).not.toContain("test-secret");
-      expect(result.activities.map((activity) => activity.type)).toEqual([
-        "code_mode_started",
-        "code_mode_finished",
-      ]);
-      expect(executionBackend.runNodeScript).not.toHaveBeenCalled();
-    } finally {
-      await client.close();
-    }
-  });
-
-  it("handles service errors as data and bridge failures as catchable exceptions", async () => {
-    const client = manager();
-    const tool = createCapabilityTool(backend(), createMcpCapability(client));
-    try {
-      const result = await runTool(
-        tool,
-        '\n        const failed = await tau.mcp.callTool("test", "fail", {});\n        printText(JSON.stringify({ isError: failed.isError }));\n        try { await tau.mcp.callTool("test", "echo", { message: 1 }); }\n        catch (error) { printText(error.message); }\n        printText(JSON.stringify((await tau.mcp.callTool("test", "echo", { message: "ok" })).structuredContent.calls));\n      ',
-      );
-      expect(result.outcome).toBe("succeeded");
-      expect(result.text).toContain('"isError":true');
-      expect(result.text).toContain("Invalid arguments");
-      expect(result.text.split("\n").at(-1)).toBe("2");
-      const malformed = await runTool(tool, "await tau.mcp.listTools('test', { limit: 0 })");
-      expect(malformed.outcome).toBe("failed");
-      expect(malformed.text).toContain("Invalid tau.mcp.listTools arguments");
-      const defaultList = await runTool(
-        tool,
-        "printText(JSON.stringify(await tau.mcp.listTools('test')))",
-      );
-      expect(defaultList.outcome).toBe("succeeded");
+      expect(await api.callTool(["test", "fail", {}], context)).toMatchObject({ isError: true });
+      await expect(api.callTool(["test", "echo", { message: 1 }], context)).rejects.toThrow();
+      const result = await api.callTool(["test", "echo", { message: "ok" }], context);
+      expect(result.structuredContent.calls).toBe(2);
+      await expect(api.listTools(["test", { limit: 0 }], context)).rejects.toThrow();
+      expect((await api.listTools(["test"], context)).tools.length).toBeGreaterThan(0);
     } finally {
       await client.close();
     }

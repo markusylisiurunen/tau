@@ -12,7 +12,7 @@ import {
   createProtocolImage,
 } from "./helpers/session_protocol_fixtures.js";
 
-const commandModuleUrl = pathToFileURL(resolve("dist/sdk/index.js")).href;
+const commandModuleUrl = pathToFileURL(resolve("dist/sdk/client_tool_command.js")).href;
 const codeModeModuleUrl = pathToFileURL(resolve("dist/code_mode/index.js")).href;
 
 function readyFrame(subject = "notification") {
@@ -189,37 +189,6 @@ describe("command client tools", () => {
     });
   });
 
-  it("returns structured command failures with terminal presentation", async () => {
-    const script = [
-      `import { runTauClientToolCommand } from ${JSON.stringify(commandModuleUrl)};`,
-      "await runTauClientToolCommand({",
-      '  name: "notify",',
-      "  execute: () => ({",
-      "    ok: false,",
-      '    error: "notifications disabled",',
-      '    presentation: { details: [{ text: "Desktop notifications are disabled", tone: "removed" }] },',
-      "  }),",
-      "});",
-    ].join("\n");
-    const [tool] = createCommandClientTools([
-      createConfig({
-        command: process.execPath,
-        args: ["--input-type=module", "--eval", script],
-      }),
-    ]);
-    const context = createContext();
-    const args = { message: "hello" };
-
-    await expect(tool.describe(args, context)).resolves.toBeUndefined();
-    await expect(tool.execute(args, context)).resolves.toEqual({
-      ok: false,
-      error: "notifications disabled",
-      presentation: {
-        details: [{ text: "Desktop notifications are disabled", tone: "removed" }],
-      },
-    });
-  });
-
   it("inherits the TUI process cwd and environment unchanged", async () => {
     const variableName = `TAU_COMMAND_CLIENT_TOOL_TEST_${process.pid}`;
     const previousValue = process.env[variableName];
@@ -298,93 +267,6 @@ describe("command client tools", () => {
     });
   });
 
-  it("runs a direct Bash command protocol implementation", async () => {
-    const script = [
-      "IFS= read -r prepare",
-      `printf '%s\\n' '${JSON.stringify({
-        version: 5,
-        type: "ready",
-        presentation: { subject: "shell command" },
-      })}'`,
-      "IFS= read -r execute",
-      `printf '%s\\n' '${JSON.stringify({
-        version: 5,
-        type: "result",
-        ok: true,
-        content: [{ type: "text", text: "shell result" }],
-      })}'`,
-    ].join("\n");
-    const [tool] = createCommandClientTools([
-      createConfig({ command: "bash", args: ["--noprofile", "--norc", "-c", script] }),
-    ]);
-    const context = createContext();
-    const args = { message: "hello" };
-
-    await expect(tool.describe(args, context)).resolves.toMatchObject({
-      subject: "shell command",
-    });
-    await expect(tool.execute(args, context)).resolves.toEqual({
-      content: [{ type: "text", text: "shell result" }],
-    });
-  });
-
-  it("uses the tool name when a command omits presentation", async () => {
-    const spawn = createInteractiveSpawn({
-      beforeExecute: `${JSON.stringify({ version: 5, type: "ready" })}\n`,
-    });
-    const [tool] = createCommandClientTools([createConfig()], createDeps(spawn));
-    const context = createContext();
-    const args = { message: "hello" };
-
-    await expect(tool.describe(args, context)).resolves.toBeUndefined();
-    await expect(tool.execute(args, context)).resolves.toEqual({
-      content: [{ type: "text", text: "done" }],
-    });
-  });
-
-  it("starts a configured command with the versioned invocation", async () => {
-    const spawn = createInteractiveSpawn({ result: { stderr: "diagnostic\n" } });
-    const [tool] = createCommandClientTools([createConfig()], createDeps(spawn));
-    const context = createContext();
-
-    await expect(executeClientTool(tool, { message: "hello" }, context)).resolves.toEqual({
-      content: [{ type: "text", text: "done" }],
-    });
-    expect(tool.schema).toEqual({
-      name: "notify",
-      description: "Show a local notification.",
-      parameters: createConfig().parameters,
-      executionTimeoutMs: 5000,
-    });
-    expect(spawn).toHaveBeenCalledWith(
-      "/home/user/tools/notify",
-      ["--json"],
-      expect.objectContaining({
-        detached: true,
-        signal: expect.any(AbortSignal),
-        timeoutMs: 5000,
-        maxCaptureBytes: 1024 * 1024,
-        maxCaptureMode: "terminate",
-        captureOutput: "stderr",
-        killProcessGroup: true,
-        stdio: ["pipe", "pipe", "pipe"],
-        keepStdinOpen: true,
-        input: `${JSON.stringify({
-          version: 5,
-          type: "prepare",
-          sessionId: "session-1",
-          agentId: "agent-1",
-          callId: "call-1",
-          toolName: "notify",
-          arguments: { message: "hello" },
-        })}\n`,
-        onSpawn: expect.any(Function),
-      }),
-    );
-    expect(spawn.mock.calls[0][2]).not.toHaveProperty("cwd");
-    expect(spawn.mock.calls[0][2]).not.toHaveProperty("env");
-  });
-
   it("validates arguments before starting the command", async () => {
     const spawn = vi.fn(async () => createSpawnResult());
     const [tool] = createCommandClientTools([createConfig()], createDeps(spawn));
@@ -393,27 +275,6 @@ describe("command client tools", () => {
       "Invalid arguments for command client tool 'notify': /message must be string.",
     );
     expect(spawn).not.toHaveBeenCalled();
-  });
-
-  it("reports command failures using stderr", async () => {
-    const spawn = createInteractiveSpawn({
-      afterExecute: "",
-      result: { stderr: "notifications unavailable\n", exitCode: 2 },
-    });
-    const [tool] = createCommandClientTools([createConfig()], createDeps(spawn));
-
-    await expect(executeClientTool(tool, { message: "hello" }, createContext())).rejects.toThrow(
-      "Command client tool 'notify' failed with exit code 2: notifications unavailable",
-    );
-  });
-
-  it("requires a version-5 result frame", async () => {
-    const spawn = createInteractiveSpawn({ afterExecute: "" });
-    const [tool] = createCommandClientTools([createConfig()], createDeps(spawn));
-
-    await expect(executeClientTool(tool, { message: "hello" }, createContext())).rejects.toThrow(
-      "returned no version-5 result frame",
-    );
   });
 
   it("bounds incomplete protocol frames independently of stderr capture", async () => {

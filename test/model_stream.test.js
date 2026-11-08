@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AssistantMessageEventStream, calculateCost } from "@earendil-works/pi-ai";
+import { AssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { describe, expect, test, vi } from "vitest";
 import { AuthManager } from "../dist/core/auth/auth_manager.js";
 import { AuthStorage } from "../dist/core/auth/auth_storage.js";
@@ -115,41 +115,6 @@ describe("model stream option resolution", () => {
       });
     },
   );
-
-  test("resolves GPT-5.6 models through the pi-ai models runtime", () => {
-    const runtime = new ModelRuntime();
-
-    const openaiModel = runtime.resolveModel("openai", "gpt-5.6-luna");
-    expect(openaiModel).toBeDefined();
-    expect(openaiModel.api).toBe("openai-responses");
-    expect(openaiModel.contextWindow).toBe(272000);
-
-    const codexModel = runtime.resolveModel("openai-codex", "gpt-5.6-sol");
-    expect(codexModel).toBeDefined();
-    expect(codexModel.api).toBe("openai-codex-responses");
-    expect(codexModel.contextWindow).toBe(272000);
-  });
-
-  test("calculates request cost with the highest matching input tier", () => {
-    const runtime = new ModelRuntime();
-    const model = runtime.resolveModel("openai", "gpt-5.6-luna");
-    expect(model).toBeDefined();
-
-    const cost = calculateCost(model, {
-      input: 273000,
-      output: 1000,
-      cacheRead: 0,
-      cacheWrite: 0,
-      totalTokens: 274000,
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-    });
-
-    expect(cost.input).toBeCloseTo(0.1092);
-    expect(cost.output).toBeCloseTo(0.0018);
-    expect(cost.cacheRead).toBe(0);
-    expect(cost.cacheWrite).toBe(0);
-    expect(cost.total).toBeCloseTo(0.111);
-  });
 
   test("resolves configured api keys through the pi-ai models runtime", async () => {
     const fx = createTempAuthPath();

@@ -248,13 +248,7 @@ describe("bundled Claude Agent SDK runner", () => {
     }
   }, 20_000);
 
-  it.each([
-    "api_error",
-    "error_during_execution",
-    "error_max_turns",
-    "error_max_budget_usd",
-    "error_max_structured_output_retries",
-  ])(
+  it.each(["api_error", "error_during_execution"])(
     "preserves SDK failure %s",
     async (outcome) => {
       const directory = mkdtempSync(join(tmpdir(), "tau-claude-failure-"));

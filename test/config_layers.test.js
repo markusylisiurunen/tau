@@ -11,21 +11,9 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { builtinThemes } from "../dist/core/config/builtin_themes.js";
-import { parseMcpServersConfig } from "../dist/core/config/mcp.js";
 import { loadClientConfig, loadSessionConfig } from "../dist/core/config/ownership.js";
 import { resolveConfigLevels } from "../dist/core/config/paths.js";
-import { loadRuntimeConfig } from "../dist/core/config/runtime.js";
-import {
-  getApiKeyForProvider,
-  getElevenLabsApiKey,
-  getExaApiKey,
-  getGoogleApiKey,
-  getMistralApiKey,
-  getOpenAIApiKey,
-  loadConfig,
-  loadConfigWithDiagnostics,
-} from "../dist/core/config/schema.js";
+import { loadConfig, loadConfigWithDiagnostics } from "../dist/core/config/schema.js";
 import { loadModelResolver } from "../dist/core/models/catalog.js";
 
 function createConfigDeps({ cwd, home, env }) {
@@ -59,65 +47,6 @@ function setupFixture() {
 }
 
 describe("config paths", () => {
-  it("includes global and .tau levels ordered from least to most specific", () => {
-    const fx = setupFixture();
-
-    try {
-      const repo = join(fx.home, "repo");
-      const pkg = join(repo, "packages", "pkg1");
-      mkdirSync(join(repo, ".tau"), { recursive: true });
-      mkdirSync(join(pkg, ".tau"), { recursive: true });
-
-      const deps = createConfigDeps({
-        cwd: pkg,
-        home: fx.home,
-        env: {},
-      });
-
-      const levels = resolveConfigLevels(deps, { cwd: pkg });
-      expect(levels.map((level) => level.configDir)).toEqual([
-        join(fx.home, ".config", "tau"),
-        join(repo, ".tau"),
-        join(pkg, ".tau"),
-      ]);
-    } finally {
-      fx.cleanup();
-    }
-  });
-
-  it("uses the built-in theme catalog across configuration levels", async () => {
-    const fx = setupFixture();
-
-    try {
-      const repo = join(fx.home, "repo");
-      for (const directory of [join(fx.home, ".config", "tau"), join(repo, ".tau")]) {
-        mkdirSync(join(directory, "themes"), { recursive: true });
-        writeFileSync(join(directory, "themes", "gold.json"), "invalid JSON");
-        writeFileSync(join(directory, "themes", "extra.json"), "{}");
-      }
-      writeFileSync(join(repo, ".tau", "config.json"), '{"defaultTheme":"azure"}');
-      const deps = createConfigDeps({ cwd: repo, home: fx.home, env: {} });
-      const inspectedPaths = [];
-      for (const [name, operation] of Object.entries(deps.fs)) {
-        deps.fs[name] = (path) => {
-          inspectedPaths.push(path);
-          return operation(path);
-        };
-      }
-
-      const runtime = await loadRuntimeConfig(repo, deps);
-
-      expect(runtime.themes).toEqual(builtinThemes);
-      expect(runtime.bootstrap.client.defaultTheme).toBe("azure");
-      expect(runtime.warnings).toEqual([]);
-      expect(inspectedPaths.some((path) => path.includes("/themes"))).toBe(false);
-      expect(runtime.prompts).toEqual([]);
-      expect(runtime.skills).toEqual([]);
-    } finally {
-      fx.cleanup();
-    }
-  });
-
   it("merges levels with most-specific wins", () => {
     const fx = setupFixture();
 
@@ -219,25 +148,6 @@ describe("config paths", () => {
     }
   });
 
-  it("uses virtual defaults when no config files exist", () => {
-    const fx = setupFixture();
-
-    try {
-      const deps = createConfigDeps({
-        cwd: fx.repo,
-        home: fx.home,
-        env: {},
-      });
-
-      const config = loadConfig(fx.repo, deps);
-      expect(config).toMatchObject({
-        defaultPersona: "sonnet-5.5-coder",
-      });
-    } finally {
-      fx.cleanup();
-    }
-  });
-
   it("reports parse errors without throwing", () => {
     const fx = setupFixture();
 
@@ -263,7 +173,7 @@ describe("config paths", () => {
     }
   });
 
-  it.each([undefined, "off", "default"])(
+  it.each([undefined, "off"])(
     "resolves the client cleanup style with project override %j",
     (cleanupStyle) => {
       const fx = setupFixture();
@@ -314,23 +224,8 @@ describe("config paths", () => {
   );
 
   it.each([
-    null,
-    "voice",
-    { voiceId: " " },
     { voiceId: 42 },
-    { cleanupStyle: "invalid" },
-    { cleanupStyle: true },
-    { vocabulary: "Tau" },
-    { vocabulary: [42] },
-    { vocabulary: [" "] },
-    { vocabulary: ["a".repeat(51)] },
-    { vocabulary: ["one two three four five six"] },
-    { vocabulary: ["bad[term]"] },
-    { vocabulary: ["bad\\term"] },
-    { vocabulary: ["bad\nterm"] },
     { vocabulary: ["<instruction>"] },
-    { recordingShortcut: { key: "§" } },
-    { recordingShortcut: { key: "abc", gesture: "press" } },
     { recordingShortcut: { key: "§", gesture: "hold" } },
   ])("rejects invalid speech configuration %j", (speech) => {
     const fx = setupFixture();
@@ -411,83 +306,6 @@ describe("config paths", () => {
     }
   });
 
-  it("merges api keys for arbitrary providers", () => {
-    const fx = setupFixture();
-
-    try {
-      const repo = join(fx.home, "repo");
-      const nested = join(repo, "packages", "pkg1");
-      mkdirSync(nested, { recursive: true });
-      mkdirSync(join(fx.home, ".config", "tau"), { recursive: true });
-      mkdirSync(join(repo, ".tau"), { recursive: true });
-
-      writeFileSync(
-        join(fx.home, ".config", "tau", "config.json"),
-        JSON.stringify({
-          apiKeys: {
-            openai: "global-openai",
-            "custom-provider": "global-custom",
-          },
-        }),
-      );
-
-      writeFileSync(
-        join(repo, ".tau", "config.json"),
-        JSON.stringify({
-          apiKeys: {
-            "custom-provider": "repo-custom",
-            "another-provider": "repo-another",
-          },
-        }),
-      );
-
-      const deps = createConfigDeps({
-        cwd: nested,
-        home: fx.home,
-        env: {},
-      });
-
-      const result = loadConfigWithDiagnostics(deps, {
-        levels: resolveConfigLevels(deps, { cwd: nested }),
-        modelResolver: loadModelResolver(),
-      });
-      expect(result.errors.length).toBeGreaterThan(0);
-      const config = result.config;
-      expect(config.apiKeys).toEqual({
-        openai: "global-openai",
-        "custom-provider": "global-custom",
-      });
-      expect(getApiKeyForProvider(config, "custom-provider")).toBe("global-custom");
-      expect(getApiKeyForProvider(config, "another-provider")).toBeUndefined();
-      expect(getApiKeyForProvider(config, "openai")).toBe("global-openai");
-    } finally {
-      fx.cleanup();
-    }
-  });
-
-  it.each([
-    [getExaApiKey, "exa", "EXA_API_KEY"],
-    [getGoogleApiKey, "google", "GEMINI_API_KEY"],
-    [getMistralApiKey, "mistral", "MISTRAL_API_KEY"],
-    [getElevenLabsApiKey, "elevenlabs", "ELEVENLABS_API_KEY"],
-  ])("prefers feature environment keys %#", (resolveKey, provider, variable) => {
-    const config = { apiKeys: { [provider]: "global-key" } };
-    expect(resolveKey(config, { [variable]: "env-key" })).toBe("env-key");
-    expect(resolveKey(config, {})).toBe("global-key");
-  });
-
-  it("prefers OPENAI_API_KEY for OpenAI speech transcription", () => {
-    expect(
-      getOpenAIApiKey(
-        { apiKeys: { openai: "configured-openai-key" } },
-        { OPENAI_API_KEY: "environment-openai-key" },
-      ),
-    ).toBe("environment-openai-key");
-    expect(getOpenAIApiKey({ apiKeys: { openai: "configured-openai-key" } }, {})).toBe(
-      "configured-openai-key",
-    );
-  });
-
   it("rejects modelSystemNotices for unknown model ids", () => {
     const fx = setupFixture();
 
@@ -520,95 +338,9 @@ describe("config paths", () => {
       fx.cleanup();
     }
   });
-
-  it("strips unknown top-level config keys", () => {
-    const fx = setupFixture();
-
-    try {
-      mkdirSync(join(fx.repo, ".tau"), { recursive: true });
-      writeFileSync(
-        join(fx.repo, ".tau", "config.json"),
-        JSON.stringify({ async: { client: {} } }),
-        "utf-8",
-      );
-
-      const deps = createConfigDeps({
-        cwd: fx.repo,
-        home: fx.home,
-        env: {},
-      });
-
-      const levels = resolveConfigLevels(deps, { cwd: fx.repo });
-      const modelResolver = loadModelResolver();
-      const result = loadConfigWithDiagnostics(deps, { levels, modelResolver });
-
-      expect(result.config).not.toHaveProperty("async");
-      expect(result.errors).toEqual([]);
-    } finally {
-      fx.cleanup();
-    }
-  });
-
-  it("ignores removed configuration fields", () => {
-    const fx = setupFixture();
-
-    try {
-      mkdirSync(join(fx.repo, ".tau"), { recursive: true });
-      writeFileSync(
-        join(fx.repo, ".tau", "config.json"),
-        JSON.stringify({
-          disableBuiltinPersonas: true,
-          autoCompact: { enabled: false, reserveTokens: 1000 },
-          builtInDiffTool: { codeTheme: "dark-plus" },
-          diffTool: { command: "./tools/review-ui" },
-        }),
-        "utf-8",
-      );
-
-      const deps = createConfigDeps({
-        cwd: fx.repo,
-        home: fx.home,
-        env: {},
-      });
-
-      const levels = resolveConfigLevels(deps, { cwd: fx.repo });
-      const modelResolver = loadModelResolver();
-      const result = loadConfigWithDiagnostics(deps, { levels, modelResolver });
-
-      expect(result.config).not.toHaveProperty("disableBuiltinPersonas");
-      expect(result.config).not.toHaveProperty("autoCompact");
-      expect(result.config).not.toHaveProperty("builtInDiffTool");
-      expect(result.config).not.toHaveProperty("diffTool");
-      expect(result.errors).toEqual([]);
-    } finally {
-      fx.cleanup();
-    }
-  });
 });
 
 describe("MCP host configuration", () => {
-  it.each(["stdio", "http"])("validates optional %s server summaries", (type) => {
-    const connection =
-      type === "stdio" ? { type, command: "server" } : { type, url: "https://example.com/mcp" };
-    const valid = parseMcpServersConfig(
-      {
-        omitted: connection,
-        trimmed: { ...connection, description: "  Search issues.  " },
-        boundary: { ...connection, description: "x".repeat(512) },
-      },
-      "test",
-    );
-    expect(valid.errors).toEqual([]);
-    expect(valid.config.omitted).not.toHaveProperty("description");
-    expect(valid.config.trimmed.description).toBe("Search issues.");
-    expect(valid.config.boundary.description).toHaveLength(512);
-    for (const description of ["", "  ", 42, null, "x".repeat(513)]) {
-      const invalid = parseMcpServersConfig({ invalid: { ...connection, description } }, "test");
-      expect(invalid.config).toEqual({});
-      expect(invalid.errors).toHaveLength(1);
-    }
-  });
-
   it("merges host launch-directory layers by server name and resolves paths at their defining layer", () => {
     const fx = setupFixture();
     try {

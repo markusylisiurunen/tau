@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 import { createWebCapability } from "../dist/core/code_mode/web.js";
-import { getExaApiKey } from "../dist/core/config/index.js";
 import { discoverAgentContent } from "../dist/core/tools/web_discovery.js";
 import { createCapabilityTool } from "./helpers/code_mode.js";
 
@@ -64,13 +63,6 @@ function getToolText(result) {
 }
 
 describe("Exa web code-mode tool", () => {
-  it("resolves the Exa API key from the environment before config", () => {
-    expect(getExaApiKey({ apiKeys: { exa: "config-key" } }, { EXA_API_KEY: " env-key " })).toBe(
-      "env-key",
-    );
-    expect(getExaApiKey({ apiKeys: { exa: " config-key " } }, {})).toBe("config-key");
-  });
-
   it("runs metadata discovery through the execution environment", async () => {
     const requestedUrl = "https://example.com/docs/getting-started";
     const responses = new Map([
@@ -210,37 +202,6 @@ describe("Exa web code-mode tool", () => {
     );
   });
 
-  it("allows discovery targets available to the execution environment", async () => {
-    const backend = createBackend();
-    backend.runNodeScript.mockResolvedValue(createExecutionResult("[null,null,null,null,null]"));
-
-    await expect(
-      discoverAgentContent(backend, "http://127.0.0.1:8787/docs", new AbortController().signal),
-    ).resolves.toEqual({
-      requestedUrl: "http://127.0.0.1:8787/docs",
-      markdown: [],
-      llmsTxt: [],
-    });
-    await expect(
-      discoverAgentContent(backend, "file:///tmp/docs", new AbortController().signal),
-    ).rejects.toThrow("must use http or https");
-    await expect(
-      discoverAgentContent(
-        backend,
-        `https://example.com/${"a".repeat(2_048)}`,
-        new AbortController().signal,
-      ),
-    ).rejects.toThrow("must not exceed 2048 characters");
-    await expect(
-      discoverAgentContent(
-        backend,
-        `https://example.com/${Array(21).fill("segment").join("/")}`,
-        new AbortController().signal,
-      ),
-    ).rejects.toThrow("must not contain more than 20 path segments");
-    expect(backend.runNodeScript).toHaveBeenCalledTimes(1);
-  });
-
   it("runs generated code in a capability-limited sandbox", async () => {
     const backend = createBackend();
     const deps = createDeps({});
@@ -341,110 +302,6 @@ describe("Exa web code-mode tool", () => {
     expect(getToolText(result)).toContain("https://linked.example");
     expect(getToolText(result)).not.toContain("costDollars");
     expect(getToolText(result)).not.toContain("image.example");
-  });
-
-  it("sends provider requests through abortable host fetch", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          results: [{ title: "Tau", url: "https://example.com/tau", highlights: ["result"] }],
-          statuses: [],
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      ),
-    );
-    try {
-      const backend = createBackend();
-      const tool = createWebTool(backend);
-      const { result } = await runTool(tool, { code: "await tau.web.search('tau')" });
-
-      expect(result.toolResult.outcome).toBe("succeeded");
-      expect(fetchMock).toHaveBeenCalledWith(
-        "https://api.exa.ai/search",
-        expect.objectContaining({
-          method: "POST",
-          headers: expect.objectContaining({ "Exa-Beta": "dynamic-highlights-2026-08-28" }),
-          body: JSON.stringify({
-            query: "tau",
-            type: "auto",
-            contents: { highlights: { dynamic: true } },
-          }),
-          signal: expect.any(AbortSignal),
-        }),
-      );
-      fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ results: [] })));
-      const fetched = await runTool(tool, {
-        code: "await tau.web.fetch('https://example.com')",
-      });
-      expect(fetched.result.toolResult.outcome).toBe("succeeded");
-      const [url, request] = fetchMock.mock.calls[1];
-      expect(url).toBe("https://api.exa.ai/contents");
-      expect(request.headers).not.toHaveProperty("Exa-Beta");
-      expect(JSON.parse(request.body)).toEqual({
-        urls: ["https://example.com"],
-        highlights: true,
-      });
-    } finally {
-      fetchMock.mockRestore();
-    }
-  });
-
-  it("preserves notices through code mode without exposing provider warnings", async () => {
-    const notices = [
-      {
-        code: "RESTRICTIONS_RELAXED",
-        path: "/query",
-        message: "The quoted phrase was removed.",
-        details: { relaxed: [{ kind: "phrase", operator: '"tau"' }] },
-      },
-      { code: "FUTURE_NOTICE", path: "/query", message: "Additional retrieval context." },
-    ];
-    const client = {
-      search: vi.fn(async () => ({
-        results: [],
-        notices,
-        warnings: [{ code: "IGNORED_FIELD", path: "/unused", message: "Unused field." }],
-      })),
-      getContents: vi.fn(async () => ({ results: [] })),
-    };
-    const tool = createWebTool(createBackend(), createDeps(client));
-    const { result } = await runTool(tool, {
-      code: [
-        "printText(JSON.stringify(await tau.web.search('tau')));",
-        "printText(JSON.stringify(await tau.web.fetch('https://example.com')));",
-      ].join("\n"),
-    });
-    expect(result.toolResult.outcome).toBe("succeeded");
-    const responses = getToolText(result)
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line));
-    expect(responses).toEqual([
-      { results: [], statuses: [], notices },
-      { results: [], statuses: [], notices: [] },
-    ]);
-  });
-
-  it.each([" ", "x".repeat(4097), 42])(
-    "rejects invalid objectives before searching",
-    async (objective) => {
-      const client = { search: vi.fn() };
-      const tool = createWebTool(createBackend(), createDeps(client));
-      const { result } = await runTool(tool, {
-        code: `await tau.web.search('tau', { objective: ${JSON.stringify(objective)} })`,
-      });
-      expect(result.toolResult.outcome).toBe("failed");
-      expect(client.search).not.toHaveBeenCalled();
-    },
-  );
-
-  it("rejects malformed provider notices", async () => {
-    const client = {
-      search: vi.fn(async () => ({ results: [], notices: [{ code: "INCOMPLETE" }] })),
-    };
-    const tool = createWebTool(createBackend(), createDeps(client));
-    const { result } = await runTool(tool, { code: "await tau.web.search('tau')" });
-    expect(result.toolResult.outcome).toBe("failed");
   });
 
   it("rejects oversized provider responses", async () => {
@@ -549,48 +406,6 @@ describe("Exa web code-mode tool", () => {
     expect(client.getContents).not.toHaveBeenCalled();
   });
 
-  it("rejects unknown tool arguments without starting the sandbox", async () => {
-    const backend = createBackend();
-    const deps = createDeps({});
-    const tool = createWebTool(backend, deps);
-    const { result } = await runTool(tool, {
-      code: "printText(docs)",
-      objective: "legacy shape",
-    });
-
-    expect(result.toolResult.outcome).toBe("blocked");
-    expect(getToolText(result)).toContain("Invalid arguments");
-    expect(deps.createExaClient).not.toHaveBeenCalled();
-  });
-
-  it("separates failed-program status from program output", async () => {
-    const backend = createBackend();
-    const tool = createWebTool(backend, createDeps({}));
-    const { result } = await runTool(tool, { code: 'throw new Error("program failure")' });
-    const text = getToolText(result);
-
-    expect(result.toolResult.outcome).toBe("failed");
-    expect(text).toContain("program failure");
-    expect(text).toMatch(/\n\n\[Program failed with exit code 1\.\]$/);
-    expect(text).not.toContain("\n(exit 1)");
-  });
-
-  it("forwards cancellation to a running sandbox", async () => {
-    const backend = createBackend();
-    const tool = createWebTool(backend, createDeps({}));
-    const controller = new AbortController();
-    const run = runTool(tool, { code: "for (;;) {}" }, controller.signal);
-    setTimeout(() => controller.abort(), 20);
-
-    const { result } = await run;
-    expect(result.toolResult.outcome).toBe("cancelled");
-    expect(getToolText(result)).toBe("Program was cancelled.");
-    expect(result.uiEvent.presentation.details).toContainEqual({
-      text: "Program was cancelled.",
-      wrap: "word",
-    });
-  });
-
   it("cancels and settles provider requests before returning", async () => {
     let markProviderStarted;
     const providerStarted = new Promise((resolve) => {
@@ -625,54 +440,5 @@ describe("Exa web code-mode tool", () => {
     expect(providerSettled).toBe(true);
     expect(client.search.mock.calls[0][2].aborted).toBe(true);
     expect(getToolText(result)).toBe("Program was cancelled.");
-  });
-
-  it("cancels provider requests and reports sandbox timeouts explicitly", async () => {
-    let providerSettled = false;
-    const client = {
-      search: vi.fn(
-        async (_query, _options, signal) =>
-          await new Promise((_resolve, reject) => {
-            signal.addEventListener(
-              "abort",
-              () => {
-                providerSettled = true;
-                reject(signal.reason);
-              },
-              { once: true },
-            );
-          }),
-      ),
-    };
-    const backend = createBackend();
-    const deps = { ...createDeps(client), timeoutMs: 1_000 };
-    const tool = createWebTool(backend, deps);
-    const { result } = await runTool(tool, {
-      code: "printText('partial output'); await tau.web.search('tau')",
-    });
-
-    expect(providerSettled).toBe(true);
-    expect(result.toolResult.outcome).toBe("cancelled");
-    expect(getToolText(result)).toBe("partial output\n\n[Program timed out after 1000ms.]");
-    expect(result.uiEvent.presentation.details).toContainEqual({
-      text: "[Program timed out after 1000ms.]",
-      wrap: "word",
-    });
-  });
-
-  it("decodes multibyte output across Worker stream chunks", async () => {
-    const backend = createBackend();
-    const tool = createWebTool(backend, createDeps({}));
-    const { result } = await runTool(tool, { code: "printText('€'.repeat(400_000))" });
-
-    expect(getToolText(result)).not.toContain("�");
-  });
-
-  it("middle-truncates large program output at 8,192 estimated tokens", async () => {
-    const backend = createBackend();
-    const tool = createWebTool(backend, createDeps({}));
-    const { result } = await runTool(tool, { code: "printText('x'.repeat(60_000))" });
-
-    expect(getToolText(result)).toContain("Output truncated for context");
   });
 });

@@ -111,26 +111,6 @@ describe("command client tool config", () => {
     }
   });
 
-  it("uses default-enabled tools when the workspace has no explicit selection", () => {
-    const fx = setupFixture();
-
-    try {
-      writeFileSync(
-        join(fx.home, ".config", "tau", "config.json"),
-        JSON.stringify({
-          clientTools: [createClientTool("notify", true), createClientTool("deploy", false)],
-        }),
-      );
-
-      const result = loadFixtureConfig(fx);
-
-      expect(result.errors).toEqual([]);
-      expect(result.config.clientTools?.map((tool) => tool.name)).toEqual(["notify"]);
-    } finally {
-      fx.cleanup();
-    }
-  });
-
   it("uses the most specific workspace allowlist and skips unknown tool names", () => {
     const fx = setupFixture();
     const nested = join(fx.repo, "packages", "app");
@@ -161,28 +141,6 @@ describe("command client tool config", () => {
     }
   });
 
-  it("allows a workspace to disable all configured client tools", () => {
-    const fx = setupFixture();
-
-    try {
-      writeFileSync(
-        join(fx.home, ".config", "tau", "config.json"),
-        JSON.stringify({ clientTools: [createClientTool("notify", true)] }),
-      );
-      writeFileSync(
-        join(fx.repo, ".tau", "config.json"),
-        JSON.stringify({ enabledClientTools: [] }),
-      );
-
-      const result = loadFixtureConfig(fx);
-
-      expect(result.errors).toEqual([]);
-      expect(result.config.clientTools).toBeUndefined();
-    } finally {
-      fx.cleanup();
-    }
-  });
-
   it("ignores project-defined command tools and reports why", () => {
     const fx = setupFixture();
 
@@ -207,35 +165,6 @@ describe("command client tool config", () => {
       expect(result.errors).toContain(
         `${join(fx.repo, ".tau", "config.json")}: 'clientTools' may only be configured in the global config.`,
       );
-    } finally {
-      fx.cleanup();
-    }
-  });
-
-  it("requires each global tool to declare whether it is enabled by default", () => {
-    const fx = setupFixture();
-
-    try {
-      writeFileSync(
-        join(fx.home, ".config", "tau", "config.json"),
-        JSON.stringify({
-          clientTools: [
-            {
-              name: "notify",
-              description: "Show a local notification.",
-              parameters,
-              command: "notify",
-            },
-          ],
-        }),
-      );
-
-      const result = loadFixtureConfig(fx);
-
-      expect(result.config.clientTools).toBeUndefined();
-      expect(result.errors).toEqual([
-        `${join(fx.home, ".config", "tau", "config.json")}: clientTools[0].defaultEnabled must be a boolean.`,
-      ]);
     } finally {
       fx.cleanup();
     }

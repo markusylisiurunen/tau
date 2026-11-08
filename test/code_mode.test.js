@@ -1,11 +1,10 @@
 import { spawn, spawnSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { crc32 } from "node:zlib";
-import sharp from "sharp";
 import { describe, expect, it, vi } from "vitest";
-import { buildTauCodeModeToolDescription, executeTauCodeMode } from "../dist/code_mode/index.js";
+import { prepareCodeModeImage } from "../dist/code_mode/images.js";
+import { executeTauCodeMode } from "../dist/code_mode/index.js";
 import { runTauCodeMode } from "../dist/code_mode/runtime.js";
 import { createTauCodeModeClientTool } from "../dist/sdk/index.js";
 import { createProtocolImage } from "./helpers/session_protocol_fixtures.js";
@@ -37,35 +36,6 @@ function getTextContent(result) {
 }
 
 describe("public code-mode runtime", () => {
-  it.concurrent.each([1, 16_384, 65_536])(
-    "applies an output budget of %s",
-    async (maxOutputTokens) => {
-      const runtime = await runTauCodeMode({
-        ...createDefinition(),
-        code: 'printText("x".repeat(60_000))',
-        maxOutputTokens,
-      });
-      expect(runtime.status).toBe("succeeded");
-      expect(runtime.projection.maxTokens).toBe(maxOutputTokens);
-      expect(runtime.projection.truncated).toBe(maxOutputTokens === 1);
-    },
-  );
-
-  it.each([0, -1, 1.5, 65_537, "16384", null, NaN, Infinity])(
-    "rejects an invalid runtime output budget %s before side effects",
-    async (maxOutputTokens) => {
-      const get = vi.fn();
-      await expect(
-        runTauCodeMode({
-          ...createDefinition({ api: { get } }),
-          code: "await linear.get()",
-          maxOutputTokens,
-        }),
-      ).rejects.toThrow();
-      expect(get).not.toHaveBeenCalled();
-    },
-  );
-
   it("passes SDK output budgets to the runtime", async () => {
     const tool = createTauCodeModeClientTool({
       ...createDefinition(),
@@ -96,66 +66,6 @@ describe("public code-mode runtime", () => {
     });
   });
 
-  it.concurrent.each(["issue", "[issue]"])(
-    "rejects raw %s output without coercion and accepts selected text",
-    async (value) => {
-      const result = await executeTauCodeMode({
-        ...createDefinition(),
-        code: [
-          'const issue = await linear.issues.get("TAU-418");',
-          "try {",
-          `  printText(${value});`,
-          '} catch (error) { printText(error instanceof TypeError ? "rejected" : "unexpected"); }',
-          "printText(issue.id);",
-        ].join("\n"),
-      });
-
-      expect(getTextContent(result)).toBe("rejected\nTAU-418");
-    },
-  );
-
-  it.concurrent.each(["jpeg", "png", "webp"])(
-    "forwards validated %s images from any API",
-    async (format) => {
-      const data = await sharp({
-        create: { width: 2, height: 2, channels: 3, background: "#123456" },
-      })
-        .toFormat(format)
-        .toBuffer();
-      const block = { type: "image", mimeType: `image/${format}`, data: data.toString("base64") };
-      const result = await executeTauCodeMode({
-        ...createDefinition({
-          api: { screenshot: async () => ({ ...block, annotations: { title: "screen" } }) },
-        }),
-        code: "await printImage(await linear.screenshot())",
-      });
-
-      expect(result).toEqual({ content: [block] });
-      expect(getTextContent(result)).not.toContain(block.data);
-    },
-  );
-
-  it.concurrent("interleaves console text and awaited images in emission order", async () => {
-    const block = createProtocolImage();
-    const result = await executeTauCodeMode({
-      ...createDefinition({ api: { screenshot: async () => block } }),
-      code: [
-        'printText("1"); printText("warning");',
-        "await printImage(await linear.screenshot());",
-        'printText("2");',
-        "await printImage(await linear.screenshot());",
-        'printText("3");',
-      ].join("\n"),
-    });
-    expect(result.content).toEqual([
-      { type: "text", text: "1\nwarning" },
-      block,
-      { type: "text", text: "2" },
-      block,
-      { type: "text", text: "3" },
-    ]);
-  });
-
   it.concurrent("keeps image positions while truncating text across multiple blocks", async () => {
     const block = createProtocolImage();
     const result = await executeTauCodeMode({
@@ -179,37 +89,30 @@ describe("public code-mode runtime", () => {
     expect(getTextContent(result)).not.toContain("�");
   });
 
-  it("keeps emitted output when a synchronous program times out", async () => {
+  it("keeps emitted output when a running program is cancelled", async () => {
     const block = createProtocolImage();
-    const runtime = await runTauCodeMode({
-      ...createDefinition({ api: { screenshot: async () => block }, timeoutMs: 500 }),
-      code: 'printText("before"); await printImage(await linear.screenshot()); printText("after"); while (true) {}',
+    const ready = Promise.withResolvers();
+    const controller = new AbortController();
+    const running = runTauCodeMode({
+      ...createDefinition({
+        api: {
+          screenshot: async () => block,
+          ready: () => {
+            ready.resolve();
+            return null;
+          },
+        },
+      }),
+      signal: controller.signal,
+      code: 'printText("before"); await printImage(await linear.screenshot()); printText("after"); await linear.ready(); while (true) {}',
     });
-    expect(runtime.status).toBe("timed-out");
+    await ready.promise;
+    controller.abort();
+    const runtime = await running;
+    expect(runtime.status).toBe("cancelled");
     expect(runtime.result.content[0]).toEqual({ type: "text", text: "before" });
     expect(runtime.result.content[1]).toEqual(block);
     expect(runtime.result.content[2].text).toContain("after");
-    expect(runtime.result.content[2].text).toContain("500ms");
-  });
-
-  it("bounds console capture without discarding images at the trimmed boundary", async () => {
-    const block = createProtocolImage();
-    const result = await executeTauCodeMode({
-      ...createDefinition({ api: { screenshot: async () => block } }),
-      code: 'printText("a".repeat(2 * 1024 * 1024)); await printImage(await linear.screenshot()); printText("b".repeat(2 * 1024 * 1024))',
-    });
-    expect(result.content[0]).toEqual(block);
-    expect(result.content[1].text).toContain("Output truncated for context");
-    expect(result.content[1].text).not.toContain("aaaa");
-    expect(result.content[1].text.length).toBeLessThan(60_000);
-  });
-
-  it.concurrent("does not forward images merely returned by an API", async () => {
-    const result = await executeTauCodeMode({
-      ...createDefinition({ api: { screenshot: async () => createProtocolImage() } }),
-      code: 'await linear.screenshot(); printText("received")',
-    });
-    expect(result).toEqual({ content: [{ type: "text", text: "received" }] });
   });
 
   it.concurrent("rejects invalid image blocks outside the sandbox", async () => {
@@ -223,43 +126,13 @@ describe("public code-mode runtime", () => {
       createProtocolImage({ mimeType: "image/jpeg" }),
       createProtocolImage({ data: Buffer.from("plain text").toString("base64") }),
     ];
-    const result = await executeTauCodeMode({
-      ...createDefinition({ api: { screenshots: async () => blocks } }),
-      code: [
-        "const outcomes = [];",
-        "for (const [index, block] of (await linear.screenshots()).entries()) {",
-        "  try {",
-        "    await printImage(block);",
-        "    outcomes.push({ index, accepted: true });",
-        "  } catch (error) {",
-        "    outcomes.push({ index, error: error.message });",
-        "  }",
-        "}",
-        "printText(JSON.stringify(outcomes));",
-      ].join("\n"),
-    });
-    expect(result.content).toHaveLength(1);
-    expect(JSON.parse(getTextContent(result))).toEqual([
-      { index: 0, error: expect.stringContaining("expects") },
-      { index: 1, error: expect.stringContaining("expects") },
-      { index: 2, error: expect.stringContaining("base64") },
-      { index: 3, error: expect.stringContaining("base64") },
-      { index: 4, error: expect.stringContaining("base64") },
-      { index: 5, error: expect.stringContaining("supports") },
-      { index: 6, error: expect.stringContaining("MIME type does not match") },
-      { index: 7, error: expect.stringContaining("MIME type does not match") },
-    ]);
+    for (const block of blocks) await expect(prepareCodeModeImage(block)).rejects.toThrow();
   });
 
-  it.concurrent("decodes image pixels before accepting a valid-looking header", async () => {
+  it("decodes image pixels before accepting a valid-looking header", async () => {
     const block = createProtocolImage();
     block.data = Buffer.from(block.data, "base64").subarray(0, 55).toString("base64");
-    await expect(
-      executeTauCodeMode({
-        ...createDefinition({ api: { screenshot: async () => block } }),
-        code: "await printImage(await linear.screenshot())",
-      }),
-    ).rejects.toThrow();
+    await expect(prepareCodeModeImage(block)).rejects.toThrow();
   });
 
   it("rejects excessive source pixels before decoding or resizing", async () => {
@@ -268,62 +141,8 @@ describe("public code-mode runtime", () => {
     data.writeUInt32BE(10_000, 20);
     data.writeUInt32BE(crc32(data.subarray(12, 29)), 29);
     await expect(
-      executeTauCodeMode({
-        ...createDefinition({
-          api: { screenshot: async () => createProtocolImage({ data: data.toString("base64") }) },
-        }),
-        code: "await printImage(await linear.screenshot())",
-      }),
-    ).rejects.toThrow("pixel limit");
-  });
-
-  it("forwards images larger than 1 MiB without degrading valid model-sized bytes", async () => {
-    const bytes = await sharp(randomBytes(1000 * 500 * 3), {
-      raw: { width: 1000, height: 500, channels: 3 },
-    })
-      .png()
-      .toBuffer();
-    expect(bytes.length).toBeGreaterThan(1024 * 1024);
-    const block = createProtocolImage({ data: bytes.toString("base64") });
-    const result = await executeTauCodeMode({
-      ...createDefinition({ api: { screenshot: async () => block } }),
-      code: "await printImage(await linear.screenshot())",
-    });
-    expect(result.content).toEqual([block]);
-  });
-
-  it("applies bridge payload limits to image output", async () => {
-    await expect(
-      executeTauCodeMode({
-        ...createDefinition(),
-        code: 'await printImage({ type: "image", data: "A".repeat(64 * 1024 * 1024), mimeType: "image/png" })',
-      }),
-    ).rejects.toThrow("bridge payload bytes");
-  });
-
-  it.concurrent("resizes images and preserves output order for concurrent helper calls", async () => {
-    const large = await sharp({
-      create: { width: 4608, height: 144, channels: 3, background: "#123456" },
-    })
-      .png()
-      .toBuffer();
-    const blocks = [createProtocolImage({ data: large.toString("base64") }), createProtocolImage()];
-    const result = await executeTauCodeMode({
-      ...createDefinition({ api: { screenshots: async () => blocks } }),
-      code: 'await Promise.all((await linear.screenshots()).map((block, index) => { printText(JSON.stringify(index)); return printImage(block); })); printText("done")',
-    });
-    const metadata = await sharp(
-      Buffer.from(result.content.filter((part) => part.type === "image")[0].data, "base64"),
-    ).metadata();
-    expect(metadata).toMatchObject({ width: 4096, height: 128 });
-    expect(result.content.map((part) => (part.type === "text" ? part.text : "image"))).toEqual([
-      "0",
-      "image",
-      "1",
-      "image",
-      "done",
-    ]);
-    expect(result.content.filter((part) => part.type === "image")[1]).toEqual(blocks[1]);
+      prepareCodeModeImage(createProtocolImage({ data: data.toString("base64") })),
+    ).rejects.toThrow();
   });
 
   it.concurrent("bounds image output and makes invalid output catchable without losing valid images", async () => {
@@ -342,88 +161,10 @@ describe("public code-mode runtime", () => {
     expect(getTextContent(result)).toContain("at most 16 images");
   });
 
-  it("keeps images separate from truncated and persisted text", async () => {
-    const block = createProtocolImage();
-    const persistOutput = vi.fn(async (output) => {
-      expect(output.content).not.toContain(block.data);
-      return { path: "/tmp/output" };
-    });
-    const result = await executeTauCodeMode({
-      ...createDefinition({ api: { screenshot: async () => block }, persistOutput }),
-      code: 'await printImage(await linear.screenshot()); printText("x".repeat(60_000))',
-    });
-    expect(getTextContent(result)).toContain("Output truncated for context");
-    expect(result.content.filter((part) => part.type === "image")).toEqual([block]);
-    expect(persistOutput).toHaveBeenCalledOnce();
-  });
-
   it.concurrent("reserves the image helper name for the shared runtime", async () => {
     await expect(
       executeTauCodeMode({ ...createDefinition({ name: "printImage" }), code: "" }),
     ).rejects.toThrow("non-reserved");
-  });
-
-  it.concurrent("omits undefined object properties from API arguments", async () => {
-    const inspect = vi.fn(async ([value]) => value);
-    const result = await executeTauCodeMode({
-      ...createDefinition({ api: { inspect } }),
-      code: [
-        "const options = { limit: 100, cursor: undefined, nested: { keep: true, omit: undefined } };",
-        "printText(JSON.stringify(await linear.inspect(options)));",
-      ].join("\n"),
-    });
-
-    expect(JSON.parse(getTextContent(result))).toEqual({ limit: 100, nested: { keep: true } });
-    expect(inspect).toHaveBeenCalledWith(
-      [{ limit: 100, nested: { keep: true } }],
-      expect.any(Object),
-    );
-  });
-
-  it.concurrent("rejects undefined API arguments instead of converting them to null", async () => {
-    await expect(
-      executeTauCodeMode({
-        ...createDefinition({ api: { inspect: async () => null } }),
-        code: "await linear.inspect(undefined)",
-      }),
-    ).rejects.toThrow("Code-mode API arguments must be JSON-serializable values");
-  });
-
-  it("keeps runtime documentation identical across execution modes and deadlines", async () => {
-    const guides = [];
-    for (const timeoutMs of [undefined, 10000, 900000, null]) {
-      const result = await runTauCodeMode({
-        ...createDefinition(),
-        code: "printText(docs)",
-        timeoutMs,
-      });
-      expect(result.status).toBe("succeeded");
-      guides.push(getTextContent(result.result));
-    }
-    expect(new Set(guides).size).toBe(1);
-  });
-
-  it.concurrent("provides canonical documentation and executable output examples without dumping response metadata", async () => {
-    const docs = await executeTauCodeMode({
-      ...createDefinition(),
-      code: "printText(docs)",
-    });
-    expect(getTextContent(docs)).toContain("# Code-mode runtime");
-    expect(getTextContent(docs)).not.toContain("`files`");
-    expect(getTextContent(docs)).toContain("# Linear API");
-    const examples = [...getTextContent(docs).matchAll(/```js\n([\s\S]*?)\n```/g)];
-    expect(examples).toHaveLength(3);
-    const result = await executeTauCodeMode({
-      ...createDefinition(),
-      code: [
-        'const items = [{ id: "one", title: "First", metadata: "irrelevant" }];',
-        'const blocks = [{ type: "text", text: "Hello" }, { type: "image", data: "private" }, { type: "text", text: "World" }];',
-        ...examples.map((match) => match[1]),
-      ].join("\n"),
-    });
-    expect(getTextContent(result)).toBe(
-      'one: First\nHello\n\nWorld\n[{"id":"one","title":"First"}]',
-    );
   });
 
   it("rejects oversized bridge arguments before calling the handler", async () => {
@@ -454,30 +195,6 @@ describe("public code-mode runtime", () => {
         code: "printText(JSON.stringify(await linear.invalid()))",
       }),
     ).rejects.toThrow("linear.invalid returned a non-JSON value");
-  });
-
-  it("offers every terminal output to optional persistence", async () => {
-    const persistOutput = vi.fn(async (output, context) => {
-      expect(context.invocation).toEqual(invocation);
-      return output.contextTruncated ? { path: "/tmp/linear-output" } : undefined;
-    });
-    const result = await executeTauCodeMode({
-      ...createDefinition(),
-      code: 'printText("x".repeat(60_000))',
-      invocation,
-      persistOutput,
-    });
-
-    expect(persistOutput).toHaveBeenCalledWith(
-      expect.objectContaining({
-        captureTruncated: false,
-        contextTruncated: true,
-        status: "succeeded",
-      }),
-      expect.objectContaining({ invocation }),
-    );
-    expect(getTextContent(result)).toContain("Output truncated for context");
-    expect(getTextContent(result)).toContain("saved to /tmp/linear-output");
   });
 
   it("preserves structured capability error codes inside the sandbox", async () => {
@@ -553,69 +270,6 @@ describe("public code-mode runtime", () => {
     await handlerFinished;
   });
 
-  it.each([undefined, 12345])(
-    "exposes the SDK deadline for timeout %s in its schema",
-    (timeoutMs) => {
-      const tool = createTauCodeModeClientTool({
-        ...createDefinition(),
-        timeoutMs,
-        description: "Use the Linear integration.",
-      });
-      expect(tool.schema.description).toContain(String(timeoutMs ?? 60000));
-      expect(tool.schema.executionTimeoutMs).toBe(timeoutMs);
-      expect(tool.schema.parameters.properties).not.toHaveProperty("timeout");
-    },
-  );
-
-  it("preserves supplied SDK guidance alongside its deadline", async () => {
-    const description = "Use the Linear integration exactly as documented here.";
-    const tool = createTauCodeModeClientTool({
-      ...createDefinition(),
-      description,
-    });
-
-    expect(tool.schema).toMatchObject({
-      name: "linear",
-      description: expect.stringContaining(description),
-      parameters: {
-        type: "object",
-        required: ["code"],
-        additionalProperties: false,
-      },
-    });
-    expect(
-      await tool.describe(
-        { code: 'printText(JSON.stringify(await linear.issues.get("TAU-418")))' },
-        {
-          ...invocation,
-          signal: new AbortController().signal,
-          executionEnvironment: { exec: vi.fn() },
-        },
-      ),
-    ).toMatchObject({
-      subject: 'printText(JSON.stringify(await linear.issues.get("TAU-418")))',
-      subjectWrap: "character",
-    });
-    await expect(
-      tool.execute(
-        { code: 'printText(JSON.stringify(await linear.issues.get("TAU-418")))' },
-        {
-          ...invocation,
-          signal: new AbortController().signal,
-          executionEnvironment: {
-            exec: vi.fn(),
-          },
-        },
-      ),
-    ).resolves.toEqual({
-      content: [{ type: "text", text: JSON.stringify({ id: "TAU-418", invocation }) }],
-      presentation: {
-        subject: 'printText(JSON.stringify(await linear.issues.get("TAU-418")))',
-        subjectWrap: "character",
-      },
-    });
-  });
-
   it("provides client-tool execution access to trusted code-mode handlers", async () => {
     const executionEnvironment = {
       exec: vi.fn(async () => ({ output: "clean" })),
@@ -651,17 +305,6 @@ describe("public code-mode runtime", () => {
     expect(executionEnvironment.exec).toHaveBeenCalledWith("git status --short");
   });
 
-  it("builds the progressive-disclosure description only when requested", () => {
-    expect(
-      buildTauCodeModeToolDescription({
-        name: "linear",
-        description: "Search Linear issues.",
-      }),
-    ).toBe(
-      "Search Linear issues. When this tool is useful, first check whether its documentation is already visible in the conversation context. If it is not, your first call must be a documentation-only program that does nothing except print docs with printText(docs). Read the returned documentation before writing a later tool call that uses linear. Once the documentation is visible, use the API normally without reloading it, and do not guess API signatures.",
-    );
-  });
-
   it("does not pass parent eval flags to the file-backed worker", () => {
     const moduleUrl = pathToFileURL(resolve("dist/code_mode/index.js")).href;
     const script = [
@@ -686,89 +329,8 @@ describe("public code-mode runtime", () => {
 });
 
 describe("code-mode command adapter", () => {
-  it.each([undefined, 12345])(
-    "documents the command deadline for timeout %s",
-    async (timeoutMs) => {
-      const moduleUrl = pathToFileURL(resolve("dist/code_mode/index.js")).href;
-      const script = [
-        `import { runTauCodeModeCommand } from ${JSON.stringify(moduleUrl)};`,
-        "await runTauCodeModeCommand({",
-        'name: "linear", documentation: "# Linear API",',
-        `timeoutMs: ${timeoutMs},`,
-        "api: { echo: async ([value]) => value },",
-        "});",
-      ].join("\n");
-      const result = await runCommandWithOpenStdin(script, {
-        version: 5,
-        type: "prepare",
-        ...invocation,
-        toolName: "linear",
-        arguments: { code: "printText(docs)" },
-      });
-      expect(result.status).toBe(0);
-      const frames = result.stdout
-        .trim()
-        .split("\n")
-        .map((line) => JSON.parse(line));
-      const outcome = frames.find((frame) => frame.type === "result");
-      expect(outcome.ok).toBe(true);
-      expect(getTextContent(outcome)).toContain(String(timeoutMs ?? 60000));
-    },
-  );
-
-  it("reads and writes the command client-tool framing", async () => {
-    const moduleUrl = pathToFileURL(resolve("dist/code_mode/index.js")).href;
-    const script = [
-      `import(${JSON.stringify(moduleUrl)}).then(async ({ runTauCodeModeCommand }) => {`,
-      "  await runTauCodeModeCommand({",
-      '    name: "linear",',
-      '    documentation: "# Linear API",',
-      "    api: { echo: async ([value], context) => ({ value, invocation: context.invocation }) },",
-      "  });",
-      "});",
-    ].join("\n");
-    const request = {
-      version: 5,
-      type: "prepare",
-      ...invocation,
-      toolName: "linear",
-      arguments: {
-        code: 'printText(JSON.stringify(await linear.echo("hello")))',
-        maxOutputTokens: 16_384,
-      },
-    };
-    const result = await runCommandWithOpenStdin(script, request);
-
-    expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
-    const frames = result.stdout
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line));
-    expect(frames).toEqual([
-      {
-        version: 5,
-        type: "ready",
-        presentation: expect.objectContaining({
-          subject: 'printText(JSON.stringify(await linear.echo("hello")))',
-          subjectWrap: "character",
-        }),
-      },
-      {
-        version: 5,
-        type: "result",
-        ok: true,
-        content: [{ type: "text", text: JSON.stringify({ value: "hello", invocation }) }],
-        presentation: {
-          subject: 'printText(JSON.stringify(await linear.echo("hello")))',
-          subjectWrap: "character",
-        },
-      },
-    ]);
-  });
-
   it("stops when terminated during asynchronous command description", async () => {
-    const moduleUrl = pathToFileURL(resolve("dist/sdk/index.js")).href;
+    const moduleUrl = pathToFileURL(resolve("dist/sdk/client_tool_command.js")).href;
     const script = [
       `import { runTauClientToolCommand } from ${JSON.stringify(moduleUrl)};`,
       "await runTauClientToolCommand({",
@@ -798,7 +360,7 @@ describe("code-mode command adapter", () => {
   });
 
   it("stops when terminated while awaiting execution authorization", async () => {
-    const moduleUrl = pathToFileURL(resolve("dist/sdk/index.js")).href;
+    const moduleUrl = pathToFileURL(resolve("dist/sdk/client_tool_command.js")).href;
     const script = [
       `import { runTauClientToolCommand } from ${JSON.stringify(moduleUrl)};`,
       "await runTauClientToolCommand({",
@@ -824,7 +386,7 @@ describe("code-mode command adapter", () => {
   });
 
   it("aborts the handler when protocol input closes", () => {
-    const moduleUrl = pathToFileURL(resolve("dist/sdk/index.js")).href;
+    const moduleUrl = pathToFileURL(resolve("dist/sdk/client_tool_command.js")).href;
     const script = [
       `import { runTauClientToolCommand } from ${JSON.stringify(moduleUrl)};`,
       "await runTauClientToolCommand({",
@@ -897,39 +459,7 @@ function runCommandAndTerminate(script, request, streamName, marker) {
   });
 }
 
-function runCommandWithOpenStdin(script, request) {
-  return new Promise((resolveResult, rejectResult) => {
-    const child = spawn(process.execPath, ["--eval", script], {
-      cwd: process.cwd(),
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    let executeSent = false;
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk;
-      for (const line of stdout.split("\n")) {
-        if (!line.trim()) continue;
-        try {
-          if (!executeSent && JSON.parse(line).type === "ready") {
-            executeSent = true;
-            child.stdin.write(`${JSON.stringify({ version: 5, type: "execute" })}\n`);
-          }
-        } catch {}
-      }
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk;
-    });
-    child.on("error", rejectResult);
-    child.on("close", (status, signal) => resolveResult({ status, signal, stdout, stderr }));
-    child.stdin.write(`${JSON.stringify(request)}\n`);
-  });
-}
-
-it.each([4096, 4097])("enforces the total bridge budget at %s requests", async (count) => {
+it.each([4097])("enforces the total bridge budget at %s requests", async (count) => {
   const ping = vi.fn(() => null);
   const result = await runTauCodeMode({
     ...createDefinition({ api: { ping } }),

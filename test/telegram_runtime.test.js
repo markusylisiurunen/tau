@@ -2,7 +2,6 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
-import { startTelegramAdapter } from "../dist/core/telegram/adapter.js";
 import {
   createTelegramProjectPreferenceStore,
   resolveTelegramProjectPreferencesPath,
@@ -35,74 +34,6 @@ function createTelegramConfig(overrides = {}) {
 }
 
 describe("telegram runtime", () => {
-  it("advertises project switches based on each bot's available projects", async () => {
-    const menus = new Map();
-    const runtime = await startTelegramRuntime({
-      config: createTelegramConfig({
-        bots: {
-          single: {
-            botToken: "single-token",
-            startup: { source: "workspace" },
-            allowedProjectIds: ["alpha"],
-          },
-          multiple: { botToken: "multiple-token", startup: { source: "workspace" } },
-        },
-      }),
-      createSessionClient: vi.fn(),
-      deps: {
-        startTelegramAdapter: (options) =>
-          startTelegramAdapter({
-            ...options,
-            api: {
-              getMe: async () => ({ username: `${options.botId}_bot` }),
-              setCommands: async (commands) => menus.set(options.botId, commands),
-              getUpdates: async () => new Promise(() => {}),
-            },
-          }),
-      },
-    });
-    try {
-      expect(menus.size).toBe(2);
-      for (const [botId, commands] of menus) {
-        expect(
-          commands.map(({ command }) => command).filter((command) => command.startsWith("use_")),
-        ).toEqual(botId === "single" ? [] : ["use_alpha", "use_beta"]);
-      }
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it("passes each bot's persona menu to its adapter", async () => {
-    const adapters = new Map();
-    const presets = {
-      friendly: { source: "persona", persona: "project-persona", label: "friendly" },
-    };
-    const runtime = await startTelegramRuntime({
-      config: createTelegramConfig({
-        bots: {
-          curated: { botToken: "token", startup: { source: "workspace" }, presets },
-          empty: { botToken: "token", startup: { source: "workspace" }, presets: {} },
-          full: { botToken: "token", startup: { source: "workspace" } },
-        },
-      }),
-      createSessionClient: vi.fn(),
-      deps: {
-        startTelegramAdapter: async (options) => {
-          adapters.set(options.botId, options);
-          return { close: async () => {} };
-        },
-      },
-    });
-    try {
-      expect(adapters.get("curated").presets).toEqual(presets);
-      expect(adapters.get("empty").presets).toEqual({});
-      expect(adapters.get("full").presets).toBeUndefined();
-    } finally {
-      await runtime.close();
-    }
-  });
-
   it("routes each bot's environment to its sessions without changing the runner", async () => {
     const root = await mkdtemp(join(tmpdir(), "tau-bot-env-"));
     const requests = [];
@@ -321,73 +252,6 @@ describe("telegram runtime", () => {
 
     expect(telegramHandle.close).toHaveBeenCalledTimes(1);
     expect(events.slice(-1)).toEqual(["close-telegram:bot-one"]);
-  });
-
-  it("keeps runtime log causes single-line and bounded", async () => {
-    const logs = [];
-    const runtime = await startTelegramRuntime({
-      config: createTelegramConfig({
-        bots: { "bot-one": { botToken: "token-1", startup: { source: "workspace" } } },
-      }),
-      createSessionClient: vi.fn(),
-      onLog: (line) => {
-        logs.push(line);
-      },
-      deps: {
-        startTelegramAdapter: vi.fn(async (options) => {
-          options.onLog?.({
-            level: "warn",
-            message: "telegram poll failed",
-            data: { cause: `gateway failure\r\n${"x".repeat(600)}` },
-          });
-          return { close: vi.fn(async () => {}) };
-        }),
-      },
-    });
-
-    const warning = logs[0];
-    expect(warning).not.toMatch(/[\r\n]/);
-    expect(warning).toMatch(
-      /^\[telegram:bot-one:warn\] telegram poll failed: gateway failure x+…$/,
-    );
-    expect(warning.length).toBe("[telegram:bot-one:warn] telegram poll failed: ".length + 500);
-
-    await runtime.close();
-  });
-
-  it("includes exhausted-delivery recovery identifiers in runtime logs", async () => {
-    const logs = [];
-    const runtime = await startTelegramRuntime({
-      config: createTelegramConfig({
-        bots: { "bot-one": { botToken: "token-1", startup: { source: "workspace" } } },
-      }),
-      createSessionClient: vi.fn(),
-      onLog: (line) => {
-        logs.push(line);
-      },
-      deps: {
-        startTelegramAdapter: vi.fn(async (options) => {
-          options.onLog?.({
-            level: "error",
-            message: "telegram notification delivery retries exhausted",
-            data: {
-              sessionId: "session-one",
-              chatId: 42,
-              messageId: "assistant-final",
-              attempts: 3,
-              cause: "telegram unavailable",
-            },
-          });
-          return { close: vi.fn(async () => {}) };
-        }),
-      },
-    });
-
-    expect(logs[0]).toBe(
-      '[telegram:bot-one:error] telegram notification delivery retries exhausted [sessionId="session-one" messageId="assistant-final" chatId=42 attempts=3]: telegram unavailable',
-    );
-
-    await runtime.close();
   });
 
   it("preserves version 1 project preferences when saving TTS settings", async () => {

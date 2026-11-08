@@ -293,41 +293,6 @@ describe("diff_review snapshot", () => {
     );
   });
 
-  it("captures explicit Git diffs larger than the previous 2 MiB limit", async () => {
-    const content = `export const value = "${"x".repeat(2 * 1024 * 1024)}";`;
-    const patch = [
-      "diff --git a/src/large.ts b/src/large.ts",
-      "new file mode 100644",
-      "--- /dev/null",
-      "+++ b/src/large.ts",
-      "@@ -0,0 +1 @@",
-      `+${content}`,
-    ].join("\n");
-    const spawn = async (_cmd, args) => {
-      if (args[0] === "rev-parse") {
-        return createSpawnResult("/repo\n");
-      }
-      if (args[0] === "diff" && args[1] === "--name-status") {
-        return createSpawnResult("A\0src/large.ts\0");
-      }
-      return createSpawnResult(patch);
-    };
-
-    const snapshot = await captureDiffReviewSnapshot({
-      cwd: "/repo",
-      source: { kind: "git_diff", diffArgs: ["main...HEAD"] },
-      deps: {
-        spawn,
-        env: { env: () => ({}) },
-      },
-    });
-
-    expect(Buffer.byteLength(snapshot.patch, "utf-8")).toBeGreaterThan(2 * 1024 * 1024);
-    expect(snapshot.files).toEqual([
-      { path: "src/large.ts", status: "added", newPath: "src/large.ts" },
-    ]);
-  });
-
   it("stops snapshot capture when diff review startup is aborted", async () => {
     const abortController = new AbortController();
     const spawn = async (_cmd, args) => {

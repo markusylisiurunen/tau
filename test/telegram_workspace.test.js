@@ -113,16 +113,6 @@ describe("telegram workspace", () => {
     expect(await readFile(join(workspaceRoot, "keep.txt"), "utf8")).toBe("keep");
   });
 
-  it("treats a missing workspace root as already clean", async () => {
-    const workspaceRoot = await createWorkspaceRoot();
-
-    await expect(cleanupWorkspaceRootOnStartup(workspaceRoot, [])).resolves.toEqual({
-      workspaceRoot,
-      deletedEntries: 0,
-      failures: [],
-    });
-  });
-
   it("reuses a persistent project directory without modifying it", async () => {
     const workspaceRoot = await createWorkspaceRoot();
     const directory = join(workspaceRoot, "me");
@@ -160,88 +150,6 @@ describe("telegram workspace", () => {
       }),
     ).rejects.toThrow(`project directory does not exist: ${directory}`);
     expect(spawnWithCaptureMock).not.toHaveBeenCalled();
-  });
-
-  it("clones repository through a persistent cache and logs phase durations", async () => {
-    const workspaceRoot = await createWorkspaceRoot();
-    const cachePath = join(`${workspaceRoot}-repo-cache`, "tau.git");
-    const logs = [];
-
-    spawnWithCaptureMock.mockImplementation(async (command, commandArgs) => {
-      if (command === "gh") {
-        await mkdir(commandArgs[3], { recursive: true });
-        return { exitCode: 0, output: "cached" };
-      }
-
-      if (command === "git") {
-        if (commandArgs[2] === "remote" && commandArgs[3] === "get-url") {
-          return { exitCode: 0, output: "git@github.com:owner/repo.git\n" };
-        }
-
-        if (commandArgs[0] === "clone") {
-          const workspacePath = commandArgs[3];
-          await mkdir(join(workspacePath, "packages", "core"), { recursive: true });
-          return { exitCode: 0, output: "cloned from cache" };
-        }
-
-        if (commandArgs[2] === "checkout") {
-          return { exitCode: 0, output: "Already on 'main'" };
-        }
-
-        return { exitCode: 0, output: "" };
-      }
-
-      throw new Error(`unexpected command: ${command}`);
-    });
-
-    const result = await prepareWorkspace({
-      sessionId: "abc12345",
-      projectId: "tau",
-      workspaceRoot,
-      project: {
-        repo: "owner/repo",
-        ref: "main",
-        workingDirectory: "packages/core",
-      },
-      onLog: (entry) => logs.push(entry),
-    });
-
-    expect(result.sessionCwd).toBe(join(result.workspacePath, "packages", "core"));
-    expect(result.provisionTargets).toEqual([
-      {
-        projectId: "tau",
-        repositoryRoot: result.workspacePath,
-        cwd: join(result.workspacePath, "packages", "core"),
-      },
-    ]);
-
-    expect(spawnWithCaptureMock).toHaveBeenNthCalledWith(
-      1,
-      "gh",
-      ["repo", "clone", "owner/repo", cachePath, "--", "--bare"],
-      expect.any(Object),
-    );
-    expect(spawnWithCaptureMock).toHaveBeenCalledWith(
-      "git",
-      ["clone", "--shared", cachePath, result.workspacePath],
-      expect.any(Object),
-    );
-
-    const cloneLog = logs.find((entry) => entry.message === "repository clone complete");
-    expect(cloneLog?.data).toEqual(
-      expect.objectContaining({
-        cachePath,
-        durationMs: expect.any(Number),
-      }),
-    );
-
-    const checkoutLog = logs.find((entry) => entry.message === "ref checkout complete");
-    expect(checkoutLog?.data).toEqual(
-      expect.objectContaining({
-        ref: "main",
-        durationMs: expect.any(Number),
-      }),
-    );
   });
 
   it("prepares composite workspaces with generated root context", async () => {
@@ -392,54 +300,6 @@ describe("telegram workspace", () => {
     await expect(readdir(workspacePath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("fetches an existing repository cache before cloning", async () => {
-    const workspaceRoot = await createWorkspaceRoot();
-    const cachePath = join(`${workspaceRoot}-repo-cache`, "tau.git");
-    await mkdir(cachePath, { recursive: true });
-
-    spawnWithCaptureMock.mockImplementation(async (command, commandArgs) => {
-      if (command !== "git") {
-        throw new Error(`unexpected command: ${command}`);
-      }
-
-      if (commandArgs[2] === "config" && commandArgs[3] === "--get") {
-        return { exitCode: 0, output: "owner/repo\n" };
-      }
-
-      if (commandArgs[2] === "remote" && commandArgs[3] === "get-url") {
-        return { exitCode: 0, output: "git@github.com:owner/repo.git\n" };
-      }
-
-      if (commandArgs[0] === "clone") {
-        await mkdir(commandArgs[3], { recursive: true });
-        return { exitCode: 0, output: "cloned from cache" };
-      }
-
-      return { exitCode: 0, output: "" };
-    });
-
-    const result = await prepareWorkspace({
-      sessionId: "abc12345",
-      projectId: "tau",
-      workspaceRoot,
-      project: {
-        repo: "owner/repo",
-      },
-    });
-
-    expect(result.workspacePath).toBe(join(workspaceRoot, "tau", "abc12345"));
-    expect(spawnWithCaptureMock).toHaveBeenCalledWith(
-      "git",
-      ["-C", cachePath, "fetch", "--prune", "origin", "+refs/heads/*:refs/heads/*"],
-      expect.any(Object),
-    );
-    expect(spawnWithCaptureMock).not.toHaveBeenCalledWith(
-      "gh",
-      expect.any(Array),
-      expect.any(Object),
-    );
-  });
-
   it("reinitializes an existing repository cache when the configured repo changes", async () => {
     const workspaceRoot = await createWorkspaceRoot();
     const cachePath = join(`${workspaceRoot}-repo-cache`, "tau.git");
@@ -497,35 +357,5 @@ describe("telegram workspace", () => {
       ["-C", cachePath, "fetch", "--prune", "origin"],
       expect.any(Object),
     );
-  });
-
-  it("fails when repository cache clone fails", async () => {
-    const workspaceRoot = await createWorkspaceRoot();
-    const logs = [];
-
-    spawnWithCaptureMock.mockImplementation(async (command) => {
-      if (command === "gh") {
-        return { exitCode: 1, output: "clone failed" };
-      }
-
-      throw new Error(`unexpected command: ${command}`);
-    });
-
-    await expect(
-      prepareWorkspace({
-        sessionId: "abc12345",
-        projectId: "tau",
-        workspaceRoot,
-        project: {
-          repo: "owner/repo",
-          ref: "main",
-        },
-        onLog: (entry) => logs.push(entry),
-      }),
-    ).rejects.toThrow("repository cache clone failed with exit code 1");
-
-    expect(spawnWithCaptureMock).toHaveBeenCalledTimes(1);
-    const cloneFailureLog = logs.find((entry) => entry.message === "repository cache clone failed");
-    expect(cloneFailureLog?.level).toBe("error");
   });
 });

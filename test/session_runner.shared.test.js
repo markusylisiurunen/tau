@@ -1,0 +1,799 @@
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it, vi } from "vitest";
+import { captureDiffReviewSnapshot } from "../dist/core/diff_review/snapshot.js";
+import { runDirectBashCommand } from "../dist/core/session/direct_bash.js";
+import { runModelSubturn, SequentialToolCallRunner } from "../dist/core/session/runner.js";
+import { BASH_DEFAULT_TIMEOUT_MS } from "../dist/core/tools/bash.js";
+import { scopeToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
+import { buildToolRunPresentation } from "../dist/core/tools/presentation.js";
+import { ToolRegistry } from "../dist/core/tools/registry.js";
+import { ClientToolBroker } from "../dist/host/client_tool_broker.js";
+import {
+  createSdkDiffSnapshotDeps,
+  createSdkToolExecutionBackend,
+} from "../dist/tui/session_tool_execution_backend.js";
+
+function createModelStream(events, result, error) {
+  return {
+    async *[Symbol.asyncIterator]() {
+      for (const event of events) {
+        yield event;
+      }
+      if (error) {
+        throw error;
+      }
+    },
+    async result() {
+      if (error) {
+        throw error;
+      }
+      return result;
+    },
+  };
+}
+
+describe("session runner", () => {
+  it("coalesces rapid assistant partials and flushes the final accumulated partial", async () => {
+    const now = vi.spyOn(Date, "now");
+    now.mockReturnValue(1_000);
+    const finalMessage = {
+      role: "assistant",
+      api: "anthropic",
+      provider: "anthropic",
+      model: "claude-opus",
+      stopReason: "end_turn",
+      content: [{ type: "text", text: "abc" }],
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+    };
+    const modelRuntime = {
+      streamModel() {
+        return createModelStream(
+          [
+            { type: "text_delta", delta: "a" },
+            { type: "text_delta", delta: "b" },
+            { type: "text_delta", delta: "c" },
+          ],
+          finalMessage,
+        );
+      },
+    };
+
+    try {
+      const events = [];
+      const runner = runModelSubturn({
+        model: {},
+        context: {},
+        streamModel: modelRuntime.streamModel.bind(modelRuntime),
+        streamOptions: {},
+        signal: new AbortController().signal,
+        emitPartials: true,
+      });
+      while (true) {
+        const next = await runner.next();
+        if (next.done) {
+          expect(next.value).toBe(finalMessage);
+          break;
+        }
+        events.push(next.value);
+      }
+
+      expect(events).toEqual([
+        {
+          type: "assistant_partial",
+          snapshot: {
+            text: "a",
+            thinking: "",
+            toolCalls: [],
+            hasTextStarted: true,
+            hasAnyThinking: false,
+          },
+        },
+        {
+          type: "assistant_partial",
+          snapshot: {
+            text: "abc",
+            thinking: "",
+            toolCalls: [],
+            hasTextStarted: true,
+            hasAnyThinking: false,
+          },
+        },
+      ]);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("flushes a coalesced assistant partial while the model stream is idle", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const idle = Promise.withResolvers();
+    const finalMessage = {
+      role: "assistant",
+      api: "openai-responses",
+      provider: "openai",
+      model: "gpt-5.6-luna",
+      stopReason: "stop",
+      content: [{ type: "text", text: "ab" }],
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+    };
+    const streamModel = () => ({
+      async *[Symbol.asyncIterator]() {
+        yield { type: "text_delta", delta: "a" };
+        yield { type: "text_delta", delta: "b" };
+        await idle.promise;
+      },
+      async result() {
+        return finalMessage;
+      },
+    });
+    const runner = runModelSubturn({
+      model: {},
+      context: {},
+      streamModel,
+      streamOptions: {},
+      signal: new AbortController().signal,
+      emitPartials: true,
+    });
+
+    try {
+      expect((await runner.next()).value.snapshot.text).toBe("a");
+      const pendingPartial = runner.next();
+      await vi.advanceTimersByTimeAsync(33);
+      expect((await pendingPartial).value.snapshot.text).toBe("ab");
+      idle.resolve();
+      await expect(runner.next()).resolves.toEqual({ done: true, value: finalMessage });
+    } finally {
+      idle.resolve();
+      await runner.return();
+      vi.useRealTimers();
+    }
+  });
+
+  it("flushes pending assistant text before tool-call streaming", async () => {
+    const now = vi.spyOn(Date, "now");
+    now.mockReturnValue(1_000);
+    const toolCall = {
+      id: "tool-call-1",
+      type: "toolCall",
+      name: "fake_tool",
+      arguments: {},
+    };
+    const finalMessage = {
+      role: "assistant",
+      api: "anthropic",
+      provider: "anthropic",
+      model: "claude-opus",
+      stopReason: "toolUse",
+      content: [{ type: "text", text: "ab" }, toolCall],
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+    };
+    const modelRuntime = {
+      streamModel() {
+        return createModelStream(
+          [
+            { type: "text_delta", delta: "a" },
+            { type: "text_delta", delta: "b" },
+            { type: "toolcall_start", contentIndex: 1, partial: finalMessage },
+            { type: "toolcall_delta", contentIndex: 1, delta: "{}", partial: finalMessage },
+            { type: "toolcall_end", contentIndex: 1, toolCall, partial: finalMessage },
+          ],
+          finalMessage,
+        );
+      },
+    };
+
+    try {
+      const events = [];
+      const runner = runModelSubturn({
+        model: {},
+        context: {},
+        streamModel: modelRuntime.streamModel.bind(modelRuntime),
+        streamOptions: {},
+        signal: new AbortController().signal,
+        emitPartials: true,
+      });
+      while (true) {
+        const next = await runner.next();
+        if (next.done) {
+          expect(next.value).toBe(finalMessage);
+          break;
+        }
+        events.push(next.value);
+      }
+
+      expect(events).toEqual([
+        {
+          type: "assistant_partial",
+          snapshot: {
+            text: "a",
+            thinking: "",
+            toolCalls: [],
+            hasTextStarted: true,
+            hasAnyThinking: false,
+          },
+        },
+        {
+          type: "assistant_partial",
+          snapshot: {
+            text: "ab",
+            thinking: "",
+            toolCalls: [],
+            hasTextStarted: true,
+            hasAnyThinking: false,
+          },
+        },
+        {
+          type: "tool_call_streaming",
+          toolCallId: toolCall.id,
+          toolName: toolCall.name,
+          contentIndex: 1,
+        },
+        {
+          type: "assistant_partial",
+          snapshot: {
+            text: "ab",
+            thinking: "",
+            toolCalls: [toolCall],
+            hasTextStarted: true,
+            hasAnyThinking: false,
+          },
+        },
+      ]);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("discards completed calls still buffered behind earlier calls", async () => {
+    const earlierCall = {
+      id: "earlier-call",
+      type: "toolCall",
+      name: "bash",
+      arguments: {},
+    };
+    const laterCall = {
+      id: "later-call",
+      type: "toolCall",
+      name: "write",
+      arguments: {},
+    };
+    const partial = {
+      role: "assistant",
+      content: [earlierCall, laterCall],
+      timestamp: 1,
+    };
+    const modelRuntime = {
+      streamModel() {
+        return createModelStream(
+          [
+            { type: "toolcall_start", contentIndex: 0, partial },
+            { type: "toolcall_start", contentIndex: 1, partial },
+            { type: "toolcall_end", contentIndex: 1, toolCall: laterCall, partial },
+          ],
+          undefined,
+          new Error("stream failed"),
+        );
+      },
+    };
+    const runner = runModelSubturn({
+      model: {},
+      context: {},
+      streamModel: modelRuntime.streamModel.bind(modelRuntime),
+      streamOptions: {},
+      signal: new AbortController().signal,
+      emitPartials: true,
+    });
+    const events = [];
+
+    await expect(async () => {
+      while (true) {
+        const next = await runner.next();
+        if (next.done) break;
+        events.push(next.value);
+      }
+    }).rejects.toThrow("stream failed");
+
+    expect(events).toEqual([
+      {
+        type: "tool_call_streaming",
+        toolCallId: earlierCall.id,
+        toolName: earlierCall.name,
+        contentIndex: 0,
+      },
+      {
+        type: "tool_call_streaming",
+        toolCallId: laterCall.id,
+        toolName: laterCall.name,
+        contentIndex: 1,
+      },
+      {
+        type: "tool_call_discarded",
+        toolCallId: earlierCall.id,
+        contentIndex: 0,
+      },
+      {
+        type: "tool_call_discarded",
+        toolCallId: laterCall.id,
+        contentIndex: 1,
+      },
+    ]);
+  });
+
+  it("flushes the latest pending assistant partial before a stream error", async () => {
+    const now = vi.spyOn(Date, "now");
+    now.mockReturnValue(1_000);
+    const modelRuntime = {
+      streamModel() {
+        return createModelStream(
+          [
+            { type: "text_delta", delta: "a" },
+            { type: "text_delta", delta: "b" },
+          ],
+          undefined,
+          new Error("stream failed"),
+        );
+      },
+    };
+
+    try {
+      const events = [];
+      const runner = runModelSubturn({
+        model: {},
+        context: {},
+        streamModel: modelRuntime.streamModel.bind(modelRuntime),
+        streamOptions: {},
+        signal: new AbortController().signal,
+        emitPartials: true,
+      });
+      await expect(async () => {
+        while (true) {
+          const next = await runner.next();
+          if (next.done) {
+            break;
+          }
+          events.push(next.value);
+        }
+      }).rejects.toThrow("stream failed");
+
+      expect(events.map((event) => event.snapshot.text)).toEqual(["a", "ab"]);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("blocks malformed optional client-tool arguments before dispatch", async () => {
+    const broker = new ClientToolBroker();
+    const sendCall = vi.fn();
+    const registration = broker.registerClient({
+      tools: [
+        {
+          name: "local_action",
+          description: "Perform a local action.",
+          parameters: {
+            type: "object",
+            properties: { dryRun: { type: "boolean" }, label: { type: "string" } },
+            additionalProperties: false,
+          },
+        },
+      ],
+      sendCall,
+      sendCancel: vi.fn(),
+    });
+    registration.attachSession("session-1");
+    const runner = new SequentialToolCallRunner(
+      {
+        toolRegistry: new ToolRegistry(broker.getToolDefinitions("session-1")),
+        executionContext: {
+          agentId: "agent-1",
+          turnId: "turn-1",
+          assistantMessageId: "assistant-1",
+        },
+      },
+      new AbortController().signal,
+    );
+    const call = {
+      id: "malformed-call",
+      type: "toolCall",
+      name: "local_action",
+      arguments: {},
+      argumentsError: 'Invalid JSON: {"dryRun":true,"label": broken}',
+    };
+    const admission = runner.prepare(call);
+    expect(admission.lifecycleEvent.type).toBe("tool_run_blocked");
+    admission.start();
+    const completion = runner.finish();
+    const events = [];
+    for await (const event of runner) {
+      events.push(event);
+      event.acknowledge?.();
+    }
+    await completion;
+    expect(sendCall).not.toHaveBeenCalled();
+    expect(events).toContainEqual({
+      type: "tool_result",
+      message: expect.objectContaining({
+        toolCallId: call.id,
+        isError: true,
+        content: [{ type: "text", text: call.argumentsError }],
+      }),
+    });
+  });
+
+  it("releases pending tool acknowledgements when event consumption stops", async () => {
+    const call = {
+      id: "activity-call",
+      type: "toolCall",
+      name: "activity-tool",
+      arguments: {},
+    };
+    const registry = new ToolRegistry([
+      {
+        schema: {
+          name: call.name,
+          description: "activity tool",
+          parameters: { type: "object", properties: {}, additionalProperties: false },
+        },
+        describe: () => ({
+          presentation: buildToolRunPresentation({ toolName: call.name, subject: call.name }),
+        }),
+        execute: async (_call, context) => {
+          await context.emitActivity({
+            type: "tool_call_blocked",
+            toolCallId: call.id,
+            toolName: call.name,
+            reason: "activity",
+            presentation: buildToolRunPresentation({ toolName: call.name, subject: call.name }),
+          });
+          return { content: [{ type: "text", text: "done" }], outcome: "succeeded" };
+        },
+      },
+    ]);
+    const runner = new SequentialToolCallRunner(
+      {
+        toolRegistry: registry,
+        executionContext: {
+          agentId: "agent-1",
+          turnId: "turn-1",
+          assistantMessageId: "assistant-1",
+        },
+      },
+      new AbortController().signal,
+    );
+    const admission = runner.prepare(call);
+    admission.start();
+    const iterator = runner[Symbol.asyncIterator]();
+    const started = await iterator.next();
+    started.value.acknowledge();
+    const activity = await iterator.next();
+    expect(activity.value.type).toBe("tool_activity");
+
+    runner.cancelPendingAcknowledgements(new Error("event sink failed"));
+
+    await expect(runner.finish()).rejects.toThrow("event sink failed");
+  });
+});
+
+describe("session execution backend plumbing", () => {
+  it("writes binary files through login Bash stdin without text conversion", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "tau-sdk-backend-test-"));
+    const session = {
+      async exec(command, options) {
+        const result = spawnSync("/bin/bash", ["-lc", command, ...(options.args ?? [])], {
+          cwd: options.cwd,
+          env: { ...process.env, ...options.env },
+          input: options.stdin,
+        });
+        const stdout = result.stdout.toString("utf-8");
+        const stderr = result.stderr.toString("utf-8");
+        return {
+          output: stdout + stderr,
+          stdout,
+          stderr,
+          exitCode: result.status,
+          truncated: false,
+          timedOut: false,
+          aborted: false,
+          closeSignal: result.signal,
+        };
+      },
+    };
+    const backend = createSdkToolExecutionBackend({ executionEnvironment: session, cwd });
+    const content = Buffer.from([0, 255, 1]);
+
+    try {
+      await expect(backend.writeFileBinary("assets/image.bin", content)).resolves.toEqual({
+        path: "assets/image.bin",
+        bytes: content.byteLength,
+      });
+      expect(readFileSync(join(cwd, "assets/image.bin"))).toEqual(content);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("captures no-HEAD diff snapshots through automation-safe login Bash", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "tau-sdk-diff-test-"));
+    const runGit = (args) => {
+      const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+      if (result.status !== 0) {
+        throw new Error(result.stderr || result.stdout);
+      }
+    };
+    const execOptions = [];
+    const session = {
+      async exec(command, options) {
+        execOptions.push(options);
+        const result = spawnSync(
+          "/bin/bash",
+          ["-lc", `set -e\n${command}`, ...(options.args ?? [])],
+          {
+            cwd: options.cwd,
+            env: { ...process.env, ...options.env },
+            input: options.stdin,
+            encoding: "utf8",
+          },
+        );
+        return {
+          output: result.stdout + result.stderr,
+          stdout: result.stdout,
+          stderr: result.stderr,
+          exitCode: result.status,
+          truncated: false,
+          timedOut: false,
+          aborted: false,
+          closeSignal: result.signal,
+        };
+      },
+    };
+
+    try {
+      runGit(["init"]);
+      writeFileSync(join(cwd, "tracked.txt"), "tracked\n");
+      runGit(["add", "tracked.txt"]);
+      writeFileSync(join(cwd, "untracked.txt"), "new\n");
+
+      const backend = createSdkToolExecutionBackend({ executionEnvironment: session, cwd });
+      const snapshot = await captureDiffReviewSnapshot({
+        cwd,
+        source: { kind: "git_diff", diffArgs: [] },
+        deps: createSdkDiffSnapshotDeps({ backend, cwd }),
+      });
+
+      expect(snapshot.repoRoot).toBe(realpathSync(cwd));
+      expect(snapshot.files.map((file) => file.path)).toEqual(["tracked.txt", "untracked.txt"]);
+      expect(snapshot.patch).toContain("+tracked");
+      expect(snapshot.getFilePatch("untracked.txt")).toContain("+new");
+      expect(execOptions).toEqual(
+        expect.arrayContaining([expect.objectContaining({ maxCaptureBytes: expect.any(Number) })]),
+      );
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves patch files larger than the default command capture limit", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "tau-sdk-large-patch-test-"));
+    const patch = [
+      "diff --git a/large.txt b/large.txt",
+      "new file mode 100644",
+      "--- /dev/null",
+      "+++ b/large.txt",
+      "@@ -0,0 +1 @@",
+      `+${"x".repeat(1_100_000)}`,
+      "",
+    ].join("\n");
+    const patchPath = join(cwd, "large.patch");
+    writeFileSync(patchPath, patch);
+    const runGit = (args) => {
+      const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+      if (result.status !== 0) throw new Error(result.stderr || result.stdout);
+    };
+    runGit(["init"]);
+    const session = {
+      async exec(command, options) {
+        const result = spawnSync("/bin/bash", ["-lc", command, ...(options.args ?? [])], {
+          cwd: options.cwd,
+          env: { ...process.env, ...options.env },
+          input: options.stdin,
+          encoding: "utf8",
+          maxBuffer: 32 * 1024 * 1024,
+        });
+        return {
+          output: result.stdout + result.stderr,
+          stdout: result.stdout,
+          stderr: result.stderr,
+          exitCode: result.status,
+          truncated: false,
+          timedOut: false,
+          aborted: false,
+          closeSignal: result.signal,
+        };
+      },
+    };
+
+    try {
+      const backend = createSdkToolExecutionBackend({ executionEnvironment: session, cwd });
+      const snapshot = await captureDiffReviewSnapshot({
+        cwd,
+        source: { kind: "patch_files", patchFiles: [patchPath], scopeLabel: "large patch" },
+        deps: createSdkDiffSnapshotDeps({ backend, cwd }),
+      });
+
+      expect(Buffer.byteLength(snapshot.patch)).toBe(Buffer.byteLength(patch));
+      expect(snapshot.files.map((file) => file.path)).toEqual(["large.txt"]);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("scopes backend cwd and filesystem paths to the execution environment", async () => {
+    const calls = [];
+    const backend = {
+      async dispose() {},
+      async runBash(command, options = {}) {
+        calls.push(["runBash", command, options.cwd, options.env]);
+        return {
+          output: "",
+          stdout: "",
+          stderr: "",
+          exitCode: 0,
+          truncated: false,
+        };
+      },
+      async readFile(path) {
+        calls.push(["readFile", path]);
+        return { path, content: "" };
+      },
+      async readFileBinary(path) {
+        calls.push(["readFileBinary", path]);
+        return { path, content: Buffer.from(""), bytes: 0 };
+      },
+      async writeFile(path, content) {
+        calls.push(["writeFile", path, content]);
+        return { path, bytes: Buffer.byteLength(content), lines: 1 };
+      },
+      async writeFileBinary(path, content) {
+        calls.push(["writeFileBinary", path, content]);
+        return { path, bytes: content.byteLength };
+      },
+      async listDir(path) {
+        calls.push(["listDir", path]);
+        return { path, entries: [] };
+      },
+    };
+
+    const scoped = scopeToolExecutionBackend(backend, "/remote/work", {
+      GH_CONFIG_DIR: "/srv/cowork/gh",
+    });
+
+    await scoped.runBash("pwd");
+    await scoped.runBash("pwd", { cwd: "subdir", env: { EXTRA: "value" } });
+    await scoped.readFile("src/a.ts");
+    await scoped.readFileBinary("asset.bin");
+    await scoped.writeFile("out.txt", "ok");
+    await scoped.writeFileBinary("asset.bin", Buffer.from([1, 2]));
+    await scoped.listDir(".");
+
+    expect(calls).toEqual([
+      ["runBash", "pwd", "/remote/work", { GH_CONFIG_DIR: "/srv/cowork/gh" }],
+      [
+        "runBash",
+        "pwd",
+        "/remote/work/subdir",
+        { GH_CONFIG_DIR: "/srv/cowork/gh", EXTRA: "value" },
+      ],
+      ["readFile", "/remote/work/src/a.ts"],
+      ["readFileBinary", "/remote/work/asset.bin"],
+      ["writeFile", "/remote/work/out.txt", "ok"],
+      ["writeFileBinary", "/remote/work/asset.bin", Buffer.from([1, 2])],
+      ["listDir", "/remote/work"],
+    ]);
+  });
+
+  it("runs direct bash with default timeout, abort signal, and optional context recording", async () => {
+    const signal = new AbortController().signal;
+    const received = [];
+    const backend = {
+      async runBash(command, options = {}) {
+        received.push({ command, options });
+        if (command === "sleep 60") {
+          return {
+            output: "partial output\n",
+            stdout: "partial output\n",
+            stderr: "",
+            exitCode: null,
+            truncated: false,
+            timedOut: true,
+            aborted: false,
+            closeSignal: "SIGTERM",
+          };
+        }
+        return {
+          output: "hello\n",
+          stdout: "hello\n",
+          stderr: "",
+          exitCode: 0,
+          truncated: false,
+          timedOut: false,
+          aborted: false,
+          closeSignal: null,
+        };
+      },
+    };
+    const addUserText = vi.fn(async () => "history-1");
+
+    const result = await runDirectBashCommand({
+      command: "echo hello",
+      backend,
+      workingDirectory: "/repo",
+      actionLabel: "ran",
+      signal,
+      addToContext: true,
+      addUserText,
+      now: () => 100,
+    });
+
+    expect(received).toEqual([
+      {
+        command: "echo hello",
+        options: { signal, timeoutMs: BASH_DEFAULT_TIMEOUT_MS },
+      },
+    ]);
+    expect(addUserText).toHaveBeenCalledWith("Bash command output:\n$ echo hello\nhello");
+    expect(result.userHistoryEntryId).toBe("history-1");
+
+    await runDirectBashCommand({
+      command: "echo skipped",
+      backend,
+      workingDirectory: "/repo",
+      actionLabel: "ran",
+      addToContext: false,
+      addUserText,
+      now: () => 100,
+    });
+
+    expect(addUserText).toHaveBeenCalledTimes(1);
+
+    const terminated = await runDirectBashCommand({
+      command: "sleep 60",
+      backend,
+      workingDirectory: "/repo",
+      actionLabel: "ran",
+      addToContext: true,
+      addUserText,
+    });
+    expect(addUserText).toHaveBeenLastCalledWith(
+      `Bash command output:\n$ sleep 60\npartial output\n\n[Command timed out after ${BASH_DEFAULT_TIMEOUT_MS}ms.]`,
+    );
+    expect(terminated.presentation.details.at(-1)).toEqual({
+      text: `[Command timed out after ${BASH_DEFAULT_TIMEOUT_MS}ms.]`,
+      wrap: "word",
+    });
+    expect(terminated.presentation.metadata).not.toContain("exit ?");
+  });
+});

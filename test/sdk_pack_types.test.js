@@ -201,25 +201,12 @@ describe("sdk npm pack types", () => {
         [
           'import type { TauSdkDelta, TauSdkReadyMessage } from "@markusylisiurunen/tau/sdk";',
           "",
-          "const badDelta: TauSdkDelta = {",
-          "  version: 1,",
-          '  type: "session.delta",',
-          '  sessionId: "session-1",',
-          '  fromRevision: "1",',
-          "  toRevision: 2,",
-          '  reason: "unknown",',
-          "  delta: {},",
-          "};",
-          "",
-          "const badReady: TauSdkReadyMessage = {",
-          "  version: 1,",
-          '  type: "ready",',
-          '  sessionId: "session-1",',
-          '  methods: ["session.unknown"],',
-          "};",
-          "",
-          "void badDelta;",
-          "void badReady;",
+          "// @ts-expect-error revisions are numeric",
+          'const revision: TauSdkDelta["fromRevision"] = "1";',
+          "// @ts-expect-error only declared protocol methods may be advertised",
+          'const method: TauSdkReadyMessage["methods"][number] = "session.unknown";',
+          "void revision;",
+          "void method;",
           "",
         ].join("\n"),
       );
@@ -240,28 +227,12 @@ describe("sdk npm pack types", () => {
         resolve(repoRoot, "node_modules", "@types"),
       ];
 
-      const validCompileResult = run(process.execPath, [...tscArgs, validFixturePath], {
-        cwd: consumerDir,
-      });
-      expect(validCompileResult.status, validCompileResult.stdout + validCompileResult.stderr).toBe(
-        0,
+      const result = run(
+        process.execPath,
+        [...tscArgs, validFixturePath, codeModeFixturePath, invalidFixturePath],
+        { cwd: consumerDir },
       );
-
-      const codeModeCompileResult = run(process.execPath, [...tscArgs, codeModeFixturePath], {
-        cwd: consumerDir,
-      });
-      expect(
-        codeModeCompileResult.status,
-        codeModeCompileResult.stdout + codeModeCompileResult.stderr,
-      ).toBe(0);
-
-      const invalidCompileResult = run(process.execPath, [...tscArgs, invalidFixturePath], {
-        cwd: consumerDir,
-      });
-      expect(invalidCompileResult.status).not.toBe(0);
-      expect(`${invalidCompileResult.stdout}\n${invalidCompileResult.stderr}`).toContain(
-        "error TS",
-      );
+      expect(result.status, result.stdout + result.stderr).toBe(0);
     } finally {
       rmSync(tempRoot, { recursive: true, force: true });
     }

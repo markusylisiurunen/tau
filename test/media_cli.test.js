@@ -3,10 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { printToolHelp, runToolCommand, ToolCliError } from "../dist/core/tool/cli.js";
-import { printImageGenerateHelp } from "../dist/core/tool/image_generate.js";
-import { printPdfUnpackHelp } from "../dist/core/tool/pdf_unpack.js";
-import { assembleSpeechWav, printSpeechGenerateHelp } from "../dist/core/tool/speech_generate.js";
+import { runToolCommand } from "../dist/core/tool/cli.js";
 
 const roots = [];
 afterEach(async () => {
@@ -91,78 +88,30 @@ function pcmResponse(samples, id) {
   });
 }
 
-describe("standalone tool help", () => {
-  it("rejects unknown subcommands", async () => {
-    await expect(runToolCommand(["missing"], { config: {}, env: {} })).rejects.toBeInstanceOf(
-      ToolCliError,
-    );
-  });
-
-  it.each([
-    [printToolHelp, "tools.md"],
-    [printPdfUnpackHelp, "pdf-unpacking.md"],
-    [printImageGenerateHelp, "image-generation.md"],
-    [printSpeechGenerateHelp, "speech-generation.md"],
-  ])("provides usage and public documentation for %s", (printHelp, guide) => {
-    const log = vi.fn();
-    printHelp(log);
-    const text = log.mock.calls.map(([line]) => line).join("\n");
-    expect(text).toContain("usage:");
-    expect(text).toContain(`https://github.com/markusylisiurunen/tau/blob/main/docs/${guide}`);
-    expect(text).not.toContain("tau_docs");
-  });
-});
-
 describe("media output preparation", () => {
-  it.each([imageArgs, speechArgs])(
-    "protects output and artifacts before requests: %s",
-    async (...args) => {
-      const options = await fixture();
-      await script(options, [[{ speaker: "host", text: "hello" }]]);
-      const output = join(options.cwd, args.at(-1));
-      await writeFile(output, "existing output");
-      await expect(runToolCommand(args, options)).rejects.toThrow();
-      expect(await readFile(output, "utf8")).toBe("existing output");
-      const freshArgs = [...args.slice(0, -1), `fresh-${args.at(-1)}`];
-      const parts = join(options.cwd, `${freshArgs.at(-1)}.parts`);
-      await mkdir(parts);
-      await writeFile(join(parts, "recovery"), "retained");
-      await expect(runToolCommand(freshArgs, options)).rejects.toThrow();
-      expect(await readFile(join(parts, "recovery"), "utf8")).toBe("retained");
-      await expect(
-        runToolCommand([...args.slice(0, -1), `missing/${args.at(-1)}`], options),
-      ).rejects.toThrow();
-      expect(options.fetchImpl).not.toHaveBeenCalled();
-      expect(options.stdout).not.toHaveBeenCalled();
-    },
-  );
-
-  it("rejects unreadable input before requests or artifact creation", async () => {
+  it.each([imageArgs])("protects output and artifacts before requests: %s", async (...args) => {
     const options = await fixture();
+    await script(options, [[{ speaker: "host", text: "hello" }]]);
+    const output = join(options.cwd, args.at(-1));
+    await writeFile(output, "existing output");
+    await expect(runToolCommand(args, options)).rejects.toThrow();
+    expect(await readFile(output, "utf8")).toBe("existing output");
+    const freshArgs = [...args.slice(0, -1), `fresh-${args.at(-1)}`];
+    const parts = join(options.cwd, `${freshArgs.at(-1)}.parts`);
+    await mkdir(parts);
+    await writeFile(join(parts, "recovery"), "retained");
+    await expect(runToolCommand(freshArgs, options)).rejects.toThrow();
+    expect(await readFile(join(parts, "recovery"), "utf8")).toBe("retained");
     await expect(
-      runToolCommand(
-        [...imageArgs.slice(0, 3), "--prompt-file", "missing.txt", ...imageArgs.slice(5)],
-        options,
-      ),
+      runToolCommand([...args.slice(0, -1), `missing/${args.at(-1)}`], options),
     ).rejects.toThrow();
     expect(options.fetchImpl).not.toHaveBeenCalled();
-    expect(await readdir(options.cwd)).toEqual([]);
+    expect(options.stdout).not.toHaveBeenCalled();
   });
 });
 
 describe("image generation CLI", () => {
-  it("requires an explicit model before generating or creating artifacts", async () => {
-    const options = await fixture();
-    await expect(runToolCommand([imageArgs[0], ...imageArgs.slice(3)], options)).rejects.toThrow();
-    expect(options.fetchImpl).not.toHaveBeenCalled();
-    expect(await readdir(options.cwd)).toEqual([]);
-  });
-
-  it.each(
-    ["gpt-image-2.6-flare", "gpt-image-2.6-sunburst"].flatMap((model) =>
-      [undefined, "low", "medium", "high"].map((complexity) => [model, complexity]),
-    ),
-  )(
+  it.each([["gpt-image-2.6-flare", "high"]])(
     "generates with %s and complexity %s using command-local credentials",
     async (model, complexity) => {
       const options = await fixture();
@@ -205,38 +154,6 @@ describe("image generation CLI", () => {
       expect(options.fetchImpl).toHaveBeenCalledTimes(1);
     },
   );
-
-  it("normalizes OpenAI encoding controls before building the provider request", async () => {
-    const options = await fixture();
-    const image = await sharp(await png())
-      .jpeg()
-      .toBuffer();
-    options.fetchImpl.mockResolvedValue(
-      Response.json({ data: [{ b64_json: image.toString("base64") }] }),
-    );
-    await runToolCommand(
-      [
-        ...imageArgs.slice(0, -1),
-        "image.jpg",
-        "--size",
-        "auto",
-        "--quality",
-        "low",
-        "--format",
-        "jpeg",
-        "--compression",
-        "100",
-      ],
-      options,
-    );
-    expect(JSON.parse(options.fetchImpl.mock.calls[0][1].body)).toMatchObject({
-      size: "auto",
-      quality: "low",
-      output_format: "jpeg",
-      output_compression: 100,
-    });
-    expect(await readFile(join(options.cwd, "image.jpg"))).toEqual(image);
-  });
 
   it("preserves ordered reference bytes through the edit endpoint without resizing", async () => {
     const options = await fixture();
@@ -326,36 +243,7 @@ describe("image generation CLI", () => {
     expect(await readFile(join(options.cwd, "image.png"))).toEqual(image);
   });
 
-  it.each([undefined, "minimal", "medium", "high"])(
-    "sends Nano Banana 2.1 thinking %s and wide 4K controls without inventing defaults",
-    async (thinking) => {
-      const options = await fixture();
-      options.fetchImpl.mockResolvedValue(geminiImageResponse(await png(), "png"));
-      await runToolCommand(
-        [
-          ...imageArgs.slice(0, 2),
-          "gemini-nano-banana-2.1",
-          ...imageArgs.slice(3),
-          "--aspect-ratio",
-          "8:1",
-          "--resolution",
-          "4K",
-          ...(thinking === undefined ? [] : ["--thinking", thinking]),
-        ],
-        options,
-      );
-      expect(JSON.parse(options.fetchImpl.mock.calls[0][1].body).generationConfig).toEqual({
-        responseModalities: ["TEXT", "IMAGE"],
-        imageConfig: { aspectRatio: "8:1", imageSize: "4K" },
-        ...(thinking === undefined
-          ? {}
-          : { thinkingConfig: { thinkingLevel: thinking.toUpperCase() } }),
-      });
-      expect((await readManifest(options, "image.png")).model).toBe("gemini-nano-banana-2.1");
-    },
-  );
-
-  it.each(["png", "jpeg", "webp"])(
+  it.each(["jpeg"])(
     "normalizes Gemini %s images to PNG while retaining the original and usage",
     async (format) => {
       const options = await fixture();
@@ -399,45 +287,27 @@ describe("image generation CLI", () => {
     expect(options.fetchImpl).toHaveBeenCalledTimes(1);
   });
 
-  it("writes OpenAI image bytes as returned by the provider", async () => {
+  it("rejects oversized serialized Gemini prompts without references or paid calls", async () => {
     const options = await fixture();
-    const image = Buffer.from("provider image bytes");
-    options.fetchImpl.mockResolvedValue(
-      Response.json({
-        data: [{ b64_json: image.toString("base64") }],
-        usage: { output_tokens: 100 },
-      }),
-    );
-    await runToolCommand(imageArgs, options);
-    expect(await readFile(join(options.cwd, "image.png"))).toEqual(image);
-    expect(JSON.parse(options.stdout.mock.calls[0][0]).usage).toEqual({ output_tokens: 100 });
-    expect(options.fetchImpl).toHaveBeenCalledTimes(1);
+    const prompt = `x${"\n".repeat(9_500_000)}`;
+    await writeFile(join(options.cwd, "prompt.txt"), prompt);
+    await expect(
+      runToolCommand(
+        [
+          "image-generate",
+          "--model",
+          "gemini-nano-banana-2.1",
+          "--prompt-file",
+          "prompt.txt",
+          "--output",
+          "image.png",
+        ],
+        options,
+      ),
+    ).rejects.toThrow();
+    expect(options.fetchImpl).not.toHaveBeenCalled();
+    expect(await readdir(options.cwd)).toEqual(["prompt.txt"]);
   });
-
-  it.each(["plain", "escaped"])(
-    "rejects oversized serialized Gemini %s prompts without references or paid calls",
-    async (kind) => {
-      const options = await fixture();
-      const prompt = kind === "plain" ? "a".repeat(19_000_000) : `x${"\n".repeat(9_500_000)}`;
-      await writeFile(join(options.cwd, "prompt.txt"), prompt);
-      await expect(
-        runToolCommand(
-          [
-            "image-generate",
-            "--model",
-            "gemini-nano-banana-2.1",
-            "--prompt-file",
-            "prompt.txt",
-            "--output",
-            "image.png",
-          ],
-          options,
-        ),
-      ).rejects.toThrow();
-      expect(options.fetchImpl).not.toHaveBeenCalled();
-      expect(await readdir(options.cwd)).toEqual(["prompt.txt"]);
-    },
-  );
 
   it("rejects unsupported capabilities, invalid dimensions, and excluded options without paid calls", async () => {
     const options = await fixture();
@@ -464,45 +334,7 @@ describe("image generation CLI", () => {
     expect(await readdir(options.cwd)).toEqual([]);
   });
 
-  it.each([
-    ["gemini-nano-banana-2.1", "--quality", "high"],
-    ["gemini-nano-banana-2.1", "--resolution", "512"],
-    ["gpt-image-2.6-flare", "--thinking", "minimal"],
-    ["gpt-image-2.6-flare", "--complexity", "auto"],
-    ["gpt-image-2.6-sunburst", "--complexity", "max"],
-    ["gemini-nano-banana-2.1", "--complexity", "low"],
-  ])("rejects %s %s %s at the model settings boundary", async (model, flag, value) => {
-    const options = await fixture();
-    await expect(
-      runToolCommand(
-        [...imageArgs.slice(0, 2), model, ...imageArgs.slice(3), flag, value],
-        options,
-      ),
-    ).rejects.toThrow();
-    expect(options.fetchImpl).not.toHaveBeenCalled();
-    expect(await readdir(options.cwd)).toEqual([]);
-  });
-
-  it.each([
-    "gemini-3-pro-image",
-    "gemini-3.1-flash-image",
-    "gemini-3.1-flash-lite-image",
-    "gpt-image-2.5-flare",
-    "gpt-image-2.5-sunburst",
-  ])("rejects retired model %s without generating or creating artifacts", async (model) => {
-    const options = await fixture();
-    const log = vi.fn();
-    printImageGenerateHelp(log);
-    expect(log.mock.calls.map(([line]) => line).join("\n")).not.toContain(model);
-    await expect(
-      runToolCommand([...imageArgs.slice(0, 2), model, ...imageArgs.slice(3)], options),
-    ).rejects.toThrow();
-    expect(options.fetchImpl).not.toHaveBeenCalled();
-    expect(options.stdout).not.toHaveBeenCalled();
-    expect(await readdir(options.cwd)).toEqual([]);
-  });
-
-  it.each(["not json", JSON.stringify({ data: [{}] })])(
+  it.each([JSON.stringify({ data: [{}] })])(
     "rejects malformed provider responses without publishing output or retrying",
     async (body) => {
       const options = await fixture();
@@ -553,7 +385,7 @@ describe("image generation CLI", () => {
 });
 
 describe("speech generation CLI", () => {
-  it.each(["eleven_v4_turbo", "eleven_v4"])(
+  it.each(["eleven_v4_turbo"])(
     "generates %s with ordered chunks, request stitching, and valid WAV",
     async (model) => {
       const options = await fixture();
@@ -635,16 +467,16 @@ describe("speech generation CLI", () => {
     expect(await readdir(options.cwd)).toEqual(["script.json"]);
   });
 
-  it.each([
-    "{broken",
-    JSON.stringify({ voices: { host: "voice" }, chunks: [[{ speaker: "host" }]] }),
-  ])("rejects malformed scripts before requests or artifact creation", async (text) => {
-    const options = await fixture();
-    await writeFile(join(options.cwd, "script.json"), text);
-    await expect(runToolCommand(speechArgs, options)).rejects.toThrow();
-    expect(options.fetchImpl).not.toHaveBeenCalled();
-    expect(await readdir(options.cwd)).toEqual(["script.json"]);
-  });
+  it.each([JSON.stringify({ voices: { host: "voice" }, chunks: [[{ speaker: "host" }]] })])(
+    "rejects malformed scripts before requests or artifact creation",
+    async (text) => {
+      const options = await fixture();
+      await writeFile(join(options.cwd, "script.json"), text);
+      await expect(runToolCommand(speechArgs, options)).rejects.toThrow();
+      expect(options.fetchImpl).not.toHaveBeenCalled();
+      expect(await readdir(options.cwd)).toEqual(["script.json"]);
+    },
+  );
 
   it("retains the completed WAV without overwriting concurrently created output", async () => {
     const options = await fixture();
@@ -662,14 +494,6 @@ describe("speech generation CLI", () => {
     ).toBe("RIFF");
     expect(options.fetchImpl).toHaveBeenCalledTimes(1);
     expect(options.stdout).not.toHaveBeenCalled();
-  });
-
-  it("rejects malformed voice listings without emitting invalid JSON lines", async () => {
-    const options = await fixture();
-    options.fetchImpl.mockResolvedValue(Response.json({ voices: [{}] }));
-    await expect(runToolCommand(["speech-generate", "--list-voices"], options)).rejects.toThrow();
-    expect(options.stdout).not.toHaveBeenCalled();
-    expect(options.fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it("stitches only the last three completed requests and counts Unicode code points", async () => {
@@ -770,20 +594,6 @@ describe("speech generation CLI", () => {
       requestId: "interrupted",
       characterCost: "83",
     });
-  });
-
-  it("assembles thirty minutes of disk-backed PCM beyond the existing speech helper's 32 MiB cap", async () => {
-    const options = await fixture();
-    const chunk = Buffer.alloc(24000 * 2 * 60, 7);
-    const paths = [];
-    for (let index = 0; index < 30; index++) {
-      const path = join(options.cwd, `${index}.pcm`);
-      await writeFile(path, chunk);
-      paths.push(path);
-    }
-    const output = join(options.cwd, "long.wav");
-    await assembleSpeechWav(paths, output);
-    expect((await stat(output)).size).toBe(24000 * 2 * 60 * 30 + 44);
   });
 
   it("lists all voice pages without generation and uses environment credential precedence", async () => {

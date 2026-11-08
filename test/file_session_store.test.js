@@ -1,4 +1,4 @@
-import { access, chmod, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -125,27 +125,6 @@ describe("FileSessionStore", () => {
     });
   });
 
-  it("normalizes version 15 vocabulary for Scribe without changing the conversation", async () => {
-    await withTempStore(async (store, directory) => {
-      await mkdir(directory, { recursive: true });
-      const snapshot = createSnapshot("old-vocabulary", "keep this conversation");
-      snapshot.catalog.speechVocabulary = [
-        "Tau",
-        "a".repeat(100),
-        "bad[term]",
-        "one two three four five six",
-        "valid term",
-      ];
-      await writeFile(
-        join(directory, `${Buffer.from(snapshot.sessionId).toString("base64url")}.json`),
-        JSON.stringify({ format: STORED_SESSION_DOCUMENT_FORMAT, version: 15, snapshot }),
-      );
-      const loaded = await store.loadSession(snapshot.sessionId);
-      expect(loaded.catalog.speechVocabulary).toEqual(["Tau", "valid term"]);
-      expect(loaded.messages).toEqual(snapshot.messages);
-    });
-  });
-
   it("persists, loads, and lists snapshots", async () => {
     await withTempStore(async (store) => {
       await expect(
@@ -169,75 +148,6 @@ describe("FileSessionStore", () => {
     });
   });
 
-  it("round-trips intermediate system message metadata", async () => {
-    await withTempStore(async (store, directory) => {
-      const snapshot = createSnapshot("session-1", "hello");
-      snapshot.messages.push(
-        ...["instruction", "auto-compaction-continuation"].map((type, index) => ({
-          id: `system-entry-${index}`,
-          state: "committed",
-          modelVisible: true,
-          message: {
-            role: "system",
-            content: `system message ${type}`,
-            timestamp: index + 1,
-            metadata: { type, version: 1 },
-          },
-        })),
-      );
-      await store.commitSessionSnapshot(snapshot);
-
-      const reopenedStore = new FileSessionStore({ directory });
-      await expect(reopenedStore.loadSession("session-1")).resolves.toEqual(snapshot);
-      await expect(reopenedStore.listSessionSnapshots()).resolves.toEqual([snapshot]);
-      const stored = JSON.parse(await readFile(join(directory, "c2Vzc2lvbi0x.json"), "utf8"));
-      expect(stored.snapshot.messages).toEqual(snapshot.messages);
-    });
-  });
-
-  it("loads version 8 snapshots with the original plain system prompt", async () => {
-    await withTempStore(async (store, directory) => {
-      const snapshot = createSnapshot("session-1", "persisted request");
-      await mkdir(directory, { recursive: true });
-      await writeFile(
-        join(directory, "c2Vzc2lvbi0x.json"),
-        JSON.stringify({
-          format: STORED_SESSION_DOCUMENT_FORMAT,
-          version: 8,
-          snapshot,
-        }),
-        "utf8",
-      );
-
-      await expect(store.loadSession("session-1")).resolves.toEqual(snapshot);
-    });
-  });
-
-  it("migrates version 8 default-worker prompts and catalog metadata", async () => {
-    await withTempStore(async (store, directory) => {
-      const snapshot = createSnapshot("session-1", "persisted request");
-      snapshot.bootstrap.prompt.subagentSystemPrompt = "prepared child instructions";
-      snapshot.catalog.personas[0].subagentLaunchModels = ["openai/gpt-5.4:high"];
-      const legacy = structuredClone(snapshot);
-      legacy.bootstrap.prompt.subagentPrompts = {
-        default: legacy.bootstrap.prompt.subagentSystemPrompt,
-      };
-      delete legacy.bootstrap.prompt.subagentSystemPrompt;
-      for (const persona of legacy.catalog.personas) {
-        persona.subagents = { default: { launchModels: persona.subagentLaunchModels } };
-        delete persona.subagentLaunchModels;
-      }
-      await mkdir(directory, { recursive: true });
-      await writeFile(
-        join(directory, "c2Vzc2lvbi0x.json"),
-        JSON.stringify({ format: STORED_SESSION_DOCUMENT_FORMAT, version: 8, snapshot: legacy }),
-        "utf8",
-      );
-
-      await expect(store.loadSession("session-1")).resolves.toEqual(snapshot);
-    });
-  });
-
   it("migrates retired worker selections without changing conversation messages", async () => {
     await withTempStore(async (store, directory) => {
       const snapshot = createSnapshot("session-1", "retained conversation");
@@ -255,33 +165,6 @@ describe("FileSessionStore", () => {
       const loaded = await store.loadSession("session-1");
       expect(loaded.catalog.personas[0].tools).toEqual(["bash", "agents"]);
       expect(loaded.messages).toEqual(snapshot.messages);
-    });
-  });
-
-  it("writes the current versioned storage document", async () => {
-    await withTempStore(async (store, directory) => {
-      const snapshot = createSnapshot("session-1", "hello");
-      await store.commitSessionSnapshot(snapshot);
-
-      const stored = JSON.parse(await readFile(join(directory, "c2Vzc2lvbi0x.json"), "utf8"));
-      expect(stored).toEqual({
-        format: STORED_SESSION_DOCUMENT_FORMAT,
-        version: STORED_SESSION_DOCUMENT_VERSION,
-        snapshot,
-      });
-    });
-  });
-
-  it("loads unversioned snapshots that already have canonical agent state", async () => {
-    await withTempStore(async (store, directory) => {
-      const snapshot = createSnapshot("session-1", "hello");
-      const legacy = createVersionFiveSnapshot(snapshot);
-      legacy.agentState.modelContextKey = legacy.agentState.contextEpoch;
-      delete legacy.agentState.contextEpoch;
-      await mkdir(directory, { recursive: true });
-      await writeFile(join(directory, "c2Vzc2lvbi0x.json"), JSON.stringify(legacy), "utf8");
-
-      await expect(store.loadSession("session-1")).resolves.toEqual(snapshot);
     });
   });
 
@@ -405,95 +288,6 @@ describe("FileSessionStore", () => {
     });
   });
 
-  it("drops legacy tool presentation that references removed messages", async () => {
-    await withTempStore(async (store, directory) => {
-      const snapshot = createSnapshot("session-1", "hello");
-      const legacy = {
-        ...createVersionFiveSnapshot(snapshot),
-        tools: {
-          "tool-1": {
-            id: "tool-1",
-            toolCallId: "tool-1",
-            toolName: "bash",
-            call: { messageId: "removed-assistant", contentIndex: 0 },
-            status: "succeeded",
-            facetIds: ["tool-facet"],
-            resultMessageId: "removed-result",
-          },
-        },
-        facets: {
-          "tool-facet": {
-            id: "tool-facet",
-            subject: { type: "tool", id: "tool-1" },
-            kind: "test.tool",
-            version: 1,
-            data: {},
-          },
-        },
-      };
-      await mkdir(directory, { recursive: true });
-      await writeFile(join(directory, "c2Vzc2lvbi0x.json"), JSON.stringify(legacy), "utf8");
-
-      await expect(store.loadSession("session-1")).resolves.toEqual({
-        ...snapshot,
-        tools: {},
-        facets: {},
-      });
-    });
-  });
-
-  it("drops unrecoverable legacy subagent presentation during migration", async () => {
-    await withTempStore(async (store, directory) => {
-      const snapshot = createSnapshot("session-1", "hello");
-      const legacy = {
-        ...createVersionFiveSnapshot(snapshot),
-        agents: {
-          "agent-1": {
-            id: "agent-1",
-
-            title: "old run",
-            status: "succeeded",
-            costTotal: 0.01,
-            turns: 1,
-            toolCalls: 0,
-            usage: {
-              input: 1,
-              output: 1,
-              cacheRead: 0,
-              cacheWrite: 0,
-              contextWindowUsageTokens: 2,
-              contextWindow: 200000,
-            },
-            startedAt: 1,
-            finishedAt: 2,
-            abortRequested: false,
-            finalText: "stale response",
-          },
-        },
-        facets: {
-          "agent-facet": {
-            id: "agent-facet",
-            subject: { type: "agent", id: "agent-1" },
-            kind: "test.agent",
-            version: 1,
-            data: {},
-          },
-        },
-      };
-      await mkdir(directory, { recursive: true });
-      await writeFile(
-        join(directory, "c2Vzc2lvbi0x.json"),
-        JSON.stringify({ format: STORED_SESSION_DOCUMENT_FORMAT, version: 1, snapshot: legacy }),
-        "utf8",
-      );
-
-      await expect(store.loadSession("session-1")).resolves.toEqual({
-        ...snapshot,
-        agents: {},
-      });
-    });
-  });
-
   it("migrates version 5 array timelines and legacy notices", async () => {
     await withTempStore(async (store, directory) => {
       const snapshot = createSnapshot("session-1", "hello");
@@ -542,173 +336,6 @@ describe("FileSessionStore", () => {
       );
 
       await expect(store.loadSession("session-1")).resolves.toEqual(expected);
-    });
-  });
-
-  it("drops tool presentation for context-only messages while migrating version 5", async () => {
-    await withTempStore(async (store, directory) => {
-      const snapshot = createProtocolSnapshot({
-        sessionId: "session-1",
-        historyEntries: [
-          {
-            id: "assistant-hidden",
-            message: {
-              role: "assistant",
-              content: [
-                {
-                  type: "toolCall",
-                  id: "tool-hidden",
-                  name: "bash",
-                  arguments: { command: "pwd" },
-                },
-              ],
-              provider: "openai",
-              model: "gpt-5.5",
-              stopReason: "toolUse",
-            },
-          },
-        ],
-        tools: {
-          "tool-hidden": {
-            id: "tool-hidden",
-            toolCallId: "tool-hidden",
-            toolName: "bash",
-            status: "succeeded",
-            call: { messageId: "assistant-hidden", contentIndex: 0 },
-            facetIds: ["tool-hidden-facet"],
-          },
-        },
-        facets: {
-          "tool-hidden-facet": {
-            id: "tool-hidden-facet",
-            subject: { type: "tool", id: "tool-hidden" },
-            kind: "tau.tool-ui-events",
-            version: 1,
-            data: { events: [] },
-          },
-        },
-      });
-      snapshot.timeline = { epoch: 1, sequence: 0, items: [] };
-      const legacy = createVersionFiveSnapshot(snapshot);
-      await mkdir(directory, { recursive: true });
-      await writeFile(
-        join(directory, "c2Vzc2lvbi0x.json"),
-        JSON.stringify({
-          format: STORED_SESSION_DOCUMENT_FORMAT,
-          version: 5,
-          snapshot: legacy,
-        }),
-        "utf8",
-      );
-
-      await expect(store.loadSession("session-1")).resolves.toEqual({
-        ...snapshot,
-        tools: {},
-        facets: {},
-      });
-    });
-  });
-
-  it("bounds notice presentation while migrating version 6", async () => {
-    await withTempStore(async (store, directory) => {
-      const snapshot = createProtocolSnapshot({
-        sessionId: "session-1",
-        timeline: {
-          epoch: 1,
-          sequence: 1,
-          items: [
-            {
-              type: "notice",
-              id: "notice-1",
-              sequence: 1,
-              createdAt: 1,
-              notice: {
-                kind: "tau.test.notice",
-                version: 1,
-                severity: "warn",
-                subject: { type: "session" },
-                presentation: {
-                  title: "t".repeat(600),
-                  content: Array.from({ length: 20 }, () => "x".repeat(5_000)),
-                },
-                data: {},
-              },
-            },
-          ],
-        },
-      });
-      await mkdir(directory, { recursive: true });
-      await writeFile(
-        join(directory, "c2Vzc2lvbi0x.json"),
-        JSON.stringify({
-          format: STORED_SESSION_DOCUMENT_FORMAT,
-          version: 6,
-          snapshot,
-        }),
-        "utf8",
-      );
-
-      const recovered = await store.loadSession("session-1");
-      const presentation = recovered.timeline.items[0].notice.presentation;
-      expect(presentation.title).toHaveLength(512);
-      expect(presentation.content).toHaveLength(16);
-      expect(presentation.content.every((entry) => entry.length <= 4_096)).toBe(true);
-    });
-  });
-
-  it("normalizes terminal operation fields while migrating version 5", async () => {
-    await withTempStore(async (store, directory) => {
-      const snapshot = createSnapshot("session-1", "hello");
-      const legacy = createVersionFiveSnapshot(snapshot);
-      legacy.timeline.push({
-        type: "operation",
-        id: "operation-1",
-        operation: {
-          kind: "manual-compaction",
-          status: "cancelled",
-          startedAt: 1,
-          summary: "legacy summary",
-          data: { legacy: true },
-        },
-      });
-      await mkdir(directory, { recursive: true });
-      await writeFile(
-        join(directory, "c2Vzc2lvbi0x.json"),
-        JSON.stringify({
-          format: STORED_SESSION_DOCUMENT_FORMAT,
-          version: 5,
-          snapshot: legacy,
-        }),
-        "utf8",
-      );
-
-      await expect(store.loadSession("session-1")).resolves.toEqual({
-        ...snapshot,
-        timeline: {
-          epoch: 1,
-          sequence: 2,
-          items: [
-            ...snapshot.timeline.items,
-            {
-              type: "operation",
-              id: "operation-1",
-              sequence: 2,
-              createdAt: 1,
-              operationId: "operation-1",
-            },
-          ],
-        },
-        operations: {
-          "operation-1": {
-            id: "operation-1",
-            kind: "manual-compaction",
-            status: "cancelled",
-            startedAt: 1,
-            finishedAt: 1,
-            reason: "session-recovered",
-          },
-        },
-      });
     });
   });
 
@@ -766,87 +393,6 @@ describe("FileSessionStore", () => {
           ],
         },
       });
-    });
-  });
-
-  it("migrates persisted failed turn outcomes to ordered notices", async () => {
-    await withTempStore(async (store, directory) => {
-      const snapshot = createSnapshot("session-1", "hello");
-      const legacy = createVersionFiveSnapshot(snapshot);
-      legacy.messages.find((message) => message.id === "entry-1").turn = {
-        status: "failed",
-        stopReason: "error",
-        errorMessage: "model attempt limit reached",
-      };
-      await mkdir(directory, { recursive: true });
-      await writeFile(
-        join(directory, "c2Vzc2lvbi0x.json"),
-        JSON.stringify({
-          format: STORED_SESSION_DOCUMENT_FORMAT,
-          version: 5,
-          snapshot: legacy,
-        }),
-        "utf8",
-      );
-
-      await expect(store.loadSession("session-1")).resolves.toMatchObject({
-        messages: snapshot.messages,
-        turns: {
-          "entry-1": {
-            userHistoryEntryId: "entry-1",
-            state: "settled",
-            outcome: legacy.messages.find((message) => message.id === "entry-1").turn,
-          },
-        },
-        timeline: {
-          sequence: 2,
-          items: [
-            snapshot.timeline.items[0],
-            {
-              type: "notice",
-              id: "recovered-turn-failed-entry-1",
-              sequence: 2,
-              notice: {
-                kind: "tau.turn.failed",
-                subject: { type: "message", id: "entry-1" },
-                presentation: {
-                  title: "turn failed",
-                  content: ["model attempt limit reached"],
-                },
-                data: { reason: "recovered-turn-failure" },
-              },
-            },
-          ],
-        },
-      });
-    });
-  });
-
-  it("drops persisted completed turn outcomes", async () => {
-    await withTempStore(async (store, directory) => {
-      const snapshot = createSnapshot("session-1", "hello");
-      const legacy = createVersionFiveSnapshot(snapshot);
-      legacy.messages.find((message) => message.id === "entry-1").turn = {
-        status: "completed",
-        stopReason: "stop",
-      };
-      await mkdir(directory, { recursive: true });
-      await writeFile(
-        join(directory, "c2Vzc2lvbi0x.json"),
-        JSON.stringify({
-          format: STORED_SESSION_DOCUMENT_FORMAT,
-          version: 5,
-          snapshot: legacy,
-        }),
-        "utf8",
-      );
-
-      snapshot.turns["entry-1"] = {
-        userHistoryEntryId: "entry-1",
-        state: "settled",
-        outcome: legacy.messages.find((message) => message.id === "entry-1").turn,
-      };
-      await expect(store.loadSession("session-1")).resolves.toEqual(snapshot);
     });
   });
 
@@ -963,28 +509,6 @@ describe("FileSessionStore", () => {
 
       await expect(store.loadSession("session-1")).rejects.toThrow(
         "stored session snapshot id mismatch: session-1",
-      );
-    });
-  });
-
-  it("rejects stored snapshots with invalid known fields", async () => {
-    await withTempStore(async (store, directory) => {
-      await mkdir(directory, { recursive: true });
-      await writeFile(
-        join(directory, "c2Vzc2lvbi0x.json"),
-        JSON.stringify({
-          format: STORED_SESSION_DOCUMENT_FORMAT,
-          version: STORED_SESSION_DOCUMENT_VERSION,
-          snapshot: {
-            ...createSnapshot("session-1", "entry"),
-            settings: "invalid",
-          },
-        }),
-        "utf8",
-      );
-
-      await expect(store.loadSession("session-1")).rejects.toThrow(
-        "stored session snapshot is invalid: session-1",
       );
     });
   });

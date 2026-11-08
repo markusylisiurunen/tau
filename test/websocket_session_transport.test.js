@@ -6,7 +6,7 @@ import {
   WebSocketSessionServer,
 } from "../dist/core/modes/websocket_server.js";
 import { SESSION_PROTOCOL_VERSION } from "../dist/protocol/session_protocol.js";
-import { createTauSdkClientFromTransport } from "../dist/sdk/index.js";
+import { createTauSdkClientFromTransport } from "../dist/sdk/session.js";
 import { WebSocketSessionProtocolTransport } from "../dist/transport/websocket_session_transport.js";
 import {
   createProtocolBootstrap,

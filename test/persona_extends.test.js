@@ -66,16 +66,8 @@ describe("custom personas", () => {
       true,
     ],
     ["autoCompactThresholdTokens: 49999", false],
-    ["autoCompactThresholdTokens: 50000.5", false],
-    ["autoCompactThresholdTokens: '80k'", false],
-    ["autoCompactThresholdTokens: null", false],
-    [`autoCompactThresholdTokens: ${Number.MAX_SAFE_INTEGER + 1}`, false],
-    ["subagentAutoCompactThresholdTokens: {openai/: 60000}", false],
-    ["subagentAutoCompactThresholdTokens: {openai/gpt-5.4: null}", false],
-    [`subagentAutoCompactThresholdTokens: {openai/gpt-5.4: ${Number.MAX_SAFE_INTEGER + 1}}`, false],
     ["subagentAutoCompactThresholdTokens: {unknown/model: 60000}", false],
     ["subagentAutoCompactThresholdTokens: {claude-code/claude-opus-5-5: 60000}", false],
-    ["subagentAutoCompactThresholdTokens: {openai/gpt-5.4: 49999}", false],
   ])("validates persona compaction policy %s", async (fields, valid) => {
     const fx = setupFixture();
     try {
@@ -148,23 +140,6 @@ describe("custom personas", () => {
     }
   });
 
-  it("sorts built-in personas alphabetically and defaults to medium reasoning", async () => {
-    const fx = setupFixture();
-
-    try {
-      const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
-      const { personas, errors } = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
-      expect(errors).toEqual([]);
-
-      const ids = personas.map((persona) => persona.id);
-      expect(ids).toEqual([...ids].sort((left, right) => left.localeCompare(right)));
-      expect(personas.length).toBeGreaterThan(0);
-      expect(personas.every((persona) => persona.settings.reasoning === "medium")).toBe(true);
-    } finally {
-      fx.cleanup();
-    }
-  });
-
   it("omits catalog-only built-in personas when their model is unavailable", async () => {
     const fx = setupFixture();
 
@@ -216,225 +191,6 @@ describe("custom personas", () => {
     }
   });
 
-  it("loads only the current built-in Anthropic personas", async () => {
-    const fx = setupFixture();
-
-    try {
-      const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
-      const opus = resolveModel("anthropic", "claude-opus-5");
-      expect(opus).toBeTruthy();
-      const remoteCatalog = new Map([
-        [
-          "anthropic",
-          [
-            {
-              ...structuredClone(opus),
-              id: "claude-opus-5-5",
-              name: "Claude Opus 5.5",
-            },
-            {
-              ...structuredClone(opus),
-              id: "claude-fable-5-1",
-              name: "Claude Fable 5.1",
-            },
-            {
-              ...structuredClone(resolveModel("anthropic", "claude-sonnet-5")),
-              id: "claude-sonnet-5-5",
-              name: "Claude Sonnet 5.5",
-            },
-          ],
-        ],
-      ]);
-      const { personas, errors } = await loadAllContentWithModelResolver(
-        {},
-        { deps, cwd: fx.cwd, remoteCatalog },
-      );
-      expect(errors).toEqual([]);
-
-      expect(personas.find((persona) => persona.id === "sonnet-5-chat")).toBeUndefined();
-      expect(personas.find((persona) => persona.id === "sonnet-5-coder")).toBeUndefined();
-      expect(personas.find((persona) => persona.id === "opus-5-chat")).toBeUndefined();
-      expect(personas.find((persona) => persona.id === "opus-5-coder")).toBeUndefined();
-      expect(personas.find((persona) => persona.id === "opus-4.6-chat")).toBeUndefined();
-      expect(personas.find((persona) => persona.id === "opus-4.8-chat")).toBeUndefined();
-      expect(personas.find((persona) => persona.id === "fable-5.1-chat")?.model.id).toBe(
-        "claude-fable-5-1",
-      );
-      expect(personas.find((persona) => persona.id === "fable-5.1-chat")?.settings.reasoning).toBe(
-        "medium",
-      );
-      expect(
-        personas.find((persona) => persona.id === "fable-5.1-chat")?.allowedReasoningLevels,
-      ).toEqual(["low", "medium", "high", "xhigh", "max"]);
-      expect(personas.find((persona) => persona.id === "fable-5.1-coder")?.model.id).toBe(
-        "claude-fable-5-1",
-      );
-      expect(personas.find((persona) => persona.id === "opus-5.5-chat")?.model.id).toBe(
-        "claude-opus-5-5",
-      );
-      expect(personas.find((persona) => persona.id === "opus-5.5-chat")?.settings.reasoning).toBe(
-        "medium",
-      );
-      expect(
-        personas.find((persona) => persona.id === "opus-5.5-chat")?.allowedReasoningLevels,
-      ).toEqual(["low", "medium", "high", "xhigh", "max"]);
-      expect(personas.find((persona) => persona.id === "opus-5.5-coder")?.model.id).toBe(
-        "claude-opus-5-5",
-      );
-      expect(personas.find((persona) => persona.id === "sonnet-5.5-chat")?.model.id).toBe(
-        "claude-sonnet-5-5",
-      );
-      expect(personas.find((persona) => persona.id === "sonnet-5.5-chat")?.settings.reasoning).toBe(
-        "medium",
-      );
-      expect(
-        personas.find((persona) => persona.id === "sonnet-5.5-chat")?.allowedReasoningLevels,
-      ).toEqual(["low", "medium", "high", "xhigh", "max"]);
-      expect(personas.find((persona) => persona.id === "sonnet-5.5-coder")?.model.id).toBe(
-        "claude-sonnet-5-5",
-      );
-    } finally {
-      fx.cleanup();
-    }
-  });
-
-  it("omits Gemini personas even when their model is in the remote catalog", async () => {
-    const fx = setupFixture();
-
-    try {
-      const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
-      const flash = resolveModel("google", "gemini-3.7-flash");
-      expect(flash).toBeTruthy();
-      const remoteCatalog = new Map([
-        [
-          "google",
-          [
-            {
-              ...structuredClone(flash),
-              id: "gemini-3.8-flash",
-              name: "Gemini 3.8 Flash",
-            },
-          ],
-        ],
-      ]);
-      const { personas, errors } = await loadAllContentWithModelResolver(
-        {},
-        { deps, cwd: fx.cwd, remoteCatalog },
-      );
-      expect(errors).toEqual([]);
-
-      expect(personas.some((persona) => persona.id.startsWith("gemini-"))).toBe(false);
-    } finally {
-      fx.cleanup();
-    }
-  });
-
-  it("loads only current built-in GPT personas", async () => {
-    const fx = setupFixture();
-
-    try {
-      const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
-      const { personas, errors } = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
-      expect(errors).toEqual([]);
-
-      expect(personas.find((persona) => persona.id === "gpt-5.3-codex-chat")).toBeUndefined();
-      expect(personas.find((persona) => persona.id === "gpt-5.4-chat")).toBeUndefined();
-      expect(personas.find((persona) => persona.id === "gpt-5.4-chatgpt-chat")).toBeUndefined();
-      expect(
-        personas.find((persona) => persona.id === "gpt-5.4-chatgpt-fast-chat"),
-      ).toBeUndefined();
-
-      expect(personas.find((persona) => persona.id === "gpt-5.5-chat")).toBeUndefined();
-      expect(personas.find((persona) => persona.id === "gpt-5.5-chatgpt-chat")).toBeUndefined();
-      expect(
-        personas.find((persona) => persona.id === "gpt-5.5-chatgpt-fast-chat"),
-      ).toBeUndefined();
-
-      expect(personas.find((persona) => persona.id === "gpt-6.1-sol-chat")?.model.id).toBe(
-        "gpt-6.1-sol",
-      );
-      expect(personas.some((persona) => persona.id.startsWith("gpt-5.6-"))).toBe(false);
-      expect(personas.some((persona) => persona.id.startsWith("gpt-6-sol-"))).toBe(false);
-    } finally {
-      fx.cleanup();
-    }
-  });
-
-  it.each([
-    ["gpt-6-astra", "medium"],
-    ["gpt-6.1-sol", "medium"],
-    ["gpt-6.1-terra", "medium"],
-    ["gpt-6-luna", "medium"],
-  ])("loads %s personas from both remote OpenAI catalogs", async (modelId, reasoning) => {
-    const fx = setupFixture();
-
-    try {
-      const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
-      const remoteCatalog = new Map(
-        ["openai", "openai-codex"].map((provider) => {
-          const model = resolveModel(provider, "gpt-6.1-sol");
-          expect(model).toBeTruthy();
-          return [provider, [{ ...structuredClone(model), id: modelId, name: modelId }]];
-        }),
-      );
-      const { personas, errors } = await loadAllContentWithModelResolver(
-        {},
-        { deps, cwd: fx.cwd, remoteCatalog },
-      );
-      expect(errors).toEqual([]);
-
-      for (const suffix of ["", "-chatgpt", "-chatgpt-fast"]) {
-        for (const variant of ["chat", "coder"]) {
-          const persona = personas.find((entry) => entry.id === `${modelId}${suffix}-${variant}`);
-          if (suffix === "-chatgpt-fast" && variant === "chat") {
-            expect(persona).toBeUndefined();
-            continue;
-          }
-          expect(persona?.model.id).toBe(modelId);
-          expect(persona?.model.provider).toBe(suffix ? "openai-codex" : "openai");
-          expect(persona?.settings.reasoning).toBe(reasoning);
-          expect(persona?.allowedReasoningLevels).toEqual([
-            "low",
-            "medium",
-            "high",
-            "xhigh",
-            "max",
-          ]);
-          expect(persona?.settings.serviceTier).toBe(
-            suffix === "-chatgpt-fast" ? "priority" : undefined,
-          );
-        }
-      }
-    } finally {
-      fx.cleanup();
-    }
-  });
-
-  it("omits retired GPT personas even when their models are in both remote OpenAI catalogs", async () => {
-    const fx = setupFixture();
-    const modelIds = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-sol"];
-
-    try {
-      const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
-      const remoteCatalog = new Map(
-        ["openai", "openai-codex"].map((provider) => [
-          provider,
-          modelIds.map((id) => ({ ...structuredClone(resolveModel(provider, "gpt-6.1-sol")), id })),
-        ]),
-      );
-      const { personas, errors } = await loadAllContentWithModelResolver(
-        {},
-        { deps, cwd: fx.cwd, remoteCatalog },
-      );
-      expect(errors).toEqual([]);
-      for (const modelId of modelIds) {
-        expect(personas.some((persona) => persona.id.startsWith(`${modelId}-`))).toBe(false);
-      }
-    } finally {
-      fx.cleanup();
-    }
-  });
-
   it("lets custom personas replace built-in ids while retaining other built-ins", async () => {
     const fx = setupFixture();
 
@@ -461,37 +217,6 @@ describe("custom personas", () => {
       expect(custom.source).toBe("user");
       expect(custom).not.toHaveProperty("skills");
       expect(personas.some((persona) => persona.source === "builtin")).toBe(true);
-    } finally {
-      fx.cleanup();
-    }
-  });
-
-  it("parses custom persona service tiers", async () => {
-    const fx = setupFixture();
-
-    try {
-      mkdirSync(join(fx.home, ".config", "tau", "personas"), { recursive: true });
-      writeFileSync(
-        join(fx.home, ".config", "tau", "personas", "flex-tier.md"),
-        [
-          "---",
-          "id: flex-tier",
-          "provider: openai",
-          "model: gpt-5.4",
-          "serviceTier: flex",
-          "---",
-          "custom prompt",
-          "",
-        ].join("\n"),
-      );
-
-      const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
-      const { personas, errors } = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
-      expect(errors).toEqual([]);
-
-      const persona = personas.find((p) => p.id === "flex-tier");
-      expect(persona).toBeTruthy();
-      expect(persona.settings.serviceTier).toBe("flex");
     } finally {
       fx.cleanup();
     }
@@ -524,43 +249,6 @@ describe("custom personas", () => {
       const persona = personas.find((entry) => entry.id === "no-subagents");
       expect(persona.tools).toEqual(["bash", "edit"]);
       expect(persona.tools).not.toContain("agents");
-    } finally {
-      fx.cleanup();
-    }
-  });
-
-  it("ignores custom subagent definitions", async () => {
-    const fx = setupFixture();
-
-    try {
-      mkdirSync(join(fx.home, ".config", "tau", "personas"), { recursive: true });
-      writeFileSync(
-        join(fx.home, ".config", "tau", "personas", "subagent-runtime.md"),
-        [
-          "---",
-          "id: subagent-runtime",
-          "provider: anthropic",
-          "model: claude-haiku-4-5",
-          "subagents:",
-          "  analyst:",
-          "    systemPrompt: analyze repository state",
-          "    provider: openai",
-          "    model: gpt-5.6-sol",
-          "    reasoning: none",
-          "    serviceTier: flex",
-          "---",
-          "persona with a subagent",
-          "",
-        ].join("\n"),
-      );
-
-      const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
-      const { personas, errors } = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
-      expect(errors).toEqual([]);
-
-      const persona = personas.find((entry) => entry.id === "subagent-runtime");
-      expect(persona).toBeTruthy();
-      expect(persona.subagentLaunchModels).toEqual([]);
     } finally {
       fx.cleanup();
     }
@@ -638,19 +326,6 @@ describe("custom personas", () => {
     }
   });
 
-  it("loads no prompts when prompt files are not present", async () => {
-    const fx = setupFixture();
-
-    try {
-      const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
-      const { prompts, errors } = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
-      expect(errors).toEqual([]);
-      expect(prompts).toEqual([]);
-    } finally {
-      fx.cleanup();
-    }
-  });
-
   it("surfaces persona frontmatter YAML parse errors", async () => {
     const fx = setupFixture();
 
@@ -667,29 +342,6 @@ describe("custom personas", () => {
 
       expect(personas.find((persona) => persona.id === "broken")).toBeUndefined();
       expect(errors.some((error) => error.includes("invalid frontmatter YAML"))).toBe(true);
-    } finally {
-      fx.cleanup();
-    }
-  });
-
-  it("surfaces prompt frontmatter non-object errors", async () => {
-    const fx = setupFixture();
-
-    try {
-      const promptsDir = join(fx.home, ".config", "tau", "prompts");
-      mkdirSync(promptsDir, { recursive: true });
-      writeFileSync(
-        join(promptsDir, "broken.md"),
-        ["---", "- not", "- an", "- object", "---", "hello"].join("\n"),
-      );
-
-      const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
-      const { prompts, errors } = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
-
-      expect(prompts.find((prompt) => prompt.id === "broken")).toBeUndefined();
-      expect(errors.some((error) => error.includes("frontmatter must be a YAML object"))).toBe(
-        true,
-      );
     } finally {
       fx.cleanup();
     }

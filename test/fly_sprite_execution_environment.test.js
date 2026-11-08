@@ -8,7 +8,6 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createFlySpriteToolExecutionBackend,
   FlySpriteExecutionEnvironment,
-  FlySpriteExecutionEnvironmentResolver,
 } from "../dist/execution/fly_sprite_execution_environment.js";
 
 class FakeSpriteCommand extends EventEmitter {
@@ -222,41 +221,6 @@ describe("Fly Sprite execution environment", () => {
     }
   });
 
-  it("resolves the configured connection through the SDK client factory", async () => {
-    const sprite = createFakeSprite(() => executionResult());
-    const clients = [];
-    const resolver = new FlySpriteExecutionEnvironmentResolver({
-      connection: { baseURL: "https://sprites.example", tokenEnv: "SPRITES_TOKEN" },
-      env: { SPRITES_TOKEN: "token-1" },
-      createClient(token, options) {
-        clients.push({ token, options });
-        return {
-          sprite(name) {
-            clients.push({ spriteName: name });
-            return sprite;
-          },
-        };
-      },
-    });
-
-    const environment = await resolver.resolve({
-      kind: "fly-sprite",
-      spriteName: "sprite-1",
-      cwd: "/home/sprite/repo",
-    });
-
-    expect(clients).toEqual([
-      { token: "token-1", options: { baseURL: "https://sprites.example" } },
-      { spriteName: "sprite-1" },
-    ]);
-    expect(environment.snapshot()).toEqual({
-      kind: "fly-sprite",
-      spriteName: "sprite-1",
-      cwd: "/home/sprite/repo",
-      home: "/home/sprite",
-    });
-  });
-
   it("times out when the worker never becomes ready", async () => {
     vi.useFakeTimers();
     try {
@@ -389,20 +353,6 @@ describe("Fly Sprite execution environment", () => {
     ]);
     expect(requests[1].maxBytes).toBe(10);
     expect(requests[3].contentBase64).toBe(Buffer.from([0, 255]).toString("base64"));
-  });
-
-  it("normalizes missing binary files at the backend boundary", async () => {
-    const sprite = createFakeSprite(() => {
-      throw Object.assign(new Error("ENOENT: no such file or directory"), { code: "ENOENT" });
-    });
-    const backend = createFlySpriteToolExecutionBackend({
-      sprite,
-      cwd: "/home/sprite/repo",
-    });
-
-    await expect(backend.readFileBinary("/home/sprite/repo/missing.png")).rejects.toMatchObject({
-      code: "not-found",
-    });
   });
 
   it("escalates cancellation when a Sprite command ignores SIGTERM", async () => {

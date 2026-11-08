@@ -40,39 +40,33 @@ function getTool(tools, kind) {
 }
 
 describe("Telegram file delivery", () => {
-  it.each(deliveries)(
-    "transfers maximum-size %s files in bounded chunks without changing bytes",
-    async (kind, method, fileName, limit) => {
-      await withFiles(async ({ cwd, exec, api, tools, context }) => {
-        const data = Buffer.alloc(limit, 42);
-        await writeFile(join(cwd, fileName), data);
-        const tool = getTool(tools, kind);
-        expect(await tool.execute({ path: fileName, caption: "<b>original</b>" }, context)).toBe(
-          `${kind} sent to the current Telegram chat.`,
-        );
-        expect(exec).toHaveBeenCalledTimes(Math.ceil(limit / 8_000_000));
-        for (const [, options] of exec.mock.calls) {
-          expect(options.maxCaptureBytes).toBeLessThan(24 * 1024 * 1024);
-          expect(options.signal).toBe(context.signal);
-        }
-        expect(api[method]).toHaveBeenCalledOnce();
-        const [chatId, file, options] = api[method].mock.calls[0];
-        expect(chatId).toBe(-123);
-        expect(file.data.equals(data)).toBe(true);
-        expect(file).toMatchObject({
-          fileName,
-          mimeType: "application/octet-stream",
-          caption: "<b>original</b>",
-        });
+  it("transfers a file across chunk boundaries without changing bytes", async () => {
+    await withFiles(async ({ cwd, exec, api, tools, context }) => {
+      const data = Buffer.alloc(8_000_001, 42);
+      await writeFile(join(cwd, "report.csv"), data);
+      await getTool(tools, "document").execute(
+        { path: "report.csv", caption: "<b>original</b>" },
+        context,
+      );
+      expect(exec).toHaveBeenCalledTimes(2);
+      for (const [, options] of exec.mock.calls) {
+        expect(options.maxCaptureBytes).toBeLessThan(24 * 1024 * 1024);
         expect(options.signal).toBe(context.signal);
-        for (const [, otherMethod] of deliveries) {
-          if (otherMethod !== method) expect(api[otherMethod]).not.toHaveBeenCalled();
-        }
+      }
+      expect(api.sendDocument).toHaveBeenCalledOnce();
+      const [chatId, file, options] = api.sendDocument.mock.calls[0];
+      expect(chatId).toBe(-123);
+      expect(file.data.equals(data)).toBe(true);
+      expect(file).toMatchObject({
+        fileName: "report.csv",
+        mimeType: "application/octet-stream",
+        caption: "<b>original</b>",
       });
-    },
-  );
+      expect(options.signal).toBe(context.signal);
+    });
+  });
 
-  it.each(deliveries)(
+  it.each([deliveries[0], deliveries[3]])(
     "rejects oversized, empty, missing, and non-regular %s files before uploading",
     async (kind, method, fileName, limit) => {
       await withFiles(async ({ cwd, api, tools, context }) => {

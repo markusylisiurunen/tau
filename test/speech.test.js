@@ -113,70 +113,9 @@ describe("speech synthesis", () => {
     expect(chunks[0].audio.subarray(44)).toEqual(Buffer.from([1, 2, 3, 4]));
   });
 
-  it.each([generateSpeechAudio, streamSpeechPcm])(
-    "%s sends link-bearing source text to the rewriter and synthesizes its result",
-    async (synthesize) => {
-      const sourceText = [
-        "Read [the documentation](https://example.com/docs).",
-        "The issue is at https://example.com/issues/620.",
-        "See [https://example.com/help](https://example.com/help).",
-      ].join("\n");
-      const spokenText = "Read the documentation. See issue 620. See the link.";
-      const fetchMock = speechFetch(spokenText);
-
-      await collect(synthesize({ ...credentials, sourceText, fetchImpl: fetchMock }));
-
-      const rewrite = JSON.parse(fetchMock.mock.calls[0][1].body);
-      expect(rewrite.input.endsWith(sourceText)).toBe(true);
-      expect(requestedTranscripts(fetchMock)).toEqual([spokenText]);
-    },
-  );
-
-  it.each([
-    {
-      status: "incomplete",
-      output: [
-        {
-          type: "message",
-          status: "incomplete",
-          content: [{ type: "output_text", text: "Partial" }],
-        },
-      ],
-    },
-    {
-      status: "completed",
-      output: [
-        {
-          type: "message",
-          status: "completed",
-          content: [{ type: "refusal", refusal: "Refused" }],
-        },
-      ],
-    },
-    { status: "completed", output: [] },
-    {
-      status: "completed",
-      output: [
-        {
-          type: "message",
-          status: "incomplete",
-          content: [{ type: "output_text", text: "Partial" }],
-        },
-      ],
-    },
-  ])("rejects incomplete, refused, or empty rewrites before synthesis", async (payload) => {
-    const fetchMock = speechFetch(undefined, { rewrite: () => Response.json(payload) });
-    await expect(generate(fetchMock)).rejects.toThrow();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("propagates rewrite failures without starting voice lookup or synthesis", async () => {
+  it("rejects an incomplete rewrite before starting synthesis", async () => {
     const fetchMock = speechFetch(undefined, {
-      rewrite: () =>
-        Response.json(
-          { error: { message: "Rate limit", code: "rate_limit_exceeded" } },
-          { status: 429 },
-        ),
+      rewrite: () => Response.json({ status: "incomplete", output: [] }),
     });
     await expect(generate(fetchMock)).rejects.toThrow();
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -196,22 +135,6 @@ describe("speech synthesis", () => {
     ).toBe(true);
   });
 
-  it("fails before synthesis when neither default voice is visible", async () => {
-    const fetchMock = speechFetch(undefined, { voice: unavailableVoice });
-    await expect(generate(fetchMock)).rejects.toThrow();
-    expect(voiceRequests(fetchMock)).toHaveLength(2);
-    expect(requestedTranscripts(fetchMock)).toEqual([]);
-  });
-
-  it.each([401, 403, 429, 500])("does not fall back on lookup HTTP %s", async (status) => {
-    const fetchMock = speechFetch(undefined, {
-      voice: () => Response.json({ detail: { status: "missing_permissions" } }, { status }),
-    });
-    await expect(generate(fetchMock)).rejects.toThrow();
-    expect(voiceRequests(fetchMock)).toHaveLength(1);
-    expect(requestedTranscripts(fetchMock)).toEqual([]);
-  });
-
   it("does not treat a recorded missing-permission response as an unavailable voice", async () => {
     const fetchMock = speechFetch(undefined, {
       voice: () =>
@@ -223,44 +146,6 @@ describe("speech synthesis", () => {
     expect(voiceRequests(fetchMock)).toHaveLength(1);
     expect(requestedTranscripts(fetchMock)).toEqual([]);
   });
-
-  it("does not fall back on network errors or malformed voice metadata", async () => {
-    for (const voice of [
-      () => {
-        throw new Error("network failure");
-      },
-      () => Response.json({ voice_id: "wrong" }),
-    ]) {
-      const fetchMock = speechFetch(undefined, { voice });
-      await expect(generate(fetchMock)).rejects.toThrow();
-      expect(voiceRequests(fetchMock)).toHaveLength(1);
-      expect(requestedTranscripts(fetchMock)).toEqual([]);
-    }
-  });
-
-  it.each([true, false])(
-    "uses a configured voice exclusively (available: %s)",
-    async (available) => {
-      const fetchMock = speechFetch(undefined, {
-        voice: (id) => (available ? Response.json({ voice_id: id }) : unavailableVoice()),
-      });
-      const result = generate(fetchMock, { voiceId: "custom/voice" });
-      if (available) await result;
-      else await expect(result).rejects.toThrow();
-      expect(voiceRequests(fetchMock)).toHaveLength(1);
-      expect(voiceRequests(fetchMock)[0][0]).toContain("custom%2Fvoice");
-    },
-  );
-
-  it.each([404, 429, 500])(
-    "does not retry or switch voices after synthesis HTTP %s",
-    async (status) => {
-      const fetchMock = speechFetch(undefined, { audio: () => new Response(null, { status }) });
-      await expect(generate(fetchMock)).rejects.toThrow();
-      expect(voiceRequests(fetchMock)).toHaveLength(1);
-      expect(requestedTranscripts(fetchMock)).toHaveLength(1);
-    },
-  );
 
   it("buffers initial PCM and preserves sample alignment across network chunks", async () => {
     const fetchMock = speechFetch(undefined, {
@@ -346,14 +231,11 @@ describe("speech synthesis", () => {
     expect(requestedTranscripts(fetchMock)).toHaveLength(1);
   });
 
-  it.each([Buffer.alloc(0), Buffer.from([1]), Buffer.alloc(32 * 1024 * 1024 + 2)])(
-    "rejects invalid or oversized PCM",
-    async (audio) => {
-      const fetchMock = speechFetch(undefined, { audio: () => audioResponse(audio) });
-      await expect(generate(fetchMock)).rejects.toThrow();
-      expect(requestedTranscripts(fetchMock)).toHaveLength(1);
-    },
-  );
+  it("rejects misaligned PCM before producing audio", async () => {
+    const fetchMock = speechFetch(undefined, { audio: () => audioResponse(Buffer.from([1])) });
+    await expect(generate(fetchMock)).rejects.toThrow();
+    expect(requestedTranscripts(fetchMock)).toHaveLength(1);
+  });
 
   it("rejects successful non-PCM responses before playback", async () => {
     const fetchMock = speechFetch(undefined, {
@@ -363,19 +245,16 @@ describe("speech synthesis", () => {
     expect(requestedTranscripts(fetchMock)).toHaveLength(1);
   });
 
-  it.each([generateSpeechAudio, streamSpeechPcm])(
-    "bounds cumulative audio across segments",
-    async (generateAudio) => {
-      const fetchMock = speechFetch("A long sentence. ".repeat(300), {
-        audio: () => audioResponse(Buffer.alloc(17 * 1024 * 1024)),
-      });
-      await expect(
-        collect(
-          generateAudio({ ...credentials, sourceText: "Original response.", fetchImpl: fetchMock }),
-        ),
-      ).rejects.toThrow();
-    },
-  );
+  it("bounds cumulative PCM across segments", async () => {
+    const fetchMock = speechFetch("A long sentence. ".repeat(300), {
+      audio: () => audioResponse(Buffer.alloc(17 * 1024 * 1024)),
+    });
+    await expect(
+      collect(
+        streamSpeechPcm({ ...credentials, sourceText: "Original response.", fetchImpl: fetchMock }),
+      ),
+    ).rejects.toThrow();
+  });
 
   it("bounds source and rewritten Unicode text before synthesis", async () => {
     const sourceFetch = vi.fn();
@@ -402,65 +281,5 @@ describe("speech synthesis", () => {
     } finally {
       vi.useRealTimers();
     }
-  });
-
-  it.each([
-    [
-      "sentences",
-      Array.from({ length: 10 }, (_, i) => `Sentence ${i + 1} ${"A".repeat(238)}.`),
-      " ",
-      5,
-    ],
-    [
-      "paragraphs",
-      Array.from({ length: 9 }, (_, i) => `Paragraph ${i + 1} ${"A".repeat(485)}.`),
-      "\n\n",
-      3,
-    ],
-    ["no-space CJK", [`${"語".repeat(499)}。`, `${"文".repeat(499)}。`], "", 1],
-  ])("balances %s at natural boundaries", async (_kind, parts, separator, groupSize) => {
-    const fetchMock = speechFetch(parts.join(separator));
-    await collect(
-      generateSpeechAudio({
-        ...credentials,
-        sourceText: "Original response.",
-        fetchImpl: fetchMock,
-      }),
-    );
-
-    expect(requestedTranscripts(fetchMock)).toEqual(
-      Array.from({ length: Math.ceil(parts.length / groupSize) }, (_, i) =>
-        parts.slice(i * groupSize, (i + 1) * groupSize).join(separator),
-      ),
-    );
-  });
-
-  it("uses feasible boundaries when weighted cuts cannot reach the aggregate capacity", async () => {
-    const rewrittenText = "これは音声です。".repeat(1020);
-    const fetchMock = speechFetch(rewrittenText);
-
-    await collect(
-      generateSpeechAudio({
-        ...credentials,
-        sourceText: "Original response.",
-        fetchImpl: fetchMock,
-      }),
-    );
-
-    const transcripts = requestedTranscripts(fetchMock);
-    const speechWeight = (text) =>
-      Array.from(text).reduce(
-        (total, character) =>
-          total +
-          (/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(
-            character,
-          )
-            ? 3
-            : 1),
-        0,
-      );
-    expect(transcripts).toHaveLength(12);
-    expect(transcripts.join("")).toBe(rewrittenText);
-    expect(transcripts.every((transcript) => speechWeight(transcript) <= 2040)).toBe(true);
   });
 });

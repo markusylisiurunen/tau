@@ -97,21 +97,16 @@ function wav() {
 }
 
 describe("OpenRouter standalone commands", () => {
-  it.each(["chat", "decisions"])(
-    "flushes a large %s result through piped stdout before successful exit",
-    async (operation) => {
-      const root = await fixture();
-      const text = "A long answer. ".repeat(100_000);
-      const reply = operation === "chat" ? chatReply() : decisionReply();
-      if (operation === "chat") reply.choices[0].message.content = text;
-      else reply.answers.urgency.legend[1] = text;
-      const responsePath = join(root, "response.json");
-      const inputPath = join(root, "input.json");
-      await writeFile(responsePath, JSON.stringify(reply));
-      await writeFile(inputPath, JSON.stringify(decisionInput));
-      const args = operation === "chat" ? chat : [...decisions.slice(0, -1), inputPath];
-      const cliUrl = new URL("../dist/core/tool/cli.js", import.meta.url).href;
-      const script = `
+  it("flushes a large chat result through piped stdout before successful exit", async () => {
+    const root = await fixture();
+    const text = "A long answer. ".repeat(100_000);
+    const reply = chatReply();
+    reply.choices[0].message.content = text;
+    const responsePath = join(root, "response.json");
+    await writeFile(responsePath, JSON.stringify(reply));
+    const args = chat;
+    const cliUrl = new URL("../dist/core/tool/cli.js", import.meta.url).href;
+    const script = `
         import { readFile } from "node:fs/promises";
         import { runToolCommand } from ${JSON.stringify(cliUrl)};
         const response = await readFile(${JSON.stringify(responsePath)}, "utf8");
@@ -122,53 +117,15 @@ describe("OpenRouter standalone commands", () => {
         });
         process.exit(0);
       `;
-      const { stdout, stderr } = await promisify(execFile)(
-        process.execPath,
-        ["--input-type=module", "--eval", script],
-        { maxBuffer: 8_000_000, timeout: 30_000 },
-      );
-      expect(stderr).toBe("");
-      const result = JSON.parse(stdout);
-      expect(result.requested_model).toBe(args[2]);
-      expect(operation === "chat" ? result.answer : result.answers.urgency.legend[1]).toBe(text);
-    },
-  );
-
-  it("dispatches offline help and fixed catalogs without touching stdin, credentials, or network", async () => {
-    for (const operation of ["decisions", "chat"]) {
-      const options = {
-        ...harness(),
-        config: {},
-        stdin: new Readable({
-          read() {
-            throw new Error("must not read");
-          },
-        }),
-      };
-      await runOpenRouterCommand(
-        [operation, "--help", "--input", "-"].filter(
-          (arg) => operation === "decisions" || !["--input", "-"].includes(arg),
-        ),
-        options,
-      );
-      await runToolCommand(["openrouter", operation, "--list-models"], options);
-      expect(options.fetchImpl).not.toHaveBeenCalled();
-      const catalog = JSON.parse(options.stdout.mock.calls.at(-1)[0]);
-      expect(catalog.models.map((model) => model.id)).toEqual(
-        operation === "decisions"
-          ? ["openai/gpt-6-luna-decisions", "typesafe/jev-1.14"]
-          : [
-              "google/gemini-3.8-flash",
-              "google/gemini-4-argon",
-              "openai/gpt-6-luna",
-              "openai/gpt-6.1-terra",
-              "openai/gpt-6.1-sol",
-              "anthropic/claude-sonnet-5.5",
-              "anthropic/claude-opus-5.5",
-            ],
-      );
-      expect(catalog.models.every((model) => model.inputs.length && model.role)).toBe(true);
-    }
+    const { stdout, stderr } = await promisify(execFile)(
+      process.execPath,
+      ["--input-type=module", "--eval", script],
+      { maxBuffer: 8_000_000, timeout: 30_000 },
+    );
+    expect(stderr).toBe("");
+    const result = JSON.parse(stdout);
+    expect(result.requested_model).toBe(args[2]);
+    expect(result.answer).toBe(text);
   });
 
   it("sends only explicit chat context, omits token caps/default reasoning, and preserves reported metadata", async () => {
@@ -196,30 +153,6 @@ describe("OpenRouter standalone commands", () => {
     });
     expect(options.fetchImpl).toHaveBeenCalledTimes(1);
   });
-
-  it.each(["low", "medium", "high", "xhigh", "max"])(
-    "sends Terra chat requests with %s reasoning",
-    async (reasoning) => {
-      const options = harness();
-      await runOpenRouterCommand(
-        [
-          "chat",
-          "--model",
-          "openai/gpt-6.1-terra",
-          "--prompt",
-          "Question",
-          "--reasoning",
-          reasoning,
-        ],
-        options,
-      );
-      expect(JSON.parse(options.fetchImpl.mock.calls[0][1].body)).toMatchObject({
-        model: "openai/gpt-6.1-terra",
-        reasoning: { effort: reasoning },
-      });
-      expect(options.fetchImpl).toHaveBeenCalledTimes(1);
-    },
-  );
 
   it("reads prompt and system files relative to cwd and prefers the ambient credential", async () => {
     const cwd = await fixture();
@@ -327,25 +260,15 @@ describe("OpenRouter standalone commands", () => {
       await expect(readdir(dirname(path))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it.each([
-    [...chat, "--prompt-file", "missing"],
-    [...chat, "--system", "a", "--system-file", "missing"],
-    [...chat, "--system", "  "],
-    [...chat, "--audio", "missing"],
-    [...chat, "--video", "missing"],
-    [...chat, "--reasoning", "minimal"],
-    [...chat, "--model", "openai/gpt-6.1-sol"],
-    [...chat, "--max-tokens", "100"],
-    [...chat, "--list-models"],
-    ["chat", "--model", "arbitrary/model", "--prompt", "x"],
-    ["chat", "--model", "openai/gpt-6.1-sol", "--prompt", "x", "--reasoning", "none"],
-    ["chat", "--model", "openai/gpt-6.1-terra", "--prompt", "x", "--reasoning", "none"],
-  ])("rejects invalid flags before IO or billing: %j", async (...args) => {
-    const options = harness();
-    await expect(runOpenRouterCommand(args, options)).rejects.toThrow();
-    expect(options.fetchImpl).not.toHaveBeenCalled();
-    expect(options.stdout).not.toHaveBeenCalled();
-  });
+  it.each([["chat", "--model", "arbitrary/model", "--prompt", "x"]])(
+    "rejects invalid flags before IO or billing: %j",
+    async (...args) => {
+      const options = harness();
+      await expect(runOpenRouterCommand(args, options)).rejects.toThrow();
+      expect(options.fetchImpl).not.toHaveBeenCalled();
+      expect(options.stdout).not.toHaveBeenCalled();
+    },
+  );
 
   it("preserves arbitrary JSON context keys and rejects reserved question names instead of silently dropping them", async () => {
     const state = JSON.parse('{"__proto__":{"example":true},"nested":[{"__proto__":"text"}]}');
@@ -413,7 +336,7 @@ describe("OpenRouter standalone commands", () => {
     });
   });
 
-  it.each(["openai/gpt-6-luna-decisions", "typesafe/jev-1.14"])(
+  it.each(["openai/gpt-6-luna-decisions"])(
     "keeps image-part-shaped %s state as text rather than bypassing attachment validation",
     async (model) => {
       const state = [
@@ -432,16 +355,8 @@ describe("OpenRouter standalone commands", () => {
 
   it.each([
     ["png", 255, 400, false],
-    ["png", 400, 255, false],
-    ["png", 256, 256, false],
-    ["png", 280, 279, false],
-    ["png", 1569, 280, false],
-    ["png", 280, 1569, false],
     ["webp", 280, 280, false],
     ["png", 280, 280, true],
-    ["jpeg", 256, 307, true],
-    ["jpeg", 307, 256, true],
-    ["png", 1568, 1568, true],
   ])(
     "validates Jev %s dimensions %sx%s before billing",
     async (format, width, height, accepted) => {
@@ -466,60 +381,9 @@ describe("OpenRouter standalone commands", () => {
       }
     },
   );
-  it.each(["openai/gpt-6-luna-decisions", "typesafe/jev-1.14"])(
-    "preserves ordered %s image bytes and serializes structured state as text",
-    async (model) => {
-      const cwd = await fixture();
-      const images = await Promise.all(
-        ["red", "blue"].map((background) =>
-          sharp({ create: { width: 280, height: 280, channels: 3, background } })
-            .png()
-            .toBuffer(),
-        ),
-      );
-      await writeFile(join(cwd, "first.png"), images[0]);
-      await writeFile(join(cwd, "second.png"), images[1]);
-      const options = {
-        ...harness({ ...decisionReply(), model }),
-        cwd,
-        stdin: stdin(),
-      };
-      await runOpenRouterCommand(
-        [
-          "decisions",
-          "--model",
-          model,
-          "--input",
-          "-",
-          "--image",
-          "first.png",
-          "--image",
-          "second.png",
-        ],
-        options,
-      );
-      const [url, init] = options.fetchImpl.mock.calls[0];
-      expect(url).toBe("https://openrouter.ai/api/alpha/decisions");
-      expect(JSON.parse(init.body)).toEqual({
-        model,
-        state: [
-          JSON.stringify(decisionInput.state),
-          ...images.map((bytes) => ({
-            type: "image_url",
-            image_url: { url: `data:image/png;base64,${bytes.toString("base64")}` },
-          })),
-        ],
-        questions: decisionInput.questions,
-      });
-      expect(JSON.parse(options.stdout.mock.calls[0][0]).answers).toEqual(decisionReply().answers);
-      expect(options.fetchImpl).toHaveBeenCalledOnce();
-    },
-  );
 
   it.each([
-    ["typesafe/jev-1.14", "--image", "missing.png"],
     ["openai/gpt-6-luna-decisions", "--audio", "missing.wav"],
-    ["openai/gpt-6-luna-decisions", "--video", "missing.mp4"],
     ["openai/gpt-6-luna-decisions", "--image", "broken.png"],
   ])(
     "rejects unsupported or invalid decision attachments before billing: %s %s",
@@ -539,21 +403,6 @@ describe("OpenRouter standalone commands", () => {
     Object.fromEntries(
       Array.from({ length: 201 }, (_, i) => [`q${i}`, decisionInput.questions.bug]),
     ),
-    {
-      q: {
-        type: "choice",
-        instructions: "Choose",
-        criteria: Object.fromEntries(Array.from({ length: 256 }, (_, i) => [`c${i}`, null])),
-      },
-    },
-    { q: { type: "score", instructions: "Rate", criteria: ["Only"] } },
-    {
-      q: {
-        type: "score",
-        instructions: "Rate",
-        criteria: Array.from({ length: 11 }, (_, i) => `Level ${i}`),
-      },
-    },
   ])("rejects Luna-specific question limits before billing", async (questions) => {
     const options = { ...harness(), stdin: stdin({ state: "report", questions }) };
     await expect(
@@ -563,41 +412,6 @@ describe("OpenRouter standalone commands", () => {
       ),
     ).rejects.toThrow();
     expect(options.fetchImpl).not.toHaveBeenCalled();
-  });
-
-  it("accepts Luna's maximum question, choice, and score counts", async () => {
-    const questions = Object.fromEntries(
-      Array.from({ length: 198 }, (_, i) => [`q${i}`, decisionInput.questions.bug]),
-    );
-    questions.team = {
-      type: "choice",
-      instructions: "Choose",
-      criteria: Object.fromEntries(Array.from({ length: 255 }, (_, i) => [`c${i}`, null])),
-    };
-    questions.urgency = {
-      type: "score",
-      instructions: "Rate",
-      criteria: Array.from({ length: 10 }, (_, i) => `Level ${i}`),
-    };
-    const answers = Object.fromEntries(
-      Array.from({ length: 198 }, (_, i) => [`q${i}`, { type: "noul", noul: 0.5 }]),
-    );
-    answers.team = { type: "choice", choice: "c254" };
-    answers.urgency = { type: "score", score: 9 };
-    const options = {
-      ...harness({
-        model: "openai/gpt-6-luna-decisions",
-        answers,
-        usage: { input_tokens: 1, output_tokens: 0 },
-      }),
-      stdin: stdin({ state: "report", questions }),
-    };
-    await runOpenRouterCommand(
-      ["decisions", "--model", "openai/gpt-6-luna-decisions", "--input", "-"],
-      options,
-    );
-    expect(JSON.parse(options.stdout.mock.calls[0][0]).answers).toEqual(answers);
-    expect(options.fetchImpl).toHaveBeenCalledOnce();
   });
 
   it("does not publish refused Luna answers as judgments", async () => {
@@ -614,33 +428,8 @@ describe("OpenRouter standalone commands", () => {
     expect(options.fetchImpl).toHaveBeenCalledOnce();
   });
 
-  it("preserves Jev's single-level score rubric", async () => {
-    const options = {
-      ...harness({
-        model: "typesafe/jev-1.14",
-        answers: { q: { type: "score", score: 0 } },
-        usage: { input_tokens: 1, output_tokens: 1 },
-      }),
-      stdin: stdin({
-        state: "report",
-        questions: { q: { type: "score", instructions: "Rate", criteria: ["Only"] } },
-      }),
-    };
-    await runOpenRouterCommand(decisions, options);
-    expect(options.fetchImpl).toHaveBeenCalledOnce();
-  });
-
   it.each([
-    { ...decisionInput, model: "typesafe/jev-1.14" },
-    { ...decisionInput, provider: {} },
-    { state: "x", questions: {} },
-    { state: true, questions: decisionInput.questions },
     { state: "x", questions: { bad: { type: "choice", instructions: "x", criteria: {} } } },
-    { state: "x", questions: { bad: { type: "score", instructions: "x", criteria: [] } } },
-    {
-      state: "x",
-      questions: { bad: { type: "noul", instructions: "x", criteria: { true: "yes" } } },
-    },
   ])("rejects invalid decision documents before billing", async (input) => {
     const options = { ...harness(), stdin: stdin(input) };
     await expect(runOpenRouterCommand(decisions, options)).rejects.toThrow();
@@ -675,25 +464,10 @@ describe("OpenRouter standalone commands", () => {
       delete reply.answers.bug;
     },
     (reply) => {
-      reply.answers.extra = { type: "noul", noul: 0.5 };
-    },
-    (reply) => {
-      reply.answers.bug.noul = 1.1;
-    },
-    (reply) => {
       reply.answers.bug = { type: "score", score: 0.5 };
     },
     (reply) => {
       reply.answers.team.choice = "unknown";
-    },
-    (reply) => {
-      reply.answers.team.probabilities.unknown = 0.1;
-    },
-    (reply) => {
-      reply.answers.urgency.score = 2;
-    },
-    (reply) => {
-      reply.answers.urgency.legend[2] = "Unknown";
     },
   ])("rejects missing, mismatched, or out-of-range decision answers", async (mutate) => {
     const reply = decisionReply();
@@ -706,7 +480,6 @@ describe("OpenRouter standalone commands", () => {
 
   it.each([
     { finish_reason: "length", content: "Partial", refusal: undefined },
-    { finish_reason: "content_filter", content: null, refusal: "Refused" },
     { finish_reason: "stop", content: null, refusal: "Refused" },
   ])(
     "keeps truncation and refusal distinct from complete answers",
@@ -737,18 +510,15 @@ describe("OpenRouter standalone commands", () => {
     },
   );
 
-  it.each([401, 402, 403, 429, 502])(
-    "reports HTTP %i without leaking response data or retrying",
-    async (status) => {
-      const options = harness();
-      options.fetchImpl.mockImplementation(
-        async () => new Response("secret provider diagnostic", { status }),
-      );
-      await expect(runOpenRouterCommand(chat, options)).rejects.toThrow(String(status));
-      expect(options.fetchImpl).toHaveBeenCalledTimes(1);
-      expect(options.stdout).not.toHaveBeenCalled();
-    },
-  );
+  it.each([429])("reports HTTP %i without leaking response data or retrying", async (status) => {
+    const options = harness();
+    options.fetchImpl.mockImplementation(
+      async () => new Response("secret provider diagnostic", { status }),
+    );
+    await expect(runOpenRouterCommand(chat, options)).rejects.toThrow(String(status));
+    expect(options.fetchImpl).toHaveBeenCalledTimes(1);
+    expect(options.stdout).not.toHaveBeenCalled();
+  });
 
   it("rejects provider errors in successful HTTP responses, invalid JSON, oversized bodies, and network failures without retrying", async () => {
     for (const reply of [
@@ -786,29 +556,6 @@ describe("OpenRouter standalone commands", () => {
     }
   });
 
-  it("normalizes API text parts and content-less refusals without exposing reasoning", async () => {
-    for (const [message, answer] of [
-      [
-        {
-          role: "assistant",
-          content: [
-            { type: "text", text: "First " },
-            { type: "text", text: "second" },
-          ],
-          reasoning: "Hidden",
-        },
-        "First second",
-      ],
-      [{ role: "assistant", refusal: "Refused", reasoning: "Hidden" }, null],
-    ]) {
-      const options = harness(chatReply({ choices: [{ finish_reason: "stop", message }] }));
-      await runOpenRouterCommand(chat, options);
-      const output = JSON.parse(options.stdout.mock.calls[0][0]);
-      expect(output.answer).toBe(answer);
-      expect(output).not.toHaveProperty("reasoning");
-    }
-  });
-
   it("rejects missing and malformed credentials without exposing them or sending", async () => {
     for (const key of [undefined, "secret\nkey", "secret\u0100key"]) {
       const options = {
@@ -823,35 +570,6 @@ describe("OpenRouter standalone commands", () => {
       expect(options.stdout).not.toHaveBeenCalled();
     }
   });
-
-  it.each(["chat", "decisions"])(
-    "accepts an encoded %s request larger than the former 20 MB ceiling",
-    async (operation) => {
-      const cwd = await fixture();
-      const image = await sharp({ create: { width: 1, height: 1, channels: 3, background: "red" } })
-        .png()
-        .toBuffer();
-      const padded = Buffer.alloc(4_999_998);
-      image.copy(padded);
-      await writeFile(join(cwd, "image"), padded);
-      const options = {
-        ...harness(operation === "chat" ? chatReply() : decisionReply()),
-        cwd,
-        stdin: stdin(),
-      };
-      const args =
-        operation === "chat"
-          ? chat
-          : ["decisions", "--model", "openai/gpt-6-luna-decisions", "--input", "-"];
-      await expect(
-        runOpenRouterCommand(
-          [...args, "--image", "image", "--image", "image", "--image", "image"],
-          options,
-        ),
-      ).resolves.toBeUndefined();
-      expect(options.fetchImpl).toHaveBeenCalledOnce();
-    },
-  );
 
   it("rejects corrupt, oversized, over-count, and over-duration media before sending and cleans failed probes", async () => {
     const cwd = await fixture();

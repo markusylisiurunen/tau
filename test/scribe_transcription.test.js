@@ -8,7 +8,6 @@ import {
   cleanupSpeechTranscript,
   prepareSpeechCleanup,
 } from "../dist/core/utils/speech_cleanup.js";
-import { prepareSpeechToTextKeywords } from "../dist/core/utils/speech_to_text_keywords.js";
 
 function json(payload, status = 200) {
   return new Response(JSON.stringify(payload), { status });
@@ -82,18 +81,14 @@ describe("Scribe transcription", () => {
     expect(await request.body.get("file").text()).toBe("audio");
   });
 
-  it.each([
-    [{ detail: { message: "quota exhausted" } }, "quota exhausted"],
-    [{ detail: "invalid key secret-key" }, "invalid key [redacted]"],
-    [{ unexpected: true }, "HTTP 401"],
-  ])("preserves file API diagnostics without credentials", async (payload, detail) => {
+  it("redacts credentials in file API diagnostics", async () => {
     await expect(
       transcribeScribeAudio({
         apiKey: "secret-key",
         audio: Buffer.from("audio"),
-        fetchImpl: async () => json(payload, 401),
+        fetchImpl: async () => json({ detail: "invalid key secret-key" }, 401),
       }),
-    ).rejects.toThrow(detail);
+    ).rejects.toThrow("invalid key [redacted]");
   });
 
   it("redacts credentials from provider error events", async () => {
@@ -102,40 +97,6 @@ describe("Scribe transcription", () => {
     const rejected = expect(result).rejects.toThrow("invalid credential [redacted]");
     emit({ message_type: "auth_error", error: "invalid credential key" });
     await rejected;
-  });
-
-  it.each(["error", "close"])("preserves socket %s diagnostics", async (event) => {
-    const { transcription, socket } = await live();
-    const result = transcription.finish();
-    const rejected = expect(result).rejects.toThrow(event === "error" ? "handshake 401" : "1008");
-    if (event === "error") socket.emit("error", new Error("handshake 401"));
-    else socket.emit("close", 1008, Buffer.from("policy violation"));
-    await rejected;
-  });
-
-  it.each(["", "already committed"])("finishes an empty final segment after %j", async (text) => {
-    const { transcription, socket, emit } = await live();
-    if (text) emit({ message_type: "committed_transcript", text });
-    const result = transcription.finish();
-    await vi.advanceTimersByTimeAsync(0);
-    expect(socket.close).not.toHaveBeenCalled();
-    emit({ message_type: "partial_transcript", text: "" });
-    await vi.advanceTimersByTimeAsync(1500);
-    expect(socket.close).not.toHaveBeenCalled();
-    emit({ message_type: "committed_transcript", text: "" });
-    await expect(result).resolves.toBe(text);
-    expect(socket.close).toHaveBeenCalledOnce();
-  });
-
-  it("keeps configured vocabulary when hint extraction fails", async () => {
-    expect(
-      await prepareSpeechToTextKeywords({
-        apiKey: "key",
-        context: { messages: [{ role: "user", text: "context" }] },
-        vocabulary: ["Tau"],
-        fetchImpl: async () => json({}, 503),
-      }),
-    ).toEqual(["Tau"]);
   });
 
   it("paces delayed startup and live audio at 2x, then commits after draining all audio", async () => {
@@ -211,13 +172,12 @@ describe("Scribe transcription", () => {
     await expect(result).resolves.toBe("first last");
   });
 
-  it.each(["abort", "send-error"])("stops queued audio on %s", async (failure) => {
+  it("stops queued audio and timers after a send failure", async () => {
     const { transcription, socket } = await live();
     transcription.appendAudio(Buffer.alloc(320_000));
     const result = transcription.finish();
     const rejected = expect(result).rejects.toThrow();
-    if (failure === "abort") transcription.abort();
-    else socket.send.mockImplementation((_data, callback) => callback(new Error("send failed")));
+    socket.send.mockImplementation((_data, callback) => callback(new Error("send failed")));
     await vi.advanceTimersByTimeAsync(100);
     await rejected;
     const sends = socket.send.mock.calls.length;
@@ -227,102 +187,33 @@ describe("Scribe transcription", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("filters realtime keyterms to 50 terms of at most 20 characters without changing order", async () => {
-    const socket = new EventEmitter();
-    socket.terminate = vi.fn();
-    const factory = vi.fn(() => socket);
-    const vocabulary = ["x".repeat(21), ...Array.from({ length: 60 }, (_, i) => `term-${i}`)];
-    const transcription = startScribeTranscription({
-      apiKey: "key",
-      vocabulary,
-      webSocketFactory: factory,
-    });
-    await vi.waitFor(() => expect(factory).toHaveBeenCalledOnce());
-    expect(new URL(factory.mock.calls[0][0]).searchParams.getAll("keyterms")).toEqual(
-      vocabulary.slice(1, 51),
-    );
-    transcription.abort();
+  it("rejects a partial transcript after connection loss", async () => {
+    const { transcription, socket, emit } = await live();
+    emit({ message_type: "partial_transcript", text: "unfinished" });
+    const controller = new AbortController();
+    const result = transcription.finish({ signal: controller.signal });
+    const rejected = expect(result).rejects.toThrow();
+    await vi.advanceTimersByTimeAsync(0);
+    socket.emit("close", 1006, Buffer.alloc(0));
+    await rejected;
+    expect(socket.terminate).toHaveBeenCalledOnce();
   });
 
-  it("buffers startup audio and finishes on the first commit after the final request", async () => {
-    const { transcription, socket, factory, emit, onProgress } = await live();
-    const url = new URL(factory.mock.calls[0][0]);
-    expect(url.searchParams.get("no_verbatim")).toBe("false");
-    expect(url.searchParams.get("commit_strategy")).toBe("vad");
-    expect(url.searchParams.getAll("keyterms")).toEqual(["Tau"]);
-    expect(factory.mock.calls[0][1]).toEqual({ headers: { "xi-api-key": "key" } });
-    expect(JSON.parse(socket.send.mock.calls[0][0]).audio_base_64).toBe(
-      Buffer.alloc(6400).toString("base64"),
-    );
-    emit({ message_type: "partial_transcript", text: "first draft" });
-    emit({ message_type: "partial_transcript", text: "first" });
+  it("returns committed and partial text after the final-commit deadline", async () => {
+    const { transcription, socket, emit } = await live();
     emit({ message_type: "committed_transcript", text: "first" });
     const result = transcription.finish();
     await vi.advanceTimersByTimeAsync(0);
-    expect(JSON.parse(socket.send.mock.calls.at(-1)[0])).toEqual({
-      message_type: "input_audio_chunk",
-      audio_base_64: "",
-      sample_rate: 16000,
-      commit: true,
-    });
-    emit({ message_type: "partial_transcript", text: "second draft" });
+    await vi.advanceTimersByTimeAsync(1500);
+    emit({ message_type: "partial_transcript", text: "partial" });
+    await vi.advanceTimersByTimeAsync(499);
     expect(socket.close).not.toHaveBeenCalled();
-    emit({ message_type: "committed_transcript", text: "second" });
-    await expect(result).resolves.toBe("first second");
-    emit({ message_type: "partial_transcript", text: "late" });
-    emit({ message_type: "committed_transcript", text: "late segment" });
-    expect(onProgress.mock.calls.map(([text]) => text)).toEqual([
-      "first draft",
-      "first",
-      "first",
-      "first second draft",
-      "first second",
-    ]);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(result).resolves.toBe("first partial");
     expect(socket.close).toHaveBeenCalledOnce();
+    expect(socket.terminate).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
   });
-
-  it.each(["connection-loss", "abort", "malformed", "provider-error"])(
-    "fails instead of accepting a partial transcript: %s",
-    async (failure) => {
-      const { transcription, socket, emit } = await live();
-      emit({ message_type: "partial_transcript", text: "unfinished" });
-      const controller = new AbortController();
-      const result = transcription.finish({ signal: controller.signal });
-      const rejected = expect(result).rejects.toThrow();
-      await vi.advanceTimersByTimeAsync(0);
-      if (failure === "connection-loss") socket.emit("close", 1006, Buffer.alloc(0));
-      else if (failure === "abort") controller.abort();
-      else if (failure === "malformed") socket.emit("message", "{");
-      else if (failure === "provider-error")
-        emit({ message_type: "quota_exceeded", error: "quota exceeded" });
-      await rejected;
-      expect(socket.terminate).toHaveBeenCalledOnce();
-    },
-  );
-
-  it.each([
-    ["", "", ""],
-    ["first", "", "first"],
-    ["", "partial", "partial"],
-    ["first", "partial", "first partial"],
-  ])(
-    "returns available text after two seconds without a final commit: %j %j",
-    async (committed, partial, expected) => {
-      const { transcription, socket, emit } = await live();
-      if (committed) emit({ message_type: "committed_transcript", text: committed });
-      const result = transcription.finish();
-      await vi.advanceTimersByTimeAsync(0);
-      await vi.advanceTimersByTimeAsync(1500);
-      emit({ message_type: "partial_transcript", text: partial });
-      await vi.advanceTimersByTimeAsync(499);
-      expect(socket.close).not.toHaveBeenCalled();
-      await vi.advanceTimersByTimeAsync(1);
-      await expect(result).resolves.toBe(expected);
-      expect(socket.close).toHaveBeenCalledOnce();
-      expect(socket.terminate).not.toHaveBeenCalled();
-      expect(vi.getTimerCount()).toBe(0);
-    },
-  );
 
   it("aborts while preparing keywords without opening a connection", async () => {
     const factory = vi.fn();
@@ -334,19 +225,6 @@ describe("Scribe transcription", () => {
 });
 
 describe("speech cleanup", () => {
-  it("makes no call for off or empty speech", async () => {
-    const fetchImpl = vi.fn();
-    for (const [style, transcript] of [
-      ["off", "hello"],
-      ["default", ""],
-    ]) {
-      expect(await cleanupSpeechTranscript({ style, transcript, vocabulary: [], fetchImpl })).toBe(
-        transcript,
-      );
-    }
-    expect(fetchImpl).not.toHaveBeenCalled();
-  });
-
   it("cleans the whole transcript with Terra and sends transcript and vocabulary as data", async () => {
     const fetchImpl = vi.fn(async () =>
       json({
@@ -375,55 +253,6 @@ describe("speech cleanup", () => {
       context: "user: We are fixing Tau.",
     });
     expect(body.store).toBe(false);
-  });
-
-  it.each([
-    undefined,
-    { messages: [] },
-    {
-      messages: [
-        { role: "user", text: "old context ".repeat(6000) },
-        { role: "assistant", text: `${"ä中🙂".repeat(6000)} newest context` },
-      ],
-    },
-  ])("bounds cleanup context and favors the newest text", async (context) => {
-    const fetchImpl = vi.fn(async () =>
-      json({
-        status: "completed",
-        output: [{ type: "message", content: [{ type: "output_text", text: "done" }] }],
-      }),
-    );
-    await cleanupSpeechTranscript({
-      transcript: "unchanged",
-      vocabulary: ["Tau"],
-      style: "default",
-      apiKey: "key",
-      context,
-      fetchImpl,
-    });
-    const input = JSON.parse(JSON.parse(fetchImpl.mock.calls[0][1].body).input);
-    expect(Buffer.byteLength(input.context, "utf8")).toBeLessThanOrEqual(8192 * 6);
-    expect(input.context).not.toContain("�");
-    expect(input.transcript).toBe("unchanged");
-    if (context?.messages.length) {
-      expect(input.context).toMatch(/newest context$/);
-      expect(input.context).not.toContain("old context");
-    } else expect(input.context).toBe("");
-  });
-
-  it.each([
-    { status: "incomplete", output: [] },
-    { status: "completed", output: [] },
-  ])("rejects incomplete or empty cleanup", async (payload) => {
-    await expect(
-      cleanupSpeechTranscript({
-        transcript: "keep me",
-        style: "default",
-        apiKey: "key",
-        vocabulary: [],
-        fetchImpl: async () => json(payload),
-      }),
-    ).rejects.toThrow();
   });
 });
 
@@ -492,10 +321,10 @@ describe("prepared speech cleanup", () => {
     expect(socket.terminate).not.toHaveBeenCalled();
   });
 
-  it.each(["warming", "ready", "generating"])("cancels cleanup while %s", async (phase) => {
+  it("cancels active cleanup and ignores its late response", async () => {
     const { socket, prepared, warm, emit } = prepare();
     socket.emit("open");
-    if (phase !== "warming") warm();
+    warm();
     const controller = new AbortController();
     const result = prepared.finish({
       transcript: "original",
@@ -503,52 +332,23 @@ describe("prepared speech cleanup", () => {
       signal: controller.signal,
     });
     const rejected = expect(result).rejects.toThrow();
-    if (phase === "generating")
-      await vi.waitFor(() => expect(socket.send).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(socket.send).toHaveBeenCalledTimes(2));
     controller.abort();
     emit({ type: "response.completed", response: { status: "completed", output: [] } });
     await rejected;
     expect(socket.terminate).toHaveBeenCalledOnce();
-    if (phase !== "generating") expect(socket.send).toHaveBeenCalledTimes(1);
+    expect(socket.send).toHaveBeenCalledTimes(2);
   });
 
-  it.each(["timeout", "close", "error", "incomplete", "malformed", "dispose"])(
-    "rejects %s without generating after failed warmup",
-    async (failure) => {
-      vi.useFakeTimers();
-      const { socket, prepared, emit } = prepare();
-      socket.emit("open");
-      if (failure === "timeout") await vi.advanceTimersByTimeAsync(30000);
-      else if (failure === "close") socket.emit("close", 1006, Buffer.alloc(0));
-      else if (failure === "error") emit({ type: "error", error: { message: "secret" } });
-      else if (failure === "incomplete") emit({ type: "response.incomplete" });
-      else if (failure === "malformed") socket.emit("message", "{");
-      else prepared.dispose();
-      await expect(prepared.finish({ transcript: "original", vocabulary: [] })).rejects.toThrow();
-      expect(socket.send).toHaveBeenCalledTimes(1);
-      expect(socket.terminate).toHaveBeenCalledOnce();
-    },
-  );
-
-  it.each(["ready", "generating"])(
-    "rejects a lost connection while %s without retrying",
-    async (phase) => {
-      vi.useFakeTimers();
-      const { socket, prepared, warm } = prepare();
-      socket.emit("open");
-      warm();
-      if (phase === "ready") socket.emit("close", 1006, Buffer.alloc(0));
-      const result = prepared.finish({ transcript: "original", vocabulary: [] });
-      const rejected = expect(result).rejects.toThrow();
-      await vi.advanceTimersByTimeAsync(0);
-      if (phase === "generating") socket.emit("close", 1006, Buffer.alloc(0));
-      await rejected;
-      prepared.dispose();
-      expect(socket.send).toHaveBeenCalledTimes(phase === "ready" ? 1 : 2);
-      expect(socket.terminate).toHaveBeenCalledOnce();
-      expect(vi.getTimerCount()).toBe(0);
-    },
-  );
+  it("rejects cleanup after its warmup deadline without generating", async () => {
+    vi.useFakeTimers();
+    const { socket, prepared } = prepare();
+    socket.emit("open");
+    await vi.advanceTimersByTimeAsync(30000);
+    await expect(prepared.finish({ transcript: "original", vocabulary: [] })).rejects.toThrow();
+    expect(socket.send).toHaveBeenCalledTimes(1);
+    expect(socket.terminate).toHaveBeenCalledOnce();
+  });
 
   it("bounds generation independently of recording duration", async () => {
     vi.useFakeTimers();

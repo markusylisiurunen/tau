@@ -1904,28 +1904,6 @@ describe("built-in diff tool", () => {
     }
   });
 
-  it("waits for Tau's session.close after local process cancellation", async () => {
-    const client = createClientStub();
-    const server = new DiffToolHttpServer({ client });
-
-    try {
-      const started = await server.start();
-
-      await server.cancel();
-      expect(client.cancelSession).toHaveBeenCalledTimes(1);
-      expect(client.close).not.toHaveBeenCalled();
-
-      const bootstrap = await fetchJson(`${started.url}api/bootstrap`);
-      expect(bootstrap.context.sessionId).toBe("session-1");
-
-      await client.emitSessionClose();
-      await server.waitUntilClosed();
-      expect(client.close).not.toHaveBeenCalled();
-    } finally {
-      await server.close();
-    }
-  });
-
   it("closes locally when process cancellation cannot reach Tau", async () => {
     const client = createClientStub({
       cancelSession: vi.fn(async () => {

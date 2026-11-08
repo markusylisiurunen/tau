@@ -132,12 +132,13 @@ async function readExaResponse(response: Response): Promise<string> {
 }
 
 async function requestExa(
+  fetchImpl: typeof fetch,
   apiKey: string,
   endpoint: "/search" | "/contents",
   body: Record<string, unknown>,
   signal: AbortSignal,
 ): Promise<unknown> {
-  const response = await fetch(`${EXA_API_BASE_URL}${endpoint}`, {
+  const response = await fetchImpl(`${EXA_API_BASE_URL}${endpoint}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -175,12 +176,12 @@ async function requestExa(
   return payload;
 }
 
-function createExaClient(apiKey: string): ExaClient {
+export function createExaClient(apiKey: string, fetchImpl: typeof fetch = fetch): ExaClient {
   return {
     search: (query, options, signal) =>
-      requestExa(apiKey, "/search", { query, ...options }, signal),
+      requestExa(fetchImpl, apiKey, "/search", { query, ...options }, signal),
     getContents: (urls, options, signal) =>
-      requestExa(apiKey, "/contents", { urls, ...options }, signal),
+      requestExa(fetchImpl, apiKey, "/contents", { urls, ...options }, signal),
   };
 }
 

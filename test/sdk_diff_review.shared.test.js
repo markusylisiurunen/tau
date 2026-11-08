@@ -3,7 +3,7 @@ import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { startTauSdkDiffReview } from "../src/sdk/diff_review.ts";
+import { startTauSdkDiffReview } from "../dist/sdk/diff_review.js";
 
 const temporaryDirectories = [];
 

@@ -1,17 +1,17 @@
 import { once } from "node:events";
 import { createServer as createHttpServer } from "node:http";
 import { describe, expect, it, vi } from "vitest";
-import { DiffReviewBridge } from "../src/core/diff_review/bridge.ts";
-import { DiffReviewSnapshot, formatDiffReviewScope } from "../src/core/diff_review/snapshot.ts";
-import { personas } from "../src/core/personas.ts";
+import { DiffReviewBridge } from "../dist/core/diff_review/bridge.js";
+import { DiffReviewSnapshot, formatDiffReviewScope } from "../dist/core/diff_review/snapshot.js";
+import { personas } from "../dist/core/personas.js";
 import {
   DiffReviewProtocolClient,
   DiffToolHttpServer,
   DiffToolLaunchEnvironmentError,
   parseDiffToolLaunchEnvironment,
   runBuiltInDiffToolCommand,
-} from "../src/diff_tool/index.ts";
-import { buildDiffReviewCommentThreadPrompt } from "../src/diff_tool/review_prompts.ts";
+} from "../dist/diff_tool/index.js";
+import { buildDiffReviewCommentThreadPrompt } from "../dist/diff_tool/review_prompts.js";
 
 function createSubmitThreadMessage(createThread) {
   const threads = new Map();

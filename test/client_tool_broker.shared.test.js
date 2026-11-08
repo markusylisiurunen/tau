@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { parseToolRunPresentation } from "../src/core/tools/presentation.ts";
-import { ClientToolBroker } from "../src/host/client_tool_broker.ts";
-import { SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES } from "../src/protocol/session_protocol.ts";
-import { createTuiClientTools } from "../src/tui/session_chat_app.ts";
+import { parseToolRunPresentation } from "../dist/core/tools/presentation.js";
+import { ClientToolBroker } from "../dist/host/client_tool_broker.js";
+import { SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES } from "../dist/protocol/session_protocol.js";
+import { createTuiClientTools } from "../dist/tui/session_chat_app.js";
 import { createProtocolImage } from "./helpers/session_protocol_fixtures.js";
 
 function createToolCall(args = {}) {

@@ -169,56 +169,54 @@ describe("Telegram file delivery", () => {
       const fetchMock = vi.fn(
         async () => new Response(JSON.stringify({ ok: true, result: {} }), { status: 200 }),
       );
-      vi.stubGlobal("fetch", fetchMock);
-      try {
-        const tool = getTool(createTelegramFileTools(createTelegramApi("test-token"), 987), kind);
-        const data = Buffer.from("remote file bytes");
-        const context = {
-          signal: new AbortController().signal,
-          executionEnvironment: {
-            exec: vi.fn(async () => ({
-              exitCode: 0,
-              stdout: JSON.stringify({
-                identity: "stable",
-                size: data.length,
-                content: data.toString("base64"),
-              }),
-            })),
-          },
-        };
-        await tool.execute({ path: `/remote/${fileName}`, caption: "*plain*" }, context);
-        const [url, init] = fetchMock.mock.calls[0];
-        expect(url).toBe(`https://api.telegram.org/bottest-token/${method}`);
-        expect(init.body.get("chat_id")).toBe("987");
-        expect(init.body.get("caption")).toBe("*plain*");
-        expect(init.body.has("parse_mode")).toBe(false);
-        expect(init.body.get("disable_content_type_detection")).toBe(
-          kind === "document" ? "true" : null,
-        );
-        const upload = init.body.get(kind);
-        expect(upload.name).toBe(fileName);
-        expect(Buffer.from(await upload.arrayBuffer())).toEqual(data);
-        expect(init.signal).toBe(context.signal);
-        await tool.execute({ path: `/remote/${fileName}` }, context);
-        expect(fetchMock.mock.calls[1][1].body.has("caption")).toBe(false);
-        fetchMock.mockResolvedValueOnce(
-          new Response(
-            JSON.stringify({
-              ok: false,
-              description: "upload refused",
-              error_code: 429,
-              parameters: { retry_after: 1 },
+      const tool = getTool(
+        createTelegramFileTools(createTelegramApi("test-token", fetchMock), 987),
+        kind,
+      );
+      const data = Buffer.from("remote file bytes");
+      const context = {
+        signal: new AbortController().signal,
+        executionEnvironment: {
+          exec: vi.fn(async () => ({
+            exitCode: 0,
+            stdout: JSON.stringify({
+              identity: "stable",
+              size: data.length,
+              content: data.toString("base64"),
             }),
-            { status: 429 },
-          ),
-        );
-        await expect(tool.execute({ path: `/remote/${fileName}` }, context)).rejects.toThrow(
-          "upload refused",
-        );
-        expect(fetchMock).toHaveBeenCalledTimes(3);
-      } finally {
-        vi.unstubAllGlobals();
-      }
+          })),
+        },
+      };
+      await tool.execute({ path: `/remote/${fileName}`, caption: "*plain*" }, context);
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toBe(`https://api.telegram.org/bottest-token/${method}`);
+      expect(init.body.get("chat_id")).toBe("987");
+      expect(init.body.get("caption")).toBe("*plain*");
+      expect(init.body.has("parse_mode")).toBe(false);
+      expect(init.body.get("disable_content_type_detection")).toBe(
+        kind === "document" ? "true" : null,
+      );
+      const upload = init.body.get(kind);
+      expect(upload.name).toBe(fileName);
+      expect(Buffer.from(await upload.arrayBuffer())).toEqual(data);
+      expect(init.signal).toBe(context.signal);
+      await tool.execute({ path: `/remote/${fileName}` }, context);
+      expect(fetchMock.mock.calls[1][1].body.has("caption")).toBe(false);
+      fetchMock.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            ok: false,
+            description: "upload refused",
+            error_code: 429,
+            parameters: { retry_after: 1 },
+          }),
+          { status: 429 },
+        ),
+      );
+      await expect(tool.execute({ path: `/remote/${fileName}` }, context)).rejects.toThrow(
+        "upload refused",
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(3);
     },
   );
 });

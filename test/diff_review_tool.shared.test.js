@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseDiffReviewToolArgs } from "../src/core/diff_review/tool.ts";
+import { parseDiffReviewToolArgs } from "../dist/core/diff_review/tool.js";
 
 describe("diff_review tool args", () => {
   it.each(["git_diff", "patch_files"])("preserves the directory for %s", (source) => {

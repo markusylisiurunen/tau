@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { captureDiffReviewSnapshot } from "../src/core/diff_review/snapshot.ts";
+import { captureDiffReviewSnapshot } from "../dist/core/diff_review/snapshot.js";
 
 function runGit(cwd, args) {
   const result = spawnSync("git", args, {

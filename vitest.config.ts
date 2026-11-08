@@ -11,7 +11,8 @@ export default defineConfig({
         test: {
           name: "shared",
           include: ["test/**/*.shared.test.js"],
-          // These tests own their state and do not mock modules or native process globals.
+          // These files share one module graph per worker, so they must not mock modules or stub
+          // globals, and must restore any process state they change, such as umask or fake timers.
           isolate: false,
           restoreMocks: true,
         },

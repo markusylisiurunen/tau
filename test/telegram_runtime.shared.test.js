@@ -2,6 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
+import { createTelegramApi } from "../dist/core/telegram/adapter.js";
 import {
   createTelegramProjectPreferenceStore,
   resolveTelegramProjectPreferencesPath,
@@ -100,7 +101,6 @@ describe("telegram runtime", () => {
     const fetchMock = vi.fn(
       async () => new Response(JSON.stringify({ ok: true, result: {} }), { status: 200 }),
     );
-    vi.stubGlobal("fetch", fetchMock);
     try {
       runtime = await startTelegramRuntime({
         config: createTelegramConfig({
@@ -133,6 +133,7 @@ describe("telegram runtime", () => {
             manager = options.sessionManager;
             return { close: async () => {} };
           },
+          createTelegramApi: (botToken) => createTelegramApi(botToken, fetchMock),
         },
       });
       for (const ownerId of ["telegram:first:chat:123", "telegram:second:chat:-456"]) {
@@ -191,7 +192,6 @@ describe("telegram runtime", () => {
       ]);
     } finally {
       await runtime?.close();
-      vi.unstubAllGlobals();
       await rm(root, { recursive: true, force: true });
     }
   });

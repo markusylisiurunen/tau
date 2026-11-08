@@ -3,7 +3,7 @@ import {
   DIFF_REVIEW_ERROR_CODES,
   DIFF_REVIEW_PROTOCOL_VERSION,
   parseDiffReviewRequestLine,
-} from "../src/core/diff_review/protocol.ts";
+} from "../dist/core/diff_review/protocol.js";
 
 describe("diff_review protocol", () => {
   it("parses valid request lines", () => {

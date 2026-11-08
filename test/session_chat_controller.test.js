@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -30,9 +31,7 @@ import {
 } from "../dist/protocol/session_protocol.js";
 import { FileSessionStore } from "../dist/store/file_session_store.js";
 import { MemorySessionStore } from "../dist/store/memory_session_store.js";
-import { copyTextToClipboard } from "../dist/tui/clipboard.js";
 import * as listenCapture from "../dist/tui/listen_capture.js";
-import { exportMarkdown } from "../dist/tui/markdown_export.js";
 import { SessionChatController } from "../dist/tui/session_chat_controller.js";
 import { runSpeechPlaybackTask } from "../dist/tui/speech_playback.js";
 import { CustomEditor } from "../dist/tui/ui/custom_editor.js";
@@ -42,14 +41,6 @@ import {
   createProtocolExecResult,
   createProtocolSnapshot,
 } from "./helpers/session_protocol_fixtures.js";
-
-vi.mock("../dist/tui/clipboard.js", () => ({
-  copyTextToClipboard: vi.fn(async () => {}),
-}));
-
-vi.mock("../dist/tui/markdown_export.js", () => ({
-  exportMarkdown: vi.fn(async () => "https://example.com/document/1"),
-}));
 
 const bootstrap = createProtocolBootstrap();
 const altBootstrap = createProtocolBootstrap({
@@ -1057,29 +1048,30 @@ describe("SessionChatController", () => {
   });
 
   it("prevents duplicate exports and aborts on detach", async () => {
-    let signal;
-    vi.mocked(exportMarkdown).mockClear();
-    vi.mocked(exportMarkdown).mockImplementationOnce((options) => {
-      signal = options.signal;
-      return new Promise((_resolve, reject) =>
-        signal.addEventListener("abort", () => reject(new Error("cancelled")), { once: true }),
+    const requests = [];
+    const server = createServer((request) => requests.push(request));
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const session = new FakeSession(
+        createSnapshot([{ id: "reply", message: createAssistantMessage("reply") }]),
       );
-    });
-    const session = new FakeSession(
-      createSnapshot([{ id: "reply", message: createAssistantMessage("reply") }]),
-    );
-    const { controller } = await createControllerHarness({
-      session,
-      config: { markdownExport: { url: "https://example.com/api" } },
-    });
-    controller.start();
-    controller.getInputHandlers().onSubmit("/export-response");
-    await flush();
-    controller.getInputHandlers().onSubmit("/export-response");
-    await flush();
-    expect(exportMarkdown).toHaveBeenCalledTimes(1);
-    await controller.dispose();
-    expect(signal.aborted).toBe(true);
+      const { controller } = await createControllerHarness({
+        session,
+        config: { markdownExport: { url: `http://127.0.0.1:${server.address().port}/api` } },
+      });
+      controller.start();
+      controller.getInputHandlers().onSubmit("/export-response");
+      await vi.waitFor(() => expect(requests).toHaveLength(1));
+      controller.getInputHandlers().onSubmit("/export-response");
+      await flush();
+      const closed = new Promise((resolve) => requests[0].socket.once("close", resolve));
+      await controller.dispose();
+      await closed;
+      expect(requests).toHaveLength(1);
+    } finally {
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+    }
   });
 
   it("merges ephemeral timeline items by sequence and truncates them on rewind", async () => {
@@ -1507,11 +1499,23 @@ describe("SessionChatController", () => {
     });
     expect(view.messages.some((message) => message.id === retainedAssistant.id)).toBe(false);
 
-    vi.mocked(copyTextToClipboard).mockClear();
-    controller.getInputHandlers().onSubmit("/copy-text");
-    await flush();
-
-    expect(copyTextToClipboard).toHaveBeenCalledWith("retained snapshot response");
+    const bin = await mkdtemp(join(tmpdir(), "tau-clipboard-bin-"));
+    const clipboard = join(bin, "clipboard.txt");
+    const originalPath = process.env.PATH;
+    try {
+      for (const provider of ["wl-copy", "xclip", "xsel", "pbcopy"]) {
+        await writeFile(join(bin, provider), `#!/bin/sh\nexec /bin/cat > '${clipboard}'\n`);
+        await chmod(join(bin, provider), 0o755);
+      }
+      process.env.PATH = bin;
+      controller.getInputHandlers().onSubmit("/copy-text");
+      await vi.waitFor(async () =>
+        expect(await readFile(clipboard, "utf8")).toBe("retained snapshot response"),
+      );
+    } finally {
+      process.env.PATH = originalPath;
+      await rm(bin, { recursive: true, force: true });
+    }
   });
 
   it("stops visible running state when submit fails before snapshot recovery returns", async () => {

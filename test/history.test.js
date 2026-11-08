@@ -1454,7 +1454,9 @@ describe("session history", () => {
         sessions: harness.sqlite.prepare("SELECT * FROM sessions").all(),
         operations: harness.sqlite.prepare("SELECT * FROM operations ORDER BY operation_id").all(),
         matches: harness.sqlite
-          .prepare("SELECT entry_id FROM entries_search_fts WHERE entries_search_fts MATCH 'needle'")
+          .prepare(
+            "SELECT entry_id FROM entries_search_fts WHERE entries_search_fts MATCH 'needle'",
+          )
           .all(),
       });
       const before = snapshot();

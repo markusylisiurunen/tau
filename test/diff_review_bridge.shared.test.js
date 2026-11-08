@@ -1,11 +1,15 @@
 import { once } from "node:events";
+import { mkdtemp, rm } from "node:fs/promises";
 import { createConnection } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DiffReviewBridge } from "../src/core/diff_review/bridge.ts";
-import { DIFF_REVIEW_PROTOCOL_VERSION } from "../src/core/diff_review/protocol.ts";
-import { DiffReviewSnapshot, formatDiffReviewScope } from "../src/core/diff_review/snapshot.ts";
-import { personas } from "../src/core/personas.ts";
+import { DiffReviewBridge } from "../dist/core/diff_review/bridge.js";
+import { DIFF_REVIEW_PROTOCOL_VERSION } from "../dist/core/diff_review/protocol.js";
+import { DiffReviewSnapshot, formatDiffReviewScope } from "../dist/core/diff_review/snapshot.js";
+import { personas } from "../dist/core/personas.js";
+import { launchBuiltInDiffTool } from "../dist/diff_tool/launcher.js";
 
 function request(id, method, params) {
   return JSON.stringify({
@@ -218,27 +222,28 @@ describe("diff review bridge", () => {
     }
   });
 
-  it("launches the client-local diff tool from a client-local cwd", async () => {
-    const toolLauncher = vi.fn(async () => {});
+  it("launches the bundled diff tool, which joins the review and exits when it is cancelled", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tau-diff-tool-cwd-"));
     const bridge = createDiffReviewBridge({
       snapshot: createSnapshot(),
-      deps: {
-        env: {
-          cwd: () => "/client/workspace",
-          env: () => ({}),
-        },
-      },
+      deps: { env: { cwd: () => cwd, env: () => process.env } },
     });
-
-    await bridge.launchTool(toolLauncher);
-
-    expect(toolLauncher).toHaveBeenCalledWith({
-      cwd: "/client/workspace",
-      env: expect.objectContaining({
-        TAU_DIFF_CWD: "/repo/packages/app",
-        TAU_DIFF_REPO_ROOT: "/repo",
-      }),
-    });
+    try {
+      await bridge.start();
+      await bridge.launchTool(launchBuiltInDiffTool);
+      await vi.waitFor(
+        () => expect(bridge.getUiState().diffToolUiText).toMatch(/^http:\/\/[^/]+:\d+\/$/),
+        { timeout: 10_000 },
+      );
+      await bridge.cancel();
+      await expect(bridge.result).resolves.toEqual({
+        status: "cancelled",
+        reason: "controller_cancelled",
+      });
+    } finally {
+      await bridge.close();
+      await rm(cwd, { recursive: true, force: true });
+    }
   });
 
   it("serves snapshot data, threads, and returned reviews over the diff protocol", async () => {

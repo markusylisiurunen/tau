@@ -16,6 +16,7 @@ import { sweepStaleTelegramTtsTempDirs } from "./tts.js";
 
 export type TelegramRuntimeDependencies = {
   startTelegramAdapter: typeof startTelegramAdapter;
+  createTelegramApi: typeof createTelegramApi;
 };
 
 export type StartTelegramRuntimeOptions = {
@@ -54,7 +55,8 @@ type RuntimeLogEntry = {
 const MAX_RUNTIME_LOG_CAUSE_LENGTH = 500;
 
 const defaultDeps: TelegramRuntimeDependencies = {
-  startTelegramAdapter: startTelegramAdapter,
+  startTelegramAdapter,
+  createTelegramApi,
 };
 
 function formatRuntimeLogCause(data: unknown): string {
@@ -178,7 +180,7 @@ export async function startTelegramRuntime(
             ? { thresholdTokens: bot.autoCompactThresholdTokens }
             : {}),
         },
-        clientTools: createTelegramFileTools(createTelegramApi(bot.botToken), chatId),
+        clientTools: createTelegramFileTools(deps.createTelegramApi(bot.botToken), chatId),
       });
     },
   });

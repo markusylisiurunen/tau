@@ -991,7 +991,7 @@ type TelegramUpload = {
   data: Buffer;
 };
 
-export function createTelegramApi(botToken: string): TelegramApi {
+export function createTelegramApi(botToken: string, fetchImpl: typeof fetch = fetch): TelegramApi {
   const apiUrl = `https://api.telegram.org/bot${botToken}`;
 
   async function callTelegramMethod<Result>(
@@ -1015,7 +1015,7 @@ export function createTelegramApi(botToken: string): TelegramApi {
 
     let response: Response;
     try {
-      response = await fetch(`${apiUrl}/${method}`, {
+      response = await fetchImpl(`${apiUrl}/${method}`, {
         method: "POST",
         ...(upload ? {} : { headers: { "content-type": "application/json" } }),
         body,
@@ -1227,7 +1227,7 @@ export function createTelegramApi(botToken: string): TelegramApi {
         throw new Error("telegram file path is missing");
       }
 
-      const response = await fetch(`https://api.telegram.org/file/bot${botToken}/${filePath}`, {
+      const response = await fetchImpl(`https://api.telegram.org/file/bot${botToken}/${filePath}`, {
         signal: options.signal,
       });
       if (!response.ok) {
@@ -4066,7 +4066,7 @@ class TelegramAdapterImpl {
 export async function startTelegramAdapter(
   options: TelegramAdapterOptions,
 ): Promise<TelegramAdapterHandle> {
-  const api = options.api ?? createTelegramApi(options.botToken);
+  const api = options.api ?? createTelegramApi(options.botToken, options.fetchImpl);
   const botUsername = normalizeTelegramUsername((await api.getMe()).username);
   if (!botUsername) {
     throw new Error("telegram bot username is missing");

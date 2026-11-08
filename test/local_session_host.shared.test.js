@@ -1947,7 +1947,6 @@ describe("LocalSessionHost", () => {
         message: "stopped before producing a final response",
       },
       kind: "tau.turn.failed",
-      title: "turn failed",
     },
     {
       outcome: "blocked",
@@ -1956,9 +1955,8 @@ describe("LocalSessionHost", () => {
         message: "summary unavailable",
       },
       kind: "tau.turn.blocked",
-      title: "turn blocked",
     },
-  ])("persists $kind at turn settlement", async ({ outcome, failure, kind, title }) => {
+  ])("persists $kind at turn settlement", async ({ outcome, failure, kind }) => {
     const host = createHost(new MemorySessionStore());
     const hostedSession = await host.createSession(localCreateInput);
     const historyEntryId = await hostedSession.session.commitUserText("run the turn");
@@ -1979,7 +1977,7 @@ describe("LocalSessionHost", () => {
         version: 1,
         severity: "error",
         subject: { type: "message", id: historyEntryId },
-        presentation: { title, content: [failure.message] },
+        presentation: { content: [failure.message] },
         data: { reason: failure.reason },
       },
     });

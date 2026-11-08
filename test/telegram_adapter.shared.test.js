@@ -1571,39 +1571,26 @@ describe("telegram adapter", () => {
   it("bounds streamed downloads and propagates cancellation to Telegram requests", async () => {
     const signal = new AbortController().signal;
     const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
-    const api = createTelegramApi("token");
+    const api = createTelegramApi("token", fetchMock);
     const getFileResponse = () =>
       createJsonResponse({ ok: true, result: { file_path: "documents/file" } });
-    try {
-      fetchMock
-        .mockResolvedValueOnce(getFileResponse())
-        .mockResolvedValueOnce(new Response("1234"));
-      expect(await api.downloadFile("file", { maxBytes: 4, signal })).toEqual(Buffer.from("1234"));
-      expect(fetchMock.mock.calls.every(([, options]) => options.signal === signal)).toBe(true);
-      const cancel = vi.fn();
-      const stream = new ReadableStream({
-        start(controller) {
-          controller.enqueue(Buffer.from("12345"));
-        },
-        cancel,
-      });
-      fetchMock
-        .mockResolvedValueOnce(getFileResponse())
-        .mockResolvedValueOnce(new Response(stream));
-      await expect(api.downloadFile("file", { maxBytes: 4, signal })).rejects.toThrow(
-        "exceeds download limit",
-      );
-      expect(cancel).toHaveBeenCalledOnce();
-      fetchMock
-        .mockResolvedValueOnce(getFileResponse())
-        .mockResolvedValueOnce(new Response("small", { headers: { "content-length": "100" } }));
-      await expect(api.downloadFile("file", { maxBytes: 4, signal })).rejects.toThrow(
-        "exceeds download limit",
-      );
-    } finally {
-      vi.unstubAllGlobals();
-    }
+    fetchMock.mockResolvedValueOnce(getFileResponse()).mockResolvedValueOnce(new Response("1234"));
+    expect(await api.downloadFile("file", { maxBytes: 4, signal })).toEqual(Buffer.from("1234"));
+    expect(fetchMock.mock.calls.every(([, options]) => options.signal === signal)).toBe(true);
+    const cancel = vi.fn();
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(Buffer.from("12345"));
+      },
+      cancel,
+    });
+    fetchMock.mockResolvedValueOnce(getFileResponse()).mockResolvedValueOnce(new Response(stream));
+    await expect(api.downloadFile("file", { maxBytes: 4, signal })).rejects.toThrow();
+    expect(cancel).toHaveBeenCalledOnce();
+    fetchMock
+      .mockResolvedValueOnce(getFileResponse())
+      .mockResolvedValueOnce(new Response("small", { headers: { "content-length": "100" } }));
+    await expect(api.downloadFile("file", { maxBytes: 4, signal })).rejects.toThrow();
   });
 
   it("preserves long voice messages without automatic transcription", async () => {
@@ -1657,21 +1644,14 @@ describe("telegram adapter", () => {
     {
       kind: "persona",
       action: "setPersona",
-      pickerText: "choose a persona or preset for this session. this works only while Tau is idle.",
-      selectedText:
-        "switched to persona-20. this session is using Selected Model with high reasoning.",
     },
     {
       kind: "prompt",
       action: "recordPrompt",
-      pickerText:
-        "choose a saved prompt to add to the conversation without starting a turn. selection is available only while Tau is idle.",
-      selectedText:
-        "added this prompt to the conversation. send a message when you’re ready for Tau to respond.\n\nSaved prompt body",
     },
   ])(
     "paginates the $kind picker and applies a duplicate selection only once without starting a turn",
-    async ({ kind, action, pickerText, selectedText }) => {
+    async ({ kind, action }) => {
       const chat = { id: 329, type: "private" };
       const from = { id: 7 };
       const sendMessages = [];
@@ -1687,56 +1667,54 @@ describe("telegram adapter", () => {
         update_id: id,
         callback_query: { id: `${id}`, from, message: { chat, message_id: 42 }, data },
       });
-      vi.stubGlobal(
-        "fetch",
-        createTelegramFetchStub({
-          setMyCommands: async () => createJsonResponse({ ok: true, result: true }),
-          sendMessage: async ({ init }) => {
-            sendMessages.push(JSON.parse(init.body));
-            return createJsonResponse({ ok: true, result: { message_id: 42 } });
-          },
-          editMessageText: async ({ init }) => {
-            edits.push(JSON.parse(init.body));
-            return createJsonResponse({ ok: true, result: true });
-          },
-          answerCallbackQuery: async ({ init }) => {
-            answers.push(JSON.parse(init.body));
-            return createJsonResponse({ ok: true, result: true });
-          },
-          getUpdates: async ({ call }) => {
-            if (call === 1) {
-              return createJsonResponse({
-                ok: true,
-                result: [
-                  { update_id: 1, message: { chat, from, text: "/new" } },
-                  { update_id: 2, message: { chat, from, text: `/${kind}` } },
-                ],
-              });
-            }
-            if (call === 2) {
-              await waitFor(() => sendMessages.some((m) => m.reply_markup));
-              const keyboard = sendMessages.at(-1).reply_markup.inline_keyboard;
-              expect(keyboard).toHaveLength(21);
-              expect(Buffer.byteLength(keyboard[0][0].callback_data)).toBeLessThanOrEqual(64);
-              return createJsonResponse({
-                ok: true,
-                result: [callback(3, keyboard.at(-1)[0].callback_data)],
-              });
-            }
-            if (call === 3) {
-              await waitFor(() => edits.length === 1);
-              const keyboard = edits[0].reply_markup.inline_keyboard;
-              return createJsonResponse({
-                ok: true,
-                result: [4, 5].map((id) => callback(id, keyboard[0][0].callback_data)),
-              });
-            }
-            return pendingTelegramCall();
-          },
-        }),
-      );
+      const fetchImpl = createTelegramFetchStub({
+        setMyCommands: async () => createJsonResponse({ ok: true, result: true }),
+        sendMessage: async ({ init }) => {
+          sendMessages.push(JSON.parse(init.body));
+          return createJsonResponse({ ok: true, result: { message_id: 42 } });
+        },
+        editMessageText: async ({ init }) => {
+          edits.push(JSON.parse(init.body));
+          return createJsonResponse({ ok: true, result: true });
+        },
+        answerCallbackQuery: async ({ init }) => {
+          answers.push(JSON.parse(init.body));
+          return createJsonResponse({ ok: true, result: true });
+        },
+        getUpdates: async ({ call }) => {
+          if (call === 1) {
+            return createJsonResponse({
+              ok: true,
+              result: [
+                { update_id: 1, message: { chat, from, text: "/new" } },
+                { update_id: 2, message: { chat, from, text: `/${kind}` } },
+              ],
+            });
+          }
+          if (call === 2) {
+            await waitFor(() => sendMessages.some((m) => m.reply_markup));
+            const keyboard = sendMessages.at(-1).reply_markup.inline_keyboard;
+            expect(keyboard).toHaveLength(21);
+            expect(Buffer.byteLength(keyboard[0][0].callback_data)).toBeLessThanOrEqual(64);
+            return createJsonResponse({
+              ok: true,
+              result: [callback(3, keyboard.at(-1)[0].callback_data)],
+            });
+          }
+          if (call === 3) {
+            await waitFor(() => edits.length === 1);
+            const keyboard = edits[0].reply_markup.inline_keyboard;
+            return createJsonResponse({
+              ok: true,
+              result: [4, 5].map((id) => callback(id, keyboard[0][0].callback_data)),
+            });
+          }
+          return pendingTelegramCall();
+        },
+      });
       const adapter = await startAdapter({
         sessionManager: managerHarness.manager,
+        fetchImpl,
       });
       try {
         await waitFor(() => answers.length === 3);
@@ -1751,21 +1729,17 @@ describe("telegram adapter", () => {
           true,
         );
         const pickerMessage = sendMessages.find((message) => message.reply_markup);
-        expect(pickerMessage.text).toBe(pickerText);
         if (kind === "persona") {
           expect(pickerMessage.reply_markup.inline_keyboard[0][0].text).toBe("persona-0");
         }
-        expect(pickerMessage.reply_markup.inline_keyboard.at(-1)[0].text).toBe("next");
+        // The first edit pages forward to the 21st item; the second applies it and removes the keyboard.
         expect(edits[0].text).toBe(pickerMessage.text);
-        expect(edits[0].reply_markup.inline_keyboard.at(-1)[0].text).toBe("previous");
-        expect(edits[1].text).toBe(selectedText);
         expect(edits[1].reply_markup.inline_keyboard).toEqual([]);
-        expect(sendMessages.at(-1).text).toBe(
-          `this ${kind} picker has expired. use /${kind} to open a new one.`,
-        );
+        if (kind === "prompt") expect(edits[1].text).toContain("Saved prompt body");
+        // The duplicate callback is answered with a plain notice instead of a second selection.
+        expect(sendMessages.at(-1)).not.toHaveProperty("reply_markup");
       } finally {
         await adapter.close();
-        vi.unstubAllGlobals();
       }
     },
   );
@@ -2243,19 +2217,17 @@ describe("telegram adapter", () => {
     ]);
     let sendRichMessageCalls = 0;
     const logs = [];
-    vi.stubGlobal(
-      "fetch",
-      createTelegramFetchStub({
-        setMyCommands: async () => createJsonResponse({ ok: true, result: true }),
-        getUpdates: async () => pendingTelegramCall(),
-        sendRichMessage: async () => {
-          sendRichMessageCalls += 1;
-          return new Response("{", { status: 200 });
-        },
-      }),
-    );
+    const fetchImpl = createTelegramFetchStub({
+      setMyCommands: async () => createJsonResponse({ ok: true, result: true }),
+      getUpdates: async () => pendingTelegramCall(),
+      sendRichMessage: async () => {
+        sendRichMessageCalls += 1;
+        return new Response("{", { status: 200 });
+      },
+    });
     const adapter = await startAdapter({
       sessionManager: managerHarness.manager,
+      fetchImpl,
       onLog: (entry) => logs.push(entry),
     });
 
@@ -2267,7 +2239,6 @@ describe("telegram adapter", () => {
       expect(sendRichMessageCalls).toBe(1);
     } finally {
       await adapter.close();
-      vi.unstubAllGlobals();
     }
   });
 

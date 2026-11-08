@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createWebCapability } from "../dist/core/code_mode/web.js";
+import { createExaClient, createWebCapability } from "../dist/core/code_mode/web.js";
 import { discoverAgentContent } from "../dist/core/tools/web_discovery.js";
 import { createCapabilityTool } from "./helpers/code_mode.js";
 
@@ -36,7 +36,7 @@ function createDeps(client) {
 }
 
 function createWebTool(backend, deps, config = { apiKeys: { exa: "exa-key" } }) {
-  return createCapabilityTool(backend, createWebCapability(backend, config, deps), deps);
+  return createCapabilityTool(backend, createWebCapability(backend, config, deps));
 }
 
 async function runTool(tool, arguments_, signal = new AbortController().signal) {
@@ -305,7 +305,7 @@ describe("Exa web code-mode tool", () => {
   });
 
   it("rejects oversized provider responses", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    const oversized = async () =>
       new Response(
         new ReadableStream({
           start(controller) {
@@ -314,18 +314,15 @@ describe("Exa web code-mode tool", () => {
           },
         }),
         { status: 200 },
-      ),
-    );
-    try {
-      const backend = createBackend();
-      const tool = createWebTool(backend);
-      const { result } = await runTool(tool, { code: "await tau.web.search('tau')" });
+      );
+    const tool = createWebTool(createBackend(), {
+      createExaClient: (apiKey) => createExaClient(apiKey, oversized),
+      discover: discoverAgentContent,
+    });
+    const { result } = await runTool(tool, { code: "await tau.web.search('tau')" });
 
-      expect(result.toolResult.outcome).toBe("failed");
-      expect(getToolText(result)).toContain("Exa response exceeded the 16 MiB limit");
-    } finally {
-      fetchMock.mockRestore();
-    }
+    expect(result.toolResult.outcome).toBe("failed");
+    expect(getToolText(result)).toContain("16 MiB");
   });
 
   it("fails when the provider returns an invalid response", async () => {

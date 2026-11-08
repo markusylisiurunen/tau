@@ -25,7 +25,7 @@
     "precheck": "node scripts/generate-version.js && node scripts/generate-themes.js",
     "prebuild": "node scripts/generate-version.js && node scripts/generate-themes.js",
     "start": "node dist/main.js",
-    "history:dev": "npm run build && node scripts/migrate-history-dev.js && wrangler d1 execute tau-history-dev --local --persist-to src/history/worker/.wrangler/state --config src/history/worker/wrangler.dev.json --file src/history/worker/dev-seed.sql && wrangler dev --persist-to src/history/worker/.wrangler/state --config src/history/worker/wrangler.dev.json",
+    "history:dev": "wrangler d1 migrations apply tau-history-dev --local --config src/history/worker/wrangler.dev.json && wrangler d1 execute tau-history-dev --local --config src/history/worker/wrangler.dev.json --file src/history/worker/dev-seed.sql && wrangler dev --config src/history/worker/wrangler.dev.json",
     "test": "npm run --silent build && npm run --silent test:only --",
     "test:only": "vitest run --reporter=minimal --silent=passed-only"
   },

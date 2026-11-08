@@ -56,10 +56,7 @@ export async function setupHistoryService(options: HistorySetupOptions): Promise
   const temporaryDirectory = mkdtempSync(join(tmpdir(), "tau-history-"));
   try {
     writeWorkerProject(temporaryDirectory, { domain, zoneName, databaseId });
-    await applyHistoryMigrations(temporaryDirectory, env, stdout, {
-      databaseName: DATABASE_NAME,
-      remote: true,
-    });
+    await applyHistoryMigrations(temporaryDirectory, env, stdout);
     stdout(`deploying Worker ${WORKER_NAME} with Wrangler...`);
     await runWrangler(["deploy"], { cwd: temporaryDirectory, env });
     await runWrangler(["secret", "put", "API_KEY"], {
@@ -193,26 +190,23 @@ function databaseId(database: D1DatabaseInfo): string {
   throw new Error("Wrangler returned D1 database data without an ID");
 }
 
-export async function applyHistoryMigrations(
+async function applyHistoryMigrations(
   directory: string,
   env: NodeJS.ProcessEnv,
   stdout: (line: string) => void,
-  target: { databaseName: string } & ({ remote: true } | { remote: false; persistTo: string }),
 ): Promise<void> {
-  const flags = [target.remote ? "--remote" : "--local"];
-  if (!target.remote) flags.push("--persist-to", target.persistTo);
   const apply = async () => {
-    await runWrangler(["d1", "migrations", "apply", target.databaseName, ...flags], {
+    await runWrangler(["d1", "migrations", "apply", DATABASE_NAME, "--remote"], {
       cwd: directory,
       env,
     });
   };
-  stdout(`applying D1 migrations for ${target.databaseName}...`);
+  stdout(`applying D1 migrations for ${DATABASE_NAME}...`);
   writeHistoryMigrations(directory, false);
   await apply();
   await backfillHistorySearch(async (sql) => {
     const result = await runWrangler(
-      ["d1", "execute", target.databaseName, ...flags, "--json", "--command", sql],
+      ["d1", "execute", DATABASE_NAME, "--remote", "--json", "--command", sql],
       { cwd: directory, env },
     );
     const statements = JSON.parse(result.output) as Array<{
@@ -232,7 +226,7 @@ export async function applyHistoryMigrations(
   }, stdout);
   writeHistoryMigrations(directory, true);
   await apply();
-  stdout(`applied D1 migrations for ${target.databaseName}`);
+  stdout(`applied D1 migrations for ${DATABASE_NAME}`);
 }
 
 function writeHistoryMigrations(directory: string, includeCutover: boolean): void {

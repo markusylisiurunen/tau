@@ -1273,7 +1273,7 @@ describe("session history", () => {
         INSERT INTO sessions (session_id, attributes_json, created_at, updated_at) VALUES ('existing', '{}', 1, 1);
         WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x + 1 FROM n WHERE x < 1100)
         INSERT INTO entries (session_id, position, entry_id, timestamp, payload_json, search_text)
-        SELECT 'existing', x, 'entry-' || x, 1, '{}', replace(hex(zeroblob(4000)), '00', 'word ') FROM n;
+        SELECT 'existing', x, 'entry-' || x, 1, '{}', replace(hex(zeroblob(16000)), '00', 'word ') FROM n;
       `);
       sqlite.exec(HISTORY_EXTERNAL_CONTENT_MIGRATION_SQL);
       sqlite.exec("BEGIN");
@@ -1293,7 +1293,7 @@ describe("session history", () => {
         sqlite.prepare("SELECT through_rowid FROM history_search_backfill").get().through_rowid,
       ).toBe(0);
       const copied = sqlite.prepare("SELECT COUNT(*) AS count FROM entries_external").get().count;
-      expect(copied).toBeGreaterThan(0);
+      expect(copied).toBeGreaterThan(400);
       expect(copied).toBeLessThan(512);
       expect(
         sqlite
@@ -1301,7 +1301,7 @@ describe("session history", () => {
             "SELECT SUM(length(payload_json) + length(search_text)) AS bytes FROM entries_external",
           )
           .get().bytes,
-      ).toBeLessThanOrEqual(8 * 1024 * 1024);
+      ).toBeLessThanOrEqual(32 * 1024 * 1024);
       sqlite.exec(`
         UPDATE entries SET search_text = 'updated copy' WHERE position = 1;
         DELETE FROM entries WHERE position IN (2, 1000);

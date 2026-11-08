@@ -33,7 +33,7 @@ export async function backfillHistorySearch(
     let end = through;
     let bytes = 0;
     for (const row of rows) {
-      if (end > through && bytes + Number(row.bytes) > 8 * 1024 * 1024) break;
+      if (end > through && bytes + Number(row.bytes) > 32 * 1024 * 1024) break;
       const id = Number(row.id);
       if (!Number.isSafeInteger(id) || id <= end)
         throw new Error("invalid history search migration entry ID");

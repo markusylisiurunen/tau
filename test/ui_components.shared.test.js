@@ -2,12 +2,55 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import stripAnsi from "strip-ansi";
 import { expect, test, vi } from "vitest";
 import { createCommandRegistry } from "../dist/core/commands/index.js";
+import { AppIntroComponent } from "../dist/tui/ui/app_intro.js";
 import { CustomEditor } from "../dist/tui/ui/custom_editor.js";
 import { PendingMessagesComponent } from "../dist/tui/ui/pending_messages.js";
 import { SlashAutocompleteProvider } from "../dist/tui/ui/slash_autocomplete.js";
 import { SubagentPanelComponent } from "../dist/tui/ui/subagent_panel.js";
 import { createUiTheme } from "../dist/tui/ui/theme/index.js";
 import { createTagTheme, renderLines } from "./ui_helpers.js";
+
+test("AppIntroComponent reflows without losing content and caps its width", () => {
+  const names = ["alpha-skill", "beta-skill", "gamma-skill", "delta-skill"];
+  const path = `/${"directory,entry/".repeat(15)}AGENTS.md`;
+  const intro = new AppIntroComponent(createUiTheme("plain"), {
+    title: "tau v1 · 4 skills",
+    body: ["skills:", { names }, "", "context files:", `  ${path}`],
+  });
+  const wide = intro.render(160).map(stripAnsi);
+  expect(wide).toEqual(intro.render(100).map(stripAnsi));
+  for (const width of [1, 2, 3, 20, 40, 80]) {
+    const lines = intro.render(width).map(stripAnsi);
+    expect(lines.every((line) => visibleWidth(line) <= width)).toBe(true);
+    const compact = lines.join("").replaceAll(" ", "");
+    for (const value of [...names, path]) expect(compact).toContain(value);
+    if (width >= 20) {
+      const bodyLines = lines.slice(4).filter((line) => line.trim() && !line.trim().endsWith(":"));
+      expect(bodyLines.every((line) => line.startsWith("   "))).toBe(true);
+    }
+  }
+  expect(intro.render(160).map(stripAnsi)).toEqual(wide);
+});
+
+test("AppIntroComponent wraps between names without isolated separators", () => {
+  const intro = new AppIntroComponent(createUiTheme("plain"), {
+    title: "tau",
+    body: ["skills:", { names: ["alpha", "abcdefghijklmnop", "zeta", "eta"] }],
+  });
+  expect(intro.render(20).map(stripAnsi).slice(4)).toEqual([
+    "   alpha",
+    "   abcdefghijklmnop",
+    "   zeta, eta",
+  ]);
+  expect(intro.render(40).map(stripAnsi).slice(4)).toEqual([
+    "   alpha, abcdefghijklmnop, zeta, eta",
+  ]);
+  expect(intro.render(20).map(stripAnsi).slice(4)).toEqual([
+    "   alpha",
+    "   abcdefghijklmnop",
+    "   zeta, eta",
+  ]);
+});
 
 function stripTags(text) {
   return stripAnsi(text.replace(/<[^>]+>/g, ""));

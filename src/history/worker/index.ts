@@ -541,11 +541,6 @@ export async function applyOperation(
               JSON.stringify(entry),
               searchText,
             ),
-          database
-            .prepare(
-              "INSERT INTO entries_fts (session_id, entry_id, position, text) VALUES (?, ?, ?, ?)",
-            )
-            .bind(operation.sessionId, entry.id, position, searchText),
         );
       }
       if (statements.length > 0) {
@@ -561,9 +556,6 @@ export async function applyOperation(
       await requireSession(database, operation.sessionId);
       if (operation.afterEntryId === null) {
         statements.push(
-          database
-            .prepare("DELETE FROM entries_fts WHERE session_id = ?")
-            .bind(operation.sessionId),
           database.prepare("DELETE FROM entries WHERE session_id = ?").bind(operation.sessionId),
         );
       } else {
@@ -579,11 +571,6 @@ export async function applyOperation(
           );
         }
         statements.push(
-          database
-            .prepare(
-              "DELETE FROM entries_fts WHERE session_id = ? AND CAST(position AS INTEGER) > ?",
-            )
-            .bind(operation.sessionId, retained.position),
           database
             .prepare("DELETE FROM entries WHERE session_id = ? AND position > ?")
             .bind(operation.sessionId, retained.position),
@@ -680,8 +667,8 @@ async function search(
          WHERE sessions_fts MATCH ?
          UNION ALL
          SELECT session_id, 1 AS source_rank
-         FROM entries_fts
-         WHERE entries_fts MATCH ?
+         FROM entries_search_fts
+         WHERE entries_search_fts MATCH ?
        ), ranked_sessions AS (
          SELECT session_id, MIN(source_rank) AS source_rank
          FROM matching_sessions
@@ -710,28 +697,28 @@ async function search(
                     PARTITION BY session_id
                     ORDER BY CAST(position AS INTEGER), entry_id
                   ) AS snippet_rank
-           FROM entries_fts
-           WHERE entries_fts MATCH ?
+           FROM entries_search_fts
+           WHERE entries_search_fts MATCH ?
              AND session_id IN (${sessionIds.map(() => "?").join(", ")})
          ), snippet_excerpts AS MATERIALIZED (
            SELECT ranked.entry_rowid, ranked.session_id, ranked.snippet_rank,
-                  substr(snippet(entries_fts, 3, '', '', '…', 32), 1, 361) AS excerpt
+                  substr(snippet(entries_search_fts, 3, '', '', '…', 32), 1, 361) AS excerpt
            FROM ranked_snippets ranked
            -- Keep ranked rows outermost so snippet extraction uses rowid lookups.
-           CROSS JOIN entries_fts ON entries_fts.rowid = ranked.entry_rowid
-           WHERE ranked.snippet_rank <= 3 AND entries_fts MATCH ?
+           CROSS JOIN entries_search_fts ON entries_search_fts.rowid = ranked.entry_rowid
+           WHERE ranked.snippet_rank <= 3 AND entries_search_fts MATCH ?
          )
          SELECT session_id,
                 CASE WHEN length(excerpt) <= 360 THEN excerpt ELSE (
                   SELECT CASE
-                    WHEN length(snippet(entries_fts, 3, '', '', '…', 16)) <= 360
-                      THEN snippet(entries_fts, 3, '', '', '…', 16)
-                    WHEN length(snippet(entries_fts, 3, '', '', '…', 8)) <= 360
-                      THEN snippet(entries_fts, 3, '', '', '…', 8)
-                    ELSE substr(snippet(entries_fts, 3, '', '', '…', 1), 1, 360)
+                    WHEN length(snippet(entries_search_fts, 3, '', '', '…', 16)) <= 360
+                      THEN snippet(entries_search_fts, 3, '', '', '…', 16)
+                    WHEN length(snippet(entries_search_fts, 3, '', '', '…', 8)) <= 360
+                      THEN snippet(entries_search_fts, 3, '', '', '…', 8)
+                    ELSE substr(snippet(entries_search_fts, 3, '', '', '…', 1), 1, 360)
                   END
-                  FROM entries_fts
-                  WHERE rowid = snippet_excerpts.entry_rowid AND entries_fts MATCH ?
+                  FROM entries_search_fts
+                  WHERE rowid = snippet_excerpts.entry_rowid AND entries_search_fts MATCH ?
                 ) END AS match_text
          FROM snippet_excerpts
          ORDER BY session_id, snippet_rank`,

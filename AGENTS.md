@@ -60,18 +60,15 @@ Tests live flat in `test/`, mostly named after the module they cover.
 
 Install dependencies with `npm ci` at the root and in `src/diff_tool/app`: on a fresh checkout, after pulling or switching branches, and whenever a build or test fails in a way your change does not explain. Stale dependencies often cause such failures here, and reinstalling is cheap and needs no permission.
 
-For a localized change, run `npm run check`, then the tests covering the changed behavior and its important consumers. A focused run is enough when that scope is clear; do not run the full suite automatically. Report what you ran and any coverage gaps.
+For a localized change, run `npm run check` and then only the tests that cover the changed behavior and its important consumers. Tests import `dist`, so rebuild after changing source or bundled assets. For the same reason, Vitest's `--changed` cannot map source edits to the tests they affect.
 
 ```sh
-npm run test:list -- session_protocol  # preview matching files without running them
+npm run test:list -- session_protocol  # list matching test files without running them
 npm test -- session_protocol           # build, then run matching files
 npm run test:only -- session_protocol  # reuse an up-to-date build
-npm run test:only -- test/session_protocol.shared.test.js test/sdk_client.shared.test.js
 ```
 
-Filters match test file paths; multiple filters select their union. Use full paths for an exact slice. Tests import `dist`, so rebuild after source or bundled-asset changes; do not rely on Vitest's `--changed` to map source edits to those generated imports.
-
-Run the full suite for changes to the test harness, dependencies, build, or broadly shared behavior, and whenever the affected scope is unclear. CI and releases also run it:
+The full suite, which CI and releases also run:
 
 ```sh
 npm run check      # formats Markdown and code, then typechecks

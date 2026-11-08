@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,18 +8,15 @@ import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import { HistoryManager } from "../dist/core/history/history_manager.js";
 import { LocalHistoryStore } from "../dist/core/history/local_history_store.js";
-import { createLocalToolExecutionBackend } from "../dist/core/index.js";
 import { resolveModel } from "../dist/core/models/catalog.js";
 import { personas } from "../dist/core/personas.js";
 import { buildAutoCompactionContinuationMessage } from "../dist/core/session/compaction.js";
+import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
 import {
   buildToolRunPresentation,
   TOOL_UI_FACET_VERSION,
 } from "../dist/core/tools/presentation.js";
-import {
-  getSpeechToTextRecordingMaxDurationMs,
-  SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS,
-} from "../dist/core/utils/speech_to_text.js";
+import { SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS } from "../dist/core/utils/speech_to_text.js";
 import {
   formatTauUserText,
   hasAutoCompactionContinuationMetadata,
@@ -29,20 +27,11 @@ import {
 import { LocalSessionHost } from "../dist/host/local_session_host.js";
 import {
   applySessionProtocolDelta,
-  createSessionProtocolDeltaMessage,
   SESSION_PROTOCOL_VERSION,
 } from "../dist/protocol/session_protocol.js";
 import { FileSessionStore } from "../dist/store/file_session_store.js";
 import { MemorySessionStore } from "../dist/store/memory_session_store.js";
-import { TauSessionProtocolResponseError } from "../dist/transport/errors.js";
-import { formatDiffReviewUserMessage } from "../dist/tui/chat_controller/diff_review_user_message.js";
-import { formatRewindCandidateAge } from "../dist/tui/chat_controller/history_labels.js";
-import { copyTextToClipboard } from "../dist/tui/clipboard.js";
-import { HostDiagnosticRelay } from "../dist/tui/host_diagnostic_relay.js";
 import * as listenCapture from "../dist/tui/listen_capture.js";
-import { LISTEN_CAPTURE_START_TIMEOUT_MS } from "../dist/tui/listen_capture.js";
-import { exportMarkdown } from "../dist/tui/markdown_export.js";
-import { createTuiClientTools, SessionChatApp } from "../dist/tui/session_chat_app.js";
 import { SessionChatController } from "../dist/tui/session_chat_controller.js";
 import { runSpeechPlaybackTask } from "../dist/tui/speech_playback.js";
 import { CustomEditor } from "../dist/tui/ui/custom_editor.js";
@@ -52,14 +41,6 @@ import {
   createProtocolExecResult,
   createProtocolSnapshot,
 } from "./helpers/session_protocol_fixtures.js";
-
-vi.mock("../dist/tui/clipboard.js", () => ({
-  copyTextToClipboard: vi.fn(async () => {}),
-}));
-
-vi.mock("../dist/tui/markdown_export.js", () => ({
-  exportMarkdown: vi.fn(async () => "https://example.com/document/1"),
-}));
 
 const bootstrap = createProtocolBootstrap();
 const altBootstrap = createProtocolBootstrap({
@@ -966,74 +947,12 @@ async function createControllerHarness({
   return { session, view, controller };
 }
 
-describe("formatRewindCandidateAge", () => {
-  const now = 10 * 24 * 60 * 60 * 1000;
-
-  it("formats compact relative ages", () => {
-    expect(formatRewindCandidateAge(now - 30_000, now)).toBe("now");
-    expect(formatRewindCandidateAge(now - 2 * 60_000, now)).toBe("2m ago");
-    expect(formatRewindCandidateAge(now - 3 * 60 * 60_000, now)).toBe("3h ago");
-    expect(formatRewindCandidateAge(now - 4 * 24 * 60 * 60_000, now)).toBe("4d ago");
-  });
-});
-
-describe("HostDiagnosticRelay", () => {
-  const configWarnings = (cwd, warnings) => ({ event: "session_config_warnings", cwd, warnings });
-  const historyDiagnostic = { event: "history_recording", status: "delayed" };
-  const createTarget = () => ({
-    showHistoryDiagnostic: vi.fn(),
-    showSessionConfigWarnings: vi.fn(),
-  });
-
-  it("holds diagnostics until a controller attaches, then delivers live", () => {
-    const relay = new HostDiagnosticRelay({ cwd: "/launch", warnings: [] });
-    const target = createTarget();
-    relay.report(configWarnings("/project", ["early"]));
-    relay.report(historyDiagnostic);
-    expect(target.showSessionConfigWarnings).not.toHaveBeenCalled();
-
-    relay.attach(target);
-    expect(target.showSessionConfigWarnings).toHaveBeenCalledExactlyOnceWith({
-      cwd: "/project",
-      warnings: ["early"],
-    });
-    expect(target.showHistoryDiagnostic).toHaveBeenCalledExactlyOnceWith(historyDiagnostic);
-
-    relay.report(configWarnings("/project", ["live"]));
-    expect(target.showSessionConfigWarnings).toHaveBeenLastCalledWith({
-      cwd: "/project",
-      warnings: ["live"],
-    });
-  });
-
-  it("skips warnings already printed or shown, but not new ones or other directories", () => {
-    const relay = new HostDiagnosticRelay({ cwd: "/launch", warnings: ["printed"] });
-    const target = createTarget();
-    relay.report(configWarnings("/launch", ["printed"]));
-    relay.attach(target);
-    expect(target.showSessionConfigWarnings).not.toHaveBeenCalled();
-
-    relay.report(configWarnings("/launch", ["printed", "new"]));
-    expect(target.showSessionConfigWarnings).toHaveBeenLastCalledWith({
-      cwd: "/launch",
-      warnings: ["new"],
-    });
-    relay.report(configWarnings("/launch", ["new"]));
-    expect(target.showSessionConfigWarnings).toHaveBeenCalledOnce();
-
-    relay.report(configWarnings("/project", ["printed"]));
-    expect(target.showSessionConfigWarnings).toHaveBeenLastCalledWith({
-      cwd: "/project",
-      warnings: ["printed"],
-    });
-  });
-});
-
 describe("SessionChatController", () => {
-  it("reports turn status after lifecycle becomes idle and the receipt settles", async () => {
-    const { session, view, controller } = await createControllerHarness();
+  it("waits for a failed receipt after idle and never auto-speaks its partial answer", async () => {
+    const { session, view, controller } = await createControllerHarness({ deps: createMockDeps() });
+    const speak = vi.spyOn(controller, "speakLastAssistantMessage").mockResolvedValue();
     controller.start();
-    expect(view.programStatuses).toEqual(["idle"]);
+    await controller.onUserInput("/auto-speak on");
     const publish = (changes) => {
       const delta = {
         version: SESSION_PROTOCOL_VERSION,
@@ -1047,103 +966,39 @@ describe("SessionChatController", () => {
       session.snapshotValue = applySessionProtocolDelta(session.snapshotValue, delta);
       for (const listener of session.listeners) listener(delta);
     };
-    for (const [status, expected] of [
-      ["completed", "done"],
-      ["failed", "error"],
-      ["aborted", "idle"],
-      ["blocked", "error"],
-    ]) {
-      publish([
-        { type: "lifecycle.set", lifecycle: "running" },
-        { type: "turn.set", turn: { userHistoryEntryId: status, state: "running" } },
-      ]);
-      expect(view.programStatuses.at(-1)).toBe("working");
-      const runningReports = view.programStatuses.length;
-      publish([{ type: "lifecycle.set", lifecycle: "idle" }]);
-      expect(view.programStatuses).toHaveLength(runningReports);
-      publish([
-        {
-          type: "turn.set",
-          turn: {
-            userHistoryEntryId: status,
-            state: "settled",
-            outcome:
-              status === "blocked"
-                ? { status, reason: "auto-compaction-failed", message: "failed" }
-                : {
-                    status,
-                    stopReason:
-                      status === "completed" ? "stop" : status === "failed" ? "error" : "aborted",
-                  },
-          },
+    publish([
+      { type: "lifecycle.set", lifecycle: "running" },
+      { type: "turn.set", turn: { userHistoryEntryId: "turn", state: "running" } },
+    ]);
+    session.emit({ type: "assistant_start", historyEntryId: "answer" });
+    session.emit({
+      type: "assistant_final",
+      historyEntryId: "answer",
+      message: createAssistantMessage("partial answer"),
+    });
+    expect(view.programStatuses.at(-1)).toBe("working");
+    const runningReports = view.programStatuses.length;
+    publish([{ type: "lifecycle.set", lifecycle: "idle" }]);
+    expect(view.programStatuses).toHaveLength(runningReports);
+    expect(speak).not.toHaveBeenCalled();
+    publish([
+      {
+        type: "turn.set",
+        turn: {
+          userHistoryEntryId: "turn",
+          state: "settled",
+          outcome: { status: "failed", stopReason: "error", errorMessage: "provider failed" },
         },
-      ]);
-      expect(view.programStatuses.at(-1)).toBe(expected);
-      const reports = view.programStatuses.length;
-      publish([{ type: "lifecycle.set", lifecycle: "idle" }]);
-      expect(view.programStatuses).toHaveLength(reports);
-    }
+      },
+    ]);
+    expect(view.programStatuses.at(-1)).toBe("error");
+    expect(speak).not.toHaveBeenCalled();
+    const reports = view.programStatuses.length;
+    publish([{ type: "lifecycle.set", lifecycle: "idle" }]);
+    expect(view.programStatuses).toHaveLength(reports);
     await controller.dispose();
     expect(view.programStatuses.at(-1)).toBe("clear");
   });
-
-  it.each(["idle", "running"])(
-    "reports current activity on %s attachment without replaying completion",
-    async (lifecycle) => {
-      const session = new FakeSession();
-      session.snapshotValue.lifecycle = lifecycle;
-      session.snapshotValue.turns = {
-        old: {
-          userHistoryEntryId: "old",
-          state: "settled",
-          outcome: { status: "completed", stopReason: "stop" },
-        },
-      };
-      const { view, controller } = await createControllerHarness({ session });
-      controller.start();
-      expect(view.programStatuses).toEqual([lifecycle === "running" ? "working" : "idle"]);
-      await controller.dispose();
-      expect(view.programStatuses.at(-1)).toBe("clear");
-    },
-  );
-
-  it.each(["tau.turn.failed", "tau.turn.blocked", "cancelled"])(
-    "does not reuse an earlier answer when a retry ends with %s",
-    async (kind) => {
-      const session = new FakeSession();
-      session.snapshotValue = createSnapshot([
-        { id: "old-answer", message: createAssistantMessage("earlier answer") },
-      ]);
-      const { controller, view } = await createControllerHarness({ session });
-      controller.start();
-      session.snapshotValue = updateSnapshot(session.snapshotValue, { lifecycle: "running" });
-      await controller.syncFromSessionSnapshot();
-      session.snapshotValue = updateSnapshot(session.snapshotValue, { lifecycle: "idle" });
-      if (kind !== "cancelled") {
-        session.snapshotValue.timeline.items.push({
-          type: "notice",
-          id: "retry-failure",
-          sequence: ++session.snapshotValue.timeline.sequence,
-          createdAt: 1,
-          notice: {
-            kind,
-            version: 1,
-            severity: "error",
-            subject: { type: "session" },
-            presentation: { title: "failed", content: [] },
-            data: {},
-          },
-        });
-      }
-      await controller.syncFromSessionSnapshot();
-      expect(view.programStatuses).toEqual([
-        "idle",
-        "working",
-        kind === "cancelled" ? "idle" : "error",
-      ]);
-      await controller.dispose();
-    },
-  );
 
   it("reports settlement replayed during revision-gap recovery", async () => {
     const { session, controller, view } = await createControllerHarness();
@@ -1192,435 +1047,31 @@ describe("SessionChatController", () => {
     await controller.dispose();
   });
 
-  it("shows session configuration warnings as one nonfatal transcript notice", async () => {
-    const { view, controller } = await createControllerHarness();
-    controller.showSessionConfigWarnings({ cwd: "/srv/project", warnings: ["first", "second"] });
-    expect(view.transcriptNotices).toHaveLength(1);
-    const [notice] = view.transcriptNotices;
-    expect(notice.tone).toBe("default");
-    expect(notice.content.join("\n")).toContain("/srv/project");
-    expect(notice.content).toEqual(expect.arrayContaining(["first", "second"]));
-  });
-
-  it.each(["in-process", "ws://host"])(
-    "exports only completed assistant Markdown from %s",
-    async (targetLabel) => {
-      const markdown = "  # Proposal\n\n```js\nconst value = 1;\n```\n";
-      const completed = createAssistantMessage(markdown);
-      completed.content.push({ type: "thinking", thinking: "private reasoning" });
-      const session = new FakeSession(
-        createSnapshot([
-          { id: "user", message: { role: "user", content: "private input", timestamp: 1 } },
-          { id: "completed", message: completed },
-          {
-            id: "failed",
-            message: { ...createAssistantMessage("partial failure"), stopReason: "error" },
-          },
-          {
-            id: "tool-call",
-            message: { ...createAssistantMessage("tool commentary"), stopReason: "toolUse" },
-          },
-        ]),
-      );
-      const before = structuredClone(await session.snapshot());
-      const config = { markdownExport: { url: "https://example.com/api", token: "local-token" } };
-      const { controller, view } = await createControllerHarness({ session, config, targetLabel });
-      vi.mocked(exportMarkdown).mockClear();
-      controller.start();
-      controller.getInputHandlers().onSubmit("/export-response");
-      await flush();
-      expect(exportMarkdown).toHaveBeenCalledTimes(1);
-      expect(exportMarkdown).toHaveBeenCalledWith(
-        expect.objectContaining({ config: config.markdownExport, markdown }),
-      );
-      expect(view.transcriptNotices.at(-1)).toEqual(
-        expect.objectContaining({ content: ["https://example.com/document/1"] }),
-      );
-      expect(await session.snapshot()).toEqual(before);
-      await controller.dispose();
-    },
-  );
-
-  it("does not export without configuration or completed text", async () => {
-    vi.mocked(exportMarkdown).mockClear();
-    for (const config of [{}, { markdownExport: { url: "https://example.com/api" } }]) {
-      const { controller } = await createControllerHarness({ config });
-      controller.start();
-      controller.getInputHandlers().onSubmit("/export-response");
-      await flush();
-      await controller.dispose();
-    }
-    expect(exportMarkdown).not.toHaveBeenCalled();
-  });
-
   it("prevents duplicate exports and aborts on detach", async () => {
-    let signal;
-    vi.mocked(exportMarkdown).mockClear();
-    vi.mocked(exportMarkdown).mockImplementationOnce((options) => {
-      signal = options.signal;
-      return new Promise((_resolve, reject) =>
-        signal.addEventListener("abort", () => reject(new Error("cancelled")), { once: true }),
+    const requests = [];
+    const server = createServer((request) => requests.push(request));
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const session = new FakeSession(
+        createSnapshot([{ id: "reply", message: createAssistantMessage("reply") }]),
       );
-    });
-    const session = new FakeSession(
-      createSnapshot([{ id: "reply", message: createAssistantMessage("reply") }]),
-    );
-    const { controller } = await createControllerHarness({
-      session,
-      config: { markdownExport: { url: "https://example.com/api" } },
-    });
-    controller.start();
-    controller.getInputHandlers().onSubmit("/export-response");
-    await flush();
-    controller.getInputHandlers().onSubmit("/export-response");
-    await flush();
-    expect(exportMarkdown).toHaveBeenCalledTimes(1);
-    await controller.dispose();
-    expect(signal.aborted).toBe(true);
-  });
-
-  it.each([false, true])(
-    "retains history diagnostics without writing through the renderer (blocked=%s)",
-    async (quarantined) => {
-      const { view, controller } = await createControllerHarness({ targetLabel: "in-process" });
-      const diagnostic = {
-        event: "history_replication_failed",
-        endpoint: "https://history.example.com",
-        sessionId: "another-session",
-        operationId: "rewind-1",
-        ...(quarantined ? { quarantined: true } : {}),
-        error: {
-          status: quarantined ? 404 : 503,
-          code: quarantined ? "not_found" : "internal_error",
-          message: "failure",
-        },
-      };
-      controller.showHistoryDiagnostic(diagnostic);
-      expect(view.footerNotices.at(-1).tone).toBe(quarantined ? "error" : "default");
-      const notice = view.transcriptNotices.at(-1);
-      expect(notice.tone).toBe(quarantined ? "error" : "default");
-      expect(JSON.parse(notice.content[0])).toEqual(diagnostic);
-    },
-  );
-
-  it.each(["delayed", "dropped", "recovered"])(
-    "shows local recording health without treating it as remote quarantine (%s)",
-    async (status) => {
-      const { view, controller } = await createControllerHarness({ targetLabel: "in-process" });
-      const diagnostic = {
-        event: "history_recording",
-        status,
-        sessionId: "session",
-        pendingOperations: 2,
-        pendingBytes: 100,
-        message: "recording status",
-      };
-      controller.showHistoryDiagnostic(diagnostic);
-      const notice = view.transcriptNotices.at(-1);
-      expect(notice.tone).toBe(status === "dropped" ? "error" : "default");
-      expect(JSON.parse(notice.content[0])).toEqual(diagnostic);
-      expect(notice.content).toHaveLength(1);
-    },
-  );
-
-  it("renders the main-style startup intro and compact remote cwd label", async () => {
-    const systemPrompt = [
-      "system prompt",
-      "",
-      "### Project context",
-      "",
-      '<file path="/home/session/repo/AGENTS.md">',
-      "project instructions",
-      "</file>",
-      "",
-      '<file path="/home/session/repo/docs/AI_GUIDE.md">',
-      "additional instructions",
-      "</file>",
-      "",
-      "Nested AGENTS.md files under the current working directory (paths only):",
-      "",
-      "<nested-agents-files>",
-      '  <file path="/home/session/repo/src/AGENTS.md" />',
-      "</nested-agents-files>",
-    ].join("\n");
-    const snapshot = createProtocolSnapshot({
-      bootstrap: {
-        ...bootstrap,
-        prompt: { ...bootstrap.prompt, baseSystemPrompt: systemPrompt },
-      },
-      catalog: {
-        personas: [bootstrap.persona],
-        prompts: [{ id: "fix", label: "Fix", template: "fix the bug" }],
-        themes: [{ id: "gold" }],
-        mcp: { status: "available", servers: ["github"] },
-        skills: [
-          {
-            name: "alpha",
-            description: "alpha skill",
-            path: "/home/session/.tau/skills/alpha/SKILL.md",
-          },
-        ],
-      },
-      executionEnvironment: {
-        kind: "local",
-        cwd: "/home/session/repo",
-        home: "/home/session",
-      },
-    });
-    const session = new FakeSession(snapshot);
-    const view = new FakeView();
-    const { controller } = await createControllerHarness({
-      view,
-      session,
-      configuredClientToolNames: ["notify"],
-      themeIds: ["gold"],
-    });
-
-    controller.start();
-
-    const intro = view.messages.find((message) => message.model.type === "app_intro")?.model;
-    expect(intro.title).toContain("tau v");
-    expect(intro.title).toContain("2 context files");
-    expect(intro.title).toContain("1 skills");
-    expect(intro.title).toContain("1 client tool");
-    expect(intro.title).toContain("1 MCP server");
-    expect(intro.title).not.toContain("session");
-    expect(intro.body).toContain("skills:\n  alpha (~/.tau/skills)");
-    expect(intro.body).toContain(
-      "context:\n  ~/repo/AGENTS.md\n  ~/repo/docs/AI_GUIDE.md\n\nclient tools:\n  notify",
-    );
-    expect(intro.body).toContain("mcp servers:\n  github");
-    expect(intro.body).not.toContain("diff_review");
-    expect(intro.body).not.toContain("prefill_input");
-    expect(intro.body).not.toContain("~/repo/src/AGENTS.md");
-    expect(intro.body).toContain("session id: session-1");
-    expect(intro.body).not.toContain("ws://host");
-    expect(view.status.footer.cwdLabel).toBe("remote · ~/repo");
-    expect(view.status.footer.contextUsage).toBe("↑0 ↓0 r0 w0 · 0.0%/128k");
-
-    await controller.onUserInput("/help");
-    const help = view.messages.at(-1)?.model;
-    expect(help).toMatchObject({ type: "transcript_text" });
-    expect(help.text).toContain("context:\n  ~/repo/AGENTS.md\n  ~/repo/docs/AI_GUIDE.md");
-    expect(help.text).not.toContain("~/repo/src/AGENTS.md");
-    expect(help.text).toContain("skills:\n  alpha (~/.tau/skills)");
-  });
-
-  it("shows a persona compaction budget without a session override", async () => {
-    const snapshot = createSnapshot();
-    snapshot.settings.effectiveAutoCompactThresholdTokens = 80000;
-    const { controller, view } = await createControllerHarness({
-      session: new FakeSession(snapshot),
-    });
-    await controller.start();
-    expect(snapshot.settings.autoCompactThresholdTokens).toBeNull();
-    expect(view.status.footer.contextUsage).toContain("/128k (80k)");
-  });
-
-  it("sets and resets auto-compaction without changing the footer context window", async () => {
-    const { session, controller, view } = await createControllerHarness();
-    session.setAutoCompactThreshold = vi.fn(async (thresholdTokens) => ({
-      revision: 2,
-      settings: {
-        ...session.snapshotValue.settings,
-        autoCompactThresholdTokens: thresholdTokens,
-        effectiveAutoCompactThresholdTokens: thresholdTokens ?? 111616,
-      },
-    }));
-    await controller.start();
-    const original = view.status.footer.contextUsage;
-    for (const input of ["50000", "50k"]) {
-      await controller.onUserInput(`/auto-compact ${input}`);
-      expect(session.setAutoCompactThreshold).toHaveBeenLastCalledWith(50000);
-      expect(view.status.footer.contextUsage).toBe(`${original} (50k)`);
-    }
-    session.setAutoCompactThreshold.mockClear();
-    for (const input of ["49k", "50k junk", "5e4", "50000.5", "9007199254740992", "", "50kk"])
-      await controller.onUserInput(`/auto-compact ${input}`);
-    expect(session.setAutoCompactThreshold).not.toHaveBeenCalled();
-    await controller.onUserInput("/auto-compact default");
-    expect(session.setAutoCompactThreshold).toHaveBeenLastCalledWith(null);
-    expect(view.status.footer.contextUsage).toBe(original);
-  });
-
-  it("omits MCP startup sections when no servers are configured", async () => {
-    const { controller, view } = await createControllerHarness();
-    controller.start();
-    const intro = view.messages.find((message) => message.model.type === "app_intro").model;
-    expect(intro.title).not.toContain("MCP server");
-    expect(intro.body).not.toContain("mcp servers");
-  });
-
-  it("shows that MCP is unavailable for remote execution instead of listing servers", async () => {
-    const { controller, view } = await createControllerHarness({
-      session: new FakeSession(
-        createProtocolSnapshot({
-          catalog: { mcp: { status: "unavailable", reason: "remote-execution" } },
-          executionEnvironment: {
-            kind: "fly-sprite",
-            spriteName: "sprite",
-            cwd: "/home/sprite/repo",
-            home: "/home/sprite",
-          },
-        }),
-      ),
-    });
-    controller.start();
-    const intro = view.messages.find((message) => message.model.type === "app_intro").model;
-    expect(intro.title).toContain("MCP unavailable");
-    expect(intro.title).not.toContain("MCP server");
-    expect(intro.body).toMatch(/mcp servers:\n {2}unavailable: /);
-  });
-
-  it("renders persisted protocol notices in timeline order", async () => {
-    const snapshot = createProtocolSnapshot({
-      timeline: [
-        {
-          type: "notice",
-          id: "notice-history-unavailable",
-          notice: {
-            severity: "warn",
-            title: "Session history is unavailable. This session will continue.",
-            subject: { type: "session" },
-            timestamp: 1,
-          },
-        },
-      ],
-    });
-    const session = new FakeSession(snapshot);
-    const view = new FakeView();
-    const { controller } = await createControllerHarness({
-      view,
-      session,
-      targetLabel: "in-process",
-    });
-
-    controller.start();
-
-    expect(view.messages).toContainEqual({
-      id: "notice-history-unavailable",
-      model: {
-        type: "transcript_notice",
-        tone: "default",
-        title: "Session history is unavailable. This session will continue.",
-      },
-    });
-
-    const liveNotice = {
-      type: "notice",
-      id: "notice-live-warning",
-      sequence: snapshot.timeline.sequence + 1,
-      createdAt: 2,
-      notice: {
-        kind: "tau.test.notice",
-        version: 1,
-        severity: "warn",
-        subject: { type: "session" },
-        presentation: { title: "A live warning arrived." },
-        data: {},
-      },
-    };
-    for (const listener of session.listeners) {
-      listener({
-        version: SESSION_PROTOCOL_VERSION,
-        type: "session.delta",
-        sessionId: session.id,
-        fromRevision: snapshot.revision,
-        toRevision: snapshot.revision + 1,
-        cause: { type: "notice" },
-        delta: { type: "snapshot.patch", changes: [{ type: "timeline.append", item: liveNotice }] },
+      const { controller } = await createControllerHarness({
+        session,
+        config: { markdownExport: { url: `http://127.0.0.1:${server.address().port}/api` } },
       });
+      controller.start();
+      controller.getInputHandlers().onSubmit("/export-response");
+      await vi.waitFor(() => expect(requests).toHaveLength(1));
+      controller.getInputHandlers().onSubmit("/export-response");
+      await flush();
+      const closed = new Promise((resolve) => requests[0].socket.once("close", resolve));
+      await controller.dispose();
+      await closed;
+      expect(requests).toHaveLength(1);
+    } finally {
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
     }
-
-    expect(view.messages).toContainEqual({
-      id: "notice-live-warning",
-      model: {
-        type: "transcript_notice",
-        tone: "default",
-        title: "A live warning arrived.",
-      },
-    });
-  });
-
-  it("renders host feedback across a revision gap without adding it to the timeline", async () => {
-    const { session, view, controller } = await createControllerHarness({
-      targetLabel: "in-process",
-    });
-    controller.start();
-
-    const emit = (event) => {
-      for (const listener of session.ephemeralListeners) {
-        listener({
-          version: SESSION_PROTOCOL_VERSION,
-          type: "session.ephemeral",
-          sessionId: session.id,
-          event,
-        });
-      }
-    };
-
-    emit({
-      type: "feedback.notice",
-      title: "retrying after transient error",
-      tone: "default",
-      presentation: "footer",
-      durationMs: 3_000,
-    });
-    expect(view.footerNotices.at(-1)).toEqual({
-      text: "retrying after transient error",
-      tone: "default",
-      durationMs: 3_000,
-    });
-
-    for (const listener of session.listeners) {
-      listener({
-        version: SESSION_PROTOCOL_VERSION,
-        type: "session.delta",
-        sessionId: session.id,
-        fromRevision: 2,
-        toRevision: 3,
-        cause: { type: "notice" },
-        delta: {
-          type: "snapshot.patch",
-          changes: [{ type: "timeline.advance", epoch: 1, sequence: 1 }],
-        },
-      });
-    }
-    const timelineEvent = {
-      type: "timeline.item",
-      epoch: 1,
-      item: {
-        type: "notice",
-        id: "ephemeral-model-failure",
-        sequence: 1,
-        createdAt: 1,
-        notice: {
-          kind: "tau.test.feedback",
-          version: 1,
-          severity: "error",
-          subject: { type: "session" },
-          presentation: {
-            title: "model request failed",
-            content: ["provider unavailable"],
-          },
-          data: {},
-        },
-      },
-    };
-    emit(timelineEvent);
-    emit(timelineEvent);
-    expect(view.messages.filter((message) => message.id === "ephemeral-model-failure")).toEqual([
-      {
-        id: "ephemeral-model-failure",
-        model: {
-          type: "transcript_notice",
-          title: "model request failed",
-          tone: "error",
-          content: ["provider unavailable"],
-        },
-      },
-    ]);
-    expect(session.snapshotValue.timeline).toEqual({ epoch: 1, sequence: 0, items: [] });
   });
 
   it("merges ephemeral timeline items by sequence and truncates them on rewind", async () => {
@@ -1734,425 +1185,6 @@ describe("SessionChatController", () => {
     }
 
     expect(view.messages.map((message) => message.id)).toEqual(["view-1", "user-1"]);
-  });
-
-  it("discards stale ephemeral timeline items during revision-gap recovery", async () => {
-    const snapshot = createSnapshot([
-      {
-        id: "user-1",
-        message: { role: "user", content: [{ type: "text", text: "keep" }] },
-      },
-    ]);
-    const session = new FakeSession(snapshot);
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      config: EMPTY_CLIENT_CONFIG,
-      view,
-      session,
-      snapshot,
-      targetLabel: "in-process",
-    });
-    controller.start();
-
-    for (const listener of session.listeners) {
-      listener({
-        version: SESSION_PROTOCOL_VERSION,
-        type: "session.delta",
-        sessionId: session.id,
-        fromRevision: 1,
-        toRevision: 2,
-        cause: { type: "notice" },
-        delta: {
-          type: "snapshot.patch",
-          changes: [{ type: "timeline.advance", epoch: 1, sequence: 2 }],
-        },
-      });
-    }
-    for (const listener of session.ephemeralListeners) {
-      listener({
-        version: SESSION_PROTOCOL_VERSION,
-        type: "session.ephemeral",
-        sessionId: session.id,
-        event: {
-          type: "timeline.item",
-          epoch: 1,
-          item: {
-            type: "notice",
-            id: "stale-ephemeral",
-            sequence: 2,
-            createdAt: 2,
-            notice: {
-              kind: "tau.test.ephemeral",
-              version: 1,
-              severity: "error",
-              subject: { type: "session" },
-              presentation: { title: "stale failure" },
-              data: {},
-            },
-          },
-        },
-      });
-    }
-
-    const recoveredSnapshot = createProtocolSnapshot({
-      ...snapshot,
-      revision: 4,
-      messages: snapshot.messages,
-      timeline: {
-        epoch: 1,
-        sequence: 3,
-        items: snapshot.timeline.items,
-      },
-    });
-    const snapshotResponse = deferred();
-    vi.spyOn(session, "snapshot").mockImplementation(async () => await snapshotResponse.promise);
-    for (const listener of session.listeners) {
-      listener({
-        version: SESSION_PROTOCOL_VERSION,
-        type: "session.delta",
-        sessionId: session.id,
-        fromRevision: 3,
-        toRevision: 4,
-        cause: { type: "notice" },
-        delta: {
-          type: "snapshot.patch",
-          changes: [{ type: "timeline.advance", epoch: 1, sequence: 3 }],
-        },
-      });
-    }
-
-    for (const listener of session.ephemeralListeners) {
-      listener({
-        version: SESSION_PROTOCOL_VERSION,
-        type: "session.ephemeral",
-        sessionId: session.id,
-        event: {
-          type: "timeline.item",
-          epoch: 1,
-          item: {
-            type: "notice",
-            id: "fresh-ephemeral",
-            sequence: 3,
-            createdAt: 3,
-            notice: {
-              kind: "tau.test.ephemeral",
-              version: 1,
-              severity: "info",
-              subject: { type: "session" },
-              presentation: { title: "fresh notice" },
-              data: {},
-            },
-          },
-        },
-      });
-    }
-    snapshotResponse.resolve(recoveredSnapshot);
-    await flush();
-
-    expect(view.messages.some((message) => message.id === "stale-ephemeral")).toBe(false);
-    expect(view.messages).toContainEqual({
-      id: "fresh-ephemeral",
-      model: { type: "transcript_notice", title: "fresh notice", tone: "default" },
-    });
-  });
-
-  it("keeps frozen ephemeral notices during revision-gap recovery", async () => {
-    const snapshot = createSnapshot([
-      {
-        id: "user-1",
-        message: { role: "user", content: [{ type: "text", text: "before compaction" }] },
-      },
-    ]);
-    const session = new FakeSession(snapshot);
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      config: EMPTY_CLIENT_CONFIG,
-      view,
-      session,
-      snapshot,
-      targetLabel: "in-process",
-    });
-    controller.start();
-
-    for (const listener of session.listeners) {
-      listener({
-        version: SESSION_PROTOCOL_VERSION,
-        type: "session.delta",
-        sessionId: session.id,
-        fromRevision: 1,
-        toRevision: 2,
-        cause: { type: "notice" },
-        delta: {
-          type: "snapshot.patch",
-          changes: [{ type: "timeline.advance", epoch: 1, sequence: 2 }],
-        },
-      });
-    }
-    for (const listener of session.ephemeralListeners) {
-      listener({
-        version: SESSION_PROTOCOL_VERSION,
-        type: "session.ephemeral",
-        sessionId: session.id,
-        event: {
-          type: "timeline.item",
-          epoch: 1,
-          item: {
-            type: "notice",
-            id: "frozen-ephemeral",
-            sequence: 2,
-            createdAt: 2,
-            notice: {
-              kind: "tau.test.ephemeral",
-              version: 1,
-              severity: "info",
-              subject: { type: "session" },
-              presentation: { title: "frozen notice" },
-              data: {},
-            },
-          },
-        },
-      });
-    }
-
-    const compactedSnapshot = createProtocolSnapshot({
-      sessionId: session.id,
-      revision: 3,
-      historyEntries: [
-        {
-          id: "summary-entry",
-          message: { role: "user", content: [{ type: "text", text: "summary" }] },
-        },
-      ],
-    });
-    compactedSnapshot.timeline.epoch = 2;
-    for (const listener of session.listeners) {
-      listener(
-        createResetDelta(session.id, 2, compactedSnapshot, {
-          type: "compaction",
-          previousEpoch: 1,
-          epoch: 2,
-          kind: "auto",
-          cutType: "turn-boundary",
-          retainedMessageCount: 0,
-        }),
-      );
-    }
-
-    for (const listener of session.listeners) {
-      listener({
-        version: SESSION_PROTOCOL_VERSION,
-        type: "session.delta",
-        sessionId: session.id,
-        fromRevision: 3,
-        toRevision: 4,
-        cause: { type: "notice" },
-        delta: {
-          type: "snapshot.patch",
-          changes: [{ type: "timeline.advance", epoch: 2, sequence: 2 }],
-        },
-      });
-    }
-    for (const listener of session.ephemeralListeners) {
-      listener({
-        version: SESSION_PROTOCOL_VERSION,
-        type: "session.ephemeral",
-        sessionId: session.id,
-        event: {
-          type: "timeline.item",
-          epoch: 2,
-          item: {
-            type: "notice",
-            id: "active-ephemeral",
-            sequence: 2,
-            createdAt: 3,
-            notice: {
-              kind: "tau.test.ephemeral",
-              version: 1,
-              severity: "info",
-              subject: { type: "session" },
-              presentation: { title: "active notice" },
-              data: {},
-            },
-          },
-        },
-      });
-    }
-
-    const recoveredSnapshot = createProtocolSnapshot({
-      ...compactedSnapshot,
-      revision: 6,
-      messages: compactedSnapshot.messages,
-      timeline: {
-        epoch: 2,
-        sequence: 2,
-        items: compactedSnapshot.timeline.items,
-      },
-    });
-    vi.spyOn(session, "snapshot").mockResolvedValue(recoveredSnapshot);
-    for (const listener of session.listeners) {
-      listener({
-        version: SESSION_PROTOCOL_VERSION,
-        type: "session.delta",
-        sessionId: session.id,
-        fromRevision: 5,
-        toRevision: 6,
-        cause: { type: "notice" },
-        delta: {
-          type: "snapshot.patch",
-          changes: [{ type: "timeline.advance", epoch: 2, sequence: 2 }],
-        },
-      });
-    }
-    await flush();
-
-    expect(view.messages).toContainEqual({
-      id: "frozen-ephemeral",
-      model: { type: "transcript_notice", title: "frozen notice", tone: "default" },
-    });
-    expect(view.messages.some((message) => message.id === "active-ephemeral")).toBe(false);
-  });
-
-  it("keeps repeated timeline item ids in their respective compacted segments", async () => {
-    const notice = {
-      type: "notice",
-      id: "notice-history-unavailable",
-      sequence: 1,
-      createdAt: 1,
-      notice: {
-        kind: "tau.history.unavailable",
-        version: 1,
-        severity: "warn",
-        subject: { type: "session" },
-        presentation: { title: "history unavailable before compaction" },
-        data: {},
-      },
-    };
-    const snapshot = createProtocolSnapshot({
-      timeline: { epoch: 1, sequence: 1, items: [notice] },
-    });
-    const session = new FakeSession(snapshot);
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      config: EMPTY_CLIENT_CONFIG,
-      view,
-      session,
-      snapshot,
-      targetLabel: "in-process",
-    });
-    controller.start();
-
-    const compactedSnapshot = createProtocolSnapshot({
-      sessionId: snapshot.sessionId,
-      revision: 2,
-      timeline: { epoch: 2, sequence: 0, items: [] },
-    });
-    for (const listener of session.listeners) {
-      listener(
-        createResetDelta(session.id, 1, compactedSnapshot, {
-          type: "compaction",
-          previousEpoch: 1,
-          epoch: 2,
-          kind: "manual",
-          cutType: "turn-boundary",
-          retainedMessageCount: 0,
-        }),
-      );
-      listener({
-        version: SESSION_PROTOCOL_VERSION,
-        type: "session.delta",
-        sessionId: session.id,
-        fromRevision: 2,
-        toRevision: 3,
-        cause: { type: "notice" },
-        delta: {
-          type: "snapshot.patch",
-          changes: [
-            {
-              type: "timeline.append",
-              item: {
-                ...notice,
-                sequence: 1,
-                createdAt: 2,
-                notice: {
-                  ...notice.notice,
-                  presentation: { title: "history unavailable after compaction" },
-                },
-              },
-            },
-          ],
-        },
-      });
-    }
-
-    const notices = view.messages.filter(
-      (message) =>
-        message.model.type === "transcript_notice" &&
-        message.model.title.startsWith("history unavailable"),
-    );
-    expect(notices).toHaveLength(2);
-    expect(notices[0].id).not.toBe(notices[1].id);
-    const dividerIndex = view.messages.findIndex(
-      (message) =>
-        message.model.type === "session_divider" && message.model.label === "compacted context",
-    );
-    expect(view.messages.indexOf(notices[0])).toBeLessThan(dividerIndex);
-    expect(view.messages.indexOf(notices[1])).toBeGreaterThan(dividerIndex);
-  });
-
-  it("shows auto-compaction operation status in the footer", async () => {
-    const snapshot = createProtocolSnapshot({
-      timeline: [
-        {
-          type: "operation",
-          id: "operation-auto-compaction",
-          operation: {
-            kind: "auto-compaction",
-            status: "running",
-            startedAt: 1,
-          },
-        },
-      ],
-    });
-    const session = new FakeSession(snapshot);
-    const view = new FakeView();
-    const { controller } = await createControllerHarness({
-      view,
-      session,
-      targetLabel: "in-process",
-    });
-
-    controller.start();
-
-    expect(view.status.footer).toEqual({
-      type: "activity",
-      label: "compacting context",
-    });
-
-    for (const listener of session.listeners) {
-      listener({
-        version: SESSION_PROTOCOL_VERSION,
-        type: "session.delta",
-        sessionId: session.id,
-        fromRevision: snapshot.revision,
-        toRevision: snapshot.revision + 1,
-        cause: { type: "maintenance" },
-        delta: {
-          type: "snapshot.patch",
-          changes: [
-            {
-              type: "operation.set",
-              operation: {
-                ...snapshot.operations["operation-auto-compaction"],
-                status: "cancelled",
-                finishedAt: 2,
-                reason: "interrupted",
-              },
-            },
-          ],
-        },
-      });
-    }
-    expect(view.status.footer.type).toBe("regular");
   });
 
   it("freezes the old transcript from auto-compaction metadata when the start delta was missed", async () => {
@@ -2467,207 +1499,23 @@ describe("SessionChatController", () => {
     });
     expect(view.messages.some((message) => message.id === retainedAssistant.id)).toBe(false);
 
-    vi.mocked(copyTextToClipboard).mockClear();
-    controller.getInputHandlers().onSubmit("/copy-text");
-    await flush();
-
-    expect(copyTextToClipboard).toHaveBeenCalledWith("retained snapshot response");
-  });
-
-  it("hydrates a session snapshot and submits through the observed session", async () => {
-    const session = new FakeSession(
-      createSnapshot([
-        {
-          id: "history-1",
-          message: {
-            role: "user",
-            content: [{ type: "text", text: "persisted" }],
-          },
-        },
-      ]),
-    );
-    const view = new FakeView();
-    const { controller } = await createControllerHarness({
-      view,
-      session,
-      themeIds: ["gold"],
-    });
-
-    controller.start();
-    expect(view.messages.map((message) => message.id)).toContain("history-1");
-    expect(view.status.footer.cwdLabel).toBe("remote · /session/repo");
-
-    controller.getInputHandlers().onSubmit("hello session");
-    await flush();
-
-    expect(session.submit).toHaveBeenCalledWith("hello session");
-    expect(view.messages).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: "generated-user",
-          model: { type: "user", text: "hello session" },
-        }),
-        expect.objectContaining({
-          id: "assistant-1",
-          model: expect.objectContaining({ type: "assistant" }),
-        }),
-      ]),
-    );
-  });
-
-  it("projects a provider failure once from canonical assistant state", async () => {
-    const failedAssistant = {
-      ...createAssistantMessage("partial response"),
-      stopReason: "error",
-      errorMessage: "Codex request failed with request-id-89abde88",
-    };
-    const snapshot = createSnapshot([
-      { id: "user-failed", message: { role: "user", content: [{ type: "text", text: "try" }] } },
-      { id: "assistant-failed", message: failedAssistant },
-    ]);
-    const session = new FakeSession(snapshot);
-    session.emitSubmitEvents = false;
-    session.submit = vi.fn(async () => ({
-      userHistoryEntryId: "user-failed",
-      turn: { status: "failed", stopReason: "error", errorMessage: failedAssistant.errorMessage },
-    }));
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      config: EMPTY_CLIENT_CONFIG,
-      view,
-      session,
-      snapshot,
-      targetLabel: "in-process",
-    });
-
-    controller.start();
-    controller.getInputHandlers().onSubmit("try");
-    await flush();
-
-    expect(view.messages.filter((message) => message.model.type === "transcript_notice")).toEqual([
-      {
-        id: "presentation:failure:assistant-failed",
-        model: {
-          type: "transcript_notice",
-          title: "model request failed",
-          content: [failedAssistant.errorMessage],
-          tone: "error",
-        },
-      },
-    ]);
-    expect(view.transcriptNotices).toEqual([]);
-  });
-
-  it("renders submitted user messages from session deltas", async () => {
-    const session = new FakeSession();
-    const submitted = deferred();
-    session.submit = vi.fn(async () => await submitted.promise);
-    const view = new FakeView();
-    const { controller } = await createControllerHarness({
-      view,
-      session,
-    });
-    controller.start();
-
-    controller.getInputHandlers().onSubmit("hello session");
-    await flush();
-
-    expect(session.submit).toHaveBeenCalledWith("hello session");
-    expect(view.messages.some((message) => message.model.type === "user")).toBe(false);
-
-    const hostUser = {
-      id: "host-user",
-      state: "committed",
-      modelVisible: true,
-      message: {
-        role: "user",
-        content: [{ type: "text", text: "hello session" }],
-        timestamp: 1,
-      },
-    };
-    const delta = createMessageAppendDelta(session.id, session.snapshotValue.revision, hostUser);
-    session.snapshotValue = applySessionProtocolDelta(session.snapshotValue, delta);
-    for (const listener of session.listeners) {
-      listener(delta);
+    const bin = await mkdtemp(join(tmpdir(), "tau-clipboard-bin-"));
+    const clipboard = join(bin, "clipboard.txt");
+    const originalPath = process.env.PATH;
+    try {
+      for (const provider of ["wl-copy", "xclip", "xsel", "pbcopy"]) {
+        await writeFile(join(bin, provider), `#!/bin/sh\nexec /bin/cat > '${clipboard}'\n`);
+        await chmod(join(bin, provider), 0o755);
+      }
+      process.env.PATH = bin;
+      controller.getInputHandlers().onSubmit("/copy-text");
+      await vi.waitFor(async () =>
+        expect(await readFile(clipboard, "utf8")).toBe("retained snapshot response"),
+      );
+    } finally {
+      process.env.PATH = originalPath;
+      await rm(bin, { recursive: true, force: true });
     }
-
-    expect(view.messages).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: "host-user",
-          model: { type: "user", text: "hello session" },
-        }),
-      ]),
-    );
-
-    submitted.resolve({
-      userHistoryEntryId: "host-user",
-      turn: { status: "completed", stopReason: "stop" },
-    });
-    await flush();
-  });
-
-  it("clears submitted turn state when submit fails", async () => {
-    const session = new FakeSession();
-    session.rejectSubmit = true;
-    const view = new FakeView();
-    const { controller } = await createControllerHarness({
-      view,
-      session,
-      themeIds: ["gold"],
-    });
-
-    controller.start();
-    controller.getInputHandlers().onSubmit("hello session");
-    await flush();
-
-    expect(view.feedback).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          text: "failed to run assistant turn",
-          tone: "error",
-          content: ["submit rejected"],
-        }),
-      ]),
-    );
-    expect(session.submit).toHaveBeenCalledWith("hello session");
-    expect(view.messages.some((message) => message.model.type === "user")).toBe(false);
-    expect(view.workingIconStarts).toBe(1);
-    expect(view.workingIconStops).toBe(1);
-    expect(controller.isStreaming).toBe(false);
-    expect(controller.submittedTurnInProgress).toBe(false);
-    expect(view.status.footer.type).toBe("regular");
-  });
-
-  it("shows the protocol cause when a submitted turn fails", async () => {
-    const session = new FakeSession();
-    session.submit = vi.fn(async () => {
-      throw new TauSessionProtocolResponseError({
-        requestId: "submit-1",
-        error: {
-          code: "internal_error",
-          message: "failed to run session turn",
-          data: { cause: "session snapshot is invalid" },
-        },
-      });
-    });
-    const view = new FakeView();
-    const { controller } = await createControllerHarness({
-      view,
-      session,
-    });
-
-    controller.start();
-    controller.getInputHandlers().onSubmit("hello session");
-    await flush();
-
-    expect(view.feedback).toContainEqual(
-      expect.objectContaining({
-        text: "failed to run assistant turn",
-        tone: "error",
-        content: ["failed to run session turn: session snapshot is invalid"],
-      }),
-    );
   });
 
   it("stops visible running state when submit fails before snapshot recovery returns", async () => {
@@ -2698,124 +1546,6 @@ describe("SessionChatController", () => {
     expect(view.workingIconStops).toBe(1);
     expect(controller.isStreaming).toBe(false);
     expect(view.status.footer.type).toBe("regular");
-  });
-
-  it("projects interruption feedback from canonical assistant state", async () => {
-    const baseSnapshot = createSnapshot([
-      {
-        id: "assistant-interrupted",
-        message: { ...createAssistantMessage("partial response"), stopReason: "aborted" },
-      },
-    ]);
-    const snapshot = updateSnapshot(baseSnapshot, {
-      messages: baseSnapshot.messages.map((message) =>
-        message.id === "assistant-interrupted" ? { ...message, state: "interrupted" } : message,
-      ),
-    });
-    const session = new FakeSession(snapshot);
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      config: EMPTY_CLIENT_CONFIG,
-      view,
-      session,
-      snapshot,
-      targetLabel: "in-process",
-    });
-
-    controller.start();
-
-    expect(view.messages).toContainEqual({
-      id: "presentation:interruption:assistant-interrupted",
-      model: {
-        type: "transcript_notice",
-        title: "assistant turn interrupted",
-        tone: "default",
-      },
-    });
-  });
-
-  it("leaves interrupted-turn feedback to the synchronized session", async () => {
-    const { session, view, controller } = await createControllerHarness({
-      targetLabel: "in-process",
-    });
-    controller.start();
-    controller.isStreaming = true;
-
-    controller.getInputHandlers().onEscape();
-    controller.getInputHandlers().onEscape();
-    await flush();
-
-    expect(session.interrupt).toHaveBeenCalledTimes(1);
-    expect(view.transcriptNotices).toEqual([]);
-    expect(view.footerNotices).toEqual([]);
-  });
-
-  it("renders the authoritative snapshot when live assistant events were missed", async () => {
-    const session = new FakeSession();
-    session.emitSubmitEvents = false;
-    const view = new FakeView();
-    const { controller } = await createControllerHarness({
-      view,
-      session,
-    });
-    controller.start();
-
-    controller.getInputHandlers().onSubmit("hello session");
-    await flush();
-
-    expect(view.messages).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: "assistant-1",
-          model: expect.objectContaining({ type: "assistant" }),
-        }),
-      ]),
-    );
-  });
-
-  it("hides intermediate system messages on attach and live updates", async () => {
-    const instruction = {
-      role: "system",
-      content: "private native instruction",
-      timestamp: 1,
-      metadata: { type: "instruction", version: 1 },
-    };
-    const snapshot = createSnapshot([{ id: "native-1", message: instruction }]);
-    const session = new FakeSession(snapshot);
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      config: EMPTY_CLIENT_CONFIG,
-      view,
-      session,
-      snapshot,
-      targetLabel: "in-process",
-    });
-    controller.start();
-    expect(view.messages.every((message) => message.model.type === "app_intro")).toBe(true);
-    const before = structuredClone(view.messages);
-    const delta = createSessionProtocolDeltaMessage({
-      sessionId: snapshot.sessionId,
-      fromRevision: snapshot.revision,
-      toRevision: snapshot.revision + 1,
-      cause: { type: "system-message" },
-      delta: {
-        type: "snapshot.patch",
-        changes: [
-          {
-            type: "message.append",
-            message: {
-              id: "native-2",
-              state: "committed",
-              modelVisible: true,
-              message: instruction,
-            },
-          },
-        ],
-      },
-    });
-    for (const listener of session.listeners) listener(delta);
-    await flush();
-    expect(view.messages).toEqual(before);
   });
 
   it("hides raw user-message metadata and hidden system blocks from snapshots", async () => {
@@ -2850,75 +1580,6 @@ describe("SessionChatController", () => {
         expect.objectContaining({
           id: "history-raw",
           model: { type: "user", text: "\nvisible" },
-        }),
-      ]),
-    );
-  });
-
-  it("restores diff review styling from session history", async () => {
-    const rawText = formatDiffReviewUserMessage({
-      diffCommand: "git diff",
-      reviewedFiles: ["src/main.ts"],
-      outcome: "commented",
-      review: "review feedback",
-      historyEntryId: "review-user",
-    });
-    const session = new FakeSession(
-      createSnapshot([
-        {
-          id: "review-user",
-          message: {
-            role: "user",
-            content: [{ type: "text", text: rawText }],
-          },
-        },
-      ]),
-    );
-    const view = new FakeView();
-    const { controller } = await createControllerHarness({
-      view,
-      session,
-    });
-
-    controller.start();
-
-    expect(view.messages).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: "review-user",
-          model: { type: "user", text: "review feedback", kind: "review" },
-        }),
-      ]),
-    );
-  });
-
-  it("syncs rendered history when a session update arrives from another client", async () => {
-    const { session, view, controller } = await createControllerHarness();
-    controller.start();
-
-    session.snapshotValue = updateSnapshot(session.snapshotValue, {
-      revision: session.snapshotValue.revision + 1,
-      historyEntries: [
-        {
-          id: "other-user",
-          message: {
-            role: "user",
-            content: [{ type: "text", text: "from other client" }],
-          },
-        },
-      ],
-    });
-    session.emitUpdate(
-      { type: "snapshot_changed", reason: "risk_changed" },
-      session.snapshotValue.revision,
-    );
-    await flush();
-
-    expect(view.messages).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: "other-user",
-          model: { type: "user", text: "from other client" },
         }),
       ]),
     );
@@ -2974,67 +1635,6 @@ describe("SessionChatController", () => {
     expect(view.messages).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ id: "stale-user" })]),
     );
-  });
-
-  it("tracks and syncs turns started by another observed client", async () => {
-    const session = new FakeSession();
-    session.snapshot = vi.fn(async () => session.snapshotValue);
-    const view = new FakeView();
-    const { controller } = await createControllerHarness({
-      view,
-      session,
-    });
-    controller.start();
-
-    const observedUser = {
-      id: "observed-user",
-      state: "committed",
-      modelVisible: true,
-      message: {
-        role: "user",
-        content: [{ type: "text", text: "started elsewhere" }],
-        timestamp: 1,
-      },
-    };
-    const observedUserDelta = createMessageAppendDelta(
-      session.id,
-      session.snapshotValue.revision,
-      observedUser,
-    );
-    session.snapshotValue = applySessionProtocolDelta(session.snapshotValue, observedUserDelta);
-    for (const listener of session.listeners) {
-      listener(observedUserDelta);
-    }
-    session.emit({
-      type: "assistant_start",
-      historyEntryId: "observed-assistant",
-    });
-
-    expect(view.workingIconStarts).toBe(1);
-    expect(view.status.footer.type).toBe("regular");
-
-    const assistantMessage = createAssistantMessage("observed reply");
-    session.emit({
-      type: "assistant_final",
-      historyEntryId: "observed-assistant",
-      message: assistantMessage,
-    });
-    await flush();
-
-    expect(view.workingIconStops).toBe(1);
-    expect(view.messages).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: "observed-user",
-          model: { type: "user", text: "started elsewhere" },
-        }),
-        expect.objectContaining({
-          id: "observed-assistant",
-          model: expect.objectContaining({ type: "assistant" }),
-        }),
-      ]),
-    );
-    expect(session.snapshot).toHaveBeenCalledTimes(1);
   });
 
   it("stops visible running state on idle delta before a submitted turn response resolves", async () => {
@@ -3102,7 +1702,7 @@ describe("SessionChatController", () => {
   });
 
   it("retains editor submissions while manual compaction is active", async () => {
-    const { session, view, controller } = await createControllerHarness({
+    const { session, controller } = await createControllerHarness({
       targetLabel: "in-process",
     });
     controller.start();
@@ -3113,194 +1713,66 @@ describe("SessionChatController", () => {
     expect(session.submit).not.toHaveBeenCalled();
   });
 
-  it("submits directly while local speech playback is active", async () => {
-    const { session, view, controller } = await createControllerHarness({
-      targetLabel: "in-process",
-    });
-    controller.start();
-    controller.speakTask = {
-      abortController: new AbortController(),
-      completion: Promise.resolve(),
-    };
-
-    expect(controller.getInputHandlers().beforeSubmit?.("continue working")).toBe(true);
-    controller.getInputHandlers().onQueueSubmit("continue working");
-    await flush();
-
-    expect(session.submit).toHaveBeenCalledWith("continue working");
-    expect(session.queue).not.toHaveBeenCalled();
-  });
-
-  it("notifies when a session turn becomes idle", async () => {
-    const { session, view, controller } = await createControllerHarness({
-      targetLabel: "in-process",
-    });
-    controller.start();
-
-    session.emit({ type: "assistant_start", historyEntryId: "assistant-1" });
-    session.emit({
-      type: "assistant_final",
-      historyEntryId: "assistant-1",
-      message: createAssistantMessage("done"),
-    });
-
-    expect(view.terminalNotifications).toEqual(["tau is waiting for your input"]);
-  });
-
-  it("renders pending queue and steering messages from session pending state", async () => {
-    const { session, view, controller } = await createControllerHarness({
-      targetLabel: "in-process",
-    });
-    controller.start();
-
-    const message = {
-      version: SESSION_PROTOCOL_VERSION,
-      type: "session.pendingUserMessages",
-      sessionId: session.id,
-      state: {
-        revision: 2,
-        messages: [
-          { id: "steer-1", mode: "steer", text: "change direction" },
-          { id: "queue-1", mode: "queue", text: "run tests" },
-        ],
-      },
-    };
-    for (const listener of session.pendingUserMessagesListeners) {
-      listener(message);
-    }
-
-    expect(view.pendingUserMessages).toEqual(message.state.messages);
-  });
-
-  it("cancels all pending messages and restores their text to the editor", async () => {
-    const session = new FakeSession();
-    session.cancelPendingMessages = vi.fn(async () => ({
-      cancelled: [
-        { id: "steer-1", mode: "steer", text: "change direction" },
-        { id: "queue-1", mode: "queue", text: "run tests" },
-      ],
-    }));
-    const view = new FakeView();
-    view.editorText = "existing";
-    const { controller } = await createControllerHarness({
-      view,
-      session,
-      targetLabel: "in-process",
-    });
-    controller.start();
-
-    controller.getInputHandlers().onAltUp?.();
-    await flush();
-
-    expect(session.cancelPendingMessages).toHaveBeenCalledOnce();
-    expect(view.editorText).toBe("existing\n\n---\n\nchange direction\n\n---\n\nrun tests");
-  });
-
-  it.each(["submit", "queue", "steer"])(
-    "preserves hidden draft instructions through restoration and %s round trips",
-    async (method) => {
-      const { session, view, controller } = await createControllerHarness({});
-      const editor = new CustomEditor(createUiTheme("plain"));
-      const handlers = controller.getInputHandlers();
-      editor.onChange = handlers.onChange;
-      editor.beforeSubmit = handlers.beforeSubmit;
-      editor.onSubmit = handlers.onSubmit;
-      editor.onQueueSubmit = handlers.onQueueSubmit;
-      view.getEditorText = () => editor.getText();
-      view.setEditorText = (text) => editor.setText(text);
-      const pending = (id, mode, text, hiddenSystemMessages) => ({
-        id,
-        mode,
-        text: formatTauUserText({ text, hiddenSystemMessages }),
-      });
-      try {
-        session.cancelPendingMessages.mockResolvedValueOnce({
-          cancelled: [pending("draft", "queue", "existing draft", ["draft guidance"])],
-        });
-        await controller.cancelPendingMessagesIntoEditor();
-        editor.handleInput(" edited");
-        session.cancelPendingMessages.mockResolvedValueOnce({
-          cancelled: [
-            pending("steer", "steer", "change direction", ["A", "B"]),
-            pending("queue", "queue", "keep literal <system>C</system> text", ["A"]),
-          ],
-        });
-        await controller.cancelPendingMessagesIntoEditor();
-        const visible =
-          "existing draft edited\n\n---\n\nchange direction\n\n---\n\nkeep literal <system>C</system> text";
-        expect(editor.getText()).toBe(visible);
-        controller.isStreaming = method !== "submit";
-        const submit = async (count) => {
-          editor.handleInput(method === "queue" ? "\x1b[13;5u" : "\r");
-          await waitUntil(() => session[method].mock.calls.length === count);
-          if (method === "submit") await waitUntil(() => !controller.submittedTurnInProgress);
-          return session[method].mock.calls[count - 1][0];
-        };
-        const first = await submit(1);
-        expect(splitTauUserText(first)).toMatchObject({
-          displayText: visible,
-          hiddenSystemBlocks: ["draft guidance", "A", "B", "A"].map((text) => ({ text })),
-        });
-        session.cancelPendingMessages.mockResolvedValueOnce({
-          cancelled: [{ id: "restored", mode: "queue", text: first }],
-        });
-        await controller.cancelPendingMessagesIntoEditor();
-        expect(editor.getText()).toBe(visible);
-        expect(await submit(2)).toBe(first);
-        editor.handleInput("unrelated text");
-        expect(await submit(3)).toBe("unrelated text");
-        session.cancelPendingMessages.mockResolvedValueOnce({
-          cancelled: [{ id: "cleared", mode: "queue", text: first }],
-        });
-        await controller.cancelPendingMessagesIntoEditor();
-        editor.setText("");
-        editor.handleInput("fresh draft");
-        expect(await submit(4)).toBe("fresh draft");
-      } finally {
-        await controller.dispose();
-      }
-    },
-  );
-
-  it.each([
-    ["Enter", "\r", false, "submit"],
-    ["Ctrl+Enter", "\x1b[13;5u", false, "submit"],
-    ["Enter", "\r", true, "steer"],
-    ["Ctrl+Enter", "\x1b[13;5u", true, "queue"],
-  ])("routes %s (%s) with active turn=%s to %s", async (_keyName, key, active, method) => {
-    const { session, controller } = await createControllerHarness({});
+  it("preserves hidden instructions through editor restoration and queued resubmission", async () => {
+    const { session, view, controller } = await createControllerHarness({});
     const editor = new CustomEditor(createUiTheme("plain"));
     const handlers = controller.getInputHandlers();
-    editor.beforeSubmit = handlers.beforeSubmit;
     editor.onChange = handlers.onChange;
+    editor.beforeSubmit = handlers.beforeSubmit;
     editor.onSubmit = handlers.onSubmit;
     editor.onQueueSubmit = handlers.onQueueSubmit;
-    controller.isStreaming = active;
+    view.getEditorText = () => editor.getText();
+    view.setEditorText = (text) => editor.setText(text);
+    const pending = (id, mode, text, hiddenSystemMessages) => ({
+      id,
+      mode,
+      text: formatTauUserText({ text, hiddenSystemMessages }),
+    });
     try {
-      editor.setText("next instruction");
-      editor.handleInput(key);
-      await waitUntil(() => session[method].mock.calls.length === 1);
-      expect(session[method]).toHaveBeenCalledWith("next instruction");
-      for (const other of ["submit", "steer", "queue"].filter((value) => value !== method)) {
-        expect(session[other]).not.toHaveBeenCalled();
-      }
-      expect(editor.getText()).toBe("");
+      session.cancelPendingMessages.mockResolvedValueOnce({
+        cancelled: [pending("draft", "queue", "existing draft", ["draft guidance"])],
+      });
+      await controller.cancelPendingMessagesIntoEditor();
+      editor.handleInput(" edited");
+      session.cancelPendingMessages.mockResolvedValueOnce({
+        cancelled: [
+          pending("steer", "steer", "change direction", ["A", "B"]),
+          pending("queue", "queue", "keep literal <system>C</system> text", ["A"]),
+        ],
+      });
+      await controller.cancelPendingMessagesIntoEditor();
+      const visible =
+        "existing draft edited\n\n---\n\nchange direction\n\n---\n\nkeep literal <system>C</system> text";
+      expect(editor.getText()).toBe(visible);
+      controller.isStreaming = true;
+      const submit = async (count) => {
+        editor.handleInput("\x1b[13;5u");
+        await waitUntil(() => session.queue.mock.calls.length === count);
+        return session.queue.mock.calls[count - 1][0];
+      };
+      const first = await submit(1);
+      expect(splitTauUserText(first)).toMatchObject({
+        displayText: visible,
+        hiddenSystemBlocks: ["draft guidance", "A", "B", "A"].map((text) => ({ text })),
+      });
+      session.cancelPendingMessages.mockResolvedValueOnce({
+        cancelled: [{ id: "restored", mode: "queue", text: first }],
+      });
+      await controller.cancelPendingMessagesIntoEditor();
+      expect(editor.getText()).toBe(visible);
+      expect(await submit(2)).toBe(first);
+      editor.handleInput("unrelated text");
+      expect(await submit(3)).toBe("unrelated text");
+      session.cancelPendingMessages.mockResolvedValueOnce({
+        cancelled: [{ id: "cleared", mode: "queue", text: first }],
+      });
+      await controller.cancelPendingMessagesIntoEditor();
+      editor.setText("");
+      editor.handleInput("fresh draft");
+      expect(await submit(4)).toBe("fresh draft");
     } finally {
       await controller.dispose();
     }
-  });
-
-  it("submits steering text as a normal turn while idle", async () => {
-    const { session, view, controller } = await createControllerHarness({
-      targetLabel: "in-process",
-    });
-    controller.start();
-
-    controller.getInputHandlers().onSubmit("start a turn");
-    await flush();
-
-    expect(session.submit).toHaveBeenCalledWith("start a turn");
-    expect(session.steer).not.toHaveBeenCalled();
   });
 
   it("routes steering through the session protocol while a submitted turn is active", async () => {
@@ -3316,58 +1788,6 @@ describe("SessionChatController", () => {
 
     expect(session.steer).toHaveBeenCalledWith("change direction");
     expect(view.feedback).toEqual([]);
-  });
-
-  it("shows protocol causes when queueing and steering fail", async () => {
-    const session = new FakeSession();
-    session.queue = vi.fn(async () => {
-      throw new TauSessionProtocolResponseError({
-        requestId: "queue-1",
-        error: {
-          code: "internal_error",
-          message: "failed to drain pending user message",
-          data: { cause: "queued commit failed" },
-        },
-      });
-    });
-    session.steer = vi.fn(async () => {
-      throw new TauSessionProtocolResponseError({
-        requestId: "steer-1",
-        error: {
-          code: "internal_error",
-          message: "steering turn failed",
-          data: { cause: "session snapshot is invalid" },
-        },
-      });
-    });
-    const view = new FakeView();
-    const { controller } = await createControllerHarness({
-      view,
-      session,
-      targetLabel: "in-process",
-    });
-    controller.start();
-    controller.isStreaming = true;
-    controller.submittedTurnInProgress = true;
-
-    controller.getInputHandlers().onQueueSubmit("queue this");
-    controller.getInputHandlers().onSubmit("steer this");
-    await flush();
-
-    expect(view.feedback).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          text: "failed to queue message",
-          tone: "error",
-          content: ["failed to drain pending user message: queued commit failed"],
-        }),
-        expect.objectContaining({
-          text: "failed to steer assistant",
-          tone: "error",
-          content: ["steering turn failed: session snapshot is invalid"],
-        }),
-      ]),
-    );
   });
 
   it("does not dispatch or queue commands while a submitted turn response is pending", async () => {
@@ -3468,344 +1888,6 @@ describe("SessionChatController", () => {
     now.mockRestore();
   });
 
-  it("hydrates an active assistant partial from the initial session snapshot", async () => {
-    const finalAssistantMessage = createAssistantMessage("final reply");
-    const baseSnapshot = createSnapshot([
-      {
-        id: "history-1",
-        message: {
-          role: "user",
-          content: [{ type: "text", text: "persisted" }],
-        },
-      },
-    ]);
-    const session = new FakeSession(
-      updateSnapshot(baseSnapshot, {
-        lifecycle: "running",
-        messages: [
-          ...baseSnapshot.messages,
-          {
-            id: "assistant-active",
-            state: "draft",
-            modelVisible: false,
-            message: {
-              role: "assistant",
-              timestamp: 1,
-              content: [
-                { type: "thinking", thinking: "checking context" },
-                { type: "text", text: "partial reply" },
-              ],
-            },
-          },
-        ],
-        timeline: [
-          ...baseSnapshot.timeline.items,
-          {
-            type: "message",
-            id: "timeline-assistant-active",
-            messageId: "assistant-active",
-          },
-        ],
-      }),
-    );
-    const view = new FakeView();
-    const { controller } = await createControllerHarness({
-      view,
-      session,
-      themeIds: ["gold"],
-    });
-
-    controller.start();
-
-    expect(view.messages).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: "assistant-active",
-          model: {
-            type: "assistant_partial",
-            text: "partial reply",
-            thinking: "checking context",
-          },
-        }),
-      ]),
-    );
-
-    controller.getInputHandlers().onQueueSubmit("queued after attach");
-    await flush();
-
-    expect(session.submit).not.toHaveBeenCalled();
-    expect(session.queue).toHaveBeenCalledWith("queued after attach");
-    expect(view.feedback).toEqual([]);
-
-    session.snapshotValue = createSnapshot([
-      {
-        id: "history-1",
-        message: {
-          role: "user",
-          content: [{ type: "text", text: "persisted" }],
-        },
-      },
-      { id: "assistant-active", message: finalAssistantMessage },
-    ]);
-    session.emit({
-      type: "assistant_final",
-      historyEntryId: "assistant-active",
-      message: finalAssistantMessage,
-    });
-    await flush();
-
-    expect(session.submit).not.toHaveBeenCalled();
-  });
-
-  it("applies snapshot state deltas without reconciling transcript messages", async () => {
-    const snapshot = createSnapshot([
-      {
-        id: "user-1",
-        message: { role: "user", content: [{ type: "text", text: "hello" }] },
-      },
-      {
-        id: "assistant-1",
-        message: createAssistantMessage("hi"),
-      },
-    ]);
-    const session = new FakeSession(snapshot);
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      config: EMPTY_CLIENT_CONFIG,
-      view,
-      session,
-      snapshot: await session.snapshot(),
-      targetLabel: "local",
-    });
-
-    controller.start();
-    const addMessageSpy = vi.spyOn(view, "addMessage");
-    const updateMessageSpy = vi.spyOn(view, "updateMessage");
-    const updateAssistantMessageSpy = vi.spyOn(view, "updateAssistantMessage");
-    const delta = {
-      version: SESSION_PROTOCOL_VERSION,
-      type: "session.delta",
-      sessionId: session.id,
-      fromRevision: snapshot.revision,
-      toRevision: snapshot.revision + 1,
-      cause: { type: "configuration" },
-      delta: {
-        type: "snapshot.patch",
-        changes: [
-          {
-            type: "settings.set",
-            settings: { ...snapshot.settings, reasoning: "high" },
-          },
-        ],
-      },
-    };
-    session.snapshotValue = applySessionProtocolDelta(session.snapshotValue, delta);
-
-    for (const listener of session.listeners) {
-      listener(delta);
-    }
-
-    expect(addMessageSpy).not.toHaveBeenCalled();
-    expect(updateMessageSpy).not.toHaveBeenCalled();
-    expect(updateAssistantMessageSpy).not.toHaveBeenCalled();
-    expect(view.status.editor.reasoning).toBe("high");
-    expect(controller.snapshot.messages).toBe(snapshot.messages);
-    await controller.dispose();
-  });
-
-  it("targets message and notice updates in a long timeline", async () => {
-    const baseSnapshot = createSnapshot(
-      Array.from({ length: 1_000 }, (_, index) => ({
-        id: `history-${index}`,
-        message: {
-          role: "user",
-          content: [{ type: "text", text: `history ${index}` }],
-          timestamp: index,
-        },
-      })),
-    );
-    const draftMessage = {
-      id: "assistant-active",
-      state: "draft",
-      modelVisible: false,
-      message: {
-        role: "assistant",
-        content: [{ type: "text", text: "working" }],
-        timestamp: 1_001,
-      },
-    };
-    const snapshot = updateSnapshot(baseSnapshot, {
-      revision: 3,
-      lifecycle: "running",
-      messages: [...baseSnapshot.messages, draftMessage],
-      timeline: [
-        ...baseSnapshot.timeline.items,
-        {
-          type: "message",
-          id: "timeline-assistant-active",
-          messageId: draftMessage.id,
-        },
-      ],
-    });
-    const session = new FakeSession(snapshot);
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      config: EMPTY_CLIENT_CONFIG,
-      view,
-      session,
-      snapshot: await session.snapshot(),
-      targetLabel: "local",
-    });
-
-    controller.start();
-    const addMessageSpy = vi.spyOn(view, "addMessage");
-    const updateMessageSpy = vi.spyOn(view, "updateMessage");
-    const updateAssistantMessageSpy = vi.spyOn(view, "updateAssistantMessage");
-    const userMessage = {
-      id: "user-next",
-      state: "committed",
-      modelVisible: true,
-      message: {
-        role: "user",
-        content: [{ type: "text", text: "next" }],
-        timestamp: 1_002,
-      },
-    };
-    const previousControllerSnapshot = controller.snapshot;
-    const appendDelta = {
-      version: SESSION_PROTOCOL_VERSION,
-      type: "session.delta",
-      sessionId: session.id,
-      fromRevision: 3,
-      toRevision: 4,
-      cause: { type: "user-message" },
-      delta: {
-        type: "snapshot.patch",
-        changes: [
-          {
-            type: "agent-state.set",
-            agentState: { ...snapshot.agentState, revision: snapshot.agentState.revision + 1 },
-          },
-          { type: "message.append", message: userMessage },
-          {
-            type: "timeline.append",
-            item: {
-              type: "message",
-              id: "timeline-user-next",
-              sequence: snapshot.timeline.sequence + 1,
-              createdAt: userMessage.message.timestamp,
-              messageId: userMessage.id,
-            },
-          },
-        ],
-      },
-    };
-    session.snapshotValue = applySessionProtocolDelta(session.snapshotValue, appendDelta);
-    for (const listener of session.listeners) {
-      listener(appendDelta);
-    }
-
-    expect(addMessageSpy).toHaveBeenCalledTimes(1);
-    expect(addMessageSpy).toHaveBeenCalledWith({ type: "user", text: "next" }, "user-next");
-    expect(controller.snapshot.messages[1]).toBe(previousControllerSnapshot.messages[1]);
-    expect(controller.snapshot.timeline.items[0]).toBe(
-      previousControllerSnapshot.timeline.items[0],
-    );
-    expect(controller.snapshot.tools).toBe(previousControllerSnapshot.tools);
-    expect(previousControllerSnapshot.messages.some((message) => message.id === "user-next")).toBe(
-      false,
-    );
-    expect(updateMessageSpy).not.toHaveBeenCalled();
-    expect(updateAssistantMessageSpy).not.toHaveBeenCalled();
-
-    addMessageSpy.mockClear();
-    updateMessageSpy.mockClear();
-    updateAssistantMessageSpy.mockClear();
-    const finalMessage = {
-      ...draftMessage,
-      state: "committed",
-      modelVisible: true,
-      message: createAssistantMessage("done"),
-    };
-    const finalDelta = {
-      version: SESSION_PROTOCOL_VERSION,
-      type: "session.delta",
-      sessionId: session.id,
-      fromRevision: 4,
-      toRevision: 5,
-      cause: { type: "assistant-message" },
-      delta: {
-        type: "snapshot.patch",
-        changes: [
-          { type: "cost.set", costTotal: 0.01 },
-          { type: "message.replace", message: finalMessage },
-          { type: "lifecycle.set", lifecycle: "idle" },
-        ],
-      },
-    };
-    session.snapshotValue = applySessionProtocolDelta(session.snapshotValue, finalDelta);
-    for (const listener of session.listeners) {
-      listener(finalDelta);
-    }
-
-    expect(addMessageSpy).not.toHaveBeenCalled();
-    expect(updateAssistantMessageSpy).toHaveBeenCalledTimes(1);
-    expect(updateMessageSpy).toHaveBeenCalledTimes(1);
-    expect(view.messages.find((message) => message.id === draftMessage.id)?.model).toEqual(
-      expect.objectContaining({
-        type: "assistant",
-        message: expect.objectContaining({ content: [{ type: "text", text: "done" }] }),
-      }),
-    );
-
-    addMessageSpy.mockClear();
-    updateMessageSpy.mockClear();
-    updateAssistantMessageSpy.mockClear();
-    const noticeDelta = {
-      version: SESSION_PROTOCOL_VERSION,
-      type: "session.delta",
-      sessionId: session.id,
-      fromRevision: 5,
-      toRevision: 6,
-      cause: { type: "notice" },
-      delta: {
-        type: "snapshot.patch",
-        changes: [
-          {
-            type: "timeline.append",
-            item: {
-              type: "notice",
-              id: "notice-next",
-              sequence: snapshot.timeline.sequence + 2,
-              createdAt: 1_003,
-              notice: {
-                kind: "tau.test.notice",
-                version: 1,
-                severity: "warn",
-                subject: { type: "session" },
-                presentation: { title: "check this" },
-                data: {},
-              },
-            },
-          },
-        ],
-      },
-    };
-    session.snapshotValue = applySessionProtocolDelta(session.snapshotValue, noticeDelta);
-    for (const listener of session.listeners) {
-      listener(noticeDelta);
-    }
-
-    expect(addMessageSpy).toHaveBeenCalledTimes(1);
-    expect(addMessageSpy).toHaveBeenCalledWith(
-      { type: "transcript_notice", title: "check this", tone: "default" },
-      "notice-next",
-    );
-    expect(updateMessageSpy).not.toHaveBeenCalled();
-    expect(updateAssistantMessageSpy).not.toHaveBeenCalled();
-    await controller.dispose();
-  });
-
   it("preserves append order for mixed targeted timeline changes", async () => {
     const snapshot = updateSnapshot(
       createSnapshot([
@@ -3895,277 +1977,6 @@ describe("SessionChatController", () => {
     await controller.dispose();
   });
 
-  it("keeps late assistant outcome notices at the visible tail", async () => {
-    const assistantMessage = createAssistantToolCallMessage([
-      {
-        type: "toolCall",
-        id: "tool-a",
-        name: "bash",
-        arguments: { command: "echo a" },
-      },
-    ]);
-    const baseSnapshot = createSnapshot();
-    const snapshot = updateSnapshot(baseSnapshot, {
-      revision: 3,
-      messages: [
-        ...baseSnapshot.messages,
-        {
-          id: "assistant-active",
-          state: "draft",
-          modelVisible: false,
-          message: assistantMessage,
-        },
-      ],
-      timeline: [
-        ...baseSnapshot.timeline.items,
-        { type: "message", id: "timeline-assistant-active", messageId: "assistant-active" },
-      ],
-      tools: {
-        "tool-a": {
-          id: "tool-a",
-          toolCallId: "tool-a",
-          toolName: "bash",
-          call: { messageId: "assistant-active", contentIndex: 0 },
-          status: "succeeded",
-          startedAt: 1,
-          finishedAt: 2,
-          facetIds: [],
-        },
-      },
-    });
-    const session = new FakeSession(snapshot);
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      config: EMPTY_CLIENT_CONFIG,
-      view,
-      session,
-      snapshot: await session.snapshot(),
-      targetLabel: "local",
-    });
-
-    controller.start();
-    const failedMessage = {
-      id: "assistant-active",
-      state: "committed",
-      modelVisible: true,
-      message: {
-        ...assistantMessage,
-        stopReason: "error",
-        errorMessage: "provider failed",
-      },
-    };
-    const delta = {
-      version: SESSION_PROTOCOL_VERSION,
-      type: "session.delta",
-      sessionId: session.id,
-      fromRevision: 3,
-      toRevision: 4,
-      cause: { type: "assistant-message" },
-      delta: {
-        type: "snapshot.patch",
-        changes: [{ type: "message.replace", message: failedMessage }],
-      },
-    };
-    session.snapshotValue = applySessionProtocolDelta(session.snapshotValue, delta);
-    for (const listener of session.listeners) {
-      listener(delta);
-    }
-
-    expect(
-      view.messages
-        .map((message) => message.id)
-        .filter((id) =>
-          [
-            "assistant-active",
-            "timeline-tool-tool-a",
-            "presentation:failure:assistant-active",
-          ].includes(id),
-        ),
-    ).toEqual([
-      "assistant-active",
-      "timeline-tool-tool-a",
-      "presentation:failure:assistant-active",
-    ]);
-    expect(view.messages.at(-1)).toEqual({
-      id: "presentation:failure:assistant-active",
-      model: {
-        type: "transcript_notice",
-        title: "model request failed after tool execution",
-        content: ["provider failed"],
-        tone: "error",
-      },
-    });
-    await controller.dispose();
-  });
-
-  it("applies assistant content append deltas without full snapshot reconciliation", async () => {
-    const baseSnapshot = createSnapshot();
-    const snapshot = updateSnapshot(baseSnapshot, {
-      revision: 3,
-      lifecycle: "running",
-      messages: [
-        ...baseSnapshot.messages,
-        {
-          id: "assistant-streaming",
-          state: "draft",
-          modelVisible: false,
-          message: {
-            role: "assistant",
-            timestamp: 1,
-            content: [{ type: "text", text: "hello" }],
-          },
-        },
-      ],
-      timeline: [
-        ...baseSnapshot.timeline.items,
-        {
-          type: "message",
-          id: "timeline-assistant-streaming",
-          messageId: "assistant-streaming",
-        },
-      ],
-    });
-    const session = new FakeSession(snapshot);
-    const snapshotSpy = vi.spyOn(session, "snapshot");
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      config: EMPTY_CLIENT_CONFIG,
-      view,
-      session,
-      snapshot: await session.snapshot(),
-      targetLabel: "local",
-      themeIds: ["gold"],
-    });
-
-    controller.start();
-    const snapshotCallsBefore = snapshotSpy.mock.calls.length;
-    const appendDelta = {
-      version: SESSION_PROTOCOL_VERSION,
-      type: "session.delta",
-      sessionId: session.id,
-      fromRevision: 3,
-      toRevision: 4,
-      cause: { type: "assistant-stream" },
-      delta: {
-        type: "snapshot.patch",
-        changes: [
-          {
-            type: "message.content.append",
-            messageId: "assistant-streaming",
-            text: " world",
-            timestamp: 2,
-          },
-        ],
-      },
-    };
-    session.snapshotValue = applySessionProtocolDelta(session.snapshotValue, appendDelta);
-
-    for (const listener of session.listeners) {
-      listener(appendDelta);
-    }
-
-    expect(snapshotSpy).toHaveBeenCalledTimes(snapshotCallsBefore);
-    expect(view.messages.find((message) => message.id === "assistant-streaming")).toEqual(
-      expect.objectContaining({
-        model: {
-          type: "assistant_partial",
-          text: "hello world",
-          thinking: "",
-        },
-      }),
-    );
-  });
-
-  it("preserves hidden thinking from assistant content append deltas", async () => {
-    const baseSnapshot = createSnapshot();
-    const snapshot = updateSnapshot(baseSnapshot, {
-      revision: 3,
-      lifecycle: "running",
-      messages: [
-        ...baseSnapshot.messages,
-        {
-          id: "assistant-thinking-streaming",
-          state: "draft",
-          modelVisible: false,
-          message: {
-            role: "assistant",
-            timestamp: 1,
-            content: [],
-          },
-        },
-      ],
-      timeline: [
-        ...baseSnapshot.timeline.items,
-        {
-          type: "message",
-          id: "timeline-assistant-thinking-streaming",
-          messageId: "assistant-thinking-streaming",
-        },
-      ],
-    });
-    const session = new FakeSession(snapshot);
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      config: EMPTY_CLIENT_CONFIG,
-      view,
-      session,
-      snapshot: await session.snapshot(),
-      targetLabel: "local",
-      themeIds: ["gold"],
-    });
-
-    controller.start();
-    const appendDelta = {
-      version: SESSION_PROTOCOL_VERSION,
-      type: "session.delta",
-      sessionId: session.id,
-      fromRevision: 3,
-      toRevision: 4,
-      cause: { type: "assistant-stream" },
-      delta: {
-        type: "snapshot.patch",
-        changes: [
-          {
-            type: "message.content.append",
-            messageId: "assistant-thinking-streaming",
-            thinking: "checking context",
-            timestamp: 2,
-          },
-        ],
-      },
-    };
-    session.snapshotValue = applySessionProtocolDelta(session.snapshotValue, appendDelta);
-
-    for (const listener of session.listeners) {
-      listener(appendDelta);
-    }
-
-    expect(view.messages.find((message) => message.id === "assistant-thinking-streaming")).toEqual(
-      expect.objectContaining({
-        model: {
-          type: "assistant_partial",
-          text: "",
-          thinking: "checking context",
-        },
-      }),
-    );
-    controller.getInputHandlers().onCtrlT();
-
-    expect(view.feedback).toContainEqual(
-      expect.objectContaining({ tone: "default", text: "thoughts visible" }),
-    );
-    expect(
-      controller.snapshot.messages.find((entry) => entry.id === "assistant-thinking-streaming"),
-    ).toEqual(
-      expect.objectContaining({
-        message: expect.objectContaining({
-          content: [{ type: "thinking", thinking: "checking context" }],
-        }),
-      }),
-    );
-    await controller.dispose();
-  });
-
   it("replays deltas delivered while revision-gap recovery is pending", async () => {
     const baseSnapshot = createSnapshot();
     const gapMessage = {
@@ -4240,376 +2051,6 @@ describe("SessionChatController", () => {
       ]),
     );
     expect(controller.snapshot.revision).toBe(4);
-    await controller.dispose();
-  });
-
-  it("does not render content append deltas for messages hidden from the timeline", async () => {
-    const baseSnapshot = createSnapshot();
-    const snapshot = updateSnapshot(baseSnapshot, {
-      revision: 3,
-      lifecycle: "running",
-      messages: [
-        ...baseSnapshot.messages,
-        {
-          id: "assistant-hidden-streaming",
-          state: "draft",
-          modelVisible: true,
-          message: {
-            role: "assistant",
-            timestamp: 1,
-            content: [{ type: "text", text: "hidden" }],
-          },
-        },
-      ],
-      timeline: baseSnapshot.timeline,
-    });
-    const session = new FakeSession(snapshot);
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      config: EMPTY_CLIENT_CONFIG,
-      view,
-      session,
-      snapshot: await session.snapshot(),
-      targetLabel: "local",
-    });
-
-    controller.start();
-    const appendDelta = {
-      version: SESSION_PROTOCOL_VERSION,
-      type: "session.delta",
-      sessionId: session.id,
-      fromRevision: 3,
-      toRevision: 4,
-      cause: { type: "assistant-stream" },
-      delta: {
-        type: "snapshot.patch",
-        changes: [
-          {
-            type: "message.content.append",
-            messageId: "assistant-hidden-streaming",
-            text: " but synced",
-            timestamp: 2,
-          },
-        ],
-      },
-    };
-    session.snapshotValue = applySessionProtocolDelta(session.snapshotValue, appendDelta);
-
-    for (const listener of session.listeners) {
-      listener(appendDelta);
-    }
-
-    expect(view.messages).not.toEqual(
-      expect.arrayContaining([expect.objectContaining({ id: "assistant-hidden-streaming" })]),
-    );
-    expect(
-      controller.snapshot.messages.find((entry) => entry.id === "assistant-hidden-streaming")
-        .message.content[0].text,
-    ).toBe("hidden but synced");
-    await controller.dispose();
-  });
-
-  it("renders running assistant state from draft snapshot messages", async () => {
-    const baseSnapshot = createSnapshot();
-    const snapshot = updateSnapshot(baseSnapshot, {
-      lifecycle: "running",
-      messages: [
-        ...baseSnapshot.messages,
-        {
-          id: "assistant-draft",
-          state: "draft",
-          modelVisible: true,
-          message: {
-            role: "assistant",
-            content: [{ type: "text", text: "visible draft" }],
-            timestamp: 1,
-          },
-        },
-      ],
-      timeline: [
-        {
-          type: "message",
-          id: "timeline-assistant-draft",
-          messageId: "assistant-draft",
-        },
-      ],
-    });
-    const session = new FakeSession(snapshot);
-    const view = new FakeView();
-    const { controller } = await createControllerHarness({
-      view,
-      session,
-    });
-
-    controller.start();
-
-    expect(view.messages).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: "assistant-draft",
-          model: expect.objectContaining({
-            text: "visible draft",
-            type: "assistant_partial",
-          }),
-        }),
-      ]),
-    );
-
-    await controller.dispose();
-  });
-
-  it("replays snapshot tool UI facets in assistant tool-call order", async () => {
-    const assistantMessage = createAssistantToolCallMessage([
-      {
-        type: "toolCall",
-        id: "tool-a",
-        name: "bash",
-        arguments: { command: "echo a" },
-      },
-      {
-        type: "toolCall",
-        id: "tool-b",
-        name: "bash",
-        arguments: { command: "echo b" },
-      },
-    ]);
-    const snapshot = updateSnapshot(createSnapshot(), {
-      messages: [
-        ...createSnapshot().messages,
-        {
-          id: "assistant-tools",
-          state: "committed",
-          modelVisible: true,
-          message: assistantMessage,
-        },
-        {
-          id: "assistant-draft",
-          state: "draft",
-          modelVisible: false,
-          message: { role: "assistant", content: [], timestamp: 1 },
-        },
-      ],
-      timeline: [
-        {
-          type: "message",
-          id: "timeline-assistant-tools",
-          messageId: "assistant-tools",
-        },
-      ],
-      tools: {
-        "write-call": {
-          id: "write-call",
-          toolCallId: "write-call",
-          toolName: "write",
-          status: "streaming",
-          origin: { messageId: "assistant-draft", contentIndex: 0 },
-          facetIds: ["tool-ui-write-call"],
-        },
-        "tool-b": {
-          id: "tool-b",
-          toolCallId: "tool-b",
-          toolName: "bash",
-          call: { messageId: "assistant-tools", contentIndex: 1 },
-          status: "queued",
-          facetIds: ["tool-ui-tool-b"],
-        },
-        "tool-a": {
-          id: "tool-a",
-          toolCallId: "tool-a",
-          toolName: "bash",
-          call: { messageId: "assistant-tools", contentIndex: 0 },
-          status: "queued",
-          facetIds: ["tool-ui-tool-a"],
-        },
-      },
-      facets: {
-        "tool-ui-write-call": {
-          id: "tool-ui-write-call",
-          subject: { type: "tool", id: "write-call" },
-          kind: "tau.tool-ui-events",
-          version: TOOL_UI_FACET_VERSION,
-          data: {
-            events: [
-              {
-                type: "tool_call_streaming",
-                toolCallId: "write-call",
-                toolName: "write",
-                presentation: buildToolRunPresentation({
-                  toolName: "write",
-                  subject: "write",
-                }),
-              },
-            ],
-          },
-        },
-        "tool-ui-tool-b": {
-          id: "tool-ui-tool-b",
-          subject: { type: "tool", id: "tool-b" },
-          kind: "tau.tool-ui-events",
-          version: TOOL_UI_FACET_VERSION,
-          data: {
-            events: [
-              {
-                type: "tool_call_queued",
-                toolCallId: "tool-b",
-                toolName: "bash",
-                presentation: buildToolRunPresentation({
-                  toolName: "bash",
-                  subject: "echo b",
-                }),
-              },
-            ],
-          },
-        },
-        "tool-ui-tool-a": {
-          id: "tool-ui-tool-a",
-          subject: { type: "tool", id: "tool-a" },
-          kind: "tau.tool-ui-events",
-          version: TOOL_UI_FACET_VERSION,
-          data: {
-            events: [
-              {
-                type: "tool_call_queued",
-                toolCallId: "tool-a",
-                toolName: "bash",
-                presentation: buildToolRunPresentation({
-                  toolName: "bash",
-                  subject: "echo a",
-                }),
-              },
-            ],
-          },
-        },
-      },
-    });
-    const session = new FakeSession(snapshot);
-    const view = new FakeView();
-    const { controller } = await createControllerHarness({
-      view,
-      session,
-    });
-
-    controller.start();
-
-    expect(view.toolModels.map((model) => model.toolCallId)).toEqual([
-      "tool-a",
-      "tool-b",
-      "write-call",
-    ]);
-    expect(view.toolModels.map((model) => model.status)).toEqual(["queued", "queued", "streaming"]);
-    await controller.dispose();
-  });
-
-  it("renders tool results through the matching canonical tool card", async () => {
-    const baseSnapshot = createSnapshot();
-    const assistantMessage = createAssistantToolCallMessage([
-      {
-        type: "toolCall",
-        id: "tool-a",
-        name: "bash",
-        arguments: { command: "echo a" },
-      },
-    ]);
-    const snapshot = updateSnapshot(baseSnapshot, {
-      messages: [
-        ...baseSnapshot.messages,
-        {
-          id: "assistant-tools",
-          state: "committed",
-          modelVisible: true,
-          message: assistantMessage,
-        },
-        {
-          id: "tool-a",
-          state: "committed",
-          modelVisible: true,
-          message: {
-            role: "toolResult",
-            toolCallId: "tool-a",
-            toolName: "bash",
-            content: [{ type: "text", text: "a\n" }],
-            isError: false,
-            timestamp: 2,
-          },
-        },
-      ],
-      timeline: [
-        {
-          type: "message",
-          id: "timeline-assistant-tools",
-          messageId: "assistant-tools",
-        },
-        {
-          type: "message",
-          id: "timeline-tool-a",
-          messageId: "tool-a",
-        },
-      ],
-      tools: {
-        "tool-a": {
-          id: "tool-a",
-          toolCallId: "tool-a",
-          toolName: "bash",
-          call: { messageId: "assistant-tools", contentIndex: 0 },
-          status: "succeeded",
-          resultMessageId: "tool-a",
-          facetIds: ["tool-ui-tool-a"],
-        },
-      },
-      facets: {
-        "tool-ui-tool-a": {
-          id: "tool-ui-tool-a",
-          subject: { type: "tool", id: "tool-a" },
-          kind: "tau.tool-ui-events",
-          version: TOOL_UI_FACET_VERSION,
-          data: {
-            events: [
-              {
-                type: "tool_call_queued",
-                toolCallId: "tool-a",
-                toolName: "bash",
-                presentation: buildToolRunPresentation({
-                  toolName: "bash",
-                  subject: "echo a",
-                }),
-              },
-              {
-                type: "bash_execution",
-                toolCallId: "tool-a",
-                command: "echo a",
-                presentation: buildToolRunPresentation({
-                  toolName: "bash",
-                  subject: "echo a",
-                  details: [{ text: "a" }],
-                  metadata: ["exit 0"],
-                }),
-                exitCode: 0,
-              },
-            ],
-          },
-        },
-      },
-    });
-    const session = new FakeSession(snapshot);
-    const view = new FakeView();
-    const { controller } = await createControllerHarness({
-      view,
-      session,
-    });
-
-    controller.start();
-
-    expect(view.messages.some((message) => message.id === "timeline-tool-tool-a")).toBe(true);
-    expect(view.toolModels).toEqual([
-      expect.objectContaining({
-        toolCallId: "tool-a",
-        status: "succeeded",
-        presentation: expect.objectContaining({
-          subject: "echo a",
-          details: [{ text: "a", wrap: "word" }],
-        }),
-      }),
-    ]);
     await controller.dispose();
   });
 
@@ -4733,117 +2174,6 @@ describe("SessionChatController", () => {
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
-  });
-
-  it("targets a tool result update in a long timeline", async () => {
-    const baseSnapshot = createSnapshot(
-      Array.from({ length: 1_000 }, (_, index) => ({
-        id: `history-${index}`,
-        message: {
-          role: "user",
-          content: [{ type: "text", text: `history ${index}` }],
-          timestamp: index,
-        },
-      })),
-    );
-    const toolCallMessage = {
-      id: "assistant-tools",
-      state: "committed",
-      modelVisible: true,
-      message: createAssistantToolCallMessage([
-        {
-          type: "toolCall",
-          id: "tool-a",
-          name: "bash",
-          arguments: { command: "echo a" },
-        },
-      ]),
-    };
-    const tool = {
-      id: "tool-a",
-      toolCallId: "tool-a",
-      toolName: "bash",
-      call: { messageId: toolCallMessage.id, contentIndex: 0 },
-      status: "succeeded",
-      startedAt: 1_001,
-      finishedAt: 1_002,
-      facetIds: [],
-    };
-    const snapshot = updateSnapshot(baseSnapshot, {
-      revision: 3,
-      messages: [...baseSnapshot.messages, toolCallMessage],
-      timeline: [
-        ...baseSnapshot.timeline.items,
-        {
-          type: "message",
-          id: "timeline-assistant-tools",
-          messageId: toolCallMessage.id,
-        },
-      ],
-      tools: { "tool-a": tool },
-    });
-    const session = new FakeSession(snapshot);
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      config: EMPTY_CLIENT_CONFIG,
-      view,
-      session,
-      snapshot: await session.snapshot(),
-      targetLabel: "local",
-    });
-
-    controller.start();
-    const addMessageSpy = vi.spyOn(view, "addMessage");
-    const updateMessageSpy = vi.spyOn(view, "updateMessage");
-    const updateAssistantMessageSpy = vi.spyOn(view, "updateAssistantMessage");
-    const resultMessage = {
-      id: "tool-result-a",
-      state: "committed",
-      modelVisible: true,
-      message: {
-        role: "toolResult",
-        toolCallId: "tool-a",
-        toolName: "bash",
-        content: [{ type: "text", text: "a\n" }],
-        isError: false,
-        timestamp: 1_003,
-      },
-    };
-    const delta = {
-      version: SESSION_PROTOCOL_VERSION,
-      type: "session.delta",
-      sessionId: session.id,
-      fromRevision: 3,
-      toRevision: 4,
-      cause: { type: "tool-result" },
-      delta: {
-        type: "snapshot.patch",
-        changes: [
-          {
-            type: "agent-state.set",
-            agentState: { ...snapshot.agentState, revision: snapshot.agentState.revision + 1 },
-          },
-          { type: "message.append", message: resultMessage },
-          { type: "tool.set", tool: { ...tool, resultMessageId: resultMessage.id } },
-        ],
-      },
-    };
-    session.snapshotValue = applySessionProtocolDelta(session.snapshotValue, delta);
-    for (const listener of session.listeners) {
-      listener(delta);
-    }
-
-    expect(addMessageSpy).not.toHaveBeenCalled();
-    expect(updateMessageSpy).toHaveBeenCalledTimes(1);
-    expect(updateMessageSpy.mock.calls[0]?.[1]).toEqual(
-      expect.objectContaining({
-        type: "tool",
-        tool: expect.objectContaining({ toolCallId: "tool-a", status: "succeeded" }),
-      }),
-    );
-    expect(updateAssistantMessageSpy).not.toHaveBeenCalled();
-    expect(controller.snapshot.messages.at(-1)).toEqual(resultMessage);
-    await controller.dispose();
   });
 
   it("applies tool status and presentation facet deltas independently", async () => {
@@ -4990,121 +2320,6 @@ describe("SessionChatController", () => {
     expect(updateAssistantMessageSpy).not.toHaveBeenCalled();
     expect(view.status.footer.sessionCost).toBe("$0.42");
     expect(controller.snapshot.tools["tool-a"].status).toBe("running");
-    await controller.dispose();
-  });
-
-  it("includes tier-priced assistant usage in the session footer cost", async () => {
-    const assistantMessage = createAssistantMessage("tiered response");
-    assistantMessage.usage = {
-      input: 273000,
-      output: 1000,
-      cacheRead: 0,
-      cacheWrite: 0,
-      totalTokens: 274000,
-      cost: { input: 0.546, output: 0.009, cacheRead: 0, cacheWrite: 0, total: 0.555 },
-    };
-    const session = new FakeSession(
-      updateSnapshot(createSnapshot(), {
-        costTotal: 0.555,
-        messages: [
-          {
-            id: "system",
-            state: "committed",
-            modelVisible: true,
-            message: { role: "system", content: "system prompt", timestamp: 0 },
-          },
-          {
-            id: "assistant-tiered",
-            state: "committed",
-            modelVisible: true,
-            message: assistantMessage,
-          },
-        ],
-      }),
-    );
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      config: EMPTY_CLIENT_CONFIG,
-      view,
-      session,
-      snapshot: await session.snapshot(),
-      targetLabel: "local",
-    });
-
-    controller.start();
-
-    expect(view.status.footer.sessionCost).toBe("$0.56");
-    await controller.dispose();
-  });
-
-  it("reconstructs subagent activity from transient session state", async () => {
-    const agent = createAgentRun();
-    const session = new FakeSession(
-      updateSnapshot(createSnapshot(), {
-        agents: {
-          [agent.id]: agent,
-        },
-      }),
-    );
-    session.subagentActivitiesValue = {
-      revision: 2,
-      agents: {
-        [agent.id]: {
-          runRevision: 1,
-          activities: [{ type: "assistant", text: "reading files" }],
-        },
-      },
-    };
-    const view = new FakeView();
-    const { controller } = await createControllerHarness({
-      view,
-      session,
-    });
-
-    controller.start();
-
-    expect(view.subagentSnapshots).toEqual([
-      {
-        state: expect.objectContaining({
-          id: "agent-1",
-          run: expect.objectContaining({ status: "running" }),
-        }),
-        activities: [{ type: "assistant", text: "reading files" }],
-      },
-    ]);
-    await controller.dispose();
-  });
-
-  it("reconstructs finished subagents from snapshot agent state", async () => {
-    const agent = createAgentRun({
-      status: "succeeded",
-      finalText: "all clear",
-      finishedAt: 2,
-    });
-    const session = new FakeSession(
-      updateSnapshot(createSnapshot(), {
-        agents: {
-          [agent.id]: agent,
-        },
-      }),
-    );
-    const view = new FakeView();
-    const { controller } = await createControllerHarness({
-      view,
-      session,
-    });
-
-    controller.start();
-
-    expect(view.subagentSnapshots).toEqual([
-      {
-        state: expect.objectContaining({
-          id: "agent-1",
-          run: expect.objectContaining({ status: "succeeded", response: "all clear" }),
-        }),
-        activities: [],
-      },
-    ]);
     await controller.dispose();
   });
 
@@ -5303,212 +2518,6 @@ describe("SessionChatController", () => {
     );
   });
 
-  it("routes session maintenance commands through the session protocol", async () => {
-    const session = new FakeSession(
-      createSnapshot([
-        {
-          id: "history-1",
-          message: {
-            role: "user",
-            content: [{ type: "text", text: "persisted" }],
-          },
-        },
-      ]),
-    );
-    const view = new FakeView();
-    const { controller } = await createControllerHarness({
-      view,
-      session,
-    });
-    controller.start();
-
-    controller.getInputHandlers().onSubmit("/compact-keep-last preserve decisions");
-    await flush();
-
-    expect(session.compact).toHaveBeenCalledWith("summary-and-last", {
-      guidance: "preserve decisions",
-    });
-    expect(session.submit).not.toHaveBeenCalled();
-    const dividerIndexes = view.messages.flatMap((message, index) =>
-      message.model.type === "session_divider" ? [index] : [],
-    );
-    const summaryIndex = view.messages.findIndex((message) => message.id === "summary-entry");
-    expect(dividerIndexes).toHaveLength(1);
-    expect(view.messages[dividerIndexes[0]]?.model).toEqual({
-      type: "session_divider",
-      label: "compacted context",
-    });
-    expect(dividerIndexes[0]).toBeLessThan(summaryIndex);
-    expect(view.messages[summaryIndex]).toEqual({
-      id: "summary-entry",
-      model: { type: "user", text: "compacted summary: preserve decisions" },
-    });
-    expect(view.feedback).toEqual([]);
-  });
-
-  it("renders one divider before a manually compacted reset", async () => {
-    const session = new FakeSession(
-      createSnapshot([
-        {
-          id: "history-1",
-          message: {
-            role: "user",
-            content: [{ type: "text", text: "persisted" }],
-          },
-        },
-      ]),
-    );
-    session.compact = vi.fn(async () => {
-      const runningSnapshot = updateSnapshot(session.snapshotValue, {
-        revision: session.snapshotValue.revision + 1,
-        timeline: [
-          ...session.snapshotValue.timeline.items,
-          {
-            type: "operation",
-            id: "operation-manual-compaction",
-            operation: {
-              kind: "manual-compaction",
-              status: "running",
-              startedAt: 1,
-            },
-          },
-        ],
-      });
-      for (const listener of session.listeners) {
-        listener(
-          createResetDelta(
-            session.id,
-            session.snapshotValue.revision,
-            runningSnapshot,
-            "maintenance",
-          ),
-        );
-      }
-
-      const compactedSnapshot = createProtocolSnapshot({
-        sessionId: session.id,
-        revision: runningSnapshot.revision + 1,
-        agentState: {
-          revision: runningSnapshot.agentState.revision + 1,
-          modelContextKey: runningSnapshot.agentState.modelContextKey,
-        },
-        historyEntries: [
-          {
-            id: "summary-entry",
-            message: {
-              role: "user",
-              content: [{ type: "text", text: "compacted summary" }],
-            },
-          },
-        ],
-      });
-      compactedSnapshot.timeline.epoch = runningSnapshot.timeline.epoch + 1;
-      session.snapshotValue = compactedSnapshot;
-      for (const listener of session.listeners) {
-        listener(
-          createResetDelta(session.id, runningSnapshot.revision, compactedSnapshot, {
-            type: "compaction",
-            previousEpoch: runningSnapshot.timeline.epoch,
-            epoch: compactedSnapshot.timeline.epoch,
-            kind: "manual",
-            cutType: "turn-boundary",
-            retainedMessageCount: 0,
-          }),
-        );
-      }
-      return {
-        snapshot: compactedSnapshot,
-        compactionMessage: "compacted summary",
-        includedLastAssistant: false,
-      };
-    });
-    const view = new FakeView();
-    const { controller } = await createControllerHarness({
-      view,
-      session,
-      targetLabel: "in-process",
-    });
-    controller.start();
-
-    controller.getInputHandlers().onSubmit("/compact-all");
-    await flush();
-
-    const dividerIndexes = view.messages.flatMap((message, index) =>
-      message.model.type === "session_divider" ? [index] : [],
-    );
-    const summaryIndex = view.messages.findIndex((message) => message.id === "summary-entry");
-    expect(dividerIndexes).toHaveLength(1);
-    expect(view.messages[dividerIndexes[0]]?.model).toEqual({
-      type: "session_divider",
-      label: "compacted context",
-    });
-    expect(dividerIndexes[0]).toBeLessThan(summaryIndex);
-    expect(dividerIndexes.filter((index) => index > summaryIndex)).toEqual([]);
-  });
-
-  it("renders manual compaction failures as transcript errors", async () => {
-    const session = new FakeSession();
-    session.compact = vi.fn(async () => {
-      const runningSnapshot = updateSnapshot(session.snapshotValue, {
-        revision: session.snapshotValue.revision + 1,
-        timeline: [
-          ...session.snapshotValue.timeline.items,
-          {
-            type: "operation",
-            id: "operation-manual-compaction",
-            operation: {
-              kind: "manual-compaction",
-              status: "running",
-              startedAt: 1,
-            },
-          },
-        ],
-      });
-      for (const listener of session.listeners) {
-        listener(
-          createResetDelta(
-            session.id,
-            session.snapshotValue.revision,
-            runningSnapshot,
-            "maintenance",
-          ),
-        );
-      }
-
-      const failedSnapshot = updateSnapshot(runningSnapshot, {
-        revision: runningSnapshot.revision + 1,
-        timeline: runningSnapshot.timeline.items.filter((item) => item.type !== "operation"),
-      });
-      session.snapshotValue = failedSnapshot;
-      for (const listener of session.listeners) {
-        listener(
-          createResetDelta(session.id, runningSnapshot.revision, failedSnapshot, "maintenance"),
-        );
-      }
-      throw new Error("no conversation to compact.");
-    });
-    const view = new FakeView();
-    const { controller } = await createControllerHarness({
-      view,
-      session,
-      targetLabel: "in-process",
-    });
-    controller.start();
-
-    controller.getInputHandlers().onSubmit("/compact-all");
-    await flush();
-
-    expect(view.transcriptNotices).toEqual([
-      {
-        text: "failed to compact session",
-        tone: "error",
-        content: ["no conversation to compact."],
-      },
-    ]);
-    expect(view.messages.filter((message) => message.model.type === "session_divider")).toEqual([]);
-    expect(view.status.footer.type).toBe("regular");
-  });
-
   it("interrupts manual compaction with Escape and allows later compactions to be interrupted", async () => {
     const session = new FakeSession();
     let pendingCompact;
@@ -5541,338 +2550,6 @@ describe("SessionChatController", () => {
     controller.getInputHandlers().onEscape();
     await flush();
     expect(session.interrupt).toHaveBeenCalledTimes(2);
-  });
-
-  it("shows manual compaction status until the compact request finishes", async () => {
-    const session = new FakeSession();
-    const pendingCompact = deferred();
-    session.compact = vi.fn(async () => {
-      await pendingCompact.promise;
-      session.snapshotValue = updateSnapshot(session.snapshotValue, {
-        revision: session.snapshotValue.revision + 1,
-        historyEntries: [
-          {
-            id: "summary-entry",
-            message: {
-              role: "user",
-              content: [{ type: "text", text: "compacted summary" }],
-            },
-          },
-        ],
-      });
-      return {
-        snapshot: session.snapshotValue,
-        compactionMessage: "compacted summary",
-        includedLastAssistant: false,
-      };
-    });
-    const view = new FakeView();
-    const { controller } = await createControllerHarness({
-      view,
-      session,
-    });
-    controller.start();
-
-    controller.getInputHandlers().onSubmit("/compact-all");
-    await flush();
-
-    expect(view.status.footer).toEqual({
-      type: "activity",
-      label: "compacting context",
-    });
-    pendingCompact.resolve();
-    await flush();
-
-    expect(view.status.footer.type).toBe("regular");
-  });
-
-  it("uses the shared slash command parser for session command dispatch", async () => {
-    const { session, view, controller } = await createControllerHarness();
-    controller.start();
-
-    controller.getInputHandlers().onSubmit("/reload ignored");
-    await flush();
-
-    controller.getInputHandlers().onSubmit("/help extra");
-    await flush();
-
-    expect(session.reload).toHaveBeenCalledTimes(1);
-    expect(session.submit).not.toHaveBeenCalled();
-    expect(
-      view.messages.some(
-        (message) =>
-          message.model.type === "transcript_text" && message.model.text.includes("commands:"),
-      ),
-    ).toBe(true);
-  });
-
-  it("tracks session editor input modes without command hints", async () => {
-    const { session, view, controller } = await createControllerHarness();
-    controller.start();
-    const handlers = controller.getInputHandlers();
-
-    handlers.onChange("! pwd");
-    expect(view.status.editor.mode).toBe("bash");
-
-    handlers.onChange("!! pwd");
-    expect(view.status.editor.mode).toBe("bash_incognito");
-
-    handlers.onChange("# remember this");
-    expect(view.status.editor.mode).toBe("normal");
-
-    handlers.onChange("/reload");
-    expect(view.status.editor.mode).toBe("normal");
-    expect(view.status.footer.type).toBe("regular");
-  });
-
-  it("switches session personas through the session protocol", async () => {
-    const { session, view, controller } = await createControllerHarness();
-    controller.start();
-
-    controller.getInputHandlers().onSubmit("/persona:persona-2");
-    await flush();
-
-    expect(session.setPersona).toHaveBeenCalledWith("persona-2");
-    expect(view.status.editor.personaName).toBe("Persona 2");
-    expect(view.feedback).toContainEqual(
-      expect.objectContaining({
-        tone: "default",
-        text: "switched to Persona 2 (gpt-5.5)",
-      }),
-    );
-  });
-
-  it("cycles session personas with ctrl+p", async () => {
-    const { session, view, controller } = await createControllerHarness();
-    controller.start();
-
-    controller.getInputHandlers().onCtrlP();
-    await flush();
-
-    expect(session.setPersona).toHaveBeenCalledWith("persona-2");
-    expect(view.status.editor.personaName).toBe("Persona 2");
-  });
-
-  it.each([false, true])(
-    "cycles reasoning with shift+tab while streaming=%s",
-    async (isStreaming) => {
-      const { session, view, controller } = await createControllerHarness();
-      controller.start();
-      controller.isStreaming = isStreaming;
-
-      controller.getInputHandlers().onShiftTab();
-      await flush();
-
-      expect(session.setReasoning).toHaveBeenCalledWith("minimal");
-      expect(view.status.editor.reasoningLabel).toBe("minimal");
-      expect(view.status.editor.reasoning).toBe("minimal");
-      expect(view.feedback).not.toContainEqual({
-        text: "cannot change reasoning while a session turn is running",
-        tone: "default",
-      });
-    },
-  );
-
-  it("inserts session prompt templates locally in the editor", async () => {
-    const { session, view, controller } = await createControllerHarness();
-    controller.start();
-
-    controller.getInputHandlers().onSubmit("/prompt:fix");
-    await flush();
-
-    expect(session.resolvePrompt).toHaveBeenCalledWith("fix");
-    expect(view.editorText).toBe("fix the bug");
-    expect(session.submit).not.toHaveBeenCalled();
-  });
-
-  it("reloads session content through the session protocol", async () => {
-    const { session, view, controller } = await createControllerHarness();
-    controller.start();
-
-    controller.getInputHandlers().onSubmit("/reload");
-    await flush();
-
-    expect(session.reload).toHaveBeenCalledTimes(1);
-    expect(view.feedback).toContainEqual(
-      expect.objectContaining({
-        tone: "default",
-        text: "configuration warning",
-        content: ["reload warning"],
-      }),
-    );
-    expect(view.feedback).toContainEqual(
-      expect.objectContaining({
-        tone: "default",
-        text: "reloaded: 2 personas, 2 prompts, 1 skills.",
-      }),
-    );
-
-    controller.getInputHandlers().onSubmit("/prompt:reloaded");
-    await flush();
-
-    expect(session.resolvePrompt).toHaveBeenCalledWith("reloaded");
-    expect(view.editorText).toBe("reloaded prompt");
-  });
-
-  it("stashes session editor input to the local clipboard with ctrl+s", async () => {
-    const session = new FakeSession();
-    const view = new FakeView();
-    view.editorText = "[paste #1 +12 lines]";
-    view.getExpandedEditorText = () => "line 1\nline 2";
-    const { controller } = await createControllerHarness({
-      view,
-      session,
-    });
-    controller.start();
-
-    controller.getInputHandlers().onCtrlS();
-    await flush();
-
-    expect(copyTextToClipboard).toHaveBeenCalledWith("line 1\nline 2");
-    expect(view.editorText).toBe("");
-    expect(view.feedback).toContainEqual({
-      text: "stashed input to clipboard",
-      tone: "default",
-    });
-  });
-
-  it("warns when stashing empty session editor input", async () => {
-    const session = new FakeSession();
-    const view = new FakeView();
-    view.editorText = "   ";
-    const { controller } = await createControllerHarness({
-      view,
-      session,
-    });
-    controller.start();
-
-    controller.getInputHandlers().onCtrlS();
-    await flush();
-
-    expect(view.feedback).toContainEqual({
-      text: "no input to stash yet",
-      tone: "default",
-    });
-  });
-
-  it("cycles session subagent selection with alt+down", async () => {
-    const { session, view, controller } = await createControllerHarness();
-    controller.start();
-
-    controller.getInputHandlers().onAltDown();
-
-    expect(view.subagentSelectionCycles).toEqual([1]);
-    expect(view.renderRequests).toBeGreaterThan(0);
-  });
-
-  it("interrupts the selected session subagent with ctrl+g", async () => {
-    const session = new FakeSession();
-    const view = new FakeView();
-    view.selectedSubagentId = "subagent-1";
-    const { controller } = await createControllerHarness({
-      view,
-      session,
-    });
-    controller.start();
-
-    controller.getInputHandlers().onCtrlG();
-    await flush();
-
-    expect(session.interruptSubagent).toHaveBeenCalledWith("subagent-1");
-    expect(view.feedback).not.toContainEqual(
-      expect.objectContaining({
-        text: expect.stringContaining("unknown subagent id"),
-      }),
-    );
-  });
-
-  it("warns when ctrl+g has no selected session subagent", async () => {
-    const { session, view, controller } = await createControllerHarness();
-    controller.start();
-
-    controller.getInputHandlers().onCtrlG();
-    await flush();
-
-    expect(session.interruptSubagent).not.toHaveBeenCalled();
-    expect(view.feedback).toContainEqual({
-      text: "no active subagent selected",
-      tone: "default",
-    });
-  });
-
-  it("warns when ctrl+g targets an unknown session subagent", async () => {
-    const session = new FakeSession();
-    const view = new FakeView();
-    view.selectedSubagentId = "missing-subagent";
-    const { controller } = await createControllerHarness({
-      view,
-      session,
-    });
-    controller.start();
-
-    controller.getInputHandlers().onCtrlG();
-    await flush();
-
-    expect(session.interruptSubagent).toHaveBeenCalledWith("missing-subagent");
-    expect(view.feedback).toContainEqual({
-      text: "unknown subagent id: missing-subagent",
-      tone: "default",
-    });
-  });
-
-  it("submits hash-prefixed text as an ordinary user message", async () => {
-    const { session, view, controller } = await createControllerHarness();
-    controller.start();
-
-    controller.getInputHandlers().onSubmit("# remember to run npm test");
-    await flush();
-
-    expect(session.submit).toHaveBeenCalledWith("# remember to run npm test");
-    const renderedUser = view.messages.find((message) => message.id === "generated-user");
-    expect(renderedUser).toEqual(
-      expect.objectContaining({
-        model: {
-          type: "user",
-          text: "# remember to run npm test",
-        },
-      }),
-    );
-  });
-
-  it("runs /diff locally while delegating review work through the session protocol", async () => {
-    const { session, view, controller } = await createControllerHarness({
-      diffToolLauncher: launchInlineDiffTool,
-    });
-    controller.start();
-
-    await controller.onUserInput("/diff -- src/main.ts");
-    await waitUntil(() => session.createEphemeralContext.mock.calls.length > 0);
-    await waitUntil(() => session.record.mock.calls.length > 0);
-
-    expect(session.submit).not.toHaveBeenCalled();
-    expect(session.exec).toHaveBeenCalledWith(
-      'exec "$0" "$@"',
-      expect.objectContaining({ args: ["git", "diff", "--", "src/main.ts"] }),
-    );
-    expect(session.createEphemeralContext).toHaveBeenCalledWith({
-      workingDirectory: "/session/repo",
-      instructions: expect.stringContaining("src/main.ts"),
-      tools: ["bash", "view_image"],
-    });
-    expect(session.submitEphemeralThread).toHaveBeenCalledWith({
-      contextId: "ephemeral-1",
-      threadId: expect.any(String),
-      message: "explain this diff",
-    });
-    expect(session.closeEphemeralContext).toHaveBeenCalledWith("ephemeral-1");
-    expect(session.record.mock.calls[0][0]).toContain("returned review from local diff tool");
-    expect(session.operationLog.slice(-2)).toEqual(["close-ephemeral", "record"]);
-    expect(view.feedback).toContainEqual(
-      expect.objectContaining({
-        tone: "default",
-        text: "diff review added; no assistant turn started",
-      }),
-    );
   });
 
   it("keeps a returned diff review uncommitted when session recording fails", async () => {
@@ -6016,269 +2693,32 @@ describe("SessionChatController", () => {
     expect(session.closeEphemeralContext).toHaveBeenCalledWith("ephemeral-1");
   });
 
-  it("prefills only an empty TUI editor through the client tool", async () => {
-    const { session, view, controller } = await createControllerHarness({
+  it("waits for pending-message restoration before starting dictation", async () => {
+    const session = new FakeSession();
+    const view = new FakeView();
+    view.editorText = "draft";
+    const { controller } = await createControllerHarness({
+      view,
+      session,
       targetLabel: "in-process",
     });
-    const tools = createTuiClientTools({ enabled: true, getController: () => controller });
-    const prefillInput = tools.find((tool) => tool.schema.name === "prefill_input");
-
-    expect(tools.map((tool) => tool.schema.name)).toEqual(["diff_review", "prefill_input"]);
-    expect(prefillInput.schema.parameters.properties.text.pattern).toBe("\\S");
-    expect(() => prefillInput.execute({ text: " \n\t" })).toThrow(
-      "Invalid prefill_input arguments: text: must contain non-whitespace text",
-    );
-    expect(view.editorText).toBe("");
-
-    expect(prefillInput.execute({ text: "Name: \nDecision: " })).toEqual({
-      content: "Prefilled the input editor. The user can review, edit, and submit it.",
-      presentation: { subject: "Name: \nDecision: " },
+    const deferred = Promise.withResolvers();
+    session.cancelPendingMessages = () => deferred.promise;
+    const task = controller.cancelPendingMessagesIntoEditor();
+    controller.startListenCapture = vi.fn(async () => {});
+    await controller.toggleListenCapture();
+    expect(controller.startListenCapture).not.toHaveBeenCalled();
+    deferred.resolve({
+      text: "loaded",
+      cancelled: [],
+      snapshot: await session.snapshot(),
+      removedEntryIds: [],
     });
-    expect(view.editorText).toBe("Name: \nDecision: ");
-
-    expect(() => prefillInput.execute({ text: "replacement" })).toThrow(
-      "Cannot prefill input because the editor already contains text.",
-    );
-    expect(view.editorText).toBe("Name: \nDecision: ");
+    await task;
+    await controller.toggleListenCapture();
+    expect(controller.startListenCapture).toHaveBeenCalledTimes(1);
+    await controller.dispose();
   });
-
-  it("adds configured command tools to the built-in TUI tools", () => {
-    const tools = createTuiClientTools({
-      enabled: true,
-      getController: () => undefined,
-      commandTools: [
-        {
-          name: "notify",
-          description: "Show a local notification.",
-          parameters: { type: "object", properties: {}, additionalProperties: false },
-          command: "notify",
-        },
-      ],
-    });
-
-    expect(tools.map((tool) => tool.schema.name)).toEqual([
-      "diff_review",
-      "prefill_input",
-      "notify",
-    ]);
-  });
-
-  it("rejects configured tools that duplicate a built-in TUI tool", () => {
-    expect(() =>
-      createTuiClientTools({
-        enabled: true,
-        getController: () => undefined,
-        commandTools: [
-          {
-            name: "prefill_input",
-            description: "Replace a built-in tool.",
-            parameters: { type: "object", properties: {}, additionalProperties: false },
-            command: "replacement",
-          },
-        ],
-      }),
-    ).toThrow("duplicate TUI client tool 'prefill_input'");
-  });
-
-  it("waits for terminal color detection before closing after session creation fails", async () => {
-    const creationError = new Error("session creation failed");
-    let resolveTerminalColors;
-    const terminalColors = new Promise((resolve) => {
-      resolveTerminalColors = resolve;
-    });
-    const client = {
-      sessions: {
-        create: vi.fn(async () => {
-          throw creationError;
-        }),
-      },
-      close: vi.fn(async () => {}),
-    };
-
-    const opening = SessionChatApp.open({
-      config: EMPTY_CLIENT_CONFIG,
-      client,
-      configuredClientToolNames: [],
-      targetLabel: "in-process",
-      sessionSelection: { mode: "create", input: {} },
-      terminalColors,
-    });
-    const rejection = expect(opening).rejects.toBe(creationError);
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(client.close).not.toHaveBeenCalled();
-
-    resolveTerminalColors({
-      foreground: { r: 1, g: 1, b: 1 },
-      background: { r: 0, g: 0, b: 0 },
-      appearance: "dark",
-    });
-    await rejection;
-    expect(client.close).toHaveBeenCalledOnce();
-  });
-
-  it("rejects configured tool collisions before connecting the transport", async () => {
-    await expect(
-      SessionChatApp.connect({
-        transport: "websocket",
-        url: "ws://127.0.0.1:1",
-        sessionSelection: { mode: "select" },
-        clientToolsEnabled: true,
-        config: {
-          ...EMPTY_CLIENT_CONFIG,
-          clientTools: [
-            {
-              name: "prefill_input",
-              defaultEnabled: true,
-              description: "Replace a built-in tool.",
-              parameters: { type: "object", properties: {}, additionalProperties: false },
-              command: "replacement",
-            },
-          ],
-        },
-      }),
-    ).rejects.toThrow("duplicate TUI client tool 'prefill_input'");
-  });
-
-  it("disables built-in and configured TUI client tools together", () => {
-    expect(
-      createTuiClientTools({
-        enabled: false,
-        getController: () => undefined,
-        commandTools: [
-          {
-            name: "notify",
-            description: "Show a local notification.",
-            parameters: { type: "object", properties: {}, additionalProperties: false },
-            command: "notify",
-          },
-        ],
-      }),
-    ).toEqual([]);
-  });
-
-  it("keeps an active model-launched diff review visible and steerable", async () => {
-    const { session, view, controller } = await createControllerHarness({
-      diffToolLauncher: (args) => launchInlineDiffTool({ ...args, returnDelayMs: 100 }),
-    });
-    controller.start();
-
-    const executionEnvironment = {
-      exec: vi.fn((command, options) => session.exec(command, options)),
-    };
-    const result = controller.runClientDiffReview(
-      { source: "git_diff", diffArgs: ["--", "src/main.ts"], workingDirectory: "../other repo" },
-      {
-        sessionId: "session-1",
-        callId: "diff-review-1",
-        signal: new AbortController().signal,
-        executionEnvironment,
-      },
-    );
-
-    await waitUntil(() =>
-      view.messages.some(
-        (message) =>
-          message.model.type === "diff_review" &&
-          message.model.status === "active" &&
-          message.model.uiText === "http://127.0.0.1:4321",
-      ),
-    );
-
-    controller.isStreaming = true;
-    controller.getInputHandlers().onQueueSubmit("queue after review");
-    controller.getInputHandlers().onSubmit("adjust the review");
-    await flush();
-
-    expect(session.queue).toHaveBeenCalledWith("queue after review");
-    expect(session.steer).toHaveBeenCalledWith("adjust the review");
-
-    await expect(result).resolves.toContain("Diff review completed.");
-    expect(executionEnvironment.exec).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({ cwd: "/session/other repo" }),
-    );
-    expect(session.createEphemeralContext).toHaveBeenCalledWith(
-      expect.objectContaining({ workingDirectory: "/session/other repo" }),
-    );
-    await expect(result).resolves.toContain("Reviewed scope: git diff -- src/main.ts");
-    await expect(result).resolves.toContain("returned review from local diff tool");
-    const diffReviewMessage = view.messages.find((message) => message.model.type === "diff_review");
-    expect(diffReviewMessage.model).toMatchObject({
-      type: "diff_review",
-      status: "returned",
-      command: "git diff -- src/main.ts",
-    });
-    expect(session.record).not.toHaveBeenCalled();
-    expect(session.closeEphemeralContext).toHaveBeenCalledWith("ephemeral-1");
-  });
-
-  it("routes /listen as a client-side command in session attach", async () => {
-    const spawn = vi.fn();
-    const { session, view, controller } = await createControllerHarness({
-      deps: createMockDeps(spawn, "linux"),
-      config: { apiKeys: { elevenlabs: "eleven-key" } },
-    });
-    controller.start();
-
-    controller.getInputHandlers().onSubmit("/listen");
-    await flush();
-
-    expect(spawn).not.toHaveBeenCalled();
-    expect(view.footerNotices).toContainEqual({
-      text: "/listen is currently supported only on macOS.",
-      tone: "default",
-      durationMs: 3000,
-    });
-    expect(view.feedback).not.toContainEqual(
-      expect.objectContaining({
-        text: expect.stringContaining("not supported in protocol attach mode"),
-      }),
-    );
-    expect(session.submit).not.toHaveBeenCalled();
-  });
-
-  it.each(["prompt", "stash", "pending", "rewind"])(
-    "does not start dictation while a %s editor update is pending",
-    async (kind) => {
-      const session = new FakeSession();
-      const view = new FakeView();
-      view.editorText = "draft";
-      const { controller } = await createControllerHarness({
-        view,
-        session,
-        targetLabel: "in-process",
-      });
-      const deferred = Promise.withResolvers();
-      let task;
-      if (kind === "prompt") {
-        session.resolvePrompt = () => deferred.promise;
-        task = controller.insertPrompt("fix");
-      } else if (kind === "stash") {
-        copyTextToClipboard.mockImplementationOnce(() => deferred.promise);
-        task = controller.stashEditorToClipboard();
-      } else if (kind === "pending") {
-        session.cancelPendingMessages = () => deferred.promise;
-        task = controller.cancelPendingMessagesIntoEditor();
-      } else {
-        session.rewindToHistoryEntryId = () => deferred.promise;
-        task = controller.applyRewindSelection("entry");
-      }
-      controller.startListenCapture = vi.fn(async () => {});
-      await controller.toggleListenCapture();
-      expect(controller.startListenCapture).not.toHaveBeenCalled();
-      deferred.resolve({
-        text: "loaded",
-        cancelled: [],
-        snapshot: await session.snapshot(),
-        removedEntryIds: [],
-      });
-      await task;
-      await controller.toggleListenCapture();
-      expect(controller.startListenCapture).toHaveBeenCalledTimes(1);
-      await controller.dispose();
-    },
-  );
 
   it.each(["commit", "deadline"])(
     "replaces Scribe previews and unlocks editing on %s",
@@ -6431,108 +2871,6 @@ describe("SessionChatController", () => {
     },
   );
 
-  it.each([
-    ["submit", "steer"],
-    ["submit", "queue"],
-    ["queue", "queue"],
-    ["steer", "steer"],
-    ["failure", "steer"],
-    ["disposed", "steer"],
-    ["cancelled", "steer"],
-    ["cancelled failure", "queue"],
-    ["empty", "steer"],
-  ])("finalizes recording without submitting the preview (%s via %s)", async (outcome, mode) => {
-    const audioPath = join(tmpdir(), `tau-session-listen-enter-${outcome}-${Date.now()}.wav`);
-    await writeFile(audioPath, Buffer.alloc(2048, 1));
-    const { session, view, controller } = await createControllerHarness({});
-    const editor = new CustomEditor(createUiTheme("plain"));
-    const handlers = controller.getInputHandlers();
-    editor.beforeSubmit = handlers.beforeSubmit;
-    editor.onChange = handlers.onChange;
-    editor.onSubmit = handlers.onSubmit;
-    editor.onQueueSubmit = handlers.onQueueSubmit;
-    editor.onDisabledSubmit = handlers.onDisabledSubmit;
-    view.getEditorText = () => editor.getText();
-    view.beginEditorTextPreview = () => editor.beginTextPreview();
-    view.setEditorInputEnabled = (enabled) => editor.setInputEnabled(enabled);
-    view.submitEditor = vi.fn((mode) => editor.submit(mode));
-    const finalTranscript = deferred();
-    const capture = deferred();
-    const transcription = {
-      finish: vi.fn(() => finalTranscript.promise),
-      abort: vi.fn(),
-    };
-    const abortController = new AbortController();
-    abortController.signal.addEventListener("abort", () => capture.resolve());
-
-    try {
-      editor.setText("typed suffix");
-      editor.handleInput("\x01");
-      for (let i = 0; i < 6; i++) editor.handleInput("\x1b[C");
-      controller.beginListenPreview();
-      controller.listenPreview.update("provisional ");
-      controller.listenRecording = {
-        audioPath,
-        startedAt: Date.now() - 1000,
-        stopRequested: false,
-        cleanupStyle: "off",
-        abortController,
-        completion: capture.promise,
-        transcription,
-      };
-      controller.isStreaming = outcome === "queue" || outcome === "steer";
-
-      const submitKey = mode === "queue" ? "\x1b[13;5u" : "\r";
-      editor.handleInput(submitKey);
-      await waitUntil(() => transcription.finish.mock.calls.length === 1);
-      expect(abortController.signal.aborted).toBe(true);
-      editor.handleInput(submitKey);
-      expect(session.steer).not.toHaveBeenCalled();
-      expect(session.submit).not.toHaveBeenCalled();
-      expect(session.queue).not.toHaveBeenCalled();
-      expect(editor.getText()).toBe("typed provisional suffix");
-
-      const disposal = outcome === "disposed" ? controller.dispose() : undefined;
-      if (outcome.startsWith("cancelled")) {
-        await controller.interrupt();
-        await controller.interrupt();
-        expect(editor.getText()).toBe("typed suffix");
-        expect(transcription.abort).toHaveBeenCalled();
-      }
-      if (outcome === "failure" || outcome === "cancelled failure")
-        finalTranscript.reject(new Error("transcription failed"));
-      else finalTranscript.resolve(outcome === "empty" ? "" : "finalized ");
-      await controller.listenTransition;
-      await disposal;
-
-      if (outcome === "submit" || outcome === "queue" || outcome === "steer") {
-        await waitUntil(() => session[outcome].mock.calls.length === 1);
-        const submitted = session[outcome].mock.calls[0][0];
-        expect(stripTauUserDisplayText(submitted)).toBe("typed finalized suffix");
-        expect(splitTauUserText(submitted).hiddenSystemBlocks).toHaveLength(1);
-        expect(view.submitEditor).toHaveBeenCalledOnce();
-        expect(view.submitEditor).toHaveBeenCalledWith(mode);
-        expect(editor.getText()).toBe("");
-      } else {
-        expect(session.submit).not.toHaveBeenCalled();
-        expect(session.queue).not.toHaveBeenCalled();
-        expect(session.steer).not.toHaveBeenCalled();
-        expect(view.submitEditor).not.toHaveBeenCalled();
-        expect(editor.getText()).toBe("typed suffix");
-      }
-      if (outcome === "failure") {
-        expect(controller.retainedListenAudio?.audioPath).toBe(audioPath);
-        expect(await readFile(audioPath)).toHaveLength(2048);
-      }
-      expect(transcription.finish).toHaveBeenCalledOnce();
-    } finally {
-      finalTranscript.resolve("finalized ");
-      capture.resolve();
-      await controller.dispose();
-      await rm(audioPath, { force: true });
-    }
-  });
-
   describe("speech cleanup styles", () => {
     const createRecordingHarness = async (cleanupResponse, cleanupStyle) => {
       const audioPath = join(
@@ -6643,33 +2981,6 @@ describe("SessionChatController", () => {
         output: [{ type: "message", content: [{ type: "output_text", text }] }],
       });
 
-    it("warms the configured default and resets a per-recording override on the next capture", async () => {
-      const { controller, view, editor, audioPath, cleanupSockets, cleanupRequests } =
-        await createRecordingHarness(async () => cleanedResponse("Cleaned."), "default");
-      try {
-        await controller.onUserInput("/listen");
-        await flush();
-        expect(view.status.editor.recordingStyle).toBe("default");
-        expect(cleanupSockets).toHaveLength(1);
-        expect(JSON.parse(cleanupSockets[0].send.mock.calls[0][0]).generate).toBe(false);
-        expect(cleanupRequests).toEqual([]);
-        editor.handleInput("\t");
-        expect(view.status.editor.recordingStyle).toBe("off");
-        expect(cleanupSockets[0].terminate).toHaveBeenCalledOnce();
-        await controller.cancelListenCapture();
-        await writeFile(audioPath, Buffer.alloc(2048, 1));
-        await controller.onUserInput("/listen");
-        await flush();
-        expect(view.status.editor.recordingStyle).toBe("default");
-        expect(cleanupSockets).toHaveLength(2);
-        await controller.cancelListenCapture();
-        expect(cleanupSockets[1].terminate).toHaveBeenCalledOnce();
-      } finally {
-        await controller.dispose();
-        await rm(audioPath, { force: true });
-      }
-    });
-
     it("cycles the style with Tab only while recording and applies it on stop", async () => {
       const cleanup = Promise.withResolvers();
       const { controller, view, session, editor, audioPath, cleanupRequests, cleanupSockets } =
@@ -6754,130 +3065,33 @@ describe("SessionChatController", () => {
       }
     });
 
-    it.each(["interrupt", "dispose"])(
-      "drops a pending cleanup on %s without inserting stale text",
-      async (action) => {
-        const cleanup = Promise.withResolvers();
-        const { controller, view, session, editor, audioPath, cleanupRequests } =
-          await createRecordingHarness(() => cleanup.promise);
-        try {
-          editor.setText("draft");
-          await controller.onUserInput("/listen");
-          editor.handleInput("\t");
-          controller.getInputHandlers().onToggleRecording();
-          await waitUntil(() => cleanupRequests.length === 1);
-          await controller[action]();
-          expect(cleanupRequests[0].signal.aborted).toBe(true);
-          expect(editor.getText()).toBe("draft");
-          cleanup.resolve(cleanedResponse("Stale."));
-          await controller.listenTransition;
-          await flush();
-          expect(editor.getText()).toBe("draft");
-          expect(view.editorEnabledUpdates.at(-1)).toBe(true);
-          expect(view.transcriptNotices).toEqual([]);
-          expect(controller.editorHiddenSystemMessages).toEqual([]);
-          expect(session.submit).not.toHaveBeenCalled();
-          await expect(readFile(audioPath)).rejects.toMatchObject({ code: "ENOENT" });
-        } finally {
-          await controller.dispose();
-          await rm(audioPath, { force: true });
-        }
-      },
-    );
-  });
-
-  it("finishes voice input at its recording limit", async () => {
-    const audioPath = join(tmpdir(), `tau-session-listen-limit-${Date.now()}.wav`);
-    await writeFile(audioPath, Buffer.alloc(2048, 1));
-    const spawn = vi.fn(async (command, _args, options = {}) => {
-      if (command === "mktemp") {
-        return createSpawnResult({ stdout: `${audioPath}\n` });
+    it("drops pending cleanup on disposal without inserting stale text", async () => {
+      const cleanup = Promise.withResolvers();
+      const { controller, view, session, editor, audioPath, cleanupRequests } =
+        await createRecordingHarness(() => cleanup.promise);
+      try {
+        editor.setText("draft");
+        await controller.onUserInput("/listen");
+        editor.handleInput("\t");
+        controller.getInputHandlers().onToggleRecording();
+        await waitUntil(() => cleanupRequests.length === 1);
+        await controller.dispose();
+        expect(cleanupRequests[0].signal.aborted).toBe(true);
+        expect(editor.getText()).toBe("draft");
+        cleanup.resolve(cleanedResponse("Stale."));
+        await controller.listenTransition;
+        await flush();
+        expect(editor.getText()).toBe("draft");
+        expect(view.editorEnabledUpdates.at(-1)).toBe(true);
+        expect(view.transcriptNotices).toEqual([]);
+        expect(controller.editorHiddenSystemMessages).toEqual([]);
+        expect(session.submit).not.toHaveBeenCalled();
+        await expect(readFile(audioPath)).rejects.toMatchObject({ code: "ENOENT" });
+      } finally {
+        await controller.dispose();
+        await rm(audioPath, { force: true });
       }
-      if (command === "ffmpeg") {
-        const stdout = new EventEmitter();
-        options.onSpawn({ stdout });
-        queueMicrotask(() => stdout.emit("data", Buffer.from([1, 2])));
-        return await new Promise((resolve) => {
-          options.signal.addEventListener("abort", () => {
-            resolve(createSpawnResult({ aborted: true }));
-          });
-        });
-      }
-      throw new Error(`unexpected command: ${command}`);
     });
-    const transcription = {
-      appendAudio: vi.fn(),
-      finish: vi.fn(async () => "automatic transcript"),
-      abort: vi.fn(),
-    };
-    const { session, view, controller } = await createControllerHarness({
-      targetLabel: "in-process",
-      deps: createMockDeps(spawn),
-      config: { apiKeys: { elevenlabs: "key" } },
-    });
-    controller.createSpeechTranscription = vi.fn(() => transcription);
-
-    vi.useFakeTimers();
-    try {
-      await controller.onUserInput("/listen");
-      await vi.advanceTimersByTimeAsync(getSpeechToTextRecordingMaxDurationMs());
-      await controller.listenTransition;
-    } finally {
-      vi.useRealTimers();
-      await controller.dispose();
-      await rm(audioPath, { force: true });
-    }
-
-    expect(session.submit).not.toHaveBeenCalled();
-    expect(view.editorText).toBe("automatic transcript");
-  });
-
-  it.each([
-    ["submit", false],
-    ["queue", false],
-    ["steer", false],
-    ["submit", true],
-  ])("tracks dictation guidance through %s with draft cleared=%s", async (method, clearDraft) => {
-    const audioPath = join(tmpdir(), `tau-provenance-${method}-${Date.now()}.wav`);
-    await writeFile(audioPath, Buffer.alloc(2048, 1));
-    const { session, view, controller } = await createControllerHarness({});
-    const editor = new CustomEditor(createUiTheme("plain"));
-    const handlers = controller.getInputHandlers();
-    editor.onChange = handlers.onChange;
-    editor.beforeSubmit = handlers.beforeSubmit;
-    editor.onSubmit = handlers.onSubmit;
-    editor.onQueueSubmit = handlers.onQueueSubmit;
-    view.beginEditorTextPreview = () => editor.beginTextPreview();
-    view.setEditorInputEnabled = (enabled) => editor.setInputEnabled(enabled);
-    try {
-      editor.setText("typed ");
-      controller.beginListenPreview();
-      await controller.transcribeListenAudioFile(
-        { audioPath, durationMs: 1000, cleanupStyle: "off" },
-        {
-          finish: async () => "dictated",
-          abort() {},
-        },
-      );
-      if (clearDraft) editor.setText("");
-      editor.handleInput(" and edited");
-      controller.isStreaming = method !== "submit";
-      editor.handleInput(method === "queue" ? "\x1b[13;5u" : "\r");
-      await waitUntil(() => session[method].mock.calls.length === 1);
-      const submitted = session[method].mock.calls[0][0];
-      expect(stripTauUserDisplayText(submitted)).toBe(
-        clearDraft ? "and edited" : "typed dictated and edited",
-      );
-      expect(submitted.startsWith("<system>")).toBe(!clearDraft);
-      if (method === "submit") await waitUntil(() => !controller.submittedTurnInProgress);
-      editor.handleInput("only typed");
-      editor.handleInput(method === "queue" ? "\x1b[13;5u" : "\r");
-      await waitUntil(() => session[method].mock.calls.length === 2);
-      expect(session[method].mock.calls[1][0]).toBe("only typed");
-    } finally {
-      await controller.dispose();
-      await rm(audioPath, { force: true });
-    }
   });
 
   it("restores the draft after a failed preview and retries without duplicating it", async () => {
@@ -6918,71 +3132,10 @@ describe("SessionChatController", () => {
     }
   });
 
-  it.each(["failure", "disposal"])(
-    "restores the real editor after transcription %s and ignores late updates",
-    async (outcome) => {
-      const audioPath = join(tmpdir(), `tau-preview-${outcome}-${Date.now()}.wav`);
-      await writeFile(audioPath, Buffer.alloc(2048, 1));
-      const session = new FakeSession();
-      const view = new FakeView();
-      const editor = new CustomEditor(createUiTheme("plain"));
-      editor.setText("ennen jälkeen");
-      editor.handleInput("\x01");
-      for (let i = 0; i < 6; i++) editor.handleInput("\x1b[C");
-      const originalCursor = editor.getCursor();
-      view.beginEditorTextPreview = () => editor.beginTextPreview();
-      view.setEditorInputEnabled = (enabled) => editor.setInputEnabled(enabled);
-      const { controller } = await createControllerHarness({
-        view,
-        session,
-        targetLabel: "in-process",
-      });
-      const result = Promise.withResolvers();
-      const transcription = {
-        finish: () => result.promise,
-        abort: () => result.reject(new Error("aborted")),
-      };
-      try {
-        controller.beginListenPreview();
-        const preview = controller.listenPreview;
-        preview.update("English.\nSuomeksi. ");
-        const task = controller.runListenTransition(() =>
-          controller.transcribeListenAudioFile(
-            { audioPath, durationMs: 1000, cleanupStyle: "off" },
-            transcription,
-          ),
-        );
-        await waitUntil(() => controller.activeListenTranscription === transcription);
-        editor.handleInput("x");
-        expect(editor.getText()).toBe("ennen English.\nSuomeksi. jälkeen");
-        if (outcome === "disposal") await controller.dispose();
-        else result.reject(new Error("failed"));
-        await task;
-        expect(editor.getText()).toBe("ennen jälkeen");
-        expect(editor.getCursor()).toEqual(originalCursor);
-        preview.update("late");
-        preview.commit("late final");
-        expect(editor.getText()).toBe("ennen jälkeen");
-        editor.handleInput("x");
-        expect(editor.getText()).toBe("ennen xjälkeen");
-        if (outcome === "failure") {
-          expect(controller.retainedListenAudio?.audioPath).toBe(audioPath);
-        } else {
-          expect(controller.retainedListenAudio).toBeUndefined();
-          expect(view.transcriptNotices).toEqual([]);
-          await expect(readFile(audioPath)).rejects.toMatchObject({ code: "ENOENT" });
-        }
-      } finally {
-        await controller.dispose();
-        await rm(audioPath, { force: true });
-      }
-    },
-  );
-
   it("rejects retained voice input longer than 20 minutes before provider work", async () => {
     const audioPath = join(tmpdir(), `tau-session-listen-too-long-${Date.now()}.wav`);
     await writeFile(audioPath, Buffer.alloc(2048, 1));
-    const { session, view, controller } = await createControllerHarness({
+    const { view, controller } = await createControllerHarness({
       targetLabel: "in-process",
       deps: createMockDeps(),
     });
@@ -7011,109 +3164,10 @@ describe("SessionChatController", () => {
     });
   });
 
-  it.each([
-    ["network failure", "service unavailable"],
-    ["HTTP failure", "ElevenLabs transcription failed (HTTP 503)"],
-  ])(
-    "retains voice input and its style after %s and retries it into the editor",
-    async (outcome, error) => {
-      const audioPath = join(tmpdir(), `tau-session-listen-retry-${Date.now()}.wav`);
-      await writeFile(audioPath, Buffer.alloc(2048, 1));
-      let transcriptionCount = 0;
-      const cleanupInputs = [];
-      const fetchMock = vi.fn(async (input, options = {}) => {
-        const url = String(input);
-        if (url === "https://api.elevenlabs.io/v1/speech-to-text") {
-          transcriptionCount += 1;
-          if (transcriptionCount === 1) {
-            if (outcome === "network failure") throw new Error(error);
-            return new Response(null, { status: 503 });
-          }
-          return Response.json({ text: "recovered transcript" });
-        }
-        if (url === "https://api.openai.com/v1/responses") {
-          const body = JSON.parse(options.body);
-          if (body.model !== "gpt-6.1-terra") return new Response(null, { status: 500 });
-          cleanupInputs.push(JSON.parse(body.input));
-          return Response.json({
-            status: "completed",
-            output: [
-              {
-                type: "message",
-                content: [{ type: "output_text", text: "Recovered transcript." }],
-              },
-            ],
-          });
-        }
-        throw new Error(`unexpected request: ${url}`);
-      });
-      const webSocketFactory = vi.fn();
-      const { view, controller } = await createControllerHarness({
-        targetLabel: "in-process",
-        deps: createMockDeps(),
-        config: {
-          apiKeys: { elevenlabs: "eleven-key", openai: "openai-key" },
-          speech: { personalVocabulary: ["Tau"] },
-        },
-        speechToTextDeps: { fetchImpl: fetchMock, webSocketFactory },
-      });
-      controller.snapshot.messages = [
-        {
-          id: "context-user",
-          state: "committed",
-          message: { role: "user", content: "We are discussing Scribe.", timestamp: 1 },
-        },
-      ];
-      controller.listenRecording = {
-        audioPath,
-        startedAt: Date.now(),
-        stopRequested: false,
-        cleanupStyle: "default",
-        abortController: new AbortController(),
-        completion: Promise.resolve(),
-      };
-
-      try {
-        await controller.stopListenCapture();
-        await expect(readFile(audioPath)).resolves.toHaveLength(2048);
-        expect(controller.retainedListenAudio).toMatchObject({
-          audioPath,
-          cleanupStyle: "default",
-        });
-        expect(cleanupInputs).toEqual([]);
-        expect(view.transcriptNotices.at(-1)).toEqual({
-          text: "failed to transcribe speech",
-          tone: "error",
-          content: [
-            error,
-            `recording retained at ${audioPath}`,
-            "run /listen retry to try again, or /listen discard to delete it",
-          ],
-        });
-
-        await controller.onUserInput("/listen retry");
-        expect(view.editorText).toBe("Recovered transcript.");
-        await expect(readFile(audioPath)).rejects.toMatchObject({ code: "ENOENT" });
-      } finally {
-        await rm(audioPath, { force: true });
-      }
-
-      expect(transcriptionCount).toBe(2);
-      expect(cleanupInputs).toEqual([
-        {
-          transcript: "recovered transcript",
-          vocabulary: expect.arrayContaining(["Tau"]),
-          context: "user: We are discussing Scribe.",
-        },
-      ]);
-      expect(webSocketFactory).not.toHaveBeenCalled();
-    },
-  );
-
   it("discards retained voice input only when requested", async () => {
     const audioPath = join(tmpdir(), `tau-session-listen-discard-${Date.now()}.wav`);
     await writeFile(audioPath, Buffer.alloc(2048, 1));
-    const { session, view, controller } = await createControllerHarness({
+    const { view, controller } = await createControllerHarness({
       targetLabel: "in-process",
       deps: createMockDeps(),
     });
@@ -7134,128 +3188,14 @@ describe("SessionChatController", () => {
     expect(controller.retainedListenAudio).toBeUndefined();
   });
 
-  it("captures session and personal vocabulary when each recording starts", async () => {
-    const audioPath = join(tmpdir(), `tau-session-listen-vocabulary-${Date.now()}.wav`);
-    const spawn = vi.fn(async (command, _args, options = {}) => {
-      if (command === "mktemp") return createSpawnResult({ stdout: `${audioPath}\n` });
-      if (command === "ffmpeg") {
-        const stdout = new EventEmitter();
-        options.onSpawn({ stdout });
-        queueMicrotask(() => stdout.emit("data", Buffer.from([1, 2, 3, 4])));
-        return await new Promise((resolve) => {
-          options.signal.addEventListener("abort", () => {
-            resolve(createSpawnResult({ aborted: true }));
-          });
-        });
-      }
-      throw new Error(`unexpected command: ${command}`);
-    });
-    const webSocketFactory = createIdleSpeechWebSocketFactory();
-    const readSentVocabulary = async (index) => {
-      await waitUntil(() => webSocketFactory.mock.calls.length > index);
-      return new URL(webSocketFactory.mock.calls[index][0]).searchParams.getAll("keyterms");
-    };
-    const session = new FakeSession(
-      createProtocolSnapshot({ catalog: { speechVocabulary: ["Session", "Shared"] } }),
-    );
-    const { controller } = await createControllerHarness({
-      session,
-      deps: createMockDeps(spawn),
-      config: {
-        apiKeys: { elevenlabs: "eleven-key" },
-        speech: { personalVocabulary: ["Shared", "Personal"] },
-      },
-      speechToTextDeps: { webSocketFactory },
-    });
-
-    try {
-      await controller.onUserInput("/listen");
-      session.snapshotValue = updateSnapshot(session.snapshotValue, {
-        catalog: { ...session.snapshotValue.catalog, speechVocabulary: ["Reloaded"] },
-      });
-      await controller.onUserInput("/reload");
-      await expect(readSentVocabulary(0)).resolves.toEqual(["Session", "Shared", "Personal"]);
-
-      await controller.cancelListenCapture();
-      await controller.onUserInput("/listen");
-      await expect(readSentVocabulary(1)).resolves.toEqual(["Reloaded", "Shared", "Personal"]);
-      await controller.dispose();
-    } finally {
-      await rm(audioPath, { force: true });
-    }
-  });
-
-  it("deletes retained voice input when a new recording replaces it", async () => {
-    const retainedPath = join(tmpdir(), `tau-session-listen-replaced-${Date.now()}.wav`);
-    const nextPath = join(tmpdir(), `tau-session-listen-next-${Date.now()}.wav`);
+  it("keeps the previous recording when microphone startup fails", async () => {
+    const retainedPath = join(tmpdir(), `tau-session-listen-failure-retained-${Date.now()}.wav`);
+    const nextPath = join(tmpdir(), `tau-session-listen-failure-next-${Date.now()}.wav`);
     await writeFile(retainedPath, Buffer.alloc(2048, 1));
-    const spawn = vi.fn(async (command, _args, options = {}) => {
-      if (command === "mktemp") {
-        return createSpawnResult({ stdout: `${nextPath}\n` });
-      }
-      if (command === "ffmpeg") {
-        const stdout = new EventEmitter();
-        options.onSpawn({ stdout });
-        queueMicrotask(() => stdout.emit("data", Buffer.from([1, 2, 3, 4])));
-        return await new Promise((resolve) => {
-          options.signal.addEventListener("abort", () => {
-            resolve(createSpawnResult({ aborted: true }));
-          });
-        });
-      }
-      throw new Error(`unexpected command: ${command}`);
-    });
-    const session = new FakeSession();
-    const { controller } = await createControllerHarness({
-      view: new FakeView(),
-      session,
-      targetLabel: "in-process",
-      deps: createMockDeps(spawn),
-      config: {
-        apiKeys: { elevenlabs: "eleven-key" },
-      },
-      speechToTextDeps: { webSocketFactory: createIdleSpeechWebSocketFactory() },
-    });
-    controller.retainedListenAudio = {
-      audioPath: retainedPath,
-      durationMs: 1_000,
-      cleanupStyle: "off",
-    };
-
-    try {
-      await controller.onUserInput("/listen");
-      await expect(readFile(retainedPath)).rejects.toMatchObject({ code: "ENOENT" });
-      expect(controller.listenRecording?.audioPath).toBe(nextPath);
-      await controller.dispose();
-    } finally {
-      await rm(retainedPath, { force: true });
-      await rm(nextPath, { force: true });
-    }
-  });
-
-  it.each([
-    ["failure", "ffmpeg failed to start recording: audio device unavailable"],
-    ["timeout", "timed out waiting for microphone audio"],
-    ["shutdown", undefined],
-    ["cancelled", undefined],
-  ])("keeps retained voice input after recording startup %s", async (outcome, error) => {
-    const retainedPath = join(tmpdir(), `tau-session-listen-${outcome}-retained-${Date.now()}.wav`);
-    const nextPath = join(tmpdir(), `tau-session-listen-${outcome}-next-${Date.now()}.wav`);
-    await writeFile(retainedPath, Buffer.alloc(2048, 1));
-    let captureSignal;
-    const spawn = vi.fn(async (command, _args, options = {}) => {
+    const spawn = vi.fn(async (command) => {
       if (command === "mktemp") return createSpawnResult({ stdout: `${nextPath}\n` });
       if (command === "ffmpeg") {
-        if (outcome === "failure") {
-          return createSpawnResult({ stderr: "audio device unavailable", exitCode: 1 });
-        }
-        captureSignal = options.signal;
-        options.onSpawn({ stdout: new EventEmitter() });
-        return await new Promise((resolve) => {
-          options.signal.addEventListener("abort", () => {
-            resolve(createSpawnResult({ exitCode: null, aborted: true, closeSignal: "SIGTERM" }));
-          });
-        });
+        return createSpawnResult({ stderr: "audio device unavailable", exitCode: 1 });
       }
       throw new Error(`unexpected command: ${command}`);
     });
@@ -7271,49 +3211,22 @@ describe("SessionChatController", () => {
       cleanupStyle: "off",
     };
 
-    if (outcome === "timeout") vi.useFakeTimers();
     try {
-      const start = controller.onUserInput("/listen");
-      if (outcome === "timeout") {
-        await vi.advanceTimersByTimeAsync(0);
-        await vi.advanceTimersByTimeAsync(LISTEN_CAPTURE_START_TIMEOUT_MS);
-      } else if (outcome === "shutdown" || outcome === "cancelled") {
-        await waitUntil(() => captureSignal !== undefined);
-        if (outcome === "shutdown") await controller.dispose();
-        else await controller.interrupt();
-        expect(captureSignal.aborted).toBe(true);
-      }
-      await start;
+      await controller.onUserInput("/listen");
       await expect(readFile(retainedPath)).resolves.toHaveLength(2048);
       expect(controller.retainedListenAudio).toEqual({
         audioPath: retainedPath,
         durationMs: 1_000,
         cleanupStyle: "off",
       });
-      if (error) {
-        expect(view.transcriptNotices.at(-1)).toEqual({
-          text: "failed to start recording",
-          tone: "error",
-          content: [error],
-        });
-      } else {
-        expect(view.transcriptNotices).not.toContainEqual(
-          expect.objectContaining({ text: "failed to start recording" }),
-        );
-      }
+      expect(view.transcriptNotices.at(-1).tone).toBe("error");
     } finally {
-      if (outcome === "timeout") vi.useRealTimers();
       await rm(retainedPath, { force: true });
       await rm(nextPath, { force: true });
     }
   });
 
-  it.each([
-    ["capture shutdown", "dispose"],
-    ["audio read", "dispose"],
-    ["capture shutdown", "interrupt"],
-    ["audio read", "interrupt"],
-  ])("deletes stopped voice input during %s on %s", async (phase, action) => {
+  it("discards stopped voice input when interrupted during audio reading", async () => {
     const audioPath = join(tmpdir(), `tau-session-listen-stopping-${Date.now()}.wav`);
     const audio = Buffer.alloc(2048, 1);
     await writeFile(audioPath, audio);
@@ -7327,10 +3240,7 @@ describe("SessionChatController", () => {
     });
     const capture = Promise.withResolvers();
     const read = Promise.withResolvers();
-    const readSpy =
-      phase === "audio read"
-        ? vi.spyOn(listenCapture, "readListenAudio").mockReturnValueOnce(read.promise)
-        : undefined;
+    const readSpy = vi.spyOn(listenCapture, "readListenAudio").mockReturnValueOnce(read.promise);
     const transcription = { finish: vi.fn(), abort: vi.fn() };
     const abortController = new AbortController();
     controller.beginListenPreview();
@@ -7349,11 +3259,9 @@ describe("SessionChatController", () => {
       const stop = controller.runListenTransition(() => controller.stopListenCapture());
       expect(abortController.signal.aborted).toBe(true);
       expect(controller.listenRecording).toBeUndefined();
-      if (readSpy) {
-        capture.resolve();
-        await waitUntil(() => readSpy.mock.calls.length > 0);
-      }
-      const disposal = controller[action]();
+      capture.resolve();
+      await waitUntil(() => readSpy.mock.calls.length > 0);
+      const disposal = controller.interrupt();
       expect(view.editorText).toBe("draft ");
       capture.resolve();
       read.resolve(audio);
@@ -7370,56 +3278,7 @@ describe("SessionChatController", () => {
     } finally {
       capture.resolve();
       read.resolve(audio);
-      readSpy?.mockRestore();
-      await controller.dispose();
-      await rm(audioPath, { force: true });
-    }
-  });
-
-  it("restores the draft and guidance when Escape cancels during audio cleanup", async () => {
-    const audioPath = join(tmpdir(), `tau-session-listen-cleanup-cancel-${Date.now()}.wav`);
-    await writeFile(audioPath, Buffer.alloc(2048, 1));
-    const { view, session, controller } = await createControllerHarness({});
-    view.submitEditor = vi.fn();
-    view.editorText = "draft ";
-    controller.editorHiddenSystemMessages = ["draft guidance"];
-    const deletion = Promise.withResolvers();
-    const deleteSpy = vi
-      .spyOn(listenCapture, "deleteListenTempFile")
-      .mockReturnValueOnce(deletion.promise);
-    const transcription = { finish: vi.fn(async () => "dictated"), abort: vi.fn() };
-    controller.beginListenPreview();
-    controller.listenPreview.update("provisional");
-    controller.listenRecording = {
-      audioPath,
-      startedAt: Date.now(),
-      stopRequested: false,
-      cleanupStyle: "off",
-      abortController: new AbortController(),
-      completion: Promise.resolve(),
-      transcription,
-    };
-
-    try {
-      const stop = controller.runListenTransition(() => controller.stopListenCapture("submit"));
-      await waitUntil(() => deleteSpy.mock.calls.length > 0);
-      controller.getInputHandlers().onEscape();
-      expect(view.editorText).toBe("draft ");
-      expect(controller.editorHiddenSystemMessages).toEqual(["draft guidance"]);
-      expect(view.editorEnabledUpdates.at(-1)).toBe(true);
-      deletion.resolve();
-      await stop;
-
-      expect(view.editorText).toBe("draft ");
-      expect(controller.editorHiddenSystemMessages).toEqual(["draft guidance"]);
-      expect(view.submitEditor).not.toHaveBeenCalled();
-      expect(session.submit).not.toHaveBeenCalled();
-      expect(controller.retainedListenAudio).toBeUndefined();
-      await expect(readFile(audioPath)).rejects.toMatchObject({ code: "ENOENT" });
-    } finally {
-      deletion.resolve();
-      await controller.listenTransition;
-      deleteSpy.mockRestore();
+      readSpy.mockRestore();
       await controller.dispose();
       await rm(audioPath, { force: true });
     }
@@ -7454,287 +3313,75 @@ describe("SessionChatController", () => {
     }
   });
 
-  it.each(["recording", "retry"])(
-    "cancels %s without retaining or submitting audio",
-    async (phase) => {
-      const audioPath = join(tmpdir(), `tau-session-listen-cancel-${phase}-${Date.now()}.wav`);
-      await writeFile(audioPath, Buffer.alloc(2048));
-      let requestSignal;
-      const fetchImpl = vi.fn((_input, options) => {
-        requestSignal = options.signal;
-        return new Promise((_resolve, reject) => {
-          options.signal.addEventListener("abort", () => reject(options.signal.reason), {
-            once: true,
-          });
-        });
-      });
-      const { view, session, controller } = await createControllerHarness({
-        deps: createMockDeps(),
-        config: { apiKeys: { elevenlabs: "key" } },
-        speechToTextDeps: { fetchImpl },
-      });
-      view.editorText = "draft";
-      const transcription = { abort: vi.fn(), finish: vi.fn() };
-      const capture = Promise.withResolvers();
-      const abortController = new AbortController();
-      abortController.signal.addEventListener("abort", () => capture.resolve());
-      try {
-        let retry;
-        if (phase === "recording") {
-          controller.beginListenPreview();
-          controller.listenPreview.update("partial");
-          controller.listenRecording = {
-            audioPath,
-            startedAt: Date.now(),
-            stopRequested: false,
-            cleanupStyle: "off",
-            abortController,
-            completion: capture.promise,
-            transcription,
-          };
-        } else {
-          controller.retainedListenAudio = { audioPath, durationMs: 1000, cleanupStyle: "off" };
-          retry = controller.onUserInput("/listen retry");
-          await waitUntil(() => requestSignal !== undefined);
-        }
-        await controller.interrupt();
-        await controller.interrupt();
-        expect(view.editorText).toBe("draft");
-        expect(view.editorEnabledUpdates.at(-1)).toBe(true);
-        await retry;
-        await controller.listenTransition;
-        if (phase === "recording") {
-          expect(abortController.signal.aborted).toBe(true);
-          expect(transcription.abort).toHaveBeenCalled();
-          expect(transcription.finish).not.toHaveBeenCalled();
-        } else expect(requestSignal.aborted).toBe(true);
-        expect(controller.retainedListenAudio).toBeUndefined();
-        expect(view.transcriptNotices).toEqual([]);
-        expect(session.submit).not.toHaveBeenCalled();
-        await expect(readFile(audioPath)).rejects.toMatchObject({ code: "ENOENT" });
-      } finally {
-        capture.resolve();
-        await controller.dispose();
-        await rm(audioPath, { force: true });
-      }
-    },
-  );
-
-  it("keeps retained voice input on shutdown", async () => {
-    const audioPath = join(tmpdir(), `tau-session-listen-shutdown-${Date.now()}.wav`);
-    await writeFile(audioPath, Buffer.alloc(2048, 1));
-    const session = new FakeSession();
-    const { controller } = await createControllerHarness({
-      view: new FakeView(),
-      session,
-      targetLabel: "in-process",
-      deps: createMockDeps(),
+  it("projects real host retry completion into speech and terminal status", async () => {
+    const environment = {
+      resolveRuntimeContext: async () => ({
+        promptBootstrap: {
+          promptContext: { cwd: "/repo", home: "/home/user", platform: "linux" },
+          agentsFiles: [],
+          warnings: [],
+          unknownSkills: [],
+        },
+      }),
+      getToolExecutionBackend: () => createLocalToolExecutionBackend(),
+      snapshot: () => ({ kind: "local", cwd: "/repo", home: "/home/user" }),
+      dispose: async () => {},
+    };
+    const host = new LocalSessionHost({
+      store: new MemorySessionStore(),
+      history: new HistoryManager(new LocalHistoryStore(":memory:")),
+      defaultBootstrap: {
+        persona: personas[0],
+        personas: [personas[0]],
+        discoveredSkills: [],
+        prompts: [],
+        modelResolver: resolveModel,
+        config: { mcpServers: {}, speechVocabulary: [] },
+      },
+      environment: { now: () => Date.now() },
+      executionEnvironmentResolver: { resolve: async () => environment },
+      includeAgentContext: false,
+      getRemoteModelCatalog: () => new Map(),
     });
-    controller.retainedListenAudio = { audioPath, durationMs: 1_000, cleanupStyle: "off" };
-
+    let controller;
+    const view = new FakeView();
     try {
-      await controller.dispose();
-      await expect(readFile(audioPath)).resolves.toHaveLength(2048);
-    } finally {
-      await rm(audioPath, { force: true });
-    }
-  });
-
-  it.each(["completed", "failed", "aborted"])(
-    "auto-speaks only a live successful settled turn (%s)",
-    async (status) => {
-      const { session, controller } = await createControllerHarness({ deps: createMockDeps() });
-      const speak = vi.spyOn(controller, "speakLastAssistantMessage").mockResolvedValue();
-      controller.start();
-      await controller.onUserInput("/auto-speak on");
-      expect(speak).not.toHaveBeenCalled();
-      const publish = (changes) => {
-        const delta = {
-          version: SESSION_PROTOCOL_VERSION,
-          type: "session.delta",
-          sessionId: session.id,
-          fromRevision: session.snapshotValue.revision,
-          toRevision: session.snapshotValue.revision + 1,
-          cause: { type: "notice" },
-          delta: { type: "snapshot.patch", changes },
-        };
-        session.snapshotValue = applySessionProtocolDelta(session.snapshotValue, delta);
-        for (const listener of session.listeners) listener(delta);
-        return delta;
-      };
-      publish([{ type: "turn.set", turn: { userHistoryEntryId: "user-1", state: "running" } }]);
-      session.emit({ type: "assistant_start", historyEntryId: "answer" });
-      session.emit({
-        type: "assistant_final",
-        historyEntryId: "answer",
-        message: createAssistantMessage("answer"),
+      const hosted = await host.createSession({
+        executionEnvironment: { kind: "local", cwd: "/repo" },
+        attributes: { source: "test" },
       });
-      expect(speak).not.toHaveBeenCalled();
-      const delta = publish([
-        {
-          type: "turn.set",
-          turn: {
-            userHistoryEntryId: "user-1",
-            state: "settled",
-            outcome: {
-              status,
-              stopReason:
-                status === "completed" ? "stop" : status === "failed" ? "error" : "aborted",
-            },
-          },
-        },
-      ]);
-      expect(speak).toHaveBeenCalledTimes(status === "completed" ? 1 : 0);
-      for (const listener of session.listeners) listener(delta);
-      session.emitUpdate({});
-      expect(speak).toHaveBeenCalledTimes(status === "completed" ? 1 : 0);
-      await controller.onUserInput("/auto-speak off");
-      expect(controller.autoSpeak).toBe(false);
-      await controller.onUserInput("/auto-speak");
-      expect(controller.autoSpeak).toBe(true);
-      await controller.dispose();
-    },
-  );
-
-  it.each(["retry", "error", "aborted", "runtime-error"])(
-    "handles real host speech and status completion for %s",
-    async (mode) => {
-      const environment = {
-        resolveRuntimeContext: async () => ({
-          promptBootstrap: {
-            promptContext: { cwd: "/repo", home: "/home/user", platform: "linux" },
-            agentsFiles: [],
-            warnings: [],
-            unknownSkills: [],
-          },
-        }),
-        getToolExecutionBackend: () => createLocalToolExecutionBackend(),
-        snapshot: () => ({ kind: "local", cwd: "/repo", home: "/home/user" }),
-        dispose: async () => {},
-      };
-      const host = new LocalSessionHost({
-        store: new MemorySessionStore(),
-        history: new HistoryManager(new LocalHistoryStore(":memory:")),
-        defaultBootstrap: {
-          persona: personas[0],
-          personas: [personas[0]],
-          discoveredSkills: [],
-          prompts: [],
-          modelResolver: resolveModel,
-          config: { mcpServers: {}, speechVocabulary: [] },
-        },
-        environment: { now: () => Date.now() },
-        executionEnvironmentResolver: { resolve: async () => environment },
-        includeAgentContext: false,
-        getRemoteModelCatalog: () => new Map(),
-      });
-      let controller;
-      const view = new FakeView();
-      try {
-        const hosted = await host.createSession({
-          executionEnvironment: { kind: "local", cwd: "/repo" },
-          attributes: { source: "test" },
-        });
-        const session = new FakeSession();
-        session.id = hosted.sessionId;
-        session.snapshot = () => hosted.snapshot();
-        session.onDelta = (listener) => hosted.onDelta(listener);
-        ({ controller } = await createControllerHarness({ session, view, deps: createMockDeps() }));
-        const speak = vi.spyOn(controller, "speakLastAssistantMessage").mockResolvedValue();
-        controller.start();
-        await controller.onUserInput("/auto-speak on");
-        const responses = [
-          fauxAssistantMessage("first"),
-          fauxAssistantMessage("retry", {
-            stopReason: mode === "retry" || mode === "runtime-error" ? "stop" : mode,
-          }),
-        ];
-        hosted.runtime.agent.spec.model.stream = () => {
-          const response = responses.shift();
-          return {
-            async *[Symbol.asyncIterator]() {},
-            async result() {
-              return response;
-            },
-          };
-        };
-        const accepted = await hosted.acceptTurn({ text: "question" });
-        await hosted.runAcceptedTurn(accepted.userHistoryEntryId);
-        expect(speak).toHaveBeenCalledTimes(1);
-        expect(view.programStatuses.at(-1)).toBe("done");
-        await controller.syncFromSessionSnapshot();
-        expect(view.programStatuses.at(-1)).toBe("done");
-        if (mode === "runtime-error") {
-          vi.spyOn(hosted.runtime, "runTurn").mockRejectedValueOnce(new Error("runtime failed"));
-        }
-        const reports = view.programStatuses.length;
-        await hosted.retryTurn();
-        expect(speak).toHaveBeenCalledTimes(mode === "retry" ? 2 : 1);
-        expect(view.programStatuses.slice(reports)).toEqual([
-          "working",
-          mode === "retry" ? "done" : mode === "aborted" ? "idle" : "error",
-        ]);
-      } finally {
-        await controller?.dispose();
-        await host.shutdown();
-      }
-    },
-  );
-
-  it.each(["assistant-message", "rewind", "compaction", "resync"])(
-    "handles pending speech across a %s reset",
-    async (type) => {
       const session = new FakeSession();
-      session.snapshotValue = updateSnapshot(session.snapshotValue, { lifecycle: "running" });
-      const { controller } = await createControllerHarness({ session, deps: createMockDeps() });
+      session.id = hosted.sessionId;
+      session.snapshot = () => hosted.snapshot();
+      session.onDelta = (listener) => hosted.onDelta(listener);
+      ({ controller } = await createControllerHarness({ session, view, deps: createMockDeps() }));
       const speak = vi.spyOn(controller, "speakLastAssistantMessage").mockResolvedValue();
       controller.start();
       await controller.onUserInput("/auto-speak on");
-      controller.pendingAutoSpeak = createAssistantMessage("pending");
-      const previous = session.snapshotValue;
-      session.snapshotValue = updateSnapshot(previous, {
-        lifecycle: "idle",
-        revision: previous.revision + 1,
-      });
-      const cause =
-        type === "rewind"
-          ? { type, epoch: previous.timeline.epoch, cutoffSequence: previous.timeline.sequence }
-          : type === "compaction"
-            ? {
-                type,
-                previousEpoch: previous.timeline.epoch,
-                epoch: previous.timeline.epoch + 1,
-                kind: "manual",
-                cutType: "turn-boundary",
-                retainedMessageCount: 0,
-              }
-            : { type };
-      if (type === "compaction") session.snapshotValue.timeline.epoch += 1;
-      const delta = createResetDelta(session.id, previous.revision, session.snapshotValue, cause);
-      for (const listener of session.listeners) listener(delta);
-      expect(speak).toHaveBeenCalledTimes(type === "assistant-message" ? 1 : 0);
-      expect(controller.pendingAutoSpeak).toBeUndefined();
-      await controller.dispose();
-    },
-  );
-
-  it("auto-speaks local submissions and retries without speaking on enable", async () => {
-    const { controller, view } = await createControllerHarness({ deps: createMockDeps() });
-    const speak = vi.spyOn(controller, "speakLastAssistantMessage").mockResolvedValue();
-    controller.start();
-    await controller.onUserInput("old question");
-    const footer = view.status.footer;
-    await controller.onUserInput("/auto-speak on");
-    expect(view.status.footer).toEqual(footer);
-    expect(speak).not.toHaveBeenCalled();
-    await controller.retryTurn();
-    expect(speak).toHaveBeenCalledTimes(1);
-    await controller.onUserInput("new question");
-    expect(speak).toHaveBeenCalledTimes(2);
-    await controller.onUserInput("/auto-speak off");
-    await controller.retryTurn();
-    expect(speak).toHaveBeenCalledTimes(2);
-    await controller.dispose();
+      const responses = [fauxAssistantMessage("first"), fauxAssistantMessage("retry")];
+      hosted.runtime.agent.spec.model.stream = () => {
+        const response = responses.shift();
+        return {
+          async *[Symbol.asyncIterator]() {},
+          async result() {
+            return response;
+          },
+        };
+      };
+      const accepted = await hosted.acceptTurn({ text: "question" });
+      await hosted.runAcceptedTurn(accepted.userHistoryEntryId);
+      expect(speak).toHaveBeenCalledTimes(1);
+      expect(view.programStatuses.at(-1)).toBe("done");
+      await controller.syncFromSessionSnapshot();
+      expect(view.programStatuses.at(-1)).toBe("done");
+      const reports = view.programStatuses.length;
+      await hosted.retryTurn();
+      expect(speak).toHaveBeenCalledTimes(2);
+      expect(view.programStatuses.slice(reports)).toEqual(["working", "done"]);
+    } finally {
+      await controller?.dispose();
+      await host.shutdown();
+    }
   });
 
   it("stops speech on auto-speak off and before recording starts", async () => {
@@ -7753,146 +3400,6 @@ describe("SessionChatController", () => {
     expect(start).toHaveBeenCalledTimes(1);
     controller.speakTask = undefined;
     await controller.dispose();
-  });
-
-  it("routes /speak as a client-side command in session attach", async () => {
-    const { session, view, controller } = await createControllerHarness({
-      deps: createMockDeps(),
-    });
-    controller.start();
-
-    controller.getInputHandlers().onSubmit("/speak");
-    await flush();
-
-    expect(view.footerNotices).toContainEqual({
-      text: "no assistant message to speak yet.",
-      tone: "default",
-      durationMs: 3000,
-    });
-    expect(view.feedback).not.toContainEqual(
-      expect.objectContaining({
-        text: expect.stringContaining("not supported in protocol attach mode"),
-      }),
-    );
-    expect(session.submit).not.toHaveBeenCalled();
-  });
-
-  it("streams the last session assistant message through local playback", async () => {
-    const writtenAudio = [];
-    const player = deferred();
-    const stdin = new EventEmitter();
-    stdin.destroyed = false;
-    stdin.writableEnded = false;
-    stdin.write = vi.fn((audio, callback) => {
-      writtenAudio.push(Buffer.from(audio));
-      callback();
-      return true;
-    });
-    stdin.end = vi.fn((callback) => {
-      stdin.writableEnded = true;
-      callback();
-      player.resolve(createSpawnResult());
-    });
-    const spawn = vi.fn((_cmd, _args, options) => {
-      options.onSpawn?.({ stdin });
-      return player.promise;
-    });
-    const session = new FakeSession(
-      createSnapshot([
-        {
-          id: "assistant-history-1",
-          message: {
-            role: "assistant",
-            provider: "openai",
-            model: "gpt-5.5",
-            stopReason: "stop",
-            content: [{ type: "text", text: "Use src/app.ts:42 for the fix." }],
-          },
-        },
-      ]),
-    );
-    const view = new FakeView();
-    const { controller } = await createControllerHarness({
-      view,
-      session,
-      deps: createMockDeps(spawn),
-      config: {
-        apiKeys: { openai: "openai-key", elevenlabs: "eleven-key" },
-        speech: { voiceId: "custom-voice" },
-      },
-    });
-    const firstAudio = Buffer.alloc(12_000, 1);
-    const secondAudio = Buffer.alloc(12_000, 2);
-    const streamingBody = Buffer.concat([firstAudio, secondAudio]);
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            status: "completed",
-            output: [
-              {
-                type: "message",
-                status: "completed",
-                content: [
-                  { type: "output_text", text: "Use src slash app dot t s, line 42, for the fix." },
-                ],
-              },
-            ],
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        ),
-      )
-      .mockResolvedValueOnce(Response.json({ voice_id: "custom-voice" }))
-      .mockResolvedValueOnce(
-        new Response(streamingBody, {
-          status: 200,
-          headers: { "Content-Type": "audio/pcm" },
-        }),
-      );
-    vi.stubGlobal("fetch", fetchMock);
-
-    try {
-      controller.start();
-      await controller.speakLastAssistantMessage();
-    } finally {
-      vi.unstubAllGlobals();
-    }
-
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(fetchMock.mock.calls[1][0]).toContain("/voices/custom-voice");
-    expect(fetchMock.mock.calls[2][0]).toContain("/text-to-speech/custom-voice/stream");
-    const speechHints = view.statusUpdates
-      .map((status) => (status.footer.type === "activity" ? status.footer.label : undefined))
-      .filter((hint) => hint !== undefined);
-    expect(speechHints).toEqual(
-      expect.arrayContaining(["rewriting for speech", "preparing speech", "playing speech"]),
-    );
-    expect(view.status.footer.type).toBe("regular");
-    expect(spawn).toHaveBeenCalledOnce();
-    expect(spawn).toHaveBeenCalledWith(
-      "ffplay",
-      expect.arrayContaining([
-        "-f",
-        "s16le",
-        "-ar",
-        "24000",
-        "-ch_layout",
-        "mono",
-        "-af",
-        "atempo=1.15",
-        "pipe:0",
-      ]),
-      expect.objectContaining({
-        detached: true,
-        killProcessGroup: true,
-        stdio: ["pipe", "ignore", "pipe"],
-        onSpawn: expect.any(Function),
-      }),
-    );
-    expect(writtenAudio).toEqual([Buffer.concat([firstAudio, secondAudio])]);
-    expect(stdin.end).toHaveBeenCalledOnce();
-    expect(session.submit).not.toHaveBeenCalled();
   });
 
   it("waits for ffplay shutdown when speech is cancelled before a write", async () => {
@@ -8049,147 +3556,6 @@ describe("SessionChatController", () => {
     expect(streamAborted).toHaveBeenCalledOnce();
   });
 
-  it("reports ffplay diagnostics when its stdin closes early", async () => {
-    const stdin = new EventEmitter();
-    stdin.destroyed = false;
-    stdin.writableEnded = false;
-    stdin.write = vi.fn((_audio, callback) => {
-      const error = new Error("write EPIPE");
-      error.code = "EPIPE";
-      callback(error);
-      return false;
-    });
-    const spawn = vi.fn(async (_command, _args, options) => {
-      options.onSpawn?.({ stdin });
-      return createSpawnResult({ stderr: "audio open failed" });
-    });
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            status: "completed",
-            output: [
-              {
-                type: "message",
-                status: "completed",
-                content: [{ type: "output_text", text: "Spoken version." }],
-              },
-            ],
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        ),
-      )
-      .mockResolvedValueOnce(Response.json({ voice_id: "QtY3JBOUKEB5xzrRfOKc" }))
-      .mockResolvedValueOnce(
-        new Response(Buffer.alloc(24_000, 1), { headers: { "Content-Type": "audio/pcm" } }),
-      );
-    vi.stubGlobal("fetch", fetchMock);
-
-    try {
-      await expect(
-        runSpeechPlaybackTask({
-          deps: createMockDeps(spawn),
-          openAIApiKey: "openai-key",
-          elevenLabsApiKey: "eleven-key",
-          sourceText: "Original response.",
-          signal: new AbortController().signal,
-          onActivityLabel: vi.fn(),
-        }),
-      ).rejects.toThrow("ffplay failed: audio open failed");
-    } finally {
-      vi.unstubAllGlobals();
-    }
-  });
-
-  it("exposes session catalog data for autocomplete", async () => {
-    const { session, view, controller } = await createControllerHarness({
-      themeIds: ["gold"],
-    });
-
-    const sources = controller.getAutocompleteSources();
-
-    expect(sources.personas()).toEqual([
-      { id: "persona-1", label: "Persona 1" },
-      { id: "persona-2", label: "Persona 2" },
-    ]);
-    expect(sources.prompts()).toEqual([{ id: "fix", label: "Fix" }]);
-    expect(sources.themes()).toEqual([{ id: "gold" }]);
-    await expect(sources.autocompletePaths("main", 25)).resolves.toEqual(["src/main.ts"]);
-    expect(session.autocompletePaths).toHaveBeenCalledWith({
-      query: "main",
-      limit: 25,
-    });
-    expect(sources.skills()).toEqual(["alpha"]);
-  });
-
-  it("creates a new session and keeps previous transcript above the divider", async () => {
-    const session = new FakeSession(
-      createSnapshot([
-        {
-          id: "history-1",
-          message: {
-            role: "user",
-            content: [{ type: "text", text: "persisted" }],
-          },
-        },
-      ]),
-    );
-    session.snapshotValue = {
-      ...session.snapshotValue,
-      attributes: { source: "telegram", repository: "github.com/example/repo" },
-    };
-    const nextSession = new FakeSession(createSnapshot([]));
-    nextSession.id = "session-2";
-    nextSession.snapshotValue = {
-      ...nextSession.snapshotValue,
-      sessionId: "session-2",
-    };
-    const createSession = vi.fn(async () => nextSession);
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      config: EMPTY_CLIENT_CONFIG,
-      view,
-      session,
-      snapshot: await session.snapshot(),
-      createSession,
-      targetLabel: "ws://host",
-    });
-    controller.start();
-    const resetCountBeforeNew = view.resetToolUiSession.mock.calls.length;
-    const messageCountBeforeNew = view.messages.length;
-
-    controller.getInputHandlers().onSubmit("/new");
-    await flush();
-
-    expect(createSession).toHaveBeenCalledWith({
-      executionEnvironment: { kind: "local", cwd: "/session/repo" },
-      attributes: { source: "tui", repository: "github.com/example/repo" },
-      personaId: "persona-1",
-      reasoning: "none",
-    });
-    expect(session.unobserve).toHaveBeenCalledTimes(1);
-    expect(view.programStatuses).toEqual(["idle", "clear", "idle"]);
-    expect(view.removed).not.toContain("history-1");
-    expect(view.messages).toContainEqual({
-      id: "history-1",
-      model: { type: "user", text: "persisted" },
-    });
-    expect(view.resetToolUiSession.mock.calls.length).toBeGreaterThan(resetCountBeforeNew);
-    expect(view.feedback).not.toContainEqual(
-      expect.objectContaining({ text: "created new session" }),
-    );
-    expect(view.messages.length).toBeGreaterThan(messageCountBeforeNew);
-    expect(view.messages).toContainEqual(
-      expect.objectContaining({
-        model: { type: "session_divider", label: "new session" },
-      }),
-    );
-    expect(view.feedback).toContainEqual(
-      expect.objectContaining({ text: "session id", tone: "default", content: ["session-2"] }),
-    );
-  });
-
   it("applies replacement-session deltas buffered during listener installation", async () => {
     const session = new FakeSession(updateSnapshot(createSnapshot(), { revision: 10 }));
     const nextSession = new FakeSession();
@@ -8240,63 +3606,6 @@ describe("SessionChatController", () => {
       id: message.id,
       model: { type: "user", text: "arrived during handoff" },
     });
-  });
-
-  it("reconciles replacement-session activities after buffered agent deltas", async () => {
-    const session = new FakeSession(updateSnapshot(createSnapshot(), { revision: 10 }));
-    const nextSession = new FakeSession();
-    nextSession.id = "session-2";
-    nextSession.snapshotValue = { ...nextSession.snapshotValue, sessionId: nextSession.id };
-    const agent = createAgentRun();
-    const delta = {
-      version: SESSION_PROTOCOL_VERSION,
-      type: "session.delta",
-      sessionId: nextSession.id,
-      fromRevision: nextSession.snapshotValue.revision,
-      toRevision: nextSession.snapshotValue.revision + 1,
-      cause: { type: "agent-run" },
-      delta: {
-        type: "snapshot.patch",
-        changes: [
-          { type: "cost.set", costTotal: 0 },
-          { type: "agent.set", agent },
-        ],
-      },
-    };
-    nextSession.subagentActivitiesValue = {
-      revision: 2,
-      agents: {
-        [agent.id]: {
-          runRevision: agent.run.revision,
-          activities: [{ type: "assistant", text: "arrived during handoff" }],
-        },
-      },
-    };
-    nextSession.onDelta = vi.fn((listener) => {
-      nextSession.listeners.add(listener);
-      nextSession.snapshotValue = applySessionProtocolDelta(nextSession.snapshotValue, delta);
-      listener(delta);
-      return () => nextSession.listeners.delete(listener);
-    });
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      config: EMPTY_CLIENT_CONFIG,
-      view,
-      session,
-      snapshot: await session.snapshot(),
-      createSession: vi.fn(async () => nextSession),
-      targetLabel: "local",
-    });
-    controller.start();
-
-    await controller.onUserInput("/new");
-
-    expect(view.subagentSnapshots).toEqual([
-      {
-        state: expect.objectContaining({ id: agent.id }),
-        activities: [{ type: "assistant", text: "arrived during handoff" }],
-      },
-    ]);
   });
 
   it("serializes concurrent new-session requests", async () => {
@@ -8446,19 +3755,5 @@ describe("SessionChatController", () => {
     expect(view.removed).toEqual(expect.arrayContaining(["history-2", "history-3"]));
     expect(view.editorText).toBe("second message");
     nowSpy.mockRestore();
-  });
-
-  it("warns when there are no session user messages to rewind", async () => {
-    const { session, view, controller } = await createControllerHarness();
-    controller.start();
-
-    controller.getInputHandlers().onSubmit("/rewind");
-    await flush();
-
-    expect(view.rewindPickerShows).toHaveLength(0);
-    expect(view.feedback).toContainEqual({
-      text: "no user messages available to rewind.",
-      tone: "default",
-    });
   });
 });

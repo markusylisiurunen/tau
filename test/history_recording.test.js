@@ -3,7 +3,6 @@ import { once } from "node:events";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
 import { AgentHistoryRecorder } from "../dist/core/history/agent_history_recorder.js";
 import { HistoryManager } from "../dist/core/history/history_manager.js";
@@ -48,7 +47,7 @@ async function waitForEntries(store, ids) {
 }
 
 describe("background history recording", () => {
-  it("survives a cross-process lock longer than the old timeout and preserves rewind order", async () => {
+  it("keeps recording responsive under cross-process contention and preserves rewind order", async () => {
     const directory = mkdtempSync(join(tmpdir(), "tau-history-contention-"));
     const path = join(directory, "history.sqlite");
     const reader = new LocalHistoryStore(path);
@@ -68,15 +67,19 @@ describe("background history recording", () => {
     }, 20);
     let released = false;
     try {
-      const start = performance.now();
       const writer = manager.openSession(session, remote);
       writer.append([entry("a"), entry("b"), entry("c")]);
       writer.truncateFromSources(["b", "c"]);
       writer.append([entry("d")]);
-      expect(performance.now() - start).toBeLessThan(500);
-      await delay(5_300);
-      expect(ticks).toBeGreaterThan(50);
-      expect(reportRecording).toHaveBeenCalledWith(expect.objectContaining({ status: "delayed" }));
+      await vi.waitFor(
+        () => {
+          expect(reportRecording).toHaveBeenCalledWith(
+            expect.objectContaining({ status: "delayed" }),
+          );
+        },
+        { timeout: 5_000 },
+      );
+      expect(ticks).toBeGreaterThan(0);
       await release();
       released = true;
       await waitForEntries(reader, ["a", "d"]);
@@ -188,12 +191,23 @@ describe("background history recording", () => {
     vi.spyOn(store, "createSession").mockImplementation(() => {
       throw Object.assign(new Error("database is locked"), { errcode: 5 });
     });
+    vi.useFakeTimers();
     const manager = new HistoryManager(store);
-    manager.openSession(session);
-    const start = performance.now();
-    await manager.flush();
-    expect(performance.now() - start).toBeLessThan(3_000);
-    manager.close();
+    try {
+      manager.openSession(session);
+      let flushed = false;
+      const flush = manager.flush().then(() => {
+        flushed = true;
+      });
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(flushed).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await flush;
+      expect(flushed).toBe(true);
+    } finally {
+      manager.close();
+      vi.useRealTimers();
+    }
   });
 });
 

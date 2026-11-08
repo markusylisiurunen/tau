@@ -1,115 +1,44 @@
-import { EventEmitter } from "node:events";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { copyTextToClipboard } from "../dist/tui/clipboard.js";
 
-const spawnMock = vi.fn();
-
-vi.mock("node:child_process", () => ({
-  spawn: (...args) => spawnMock(...args),
-}));
-
-const originalPlatform = process.platform;
-
-function setPlatform(platform) {
-  Object.defineProperty(process, "platform", {
-    value: platform,
-    configurable: true,
-  });
-}
-
-function createChildProcess(result) {
-  const child = new EventEmitter();
-  const stderr = new EventEmitter();
-  const stdin = new EventEmitter();
-
-  stdin.end = vi.fn();
-  child.stderr = stderr;
-  child.stdin = stdin;
-
-  queueMicrotask(() => {
-    if (result.type === "spawn-error") {
-      child.emit("error", result.error);
-      return;
-    }
-
-    if (result.stderr) {
-      stderr.emit("data", Buffer.from(result.stderr));
-    }
-
-    child.emit("close", result.code);
-  });
-
-  return child;
-}
-
-afterEach(() => {
-  setPlatform(originalPlatform);
-  vi.clearAllMocks();
-});
-
+// Fake providers on PATH exercise real process spawning, stdin delivery, and exit handling.
 describe("copyTextToClipboard", () => {
-  it("uses pbcopy on macOS", async () => {
-    setPlatform("darwin");
-    spawnMock.mockImplementationOnce(() => createChildProcess({ type: "close", code: 0 }));
+  const originalPath = process.env.PATH;
+  let bin;
 
-    await copyTextToClipboard("hello");
-
-    expect(spawnMock).toHaveBeenCalledTimes(1);
-    expect(spawnMock).toHaveBeenCalledWith("pbcopy", [], {
-      stdio: ["pipe", "ignore", "pipe"],
-    });
+  beforeEach(async () => {
+    bin = await mkdtemp(join(tmpdir(), "tau-clipboard-bin-"));
+    process.env.PATH = bin;
   });
 
-  it("tries Linux providers in order until one succeeds", async () => {
-    setPlatform("linux");
-
-    spawnMock
-      .mockImplementationOnce(() =>
-        createChildProcess({
-          type: "spawn-error",
-          error: Object.assign(new Error("not found"), { code: "ENOENT" }),
-        }),
-      )
-      .mockImplementationOnce(() => createChildProcess({ type: "close", code: 1 }))
-      .mockImplementationOnce(() => createChildProcess({ type: "close", code: 0 }));
-
-    await copyTextToClipboard("hello");
-
-    expect(spawnMock).toHaveBeenCalledTimes(3);
-    expect(spawnMock).toHaveBeenNthCalledWith(1, "wl-copy", [], {
-      stdio: ["pipe", "ignore", "pipe"],
-    });
-    expect(spawnMock).toHaveBeenNthCalledWith(2, "xclip", ["-selection", "clipboard"], {
-      stdio: ["pipe", "ignore", "pipe"],
-    });
-    expect(spawnMock).toHaveBeenNthCalledWith(3, "xsel", ["--clipboard", "--input"], {
-      stdio: ["pipe", "ignore", "pipe"],
-    });
+  afterEach(async () => {
+    process.env.PATH = originalPath;
+    await rm(bin, { recursive: true, force: true });
   });
 
-  it("throws a clear missing-provider error when all Linux providers fail", async () => {
-    setPlatform("linux");
+  async function provider(name, script) {
+    await writeFile(join(bin, name), `#!/bin/sh\n${script}\n`);
+    await chmod(join(bin, name), 0o755);
+  }
 
-    spawnMock
-      .mockImplementationOnce(() =>
-        createChildProcess({
-          type: "spawn-error",
-          error: Object.assign(new Error("not found"), { code: "ENOENT" }),
-        }),
-      )
-      .mockImplementationOnce(() =>
-        createChildProcess({
-          type: "spawn-error",
-          error: Object.assign(new Error("not found"), { code: "ENOENT" }),
-        }),
-      )
-      .mockImplementationOnce(() =>
-        createChildProcess({
-          type: "spawn-error",
-          error: Object.assign(new Error("not found"), { code: "ENOENT" }),
-        }),
-      );
+  it("falls through missing and failing providers to one that receives the text", async () => {
+    const output = join(bin, "clipboard.txt");
+    // wl-copy is missing, xclip fails, and xsel or pbcopy receives the text.
+    await provider("xclip", "echo 'cannot open display' >&2; exit 1");
+    await provider("xsel", `exec /bin/cat > '${output}'`);
+    await provider("pbcopy", `exec /bin/cat > '${output}'`);
 
-    await expect(copyTextToClipboard("hello")).rejects.toThrow(/missing clipboard provider/i);
+    await copyTextToClipboard("hello\nclipboard");
+
+    expect(await readFile(output, "utf8")).toBe("hello\nclipboard");
+  });
+
+  it("rejects when every provider is missing or fails", async () => {
+    await provider("xclip", "exit 1");
+
+    await expect(copyTextToClipboard("hello")).rejects.toThrow();
   });
 });

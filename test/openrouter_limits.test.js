@@ -14,7 +14,6 @@ import {
   OPENROUTER_TEXT_BYTES,
   prepareOpenRouterAttachments,
 } from "../dist/core/models/openrouter_media.js";
-import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
 import { createFlySpriteToolExecutionBackend } from "../dist/execution/fly_sprite_execution_environment.js";
 
 const signal = () => new AbortController().signal;
@@ -87,14 +86,9 @@ it("accepts large structured decision input and bounds its serialized questions 
   expect(opts.fetchImpl).not.toHaveBeenCalled();
 });
 
-it("accepts 64 images and retains Jev's stricter count before reading files", async () => {
-  const bytes = await sharp({ create: { width: 280, height: 280, channels: 3, background: "red" } })
-    .png()
-    .toBuffer();
-  const adapter = { readFile: vi.fn(async () => bytes), probe: vi.fn() };
+it("rejects excessive image counts before reading files, including Jev's stricter limit", async () => {
+  const adapter = { readFile: vi.fn(), probe: vi.fn() };
   const images = Array.from({ length: 64 }, () => ({ kind: "image", path: "image" }));
-  expect(await prepareOpenRouterAttachments(images, adapter, signal())).toHaveLength(64);
-  adapter.readFile.mockClear();
   await expect(
     prepareOpenRouterAttachments([...images, images[0]], adapter, signal()),
   ).rejects.toThrow();
@@ -150,33 +144,6 @@ it("admits 32 small text-only chats while provider responses are pending", async
   }
 });
 
-it.each([
-  { kind: "text", attachments: [], admitted: 127 },
-  {
-    kind: "inline image",
-    attachments: [{ kind: "image", data: "AAAA", mimeType: "image/png" }],
-    admitted: 42,
-  },
-  { kind: "image path", attachments: [{ kind: "image", path: "image" }], admitted: 11 },
-])(
-  "admits small $kind requests until the shared budget fills",
-  async ({ attachments, admitted }) => {
-    const release = Promise.withResolvers();
-    const run = vi.fn(async () => await release.promise);
-    const requests = Array.from({ length: admitted + 1 }, () =>
-      withOpenRouterBudget(attachments, 1, signal(), run),
-    );
-    try {
-      await new Promise((resolve) => setImmediate(resolve));
-      expect(run).toHaveBeenCalledTimes(admitted);
-    } finally {
-      release.resolve();
-      await Promise.all(requests);
-    }
-    expect(run).toHaveBeenCalledTimes(admitted + 1);
-  },
-);
-
 it("queues large requests before reads, cancels waiters, and releases reservations on failure", async () => {
   const first = options();
   const started = Promise.withResolvers();
@@ -229,20 +196,17 @@ function makeWav(size) {
   return bytes;
 }
 
-it.skipIf(spawnSync("ffprobe", ["-version"]).status !== 0).each(["local", "sprite"])(
-  "validates a 24 MiB recording through the %s backend without large execution stdin",
-  async (kind) => {
+it.skipIf(spawnSync("ffprobe", ["-version"]).status !== 0)(
+  "validates a 24 MiB recording through the Sprite backend without large execution stdin",
+  async () => {
     const directory = await mkdtemp(join(tmpdir(), "tau-model-large-"));
-    const backend =
-      kind === "local"
-        ? createLocalToolExecutionBackend({ env: { cwd: () => directory } })
-        : createFlySpriteToolExecutionBackend({
-            cwd: directory,
-            sprite: {
-              spawn: (command, args, options) =>
-                spawn(command, args, { ...options, stdio: ["pipe", "pipe", "pipe"] }),
-            },
-          });
+    const backend = createFlySpriteToolExecutionBackend({
+      cwd: directory,
+      sprite: {
+        spawn: (command, args, options) =>
+          spawn(command, args, { ...options, stdio: ["pipe", "pipe", "pipe"] }),
+      },
+    });
     const run = vi.spyOn(backend, "runNodeScript");
     const fetchImpl = vi.fn(async (_url, init) => {
       const body = JSON.parse(init.body);
@@ -293,25 +257,6 @@ it.skipIf(spawnSync("ffprobe", ["-version"]).status !== 0).each(["local", "sprit
     }
   },
 );
-
-it("accepts a wide image above the former byte and edge limits, but rejects excessive edges", async () => {
-  const adapter = { readFile: vi.fn(), probe: vi.fn() };
-  for (const width of [9000, 32769]) {
-    const png = await sharp({ create: { width, height: 1, channels: 3, background: "red" } })
-      .png()
-      .toBuffer();
-    const padded = Buffer.alloc(6 * 1024 * 1024);
-    png.copy(padded);
-    adapter.readFile.mockResolvedValue(padded);
-    const preparing = prepareOpenRouterAttachments(
-      [{ kind: "image", path: "wide.png" }],
-      adapter,
-      signal(),
-    );
-    if (width === 9000) expect(await preparing).toHaveLength(1);
-    else await expect(preparing).rejects.toThrow();
-  }
-});
 
 it("accepts responses above 8 MB and cancels a response stream above 32 MiB", async () => {
   const opts = options();

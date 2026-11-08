@@ -1,0 +1,3023 @@
+import { describe, expect, it } from "vitest";
+import { buildToolRunPresentation } from "../dist/core/tools/presentation.js";
+import {
+  applySessionProtocolDelta,
+  applySessionProtocolSubagentActivitiesMessage,
+  createSessionProtocolDeltaMessage,
+  createSessionProtocolEphemeralMessage,
+  createSessionProtocolErrorResponse,
+  createSessionProtocolReadyMessage,
+  createSessionProtocolSubagentActivitiesMessage,
+  createSessionProtocolSuccessResponse,
+  parseSessionProtocolOutgoingLine,
+  parseSessionProtocolRequestLine,
+  projectSessionProtocolNoticePresentation,
+  SESSION_PROTOCOL_ERROR_CODES,
+  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES,
+  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAILS,
+  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_SUBJECT_BYTES,
+  SESSION_PROTOCOL_MAX_SUBAGENT_ASSISTANT_TEXT_BYTES,
+  SESSION_PROTOCOL_MAX_SUBAGENT_NOTICE_CONTENT_BYTES,
+  SESSION_PROTOCOL_MAX_SUBAGENT_SHORT_TEXT_BYTES,
+  SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_DETAILS_BYTES,
+  SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_METADATA_BYTES,
+  SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_SUBJECT_BYTES,
+  SESSION_PROTOCOL_METHODS,
+  SESSION_PROTOCOL_VERSION,
+  validateSessionProtocolParams,
+  validateSessionProtocolResult,
+} from "../dist/protocol/session_protocol.js";
+import {
+  createProtocolBootstrap,
+  createProtocolCatalog,
+  createProtocolExecResult,
+  createProtocolImage,
+  createProtocolSnapshot,
+} from "./helpers/session_protocol_fixtures.js";
+
+const bootstrap = createProtocolBootstrap();
+const catalog = createProtocolCatalog();
+
+describe("session_protocol", () => {
+  it("validates bounded retention and non-loading collection", () => {
+    for (const durationMs of [null, 1, 259_200_000, 2_147_483_647]) {
+      expect(
+        validateSessionProtocolParams("session.setRetention", { sessionId: "s", durationMs }).ok,
+      ).toBe(true);
+    }
+    for (const durationMs of [undefined, 0, -1, 1.5, 2_147_483_648, Infinity, "1000"]) {
+      expect(
+        validateSessionProtocolParams("session.setRetention", { sessionId: "s", durationMs }).ok,
+      ).toBe(false);
+    }
+    expect(
+      validateSessionProtocolParams("session.setRetention", {
+        sessionId: "s",
+        durationMs: null,
+        extra: true,
+      }).ok,
+    ).toBe(true);
+    expect(validateSessionProtocolParams("session.collect", { sessionId: "s" }).ok).toBe(true);
+    expect(validateSessionProtocolParams("session.collect", { sessionId: "" }).ok).toBe(false);
+    expect(validateSessionProtocolResult("session.collect", { disposed: true }).ok).toBe(true);
+    expect(validateSessionProtocolResult("session.collect", { disposed: "true" }).ok).toBe(false);
+    expect(validateSessionProtocolResult("session.setRetention", { retainedUntil: null }).ok).toBe(
+      true,
+    );
+    expect(validateSessionProtocolResult("session.setRetention", { retainedUntil: -1 }).ok).toBe(
+      false,
+    );
+  });
+  it("validates atomic persona applications and workspace selection", () => {
+    for (const selection of [
+      { personaId: null },
+      { personaId: "chat" },
+      { personaId: "chat", reasoning: "high", autoCompactThresholdTokens: 80000 },
+    ]) {
+      const params = { sessionId: "s", ...selection };
+      expect(validateSessionProtocolParams("session.setPersona", params)).toEqual({
+        ok: true,
+        value: params,
+      });
+    }
+    for (const selection of [
+      { personaId: null, reasoning: "high" },
+      { personaId: null, autoCompactThresholdTokens: 80000 },
+      { personaId: "chat", reasoning: "invalid" },
+      { personaId: "chat", autoCompactThresholdTokens: 49999 },
+      { personaId: "chat", autoCompactThresholdTokens: Number.MAX_SAFE_INTEGER + 1 },
+      { personaId: "chat", autoCompactThresholdTokens: null },
+      { personaId: "chat", unexpected: true },
+    ]) {
+      expect(
+        validateSessionProtocolParams("session.setPersona", { sessionId: "s", ...selection }).ok,
+      ).toBe(false);
+    }
+  });
+
+  it("reserves creation attribute capacity and bounds target paths", () => {
+    for (const kind of ["local", "fly-sprite"]) {
+      for (const count of [30, 31, 32, 33]) {
+        for (const overrides of [
+          {},
+          { machine: "client" },
+          { cwd: "/client" },
+          { machine: "client", cwd: "/client" },
+        ]) {
+          const result = validateSessionProtocolParams("session.create", {
+            executionEnvironment: { kind, spriteName: "sprite", cwd: "/repo" },
+            attributes: {
+              ...Object.fromEntries(Array.from({ length: count }, (_, i) => [`key${i}`, "value"])),
+              ...overrides,
+            },
+          });
+          expect(result.ok).toBe(count === 30);
+          if (!result.ok) expect(result.error.code).toBe("invalid_params");
+        }
+      }
+      for (const length of [1024, 1025]) {
+        const result = validateSessionProtocolParams("session.create", {
+          executionEnvironment: { kind, spriteName: "sprite", cwd: `/${"a".repeat(length - 1)}` },
+          attributes: {},
+        });
+        expect(result.ok).toBe(length === 1024);
+        if (!result.ok) expect(result.error.code).toBe("invalid_params");
+      }
+    }
+  });
+
+  it("validates auto-compaction thresholds for creation and mutation", () => {
+    for (const thresholdTokens of [null, 50000, 100000, Number.MAX_SAFE_INTEGER]) {
+      expect(
+        validateSessionProtocolParams("session.setAutoCompactThreshold", {
+          sessionId: "s",
+          thresholdTokens,
+        }).ok,
+      ).toBe(true);
+      expect(
+        validateSessionProtocolParams("session.create", {
+          executionEnvironment: { kind: "local", cwd: "/repo" },
+          attributes: {},
+          autoCompactThresholdTokens: thresholdTokens,
+        }).ok,
+      ).toBe(true);
+    }
+    for (const thresholdTokens of [
+      49999,
+      -1,
+      50000.5,
+      "50k",
+      Number.MAX_SAFE_INTEGER + 1,
+      Infinity,
+      undefined,
+    ]) {
+      expect(
+        validateSessionProtocolParams("session.setAutoCompactThreshold", {
+          sessionId: "s",
+          thresholdTokens,
+        }).ok,
+      ).toBe(false);
+      if (thresholdTokens !== undefined)
+        expect(
+          validateSessionProtocolParams("session.create", {
+            executionEnvironment: { kind: "local", cwd: "/repo" },
+            attributes: {},
+            autoCompactThresholdTokens: thresholdTokens,
+          }).ok,
+        ).toBe(false);
+    }
+  });
+
+  it("preserves bounded client-tool images and rejects invalid image output", () => {
+    const image = createProtocolImage();
+    const params = {
+      sessionId: "session-1",
+      callId: "call-1",
+      ok: true,
+      content: [{ type: "text", text: "before" }, image, { type: "text", text: "after" }],
+    };
+    expect(validateSessionProtocolParams("session.clientTool.result", params)).toEqual({
+      ok: true,
+      value: params,
+    });
+    expect(
+      validateSessionProtocolParams("session.clientTool.result", {
+        ...params,
+        content: Array(16).fill(image),
+      }).ok,
+    ).toBe(true);
+    for (const images of [
+      Array(1025).fill({ type: "text", text: "" }),
+      Array(17).fill(image),
+      [createProtocolImage({ data: "invalid" })],
+      [createProtocolImage({ mimeType: "image/gif" })],
+      [createProtocolImage({ data: Buffer.alloc(3.5 * 1024 * 1024 + 1).toString("base64") })],
+    ]) {
+      expect(
+        validateSessionProtocolParams("session.clientTool.result", { ...params, content: images })
+          .ok,
+      ).toBe(false);
+    }
+    expect(
+      validateSessionProtocolParams("session.clientTool.result", {
+        ...params,
+        ok: false,
+        error: "failed",
+      }),
+    ).toEqual({
+      ok: true,
+      value: { sessionId: "session-1", callId: "call-1", ok: false, error: "failed" },
+    });
+  });
+
+  it("round-trips sampled assistant messages into later sampling contexts", () => {
+    const sampledMessage = {
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "Classifying the request..." },
+        { type: "text", text: "authentication" },
+        {
+          type: "toolCall",
+          id: "malformed-call",
+          name: "lookup_ticket",
+          arguments: {},
+          argumentsError: "Invalid JSON",
+        },
+      ],
+      api: "openai-responses",
+      provider: "openai",
+      model: "gpt-5.6-sol",
+      responseModel: "gpt-5.6-sol-2026-07-01",
+      responseId: "response-1",
+      providerThinkingLevel: "high",
+      diagnostics: [
+        {
+          type: "provider-retry",
+          timestamp: 1,
+          error: { name: "Error", message: "retryable", code: 429 },
+          details: { attempt: 1 },
+        },
+      ],
+      stopReason: "stop",
+      usage: {
+        input: 42,
+        output: 9,
+        cacheRead: 0,
+        cacheWrite: 0,
+        cacheWrite1h: 0,
+        reasoning: 3,
+        totalTokens: 51,
+        cost: {
+          input: 0.0001,
+          output: 0.0002,
+          cacheRead: 0,
+          cacheWrite: 0,
+          total: 0.0003,
+        },
+      },
+      timestamp: 1,
+    };
+
+    expect(validateSessionProtocolResult("session.sample", { message: sampledMessage })).toEqual({
+      ok: true,
+      value: { message: sampledMessage },
+    });
+
+    expect(
+      validateSessionProtocolParams("session.sample", {
+        sessionId: "session-1",
+        context: {
+          systemPrompt: "Classify support tickets.",
+          messages: [
+            {
+              role: "user",
+              content: [{ type: "text", text: "I cannot log in" }],
+              timestamp: 0,
+            },
+            sampledMessage,
+          ],
+          tools: [
+            {
+              name: "lookup_ticket",
+              description: "Look up a ticket.",
+              parameters: { type: "object", properties: {} },
+            },
+          ],
+        },
+        options: { reasoning: "low", maxTokens: 500, temperature: 0 },
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        sessionId: "session-1",
+        context: {
+          systemPrompt: "Classify support tickets.",
+          messages: [
+            {
+              role: "user",
+              content: [{ type: "text", text: "I cannot log in" }],
+              timestamp: 0,
+            },
+            sampledMessage,
+          ],
+          tools: [
+            {
+              name: "lookup_ticket",
+              description: "Look up a ticket.",
+              parameters: { type: "object", properties: {} },
+            },
+          ],
+        },
+        options: { reasoning: "low", maxTokens: 500 },
+      },
+    });
+
+    expect(
+      validateSessionProtocolParams("session.sample", {
+        sessionId: "session-1",
+        context: { systemPrompt: "system", messages: [] },
+        options: { maxTokens: 0 },
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({ code: SESSION_PROTOCOL_ERROR_CODES.invalidParams }),
+    });
+    expect(
+      validateSessionProtocolResult("session.sample", {
+        message: { role: "assistant", content: [] },
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({ code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest }),
+    });
+    expect(
+      validateSessionProtocolResult("session.sample", {
+        message: { ...sampledMessage, diagnostics: [{}] },
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({ code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest }),
+    });
+  });
+
+  it("returns structured parse and validation errors", () => {
+    const malformed = parseSessionProtocolRequestLine("{not-json}");
+    expect(malformed.ok).toBe(false);
+    expect(malformed.error.code).toBe(SESSION_PROTOCOL_ERROR_CODES.parseError);
+
+    const unknownMethod = parseSessionProtocolRequestLine(
+      JSON.stringify({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-unknown",
+        method: "session.unknown",
+        params: {},
+      }),
+    );
+    expect(unknownMethod).toEqual({
+      ok: false,
+      id: "req-unknown",
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.methodNotFound,
+      }),
+    });
+
+    const emptyId = parseSessionProtocolRequestLine(
+      JSON.stringify({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "",
+        method: "session.snapshot",
+        params: { sessionId: "session-1" },
+      }),
+    );
+    expect(emptyId).toEqual({
+      ok: false,
+      id: null,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+      }),
+    });
+
+    const invalidSubmit = parseSessionProtocolRequestLine(
+      JSON.stringify({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-invalid-submit",
+        method: "session.submit",
+        params: { sessionId: "session-1", text: 123 },
+      }),
+    );
+    expect(invalidSubmit).toEqual({
+      ok: false,
+      id: "req-invalid-submit",
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidParams,
+      }),
+    });
+
+    const requestWithUnsupportedFields = parseSessionProtocolRequestLine(
+      JSON.stringify({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-unsupported",
+        method: "session.submit",
+        params: { sessionId: "session-1", text: "hello" },
+        legacy: true,
+      }),
+    );
+    expect(requestWithUnsupportedFields).toEqual({
+      ok: true,
+      request: {
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-unsupported",
+        method: "session.submit",
+        params: { sessionId: "session-1", text: "hello" },
+      },
+    });
+
+    const requestWithoutParams = parseSessionProtocolRequestLine(
+      JSON.stringify({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id: "req-without-params",
+        method: "session.snapshot",
+      }),
+    );
+    expect(requestWithoutParams).toEqual({
+      ok: false,
+      id: "req-without-params",
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+        message: "request.params is required",
+      }),
+    });
+  });
+
+  it("returns structured parse errors for malformed outgoing messages", () => {
+    const malformed = parseSessionProtocolOutgoingLine("{bad-json}");
+    expect(malformed).toEqual({
+      ok: false,
+      reason: "parse_error",
+      messageType: null,
+      id: null,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.parseError,
+      }),
+    });
+
+    const badVersion = parseSessionProtocolOutgoingLine(
+      JSON.stringify({
+        version: 99,
+        type: "ready",
+        methods: [...SESSION_PROTOCOL_METHODS],
+      }),
+    );
+    expect(badVersion).toEqual({
+      ok: false,
+      reason: "unsupported_version",
+      messageType: null,
+      id: null,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+        message: "unsupported session protocol version: 99",
+      }),
+    });
+
+    const duplicateReadyMethods = parseSessionProtocolOutgoingLine(
+      JSON.stringify({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "ready",
+        methods: [SESSION_PROTOCOL_METHODS[0], SESSION_PROTOCOL_METHODS[0]],
+      }),
+    );
+    expect(duplicateReadyMethods).toEqual({
+      ok: false,
+      reason: "invalid_payload",
+      messageType: "ready",
+      id: null,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+        message: expect.stringContaining("duplicate session protocol method"),
+      }),
+    });
+
+    const malformedResponse = parseSessionProtocolOutgoingLine(
+      JSON.stringify({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "response",
+        id: "req-9",
+        ok: false,
+        error: { code: "not-a-code", message: 123 },
+      }),
+    );
+    expect(malformedResponse).toEqual({
+      ok: false,
+      reason: "invalid_payload",
+      messageType: "response",
+      id: "req-9",
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+      }),
+    });
+
+    const responseWithEmptyId = parseSessionProtocolOutgoingLine(
+      JSON.stringify({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "response",
+        id: "",
+        ok: true,
+        result: {},
+      }),
+    );
+    expect(responseWithEmptyId).toEqual({
+      ok: false,
+      reason: "response_invalid_id",
+      messageType: "response",
+      id: null,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+      }),
+    });
+
+    const responseWithUnsupportedFields = parseSessionProtocolOutgoingLine(
+      JSON.stringify({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "response",
+        id: "req-10",
+        ok: true,
+        result: { shutdown: true },
+        error: {
+          code: SESSION_PROTOCOL_ERROR_CODES.internalError,
+          message: "should not be here",
+        },
+      }),
+    );
+    expect(responseWithUnsupportedFields).toEqual({
+      ok: true,
+      message: {
+        version: SESSION_PROTOCOL_VERSION,
+        type: "response",
+        id: "req-10",
+        ok: true,
+        result: { shutdown: true },
+      },
+    });
+
+    const oldEventEnvelope = parseSessionProtocolOutgoingLine(
+      JSON.stringify({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "event",
+        sessionId: "session-1",
+        sessionRevision: 1,
+        event: { type: "notice", severity: "info", text: "ok" },
+        extra: "not canonical",
+      }),
+    );
+    expect(oldEventEnvelope).toEqual({
+      ok: false,
+      reason: "unsupported_message_type",
+      messageType: null,
+      id: null,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+        message: "unsupported session protocol message type: event",
+      }),
+    });
+  });
+
+  it.each([null, 60_000, -1])(
+    "validates client tool deadline %s in definitions and calls",
+    (timeout) => {
+      const valid = timeout === null || timeout === 60_000;
+      expect(
+        validateSessionProtocolParams("initialize", {
+          client: {
+            name: "test",
+            version: "1",
+            tools: [
+              {
+                name: "review",
+                description: "Review",
+                parameters: {},
+                executionTimeoutMs: timeout,
+              },
+            ],
+          },
+        }).ok,
+      ).toBe(valid);
+      const parsed = parseSessionProtocolOutgoingLine(
+        JSON.stringify({
+          version: SESSION_PROTOCOL_VERSION,
+          type: "session.clientTool.call",
+          sessionId: "session-1",
+          agentId: "main",
+          callId: "call-1",
+          toolName: "review",
+          arguments: {},
+          ackDeadlineMs: 5000,
+          executionDeadlineMs: timeout,
+        }),
+      );
+      expect(parsed.ok).toBe(valid);
+      if (valid) expect(parsed.message.executionDeadlineMs).toBe(timeout);
+    },
+  );
+
+  it("validates per-method params", () => {
+    for (const [method, value] of [
+      [
+        "initialize",
+        {
+          client: { name: "tau-sdk", version: "1" },
+        },
+      ],
+      [
+        "initialize",
+        {
+          client: {
+            name: "tau-sdk",
+            version: "1",
+            tools: [
+              {
+                name: "local_picker",
+                description: "Pick a local item.",
+                parameters: { type: "object", properties: {}, additionalProperties: false },
+                executionTimeoutMs: 60_000,
+              },
+            ],
+          },
+        },
+      ],
+      [
+        "session.interrupt",
+        {
+          sessionId: "session-1",
+        },
+      ],
+      [
+        "session.create",
+        {
+          executionEnvironment: {
+            kind: "local",
+            cwd: "/repo",
+            env: { GH_CONFIG_DIR: "/srv/cowork/gh" },
+          },
+          attributes: { source: "test" },
+          personaId: "coder",
+          reasoning: "high",
+        },
+      ],
+      [
+        "session.create",
+        {
+          executionEnvironment: {
+            kind: "fly-sprite",
+            spriteName: "sprite-1",
+            cwd: "/home/sprite/repo",
+          },
+          attributes: { source: "test" },
+        },
+      ],
+      ["session.list", {}],
+      [
+        "session.observe",
+        {
+          sessionId: "session-1",
+        },
+      ],
+      [
+        "session.reload",
+        {
+          sessionId: "session-1",
+        },
+      ],
+      [
+        "session.retry",
+        {
+          sessionId: "session-1",
+        },
+      ],
+      [
+        "session.autocompletePaths",
+        {
+          sessionId: "session-1",
+          query: "src",
+          limit: 25,
+        },
+      ],
+      [
+        "session.exec",
+        {
+          sessionId: "session-1",
+          execId: "exec-1",
+          command: "pwd",
+        },
+      ],
+      [
+        "session.exec",
+        {
+          sessionId: "session-1",
+          execId: "exec-1",
+          command: "git diff",
+          args: ["one", "two"],
+          env: { GIT_OPTIONAL_LOCKS: "0" },
+          stdinBase64: Buffer.from("input").toString("base64"),
+          cwd: "/repo",
+          timeoutMs: 30000,
+          maxCaptureBytes: 2097152,
+        },
+      ],
+      [
+        "session.cancelExec",
+        {
+          sessionId: "session-1",
+          execId: "exec-1",
+        },
+      ],
+      [
+        "session.setReasoning",
+        {
+          sessionId: "session-1",
+          reasoning: "max",
+        },
+      ],
+      [
+        "session.interruptSubagent",
+        {
+          sessionId: "session-1",
+          subagentId: "subagent-1",
+        },
+      ],
+      [
+        "session.ephemeral.create",
+        {
+          sessionId: "session-1",
+          instructions: "review this",
+          tools: ["bash", "view_image"],
+          reasoning: "xhigh",
+        },
+      ],
+      [
+        "session.ephemeral.submit",
+        {
+          sessionId: "session-1",
+          contextId: "ephemeral-1",
+          threadId: "thread-1",
+          message: "review this",
+          reasoning: "low",
+        },
+      ],
+      [
+        "session.ephemeral.close",
+        {
+          sessionId: "session-1",
+          contextId: "ephemeral-1",
+        },
+      ],
+    ]) {
+      const expected = structuredClone(value);
+      expect(validateSessionProtocolParams(method, value), method).toEqual({
+        ok: true,
+        value: expected,
+      });
+    }
+
+    const invalidInitialize = validateSessionProtocolParams("initialize", {});
+    expect(invalidInitialize).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidParams,
+      }),
+    });
+
+    expect(
+      validateSessionProtocolParams("session.create", {
+        executionEnvironment: { kind: "local", cwd: "/repo", env: { HOME: "/tmp" } },
+      }),
+    ).toEqual({
+      ok: false,
+      error: {
+        code: "invalid_params",
+        message:
+          "session.create params.executionEnvironment.env must use valid environment variable names and string values without null bytes and cannot override HOME",
+      },
+    });
+    expect(validateSessionProtocolParams("session.create", {})).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidParams,
+        message: "session.create params.executionEnvironment must be an object",
+      }),
+    });
+
+    expect(
+      validateSessionProtocolParams("session.exec", {
+        sessionId: "session-1",
+        execId: "exec-1",
+        command: "git diff",
+        maxCaptureBytes: 24 * 1024 * 1024 + 1,
+      }),
+    ).toEqual({
+      ok: false,
+      error: {
+        code: "invalid_params",
+        message:
+          "session.exec params.maxCaptureBytes must be a positive integer no greater than 25165824 when provided",
+      },
+    });
+    for (const [params, message] of [
+      [
+        { sessionId: "session-1", execId: "exec-1", command: "printf \0" },
+        "session.exec params.command must be a non-empty string without null bytes",
+      ],
+      [
+        { sessionId: "session-1", execId: "exec-1", command: "printf", args: ["a\0b"] },
+        "session.exec params.args must be an array of strings without null bytes when provided",
+      ],
+      [
+        { sessionId: "session-1", execId: "exec-1", command: "pwd", env: { HOME: "/tmp" } },
+        "session.exec params.env must use valid environment variable names and string values without null bytes and cannot override HOME",
+      ],
+      [
+        { sessionId: "session-1", execId: "exec-1", command: "pwd", cwd: "/repo\0bad" },
+        "session.exec params.cwd must be a non-empty string without null bytes when provided",
+      ],
+    ]) {
+      expect(validateSessionProtocolParams("session.exec", params)).toEqual({
+        ok: false,
+        error: { code: "invalid_params", message },
+      });
+    }
+
+    expect(
+      validateSessionProtocolParams("session.record", {
+        sessionId: "session-1",
+        text: "review",
+        historyEntryId: " history-1 ",
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        sessionId: "session-1",
+        text: "review",
+        historyEntryId: "history-1",
+      },
+    });
+
+    expect(
+      validateSessionProtocolParams("session.rewind", {
+        sessionId: "session-1",
+        historyEntryId: " history-1 ",
+      }),
+    ).toEqual({
+      ok: true,
+      value: { sessionId: "session-1", historyEntryId: "history-1" },
+    });
+
+    for (const method of ["session.queue", "session.steer"]) {
+      expect(
+        validateSessionProtocolParams(method, {
+          sessionId: "session-1",
+          text: "   ",
+        }),
+      ).toMatchObject({
+        ok: false,
+        error: { code: SESSION_PROTOCOL_ERROR_CODES.invalidParams },
+      });
+    }
+
+    for (const workingDirectory of ["", "   ", 42, null]) {
+      expect(
+        validateSessionProtocolParams("session.ephemeral.create", {
+          sessionId: "session-1",
+          instructions: "review this",
+          tools: ["bash"],
+          workingDirectory,
+        }),
+      ).toMatchObject({
+        ok: false,
+        error: { code: SESSION_PROTOCOL_ERROR_CODES.invalidParams },
+      });
+    }
+
+    const submitWithEmptyHistoryId = validateSessionProtocolParams("session.submit", {
+      sessionId: "session-1",
+      text: "hello",
+      historyEntryId: "",
+    });
+    expect(submitWithEmptyHistoryId).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidParams,
+        message: "session.submit params.historyEntryId must be a non-empty string when provided",
+      }),
+    });
+
+    expect(
+      validateSessionProtocolParams("session.ephemeral.create", {
+        sessionId: "session-1",
+        instructions: "review this",
+        tools: [],
+        reasoning: "extreme",
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidParams,
+        message:
+          "session.ephemeral.create params.reasoning must be one of none, minimal, low, medium, high, xhigh, or max when provided",
+      }),
+    });
+
+    expect(
+      validateSessionProtocolParams("session.ephemeral.submit", {
+        sessionId: "session-1",
+        contextId: "ephemeral-1",
+        threadId: "thread-1",
+        forkFromThreadId: "",
+        message: "review this",
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidParams,
+        message:
+          "session.ephemeral.submit params.forkFromThreadId must be a non-empty string when provided",
+      }),
+    });
+
+    expect(
+      validateSessionProtocolParams("session.ephemeral.submit", {
+        sessionId: "session-1",
+        contextId: "ephemeral-1",
+        threadId: "thread-1",
+        message: "review this",
+        reasoning: "extreme",
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidParams,
+        message:
+          "session.ephemeral.submit params.reasoning must be one of none, minimal, low, medium, high, xhigh, or max when provided",
+      }),
+    });
+  });
+
+  it("validates optional client tool presentation overrides", () => {
+    const presentation = {
+      subject: "choice a",
+      subjectWrap: "character",
+      details: [{ text: "preparing choice", wrap: "word" }],
+      metadata: ["local"],
+    };
+    expect(
+      validateSessionProtocolParams("session.clientTool.ack", {
+        sessionId: "session-1",
+        callId: "call-1",
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        sessionId: "session-1",
+        callId: "call-1",
+      },
+    });
+    expect(
+      validateSessionProtocolParams("session.clientTool.ack", {
+        sessionId: "session-1",
+        callId: "call-1",
+        presentation,
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        sessionId: "session-1",
+        callId: "call-1",
+        presentation,
+      },
+    });
+    expect(
+      validateSessionProtocolParams("session.clientTool.result", {
+        sessionId: "session-1",
+        callId: "call-1",
+        ok: true,
+        content: [{ type: "text", text: "picked" }],
+        presentation: { details: [], metadata: [] },
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        sessionId: "session-1",
+        callId: "call-1",
+        ok: true,
+        content: [{ type: "text", text: "picked" }],
+        presentation: { details: [], metadata: [] },
+      },
+    });
+
+    const maximumDetailPresentation = {
+      details: Array.from(
+        { length: SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAILS },
+        () => ({ text: "x".repeat(1000) }),
+      ),
+    };
+    expect(
+      Buffer.byteLength(JSON.stringify(maximumDetailPresentation), "utf8"),
+    ).toBeLessThanOrEqual(SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES);
+    expect(
+      validateSessionProtocolParams("session.clientTool.ack", {
+        sessionId: "session-1",
+        callId: "call-1",
+        presentation: maximumDetailPresentation,
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        sessionId: "session-1",
+        callId: "call-1",
+        presentation: maximumDetailPresentation,
+      },
+    });
+
+    expect(
+      validateSessionProtocolParams("session.clientTool.ack", {
+        sessionId: "session-1",
+        callId: "call-1",
+        presentation: {
+          ...presentation,
+          subject: "x".repeat(SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_SUBJECT_BYTES + 1),
+        },
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidParams,
+      }),
+    });
+    expect(
+      validateSessionProtocolParams("session.clientTool.ack", {
+        sessionId: "session-1",
+        callId: "call-1",
+        presentation: {
+          ...presentation,
+          details: Array.from(
+            { length: SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAILS + 1 },
+            () => ({ text: "x", wrap: "word" }),
+          ),
+        },
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidParams,
+      }),
+    });
+    expect(
+      validateSessionProtocolParams("session.clientTool.ack", {
+        sessionId: "session-1",
+        callId: "call-1",
+        presentation: {
+          ...presentation,
+          details: Array.from({ length: 5 }, () => ({
+            text: "x".repeat(SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES / 4),
+            wrap: "word",
+          })),
+        },
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidParams,
+      }),
+    });
+  });
+
+  it("validates per-method results", () => {
+    expect(
+      validateSessionProtocolResult("initialize", {
+        protocolVersion: SESSION_PROTOCOL_VERSION,
+        methods: [SESSION_PROTOCOL_METHODS[0], SESSION_PROTOCOL_METHODS[0]],
+        alreadyInitialized: false,
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+        message: expect.stringContaining("duplicate session protocol method"),
+      }),
+    });
+
+    const snapshot = createProtocolSnapshot({ sessionId: "session-1", bootstrap });
+
+    expect(validateSessionProtocolResult("session.observe", snapshot)).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+      }),
+    });
+
+    expect(
+      validateSessionProtocolResult("session.retry", {
+        userHistoryEntryId: "history-user",
+        turn: { status: "completed", stopReason: "stop" },
+      }),
+    ).toEqual({
+      ok: true,
+      value: { turn: { status: "completed", stopReason: "stop" } },
+    });
+
+    const tieredSnapshot = createProtocolSnapshot({
+      bootstrap: {
+        ...bootstrap,
+        model: {
+          ...bootstrap.persona.model,
+          cost: {
+            ...bootstrap.persona.model.cost,
+            tiers: [
+              {
+                inputTokensAbove: 272000,
+                input: 2,
+                output: 9,
+                cacheRead: 0.2,
+                cacheWrite: 2.5,
+              },
+            ],
+          },
+          thinkingLevelMap: { xhigh: "xhigh", max: "max" },
+        },
+      },
+    });
+
+    const recordSnapshot = createProtocolSnapshot({
+      revision: 2,
+      historyEntries: [
+        {
+          id: "history-1",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "review" }],
+          },
+        },
+      ],
+    });
+
+    const reloadSnapshot = createProtocolSnapshot();
+
+    const flySnapshot = createProtocolSnapshot({
+      executionEnvironment: {
+        kind: "fly-sprite",
+        spriteName: "sprite-1",
+        cwd: "/home/sprite/repo",
+        home: "/home/sprite",
+      },
+    });
+
+    const promptSnapshot = createProtocolSnapshot({
+      bootstrap: {
+        ...bootstrap,
+        prompt: {
+          environmentTag: "\n<environment></environment>\n",
+          subagentSystemPrompt: "\nsubagent prompt\n",
+        },
+      },
+      executionEnvironment: {
+        kind: "local",
+        cwd: "/repo with spaces",
+        home: "/home/user",
+      },
+    });
+
+    const runningDraftSnapshot = createProtocolSnapshot({
+      lifecycle: "running",
+      messages: [
+        ...createProtocolSnapshot().messages,
+        {
+          id: "assistant-entry-1",
+          state: "draft",
+          modelVisible: false,
+          message: {
+            role: "assistant",
+            timestamp: 1,
+            content: [
+              { type: "thinking", thinking: "checking" },
+              { type: "text", text: "working" },
+            ],
+          },
+        },
+      ],
+    });
+
+    const hiddenMessageSnapshot = createProtocolSnapshot({
+      messages: [
+        ...createProtocolSnapshot().messages,
+        {
+          id: "model-only-1",
+          state: "committed",
+          modelVisible: true,
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "hidden from default timeline" }],
+            timestamp: 0,
+          },
+        },
+      ],
+      timeline: [],
+    });
+
+    const interruptedSnapshot = createProtocolSnapshot({
+      messages: [
+        ...createProtocolSnapshot().messages,
+        {
+          id: "assistant-entry-1",
+          state: "interrupted",
+          modelVisible: true,
+          message: {
+            role: "assistant",
+            api: "openai-responses",
+            provider: "openai",
+            model: "gpt-5.5",
+            stopReason: "aborted",
+            content: [{ type: "text", text: "partial response kept" }],
+            usage: {
+              input: 0,
+              output: 0,
+              cacheRead: 0,
+              cacheWrite: 0,
+              totalTokens: 0,
+              cost: {
+                input: 0,
+                output: 0,
+                cacheRead: 0,
+                cacheWrite: 0,
+                total: 0,
+              },
+            },
+            timestamp: 1,
+          },
+        },
+      ],
+    });
+
+    expect(
+      validateSessionProtocolResult("session.snapshot", {
+        ...createProtocolSnapshot(),
+        status: "running",
+      }),
+    ).toEqual({
+      ok: true,
+      value: createProtocolSnapshot(),
+    });
+
+    expect(
+      validateSessionProtocolResult("session.snapshot", {
+        ...createProtocolSnapshot(),
+        runtimeConfig: {},
+      }),
+    ).toEqual({
+      ok: true,
+      value: createProtocolSnapshot(),
+    });
+
+    const snapshotWithUnknownModelFields = validateSessionProtocolResult(
+      "session.snapshot",
+      createProtocolSnapshot({
+        bootstrap: {
+          ...bootstrap,
+          model: {
+            ...bootstrap.persona.model,
+            headers: { authorization: "Bearer secret", "x-custom": "secret" },
+          },
+        },
+      }),
+    );
+    expect(snapshotWithUnknownModelFields.ok).toBe(true);
+    if (snapshotWithUnknownModelFields.ok) {
+      expect(snapshotWithUnknownModelFields.value.bootstrap.model).not.toHaveProperty("headers");
+    }
+
+    expect(
+      validateSessionProtocolResult("session.snapshot", {
+        sessionId: "session-1",
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+        message: expect.stringContaining("session.snapshot result is invalid"),
+      }),
+    });
+
+    expect(
+      validateSessionProtocolResult("session.snapshot", {
+        ...createProtocolSnapshot(),
+        history: [{ role: "alien", content: [] }],
+      }),
+    ).toEqual({
+      ok: true,
+      value: createProtocolSnapshot(),
+    });
+
+    expect(
+      validateSessionProtocolResult("session.snapshot", {
+        ...createProtocolSnapshot(),
+        messages: [
+          ...createProtocolSnapshot().messages,
+          {
+            id: "entry-1",
+            state: "committed",
+            modelVisible: true,
+            message: {
+              role: "user",
+              content: [{ type: "text", text: "one" }],
+              timestamp: 0,
+            },
+          },
+          {
+            id: "entry-1",
+            state: "committed",
+            modelVisible: true,
+            message: {
+              role: "user",
+              content: [{ type: "text", text: "two" }],
+              timestamp: 0,
+            },
+          },
+        ],
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+        message: expect.stringContaining("duplicate message id 'entry-1'"),
+      }),
+    });
+
+    expect(
+      validateSessionProtocolResult("session.snapshot", {
+        ...createProtocolSnapshot(),
+        timeline: {
+          epoch: 1,
+          sequence: 1,
+          items: [
+            {
+              type: "message",
+              id: "timeline-missing",
+              sequence: 1,
+              createdAt: 0,
+              messageId: "missing-message",
+            },
+          ],
+        },
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+        message: expect.stringContaining(
+          "timeline message item 'timeline-missing' references unknown message 'missing-message'",
+        ),
+      }),
+    });
+
+    expect(
+      validateSessionProtocolResult("session.snapshot", {
+        ...createProtocolSnapshot(),
+        timeline: {
+          epoch: 1,
+          sequence: 1,
+          items: [
+            {
+              type: "notice",
+              id: "notice-missing",
+              sequence: 1,
+              createdAt: 1,
+              notice: {
+                kind: "tau.test.notice",
+                version: 1,
+                severity: "error",
+                subject: { type: "message", id: "missing-message" },
+                presentation: {
+                  title: "model request failed",
+                  content: ["provider error"],
+                },
+                data: {},
+              },
+            },
+          ],
+        },
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+        message: expect.stringContaining(
+          "timeline notice 'notice-missing' references an unknown message subject",
+        ),
+      }),
+    });
+
+    expect(
+      validateSessionProtocolResult("session.snapshot", {
+        ...createProtocolSnapshot(),
+        bootstrap: {
+          ...createProtocolSnapshot().bootstrap,
+          prompt: {
+            ...createProtocolSnapshot().bootstrap.prompt,
+            baseSystemPrompt: "old inline prompt",
+          },
+        },
+      }),
+    ).toEqual({
+      ok: true,
+      value: createProtocolSnapshot(),
+    });
+    for (const [method, value] of [
+      ["session.create", { sessionId: "session-1" }],
+      [
+        "session.observe",
+        {
+          snapshot,
+          pendingUserMessages: { revision: 1, messages: [] },
+          subagentActivities: { revision: 1, agents: {} },
+        },
+      ],
+      [
+        "session.retry",
+        {
+          turn: { status: "completed", stopReason: "stop" },
+        },
+      ],
+      ["session.exec", createProtocolExecResult({ command: "pwd" })],
+      ["session.cancelExec", { cancelled: true }],
+      [
+        "session.autocompletePaths",
+        {
+          paths: ["src/main.ts", "src/tui/"],
+        },
+      ],
+      [
+        "session.setReasoning",
+        {
+          revision: 2,
+          settings: {
+            ...createProtocolSnapshot().settings,
+            personaId: "default",
+            reasoning: "high",
+          },
+        },
+      ],
+      ["session.snapshot", createProtocolSnapshot({ bootstrap, catalog })],
+      [
+        "session.rewind",
+        {
+          snapshot: createProtocolSnapshot({ bootstrap, catalog, revision: 2 }),
+          historyEntryId: "history-1",
+          text: "rewound text",
+          removedEntryIds: ["history-1", "assistant-1"],
+        },
+      ],
+      [
+        "session.interruptSubagent",
+        {
+          found: true,
+        },
+      ],
+      [
+        "session.ephemeral.create",
+        {
+          contextId: "ephemeral-1",
+        },
+      ],
+      [
+        "session.ephemeral.submit",
+        {
+          threadId: "thread-1",
+          response: "looks good",
+        },
+      ],
+      [
+        "session.ephemeral.close",
+        {
+          closed: true,
+        },
+      ],
+      [
+        "session.exec",
+        {
+          output: "diff",
+          stdout: "diff",
+          stderr: "",
+          exitCode: 0,
+          truncated: false,
+          timedOut: false,
+          aborted: false,
+          closeSignal: null,
+        },
+      ],
+      [
+        "session.record",
+        {
+          snapshot: recordSnapshot,
+          userHistoryEntryId: "history-1",
+        },
+      ],
+      [
+        "session.reload",
+        {
+          snapshot: reloadSnapshot,
+          warnings: ["config warning"],
+          counts: { personas: 1, prompts: 1, skills: 0 },
+        },
+      ],
+      ["session.snapshot", tieredSnapshot],
+      ["session.snapshot", flySnapshot],
+      ["session.snapshot", promptSnapshot],
+      ["session.snapshot", runningDraftSnapshot],
+      ["session.snapshot", hiddenMessageSnapshot],
+      ["session.snapshot", interruptedSnapshot],
+    ]) {
+      const expected = structuredClone(value);
+      expect(validateSessionProtocolResult(method, value), method).toEqual({
+        ok: true,
+        value: expected,
+      });
+    }
+  });
+
+  it("round-trips intermediate system metadata and rejects unsupported capabilities", () => {
+    const message = {
+      role: "system",
+      content: "native instruction",
+      timestamp: 1,
+      metadata: { type: "instruction", version: 1 },
+    };
+    const entry = { id: "native-1", state: "committed", modelVisible: true, message };
+    const snapshot = createProtocolSnapshot();
+    const next = {
+      ...snapshot,
+      revision: snapshot.revision + 1,
+      messages: [...snapshot.messages, entry],
+    };
+    expect(validateSessionProtocolResult("session.snapshot", next)).toEqual({
+      ok: true,
+      value: next,
+    });
+    const delta = createSessionProtocolDeltaMessage({
+      sessionId: snapshot.sessionId,
+      fromRevision: snapshot.revision,
+      toRevision: next.revision,
+      cause: { type: "system-message" },
+      delta: { type: "snapshot.patch", changes: [{ type: "message.append", message: entry }] },
+    });
+    expect(applySessionProtocolDelta(snapshot, delta)).toEqual(next);
+    expect(
+      validateSessionProtocolParams("session.sample", {
+        sessionId: snapshot.sessionId,
+        context: { systemPrompt: "persona", messages: [message] },
+        options: {},
+      }).ok,
+    ).toBe(true);
+    for (const invalid of [
+      { ...message, content: [{ type: "text", text: "instruction" }] },
+      { ...message, metadata: { type: "instruction", version: 2 } },
+      { ...message, metadata: { type: "unknown", version: 1 } },
+      { ...message, metadata: undefined },
+      { ...message, sections: { policy: "replacement" } },
+      { ...message, toolsAdded: [] },
+      { ...message, toolsRemoved: [] },
+    ]) {
+      const invalidEntry = { ...entry, message: invalid };
+      const previous = structuredClone(snapshot);
+      for (const type of ["message.append", "message.replace"]) {
+        expect(() => {
+          const invalidDelta = createSessionProtocolDeltaMessage({
+            ...delta,
+            delta: { type: "snapshot.patch", changes: [{ type, message: invalidEntry }] },
+          });
+          applySessionProtocolDelta(snapshot, invalidDelta);
+        }).toThrow();
+        expect(snapshot).toEqual(previous);
+      }
+      expect(
+        validateSessionProtocolResult("session.snapshot", {
+          ...next,
+          messages: [...snapshot.messages, invalidEntry],
+        }).ok,
+      ).toBe(false);
+      expect(
+        validateSessionProtocolParams("session.sample", {
+          sessionId: snapshot.sessionId,
+          context: { systemPrompt: "persona", messages: [invalid] },
+          options: {},
+        }).ok,
+      ).toBe(false);
+    }
+  });
+
+  it("rejects semantically mismatched snapshot projections", () => {
+    const messages = [
+      ...createProtocolSnapshot().messages,
+      {
+        id: "user-1",
+        state: "committed",
+        modelVisible: true,
+        message: {
+          role: "user",
+          content: [{ type: "text", text: "run it" }],
+          timestamp: 1,
+        },
+      },
+      {
+        id: "assistant-1",
+        state: "draft",
+        modelVisible: false,
+        message: {
+          role: "assistant",
+          content: [
+            { type: "toolCall", id: "tool-1", name: "bash", arguments: { command: "pwd" } },
+          ],
+          timestamp: 2,
+        },
+      },
+      {
+        id: "result-1",
+        state: "committed",
+        modelVisible: true,
+        message: {
+          role: "toolResult",
+          toolCallId: "tool-1",
+          toolName: "bash",
+          content: [{ type: "text", text: "/repo" }],
+          isError: false,
+          timestamp: 3,
+        },
+      },
+    ];
+    const tool = {
+      id: "tool-1",
+      toolCallId: "tool-1",
+      toolName: "bash",
+      call: { messageId: "assistant-1", contentIndex: 0 },
+      resultMessageId: "result-1",
+      status: "succeeded",
+      facetIds: [],
+    };
+    const agent = {
+      id: "agent-1",
+
+      title: "research",
+      parentId: "main",
+      depth: 1,
+      availability: "idle",
+      model: { provider: "anthropic", id: "claude-opus-4-8", reasoning: "medium" },
+      workingDirectory: "/repo",
+      createdAt: 1,
+      run: {
+        revision: 1,
+        status: "succeeded",
+        startedAt: 1,
+        finishedAt: 2,
+        interruptRequested: false,
+        response: "result",
+      },
+      costTotal: 0,
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        contextWindowUsageTokens: 0,
+        contextWindow: 1000,
+      },
+    };
+    const snapshot = createProtocolSnapshot({
+      messages,
+      timeline: [
+        {
+          type: "notice",
+          id: "notice-1",
+          notice: {
+            severity: "info",
+            title: "hi",
+            subject: { type: "session" },
+            timestamp: 1,
+          },
+        },
+      ],
+      tools: { "tool-1": tool },
+      agents: { "agent-1": agent },
+    });
+    const streamingTool = {
+      id: "streaming-tool",
+      toolCallId: "streaming-tool",
+      toolName: "write",
+      status: "streaming",
+      origin: { messageId: "assistant-1", contentIndex: 2 },
+      facetIds: [],
+    };
+    const streamingResult = validateSessionProtocolResult("session.snapshot", {
+      ...snapshot,
+      messages: messages.map((message) =>
+        message.id === "assistant-1"
+          ? { ...message, message: { ...message.message, content: [] } }
+          : message,
+      ),
+      tools: { "streaming-tool": streamingTool },
+      timeline: {
+        ...snapshot.timeline,
+        items: snapshot.timeline.items.map((item) =>
+          item.type === "tool"
+            ? { ...item, id: "timeline-tool-streaming-tool", toolId: "streaming-tool" }
+            : item,
+        ),
+      },
+    });
+    expect(streamingResult).toEqual(
+      expect.objectContaining({
+        ok: true,
+        value: expect.objectContaining({
+          tools: { "streaming-tool": streamingTool },
+        }),
+      }),
+    );
+
+    for (const ancestry of [
+      { parentId: undefined },
+      { parentId: "" },
+      { depth: undefined },
+      { depth: 0 },
+      { depth: 3 },
+      { depth: 1.5 },
+    ]) {
+      expect(
+        validateSessionProtocolResult("session.snapshot", {
+          ...streamingResult.value,
+          agents: { "agent-1": { ...agent, ...ancestry } },
+        }).ok,
+      ).toBe(false);
+    }
+
+    for (const [overrides, message] of [
+      [
+        {
+          agentState: {
+            revision: 1,
+            modelContextKey: "current-epoch",
+            usageCheckpoint: {
+              historyEntryId: "assistant-1",
+              modelContextKey: "stale-epoch",
+              tokens: 10,
+            },
+          },
+        },
+        "usage checkpoint model context key must match agent state",
+      ],
+      [
+        {
+          agentState: {
+            revision: 1,
+            modelContextKey: "current-epoch",
+            usageCheckpoint: {
+              historyEntryId: "assistant-1",
+              modelContextKey: "current-epoch",
+              tokens: 10,
+            },
+          },
+        },
+        "usage checkpoint must reference a completed model-visible assistant response",
+      ],
+      [
+        {
+          tools: {
+            "streaming-tool": {
+              ...streamingTool,
+              origin: { messageId: "user-1", contentIndex: 0 },
+            },
+          },
+        },
+        "streaming tool 'streaming-tool' does not reference a draft assistant message",
+      ],
+      [
+        {
+          tools: {
+            "tool-1": { ...tool, call: { messageId: "assistant-1", contentIndex: 1 } },
+          },
+        },
+        "tool 'tool-1' does not match its call message content",
+      ],
+      [
+        {
+          tools: { "tool-1": { ...tool, resultMessageId: "user-1" } },
+        },
+        "tool 'tool-1' does not match its result message",
+      ],
+      [
+        {
+          facets: {
+            "operation-facet": {
+              id: "operation-facet",
+              subject: { type: "operation", id: "notice-1" },
+              kind: "test",
+              version: 1,
+              data: {},
+            },
+          },
+        },
+        "facet 'operation-facet' references unknown operation subject",
+      ],
+    ]) {
+      expect(
+        validateSessionProtocolResult("session.snapshot", { ...snapshot, ...overrides }),
+      ).toEqual({
+        ok: false,
+        error: expect.objectContaining({ message: expect.stringContaining(message) }),
+      });
+    }
+  });
+
+  it("parses and constructs typed subagent activity state", () => {
+    const message = createSessionProtocolSubagentActivitiesMessage({
+      sessionId: "session-1",
+      revision: 3,
+      changes: [
+        {
+          type: "agent.set",
+          agentId: "agent-1",
+          state: {
+            runRevision: 2,
+            activities: [
+              { type: "assistant", text: "I found the call sites." },
+              {
+                type: "tool",
+                toolName: "bash",
+                outcome: "succeeded",
+                presentation: {
+                  action: "ran",
+                  subject: "npm test",
+                  subjectWrap: "character",
+                  details: [],
+                  metadata: ["exit 0"],
+                },
+              },
+              { type: "notice", severity: "warn", title: "retrying" },
+            ],
+          },
+        },
+      ],
+    });
+
+    expect(parseSessionProtocolOutgoingLine(JSON.stringify(message))).toEqual({
+      ok: true,
+      message,
+    });
+    const baseline = {
+      revision: 2,
+      agents: {
+        "agent-0": { runRevision: 1, activities: [{ type: "assistant", text: "retained" }] },
+      },
+    };
+    const updated = applySessionProtocolSubagentActivitiesMessage(baseline, message);
+    expect(updated).toEqual({
+      revision: 3,
+      agents: {
+        ...baseline.agents,
+        "agent-1": message.changes[0].state,
+      },
+    });
+    expect(
+      applySessionProtocolSubagentActivitiesMessage(
+        updated,
+        createSessionProtocolSubagentActivitiesMessage({
+          sessionId: "session-1",
+          revision: 4,
+          changes: [{ type: "agent.remove", agentId: "agent-0" }],
+        }),
+      ),
+    ).toEqual({
+      revision: 4,
+      agents: { "agent-1": message.changes[0].state },
+    });
+
+    const createActivityMessage = (activity) =>
+      createSessionProtocolSubagentActivitiesMessage({
+        sessionId: "session-1",
+        revision: 4,
+        changes: [
+          {
+            type: "agent.set",
+            agentId: "agent-1",
+            state: { runRevision: 2, activities: [activity] },
+          },
+        ],
+      });
+    const createToolActivity = (presentation = {}) => ({
+      type: "tool",
+      toolName: "edit",
+      outcome: "succeeded",
+      presentation: {
+        action: "edited",
+        subject: "src/large.ts",
+        subjectWrap: "character",
+        details: [],
+        metadata: [],
+        ...presentation,
+      },
+    });
+    const createToolDetailsMessage = (details) =>
+      createActivityMessage(createToolActivity({ details }));
+    expect(() =>
+      createToolDetailsMessage(
+        Array.from({ length: 100 }, (_, index) => ({
+          text: `short line ${index}`,
+          wrap: "character",
+        })),
+      ),
+    ).not.toThrow();
+    const oversizedDetails = Array.from({ length: 100 }, (_, index) => ({
+      text: `${index} ${"x".repeat(500)}`,
+      wrap: "character",
+    }));
+    expect(
+      Buffer.byteLength(oversizedDetails.map((detail) => detail.text).join("\n"), "utf8"),
+    ).toBeGreaterThan(SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_DETAILS_BYTES);
+    expect(() => createToolDetailsMessage(oversizedDetails)).toThrow(
+      "session protocol subagent activities message is invalid",
+    );
+    expect(() =>
+      createActivityMessage(
+        createToolActivity({
+          subject: "😀".repeat(SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_SUBJECT_BYTES / 4 + 1),
+        }),
+      ),
+    ).toThrow("session protocol subagent activities message is invalid");
+    expect(() =>
+      createActivityMessage(
+        createToolActivity({
+          metadata: ["😀".repeat(SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_METADATA_BYTES / 4 + 1)],
+        }),
+      ),
+    ).toThrow("session protocol subagent activities message is invalid");
+    expect(() =>
+      createActivityMessage({
+        type: "tool",
+        toolName: "😀".repeat(SESSION_PROTOCOL_MAX_SUBAGENT_SHORT_TEXT_BYTES / 4 + 1),
+        outcome: "succeeded",
+        presentation: createToolActivity().presentation,
+      }),
+    ).toThrow("session protocol subagent activities message is invalid");
+    expect(() =>
+      createActivityMessage({
+        type: "assistant",
+        text: "😀".repeat(SESSION_PROTOCOL_MAX_SUBAGENT_ASSISTANT_TEXT_BYTES / 4 + 1),
+      }),
+    ).toThrow("session protocol subagent activities message is invalid");
+    expect(() =>
+      createActivityMessage({
+        type: "notice",
+        severity: "warn",
+        title: "notice",
+        content: ["😀".repeat(SESSION_PROTOCOL_MAX_SUBAGENT_NOTICE_CONTENT_BYTES / 4 + 1)],
+      }),
+    ).toThrow("session protocol subagent activities message is invalid");
+
+    expect(() =>
+      createSessionProtocolSubagentActivitiesMessage({
+        sessionId: "session-1",
+        revision: 4,
+        changes: [
+          {
+            type: "agent.set",
+            agentId: "agent-1",
+            state: {
+              runRevision: 2,
+              activities: Array.from({ length: 65 }, () => ({
+                type: "assistant",
+                text: "working",
+              })),
+            },
+          },
+        ],
+      }),
+    ).toThrow("session protocol subagent activities message is invalid");
+    expect(() =>
+      createSessionProtocolSubagentActivitiesMessage({
+        sessionId: "session-1",
+        revision: 4,
+        changes: [
+          { type: "agent.remove", agentId: "agent-1" },
+          { type: "agent.remove", agentId: "agent-1" },
+        ],
+      }),
+    ).toThrow("session protocol subagent activities message is invalid");
+  });
+
+  it("builds ready/delta/error messages with versioned envelopes", () => {
+    const ready = createSessionProtocolReadyMessage();
+    expect(ready).toEqual(
+      expect.objectContaining({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "ready",
+        methods: SESSION_PROTOCOL_METHODS,
+      }),
+    );
+    expect(ready).not.toHaveProperty("sessionId");
+
+    const delta = createSessionProtocolDeltaMessage({
+      sessionId: "session-1",
+      fromRevision: 1,
+      toRevision: 2,
+      cause: { type: "notice" },
+      delta: {
+        type: "snapshot.patch",
+        changes: [{ type: "lifecycle.set", lifecycle: "idle" }],
+      },
+    });
+    expect(delta).toEqual({
+      version: SESSION_PROTOCOL_VERSION,
+      type: "session.delta",
+      sessionId: "session-1",
+      fromRevision: 1,
+      toRevision: 2,
+      cause: { type: "notice" },
+      delta: {
+        type: "snapshot.patch",
+        changes: [{ type: "lifecycle.set", lifecycle: "idle" }],
+      },
+    });
+    expect(parseSessionProtocolOutgoingLine(JSON.stringify(delta))).toEqual({
+      ok: true,
+      message: delta,
+    });
+
+    const settingsDelta = createSessionProtocolDeltaMessage({
+      sessionId: "session-1",
+      fromRevision: 2,
+      toRevision: 3,
+      cause: { type: "configuration" },
+      delta: {
+        type: "snapshot.patch",
+        changes: [
+          {
+            type: "settings.set",
+            settings: {
+              ...createProtocolSnapshot().settings,
+              personaId: "default",
+              reasoning: "high",
+            },
+          },
+        ],
+      },
+    });
+    const settingsSnapshot = createProtocolSnapshot({
+      sessionId: "session-1",
+      revision: 2,
+    });
+    const settingsPatchedSnapshot = applySessionProtocolDelta(settingsSnapshot, settingsDelta);
+    expect(settingsPatchedSnapshot.revision).toBe(3);
+    expect(settingsPatchedSnapshot.settings).toEqual({
+      ...createProtocolSnapshot().settings,
+      personaId: "default",
+      reasoning: "high",
+    });
+    expect(settingsPatchedSnapshot.settings).not.toBe(settingsSnapshot.settings);
+    expect(settingsPatchedSnapshot.messages).toBe(settingsSnapshot.messages);
+    expect(settingsPatchedSnapshot.timeline).toBe(settingsSnapshot.timeline);
+
+    const invalidAgentStateDelta = createSessionProtocolDeltaMessage({
+      sessionId: "session-1",
+      fromRevision: 2,
+      toRevision: 3,
+      cause: { type: "maintenance" },
+      delta: {
+        type: "snapshot.patch",
+        changes: [
+          {
+            type: "agent-state.set",
+            agentState: {
+              revision: 1,
+              modelContextKey: "epoch-1",
+              usageCheckpoint: {
+                historyEntryId: "missing-assistant",
+                modelContextKey: "epoch-1",
+                tokens: 10,
+              },
+            },
+          },
+        ],
+      },
+    });
+    expect(() =>
+      applySessionProtocolDelta(
+        createProtocolSnapshot({ sessionId: "session-1", revision: 2 }),
+        invalidAgentStateDelta,
+      ),
+    ).toThrow("session delta produced an invalid snapshot");
+
+    const checkpointSnapshot = createProtocolSnapshot({
+      sessionId: "session-1",
+      revision: 2,
+      historyEntries: [
+        {
+          id: "checkpoint-assistant",
+          message: {
+            role: "assistant",
+            provider: "openai",
+            model: "gpt-5.5",
+            content: [{ type: "text", text: "done" }],
+            stopReason: "stop",
+          },
+        },
+      ],
+      agentState: {
+        revision: 1,
+        modelContextKey: "epoch-1",
+        usageCheckpoint: {
+          historyEntryId: "checkpoint-assistant",
+          modelContextKey: "epoch-1",
+          tokens: 10,
+        },
+      },
+    });
+    const invalidCheckpointTargetDelta = createSessionProtocolDeltaMessage({
+      sessionId: "session-1",
+      fromRevision: 2,
+      toRevision: 3,
+      cause: { type: "assistant-stream" },
+      delta: {
+        type: "snapshot.patch",
+        changes: [
+          {
+            type: "message.replace",
+            message: {
+              id: "checkpoint-assistant",
+              state: "draft",
+              modelVisible: false,
+              message: { role: "assistant", content: [], timestamp: 1 },
+            },
+          },
+        ],
+      },
+    });
+    expect(() =>
+      applySessionProtocolDelta(checkpointSnapshot, invalidCheckpointTargetDelta),
+    ).toThrow("session delta produced an invalid snapshot");
+
+    const ephemeral = createSessionProtocolEphemeralMessage({
+      sessionId: "session-1",
+      event: {
+        type: "ephemeral-agent.thread-update",
+        contextId: "ephemeral-1",
+        threadId: "thread-1",
+        update: {
+          costTotal: 0,
+          usage: {
+            input: 1,
+            output: 2,
+            cacheRead: 0,
+            cacheWrite: 0,
+            contextWindowUsageTokens: 3,
+            contextWindow: 400000,
+          },
+          lastActivityText: "reviewing diff",
+        },
+      },
+    });
+    expect(ephemeral).toEqual({
+      version: SESSION_PROTOCOL_VERSION,
+      type: "session.ephemeral",
+      sessionId: "session-1",
+      event: {
+        type: "ephemeral-agent.thread-update",
+        contextId: "ephemeral-1",
+        threadId: "thread-1",
+        update: {
+          costTotal: 0,
+          usage: {
+            input: 1,
+            output: 2,
+            cacheRead: 0,
+            cacheWrite: 0,
+            contextWindowUsageTokens: 3,
+            contextWindow: 400000,
+          },
+          lastActivityText: "reviewing diff",
+        },
+      },
+    });
+    expect(parseSessionProtocolOutgoingLine(JSON.stringify(ephemeral))).toEqual({
+      ok: true,
+      message: ephemeral,
+    });
+
+    const feedback = createSessionProtocolEphemeralMessage({
+      sessionId: "session-1",
+      event: {
+        type: "feedback.notice",
+        title: "retrying after transient error",
+        tone: "default",
+        presentation: "footer",
+        durationMs: 3_000,
+      },
+    });
+    expect(parseSessionProtocolOutgoingLine(JSON.stringify(feedback))).toEqual({
+      ok: true,
+      message: feedback,
+    });
+
+    const contentDelta = createSessionProtocolDeltaMessage({
+      sessionId: "session-1",
+      fromRevision: 2,
+      toRevision: 3,
+      cause: { type: "assistant-stream" },
+      delta: {
+        type: "snapshot.patch",
+        changes: [
+          {
+            type: "message.content.append",
+            messageId: "assistant-entry-1",
+            text: " world",
+            thinking: " more",
+            timestamp: 2,
+          },
+        ],
+      },
+    });
+    const patchedSnapshot = applySessionProtocolDelta(
+      createProtocolSnapshot({
+        sessionId: "session-1",
+        revision: 2,
+        lifecycle: "running",
+        messages: [
+          ...createProtocolSnapshot().messages,
+          {
+            id: "assistant-entry-1",
+            state: "draft",
+            modelVisible: false,
+            message: {
+              role: "assistant",
+              content: [
+                { type: "thinking", thinking: "some" },
+                { type: "text", text: "hello" },
+              ],
+              timestamp: 1,
+            },
+          },
+        ],
+      }),
+      contentDelta,
+    );
+    expect(patchedSnapshot.messages[1].message).toEqual({
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "some more" },
+        { type: "text", text: "hello world" },
+      ],
+      timestamp: 2,
+    });
+    const lateThinkingDelta = createSessionProtocolDeltaMessage({
+      sessionId: "session-1",
+      fromRevision: 2,
+      toRevision: 3,
+      cause: { type: "assistant-stream" },
+      delta: {
+        type: "snapshot.patch",
+        changes: [
+          {
+            type: "message.content.append",
+            messageId: "assistant-entry-1",
+            thinking: "late thought",
+            timestamp: 2,
+          },
+        ],
+      },
+    });
+    const lateThinkingSnapshot = applySessionProtocolDelta(
+      createProtocolSnapshot({
+        sessionId: "session-1",
+        revision: 2,
+        lifecycle: "running",
+        messages: [
+          ...createProtocolSnapshot().messages,
+          {
+            id: "assistant-entry-1",
+            state: "draft",
+            modelVisible: false,
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "hello" }],
+              timestamp: 1,
+            },
+          },
+        ],
+      }),
+      lateThinkingDelta,
+    );
+    expect(lateThinkingSnapshot.messages[1].message.content).toEqual([
+      { type: "thinking", thinking: "late thought" },
+      { type: "text", text: "hello" },
+    ]);
+
+    const keyedSnapshot = createProtocolSnapshot({
+      sessionId: "session-1",
+      revision: 3,
+      historyEntries: [
+        {
+          id: "assistant-entry-1",
+          message: {
+            role: "assistant",
+            api: "openai-responses",
+            provider: "openai",
+            model: "gpt-5.5",
+            stopReason: "toolUse",
+            content: [
+              {
+                type: "toolCall",
+                id: "tool-1",
+                name: "bash",
+                arguments: { command: "echo hi" },
+              },
+            ],
+          },
+        },
+      ],
+      tools: {
+        "tool-1": {
+          id: "tool-1",
+          toolCallId: "tool-1",
+          toolName: "bash",
+          call: { messageId: "assistant-entry-1", contentIndex: 0 },
+          status: "queued",
+          facetIds: [],
+        },
+      },
+      facets: {
+        "tool-ui-tool-1": {
+          id: "tool-ui-tool-1",
+          subject: { type: "tool", id: "tool-1" },
+          kind: "tau.tool-ui-events",
+          version: 1,
+          data: { events: [] },
+        },
+      },
+      agents: {},
+    });
+    const keyedDelta = createSessionProtocolDeltaMessage({
+      sessionId: "session-1",
+      fromRevision: 3,
+      toRevision: 4,
+      cause: { type: "tool-run" },
+      delta: {
+        type: "snapshot.patch",
+        changes: [
+          {
+            type: "tool.set",
+            tool: {
+              ...keyedSnapshot.tools["tool-1"],
+              status: "running",
+              startedAt: 10,
+              facetIds: ["tool-ui-tool-1"],
+            },
+          },
+          {
+            type: "facet.set",
+            facet: {
+              ...keyedSnapshot.facets["tool-ui-tool-1"],
+              data: {
+                events: [
+                  {
+                    type: "bash_started",
+                    toolCallId: "tool-1",
+                    command: "echo hi",
+                    presentation: buildToolRunPresentation({
+                      toolName: "bash",
+                      subject: "echo hi",
+                    }),
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      },
+    });
+    const keyedPatchedSnapshot = applySessionProtocolDelta(keyedSnapshot, keyedDelta);
+    expect(keyedPatchedSnapshot).toEqual(
+      expect.objectContaining({
+        revision: 4,
+        tools: expect.objectContaining({
+          "tool-1": expect.objectContaining({
+            status: "running",
+            startedAt: 10,
+          }),
+        }),
+        facets: expect.objectContaining({
+          "tool-ui-tool-1": expect.objectContaining({
+            data: {
+              events: [
+                expect.objectContaining({
+                  type: "bash_started",
+                  toolCallId: "tool-1",
+                }),
+              ],
+            },
+          }),
+        }),
+      }),
+    );
+    expect(keyedPatchedSnapshot.messages).toBe(keyedSnapshot.messages);
+    expect(keyedPatchedSnapshot.timeline).toBe(keyedSnapshot.timeline);
+    expect(keyedPatchedSnapshot.tools).not.toBe(keyedSnapshot.tools);
+    expect(keyedPatchedSnapshot.facets).not.toBe(keyedSnapshot.facets);
+
+    const invalidToolReferenceDelta = createSessionProtocolDeltaMessage({
+      sessionId: "session-1",
+      fromRevision: 3,
+      toRevision: 4,
+      cause: { type: "tool-run" },
+      delta: {
+        type: "snapshot.patch",
+        changes: [
+          {
+            type: "tool.set",
+            tool: {
+              ...keyedSnapshot.tools["tool-1"],
+              call: { messageId: "missing-assistant", contentIndex: 0 },
+            },
+          },
+        ],
+      },
+    });
+    expect(() => applySessionProtocolDelta(keyedSnapshot, invalidToolReferenceDelta)).toThrow(
+      "session delta produced an invalid snapshot",
+    );
+
+    expect(() =>
+      applySessionProtocolDelta(
+        createProtocolSnapshot({
+          sessionId: "session-1",
+          revision: 2,
+          lifecycle: "idle",
+          messages: [
+            {
+              id: "system",
+              state: "committed",
+              modelVisible: true,
+              message: {
+                role: "system",
+                content: "system prompt",
+                timestamp: 0,
+              },
+            },
+            {
+              id: "assistant-entry-1",
+              state: "committed",
+              modelVisible: true,
+              message: {
+                role: "assistant",
+                content: [{ type: "text", text: "hello" }],
+                timestamp: 1,
+              },
+            },
+          ],
+        }),
+        contentDelta,
+      ),
+    ).toThrow("message.content.append targets non-draft message");
+    expect(() =>
+      createSessionProtocolDeltaMessage({
+        sessionId: "session-1",
+        fromRevision: 2,
+        toRevision: 3,
+        cause: { type: "assistant-stream" },
+        delta: {
+          type: "snapshot.patch",
+          changes: [
+            {
+              type: "message.content.append",
+              messageId: "assistant-entry-1",
+              timestamp: 2,
+            },
+          ],
+        },
+      }),
+    ).toThrow("message.content.append requires text or thinking");
+    expect(() =>
+      createSessionProtocolDeltaMessage({
+        sessionId: "session-1",
+        fromRevision: 2,
+        toRevision: 3,
+        cause: { type: "assistant-stream" },
+        delta: {
+          type: "snapshot.patch",
+          changes: [
+            {
+              type: "message.content.append",
+              messageId: "assistant-entry-1",
+              text: "",
+              timestamp: 2,
+            },
+          ],
+        },
+      }),
+    ).toThrow("message.content.append requires text or thinking");
+
+    expect(() =>
+      createSessionProtocolDeltaMessage({
+        sessionId: "session-1",
+        fromRevision: null,
+        toRevision: 2,
+        cause: { type: "notice" },
+        delta: { type: "snapshot.patch", changes: [] },
+      }),
+    ).toThrow("session protocol delta message is invalid");
+    expect(() =>
+      createSessionProtocolDeltaMessage({
+        sessionId: "session-1",
+        fromRevision: 2,
+        toRevision: 2,
+        cause: { type: "notice" },
+        delta: { type: "snapshot.patch", changes: [] },
+      }),
+    ).toThrow("snapshot.patch toRevision must be greater than fromRevision");
+    expect(() =>
+      createSessionProtocolDeltaMessage({
+        sessionId: "",
+        fromRevision: 1,
+        toRevision: 2,
+        cause: { type: "notice" },
+        delta: { type: "snapshot.patch", changes: [] },
+      }),
+    ).toThrow("session protocol delta message is invalid");
+
+    const successResponse = createSessionProtocolSuccessResponse("req-1", "session.interrupt", {
+      interrupted: false,
+      isTurnRunning: false,
+    });
+    expect(successResponse).toEqual({
+      version: SESSION_PROTOCOL_VERSION,
+      type: "response",
+      id: "req-1",
+      ok: true,
+      result: { interrupted: false, isTurnRunning: false },
+    });
+    expect(
+      createSessionProtocolSuccessResponse("req-2", "session.unobserve", {
+        unobserved: true,
+      }),
+    ).toEqual({
+      version: SESSION_PROTOCOL_VERSION,
+      type: "response",
+      id: "req-2",
+      ok: true,
+      result: { unobserved: true },
+    });
+    expect(() =>
+      createSessionProtocolSuccessResponse("req-bad", "session.interrupt", {
+        shutdown: true,
+      }),
+    ).toThrow("session.interrupt result is invalid");
+    expect(() =>
+      createSessionProtocolSuccessResponse("", "session.interrupt", {
+        interrupted: false,
+        isTurnRunning: false,
+      }),
+    ).toThrow("session protocol success response is invalid");
+
+    const errorResponse = createSessionProtocolErrorResponse(
+      "req-2",
+      SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+      "bad request",
+    );
+    expect(errorResponse).toEqual({
+      version: SESSION_PROTOCOL_VERSION,
+      type: "response",
+      id: "req-2",
+      ok: false,
+      error: {
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+        message: "bad request",
+      },
+    });
+    expect(() =>
+      createSessionProtocolErrorResponse("req-bad", "not-a-code", "bad request"),
+    ).toThrow("session protocol error response is invalid");
+  });
+
+  it("shares unaffected snapshot records across ordered message and timeline patches", () => {
+    const snapshot = createProtocolSnapshot({
+      historyEntries: [{ id: "old", message: { role: "user", content: "old", timestamp: 1 } }],
+    });
+    const original = structuredClone(snapshot);
+    const freeze = (value) => {
+      if (!value || typeof value !== "object") return;
+      Object.freeze(value);
+      for (const child of Object.values(value)) freeze(child);
+    };
+    freeze(snapshot);
+    const message = (id, text) => ({
+      id,
+      state: "committed",
+      modelVisible: true,
+      message: { role: "user", content: [{ type: "text", text }], timestamp: 2 },
+    });
+    const item = (id, sequence) => ({
+      type: "message",
+      id: `timeline-${id}`,
+      messageId: id,
+      sequence,
+      createdAt: 2,
+    });
+    const changes = [
+      { type: "message.append", message: message("new", "draft") },
+      { type: "message.replace", message: message("new", "final") },
+      { type: "message.replace", message: message("missing", "inserted") },
+      { type: "timeline.advance", epoch: snapshot.timeline.epoch, sequence: 2 },
+      { type: "timeline.append", item: item("new", 3) },
+      { type: "timeline.append", item: item("missing", 4) },
+      { type: "cost.set", costTotal: 0.1 },
+    ];
+    const delta = (changes) =>
+      createSessionProtocolDeltaMessage({
+        sessionId: snapshot.sessionId,
+        fromRevision: snapshot.revision,
+        toRevision: snapshot.revision + 1,
+        cause: { type: "user-message" },
+        delta: { type: "snapshot.patch", changes },
+      });
+    const patch = delta(changes);
+    const next = applySessionProtocolDelta(snapshot, patch);
+    expect(snapshot).toEqual(original);
+    expect(next.messages).not.toBe(snapshot.messages);
+    expect(next.messages.slice(2)).toEqual([
+      message("new", "final"),
+      message("missing", "inserted"),
+    ]);
+    expect(next.messages[0]).toBe(snapshot.messages[0]);
+    expect(next.messages[1]).toBe(snapshot.messages[1]);
+    expect(next.timeline).not.toBe(snapshot.timeline);
+    expect(next.timeline.items[0]).toBe(snapshot.timeline.items[0]);
+    expect(next.timeline.items.slice(1)).toEqual([item("new", 3), item("missing", 4)]);
+    expect(next.timeline.sequence).toBe(4);
+    expect(next.costTotal).toBe(0.1);
+    for (const key of [
+      "tools",
+      "operations",
+      "agents",
+      "facets",
+      "turns",
+      "bootstrap",
+      "catalog",
+    ]) {
+      expect(next[key]).toBe(snapshot[key]);
+    }
+    patch.delta.changes[1].message.message.content[0].text = "mutated";
+    patch.delta.changes[4].item.id = "mutated";
+    expect(next.messages[2].message.content[0].text).toBe("final");
+    expect(next.timeline.items[1].id).toBe("timeline-new");
+
+    for (const invalid of [
+      { type: "timeline.append", item: item("new", 4) },
+      { type: "timeline.append", item: item("unknown", 5) },
+      { type: "timeline.advance", epoch: snapshot.timeline.epoch + 1, sequence: 5 },
+    ]) {
+      expect(() => applySessionProtocolDelta(snapshot, delta([...changes, invalid]))).toThrow();
+      expect(snapshot).toEqual(original);
+    }
+
+    const replaced = applySessionProtocolDelta(
+      snapshot,
+      delta([{ type: "message.replace", message: message("old", "replaced") }]),
+    );
+    expect(replaced.timeline).toBe(snapshot.timeline);
+    expect(replaced.messages[1]).not.toBe(snapshot.messages[1]);
+    expect(snapshot).toEqual(original);
+
+    const fallback = applySessionProtocolDelta(
+      snapshot,
+      delta([...changes, { type: "timeline.remove", id: "timeline-new" }]),
+    );
+    expect(fallback.timeline.items.map((entry) => entry.id)).toEqual([
+      "timeline-old",
+      "timeline-missing",
+    ]);
+    expect(snapshot).toEqual(original);
+  });
+
+  it("validates and applies durable turn record deltas", () => {
+    const snapshot = createProtocolSnapshot({ sessionId: "session-1", revision: 1 });
+    const running = {
+      userHistoryEntryId: "turn-1",
+      state: "running",
+    };
+    const accepted = applySessionProtocolDelta(
+      snapshot,
+      createSessionProtocolDeltaMessage({
+        sessionId: "session-1",
+        fromRevision: 1,
+        toRevision: 2,
+        cause: { type: "user-message" },
+        delta: { type: "snapshot.patch", changes: [{ type: "turn.set", turn: running }] },
+      }),
+    );
+    expect(accepted.turns).toEqual({ "turn-1": running });
+    expect(accepted.messages).toBe(snapshot.messages);
+    expect(accepted.timeline).toBe(snapshot.timeline);
+
+    const settled = {
+      userHistoryEntryId: "turn-1",
+      state: "settled",
+      outcome: { status: "completed", stopReason: "stop" },
+    };
+    expect(
+      applySessionProtocolDelta(
+        accepted,
+        createSessionProtocolDeltaMessage({
+          sessionId: "session-1",
+          fromRevision: 2,
+          toRevision: 3,
+          cause: { type: "assistant-message" },
+          delta: { type: "snapshot.patch", changes: [{ type: "turn.set", turn: settled }] },
+        }),
+      ).turns,
+    ).toEqual({ "turn-1": settled });
+
+    const prototypeTurn = {
+      userHistoryEntryId: "__proto__",
+      state: "running",
+    };
+    const prototypeAccepted = applySessionProtocolDelta(
+      snapshot,
+      createSessionProtocolDeltaMessage({
+        sessionId: "session-1",
+        fromRevision: 1,
+        toRevision: 2,
+        cause: { type: "user-message" },
+        delta: { type: "snapshot.patch", changes: [{ type: "turn.set", turn: prototypeTurn }] },
+      }),
+    );
+    expect(Object.hasOwn(prototypeAccepted.turns, "__proto__")).toBe(true);
+    expect(Object.entries(prototypeAccepted.turns)).toEqual([["__proto__", prototypeTurn]]);
+    expect(JSON.parse(JSON.stringify(prototypeAccepted.turns))).toEqual(
+      Object.fromEntries([["__proto__", prototypeTurn]]),
+    );
+
+    expect(() =>
+      applySessionProtocolDelta(
+        { ...accepted, turns: { "turn-1": settled } },
+        createSessionProtocolDeltaMessage({
+          sessionId: "session-1",
+          fromRevision: 2,
+          toRevision: 3,
+          cause: { type: "user-message" },
+          delta: { type: "snapshot.patch", changes: [{ type: "turn.set", turn: running }] },
+        }),
+      ),
+    ).toThrow("settled turn 'turn-1' cannot be changed");
+
+    expect(
+      validateSessionProtocolResult("session.snapshot", {
+        ...snapshot,
+        turns: {
+          "turn-1": { userHistoryEntryId: "different-turn", state: "running" },
+        },
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        message: expect.stringContaining(
+          "turn map key 'turn-1' does not match embedded user history entry id 'different-turn'",
+        ),
+      }),
+    });
+  });
+
+  it("bounds notice presentation before it enters the protocol", () => {
+    const presentation = projectSessionProtocolNoticePresentation(
+      "t".repeat(600),
+      Array.from({ length: 20 }, (_, index) => `${index}:${"x".repeat(5_000)}`),
+    );
+    expect(presentation.title).toHaveLength(512);
+    expect(presentation.title.endsWith("…")).toBe(true);
+    expect(presentation.content).toHaveLength(16);
+    expect(presentation.content.every((entry) => entry.length <= 4_096)).toBe(true);
+
+    expect(() =>
+      createSessionProtocolEphemeralMessage({
+        sessionId: "session-1",
+        event: {
+          type: "feedback.notice",
+          title: "t".repeat(513),
+          tone: "error",
+          presentation: "footer",
+          durationMs: 3_000,
+        },
+      }),
+    ).toThrow("session protocol ephemeral message is invalid");
+
+    expect(() =>
+      createSessionProtocolDeltaMessage({
+        sessionId: "session-1",
+        fromRevision: 1,
+        toRevision: 2,
+        cause: { type: "notice" },
+        delta: {
+          type: "snapshot.patch",
+          changes: [
+            {
+              type: "timeline.append",
+              item: {
+                type: "notice",
+                id: "notice-1",
+                sequence: 1,
+                createdAt: 1,
+                notice: {
+                  kind: "tau.test.notice",
+                  version: 1,
+                  severity: "info",
+                  subject: { type: "session" },
+                  presentation: {
+                    title: "test notice",
+                    content: Array.from({ length: 17 }, () => "detail"),
+                  },
+                  data: {},
+                },
+              },
+            },
+          ],
+        },
+      }),
+    ).toThrow("session protocol delta message is invalid");
+  });
+
+  it("requires canonical terminal operation fields", () => {
+    const createOperationDelta = (operation) =>
+      createSessionProtocolDeltaMessage({
+        sessionId: "session-1",
+        fromRevision: 1,
+        toRevision: 2,
+        cause: { type: "maintenance" },
+        delta: {
+          type: "snapshot.patch",
+          changes: [{ type: "operation.set", operation }],
+        },
+      });
+    const base = {
+      id: "operation-1",
+      kind: "auto-compaction",
+      startedAt: 1,
+    };
+
+    for (const operation of [
+      { ...base, status: "succeeded" },
+      { ...base, status: "failed", finishedAt: 2 },
+      { ...base, status: "skipped", finishedAt: 2 },
+      { ...base, status: "cancelled", finishedAt: 2 },
+    ]) {
+      expect(() => createOperationDelta(operation)).toThrow(
+        "session protocol delta message is invalid",
+      );
+    }
+
+    expect(
+      createOperationDelta({
+        ...base,
+        status: "running",
+        finishedAt: 2,
+        error: "stale failure",
+        summary: "stale summary",
+        data: { stale: true },
+      }).delta.changes,
+    ).toEqual([
+      {
+        type: "operation.set",
+        operation: { ...base, status: "running" },
+      },
+    ]);
+  });
+
+  it("rejects timeline appends that reuse allocated sequences", () => {
+    const current = createProtocolSnapshot({
+      sessionId: "session-1",
+      revision: 1,
+    });
+    current.timeline.sequence = 5;
+    const createAppendDelta = (sequence) =>
+      createSessionProtocolDeltaMessage({
+        sessionId: "session-1",
+        fromRevision: 1,
+        toRevision: 2,
+        cause: { type: "notice" },
+        delta: {
+          type: "snapshot.patch",
+          changes: [
+            {
+              type: "timeline.append",
+              item: {
+                type: "notice",
+                id: `notice-${sequence}`,
+                sequence,
+                createdAt: sequence,
+                notice: {
+                  kind: "tau.test.notice",
+                  version: 1,
+                  severity: "info",
+                  subject: { type: "session" },
+                  presentation: { title: "test notice" },
+                  data: {},
+                },
+              },
+            },
+          ],
+        },
+      });
+
+    for (const sequence of [2, 5]) {
+      expect(() => applySessionProtocolDelta(current, createAppendDelta(sequence))).toThrow(
+        `timeline append sequence ${sequence} must exceed current timeline sequence 5`,
+      );
+    }
+    expect(applySessionProtocolDelta(current, createAppendDelta(6)).timeline).toMatchObject({
+      sequence: 6,
+      items: [expect.objectContaining({ id: "notice-6", sequence: 6 })],
+    });
+
+    const createAdvanceDelta = (sequence) =>
+      createSessionProtocolDeltaMessage({
+        sessionId: "session-1",
+        fromRevision: 1,
+        toRevision: 2,
+        cause: { type: "notice" },
+        delta: {
+          type: "snapshot.patch",
+          changes: [{ type: "timeline.advance", epoch: 1, sequence }],
+        },
+      });
+    for (const sequence of [2, 5]) {
+      expect(() => applySessionProtocolDelta(current, createAdvanceDelta(sequence))).toThrow(
+        `timeline advance sequence ${sequence} must exceed current timeline sequence 5`,
+      );
+    }
+    expect(applySessionProtocolDelta(current, createAdvanceDelta(6)).timeline.sequence).toBe(6);
+  });
+
+  it("validates destructive reset causes against the current timeline", () => {
+    const current = createProtocolSnapshot({
+      sessionId: "session-1",
+      revision: 1,
+      historyEntries: [
+        {
+          id: "user-1",
+          message: { role: "user", content: [{ type: "text", text: "hello" }] },
+        },
+      ],
+    });
+    const nextEpochSnapshot = createProtocolSnapshot({
+      sessionId: "session-1",
+      revision: 2,
+    });
+    nextEpochSnapshot.timeline.epoch = 2;
+
+    const staleCompaction = createSessionProtocolDeltaMessage({
+      sessionId: "session-1",
+      fromRevision: null,
+      toRevision: 2,
+      cause: {
+        type: "compaction",
+        previousEpoch: 1,
+        epoch: 2,
+        kind: "auto",
+        cutType: "turn-boundary",
+        retainedMessageCount: 0,
+      },
+      delta: { type: "snapshot.reset", snapshot: nextEpochSnapshot },
+    });
+    expect(() => applySessionProtocolDelta(nextEpochSnapshot, staleCompaction)).toThrow(
+      "compaction delta previous epoch 1 does not match current timeline epoch 2",
+    );
+
+    const wrongEpochRewind = createSessionProtocolDeltaMessage({
+      sessionId: "session-1",
+      fromRevision: null,
+      toRevision: 2,
+      cause: { type: "rewind", epoch: 2, cutoffSequence: 0 },
+      delta: { type: "snapshot.reset", snapshot: nextEpochSnapshot },
+    });
+    expect(() => applySessionProtocolDelta(current, wrongEpochRewind)).toThrow(
+      "rewind delta epoch 2 does not match current timeline epoch 1",
+    );
+
+    const rewoundSnapshot = createProtocolSnapshot({
+      sessionId: "session-1",
+      revision: 2,
+    });
+    const invalidCutoffRewind = createSessionProtocolDeltaMessage({
+      sessionId: "session-1",
+      fromRevision: null,
+      toRevision: 2,
+      cause: { type: "rewind", epoch: 1, cutoffSequence: 2 },
+      delta: { type: "snapshot.reset", snapshot: rewoundSnapshot },
+    });
+    expect(() => applySessionProtocolDelta(current, invalidCutoffRewind)).toThrow(
+      "rewind delta cutoff sequence 2 exceeds current timeline sequence 1",
+    );
+
+    const loweredSequenceSnapshot = createProtocolSnapshot({
+      sessionId: "session-1",
+      revision: 2,
+    });
+    loweredSequenceSnapshot.timeline.sequence = 0;
+    const loweredSequenceRewind = createSessionProtocolDeltaMessage({
+      sessionId: "session-1",
+      fromRevision: null,
+      toRevision: 2,
+      cause: { type: "rewind", epoch: 1, cutoffSequence: 0 },
+      delta: { type: "snapshot.reset", snapshot: loweredSequenceSnapshot },
+    });
+    expect(() => applySessionProtocolDelta(current, loweredSequenceRewind)).toThrow(
+      "rewind delta timeline sequence 0 does not preserve current timeline sequence 1",
+    );
+  });
+});

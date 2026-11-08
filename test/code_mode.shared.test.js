@@ -1,0 +1,488 @@
+import { spawn, spawnSync } from "node:child_process";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+import { crc32 } from "node:zlib";
+import { describe, expect, it, vi } from "vitest";
+import { prepareCodeModeImage } from "../dist/code_mode/images.js";
+import { executeTauCodeMode } from "../dist/code_mode/index.js";
+import { runTauCodeMode } from "../dist/code_mode/runtime.js";
+import { createTauCodeModeClientTool } from "../dist/sdk/index.js";
+import { createProtocolImage } from "./helpers/session_protocol_fixtures.js";
+
+const invocation = {
+  sessionId: "session-1",
+  agentId: "agent-1",
+  callId: "call-1",
+};
+
+function createDefinition(overrides = {}) {
+  return {
+    name: "linear",
+    documentation: "# Linear API\n\nUse `linear.issues.get(id)` to read an issue.",
+    api: {
+      issues: {
+        get: async ([id], context) => ({ id, invocation: context.invocation }),
+      },
+    },
+    ...overrides,
+  };
+}
+
+function getTextContent(result) {
+  return result.content
+    .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join("\n");
+}
+
+describe("public code-mode runtime", () => {
+  it("passes SDK output budgets to the runtime", async () => {
+    const tool = createTauCodeModeClientTool({
+      ...createDefinition(),
+      description: "Read issues.",
+    });
+    const executionContext = {
+      ...invocation,
+      signal: new AbortController().signal,
+      executionEnvironment: null,
+    };
+    const args = { code: 'printText("x".repeat(60_000))', maxOutputTokens: 16_384 };
+    expect(getTextContent(await tool.execute(args, executionContext))).toBe("x".repeat(60_000));
+    await expect(
+      tool.execute({ ...args, maxOutputTokens: 65_537 }, executionContext),
+    ).rejects.toThrow();
+  });
+
+  it.concurrent("executes a nested API through the JSON bridge", async () => {
+    const result = await executeTauCodeMode({
+      ...createDefinition(),
+      code: 'printText(JSON.stringify(await linear.issues.get("TAU-418")))',
+      invocation,
+    });
+
+    expect(JSON.parse(getTextContent(result))).toEqual({
+      id: "TAU-418",
+      invocation,
+    });
+  });
+
+  it.concurrent("keeps image positions while truncating text across multiple blocks", async () => {
+    const block = createProtocolImage();
+    const result = await executeTauCodeMode({
+      ...createDefinition({ api: { screenshot: async () => block } }),
+      code: [
+        "const block = await linear.screenshot();",
+        'printText("頭".repeat(30_000));',
+        "await printImage(block);",
+        'printText("middle".repeat(30_000));',
+        "await printImage(block);",
+        'printText("尾".repeat(30_000));',
+      ].join("\n"),
+    });
+    expect(result.content).toEqual([
+      { type: "text", text: expect.stringMatching(/^頭+….*tokens truncated…$/) },
+      block,
+      block,
+      { type: "text", text: expect.stringMatching(/^尾+\n\n\[Output truncated for context:/) },
+    ]);
+    expect(getTextContent(result)).not.toContain("middle");
+    expect(getTextContent(result)).not.toContain("�");
+  });
+
+  it("keeps emitted output when a running program is cancelled", async () => {
+    const block = createProtocolImage();
+    const ready = Promise.withResolvers();
+    const controller = new AbortController();
+    const running = runTauCodeMode({
+      ...createDefinition({
+        api: {
+          screenshot: async () => block,
+          ready: () => {
+            ready.resolve();
+            return null;
+          },
+        },
+      }),
+      signal: controller.signal,
+      code: 'printText("before"); await printImage(await linear.screenshot()); printText("after"); await linear.ready(); while (true) {}',
+    });
+    await ready.promise;
+    controller.abort();
+    const runtime = await running;
+    expect(runtime.status).toBe("cancelled");
+    expect(runtime.result.content[0]).toEqual({ type: "text", text: "before" });
+    expect(runtime.result.content[1]).toEqual(block);
+    expect(runtime.result.content[2].text).toContain("after");
+  });
+
+  it.concurrent("rejects invalid image blocks outside the sandbox", async () => {
+    const blocks = [
+      null,
+      createProtocolImage({ type: "text" }),
+      createProtocolImage({ data: "not base64!" }),
+      createProtocolImage({ data: "AB==" }),
+      createProtocolImage({ data: "" }),
+      createProtocolImage({ mimeType: "image/gif" }),
+      createProtocolImage({ mimeType: "image/jpeg" }),
+      createProtocolImage({ data: Buffer.from("plain text").toString("base64") }),
+    ];
+    for (const block of blocks) await expect(prepareCodeModeImage(block)).rejects.toThrow();
+  });
+
+  it("decodes image pixels before accepting a valid-looking header", async () => {
+    const block = createProtocolImage();
+    block.data = Buffer.from(block.data, "base64").subarray(0, 55).toString("base64");
+    await expect(prepareCodeModeImage(block)).rejects.toThrow();
+  });
+
+  it("rejects excessive source pixels before decoding or resizing", async () => {
+    const data = Buffer.from(createProtocolImage().data, "base64");
+    data.writeUInt32BE(10_000, 16);
+    data.writeUInt32BE(10_000, 20);
+    data.writeUInt32BE(crc32(data.subarray(12, 29)), 29);
+    await expect(
+      prepareCodeModeImage(createProtocolImage({ data: data.toString("base64") })),
+    ).rejects.toThrow();
+  });
+
+  it.concurrent("bounds image output and makes invalid output catchable without losing valid images", async () => {
+    const block = createProtocolImage();
+    const result = await executeTauCodeMode({
+      ...createDefinition({ api: { screenshot: async () => block } }),
+      code: [
+        'try { await printImage({ type: "image", data: "invalid", mimeType: "image/png" }); } catch { printText("rejected"); }',
+        "const block = await linear.screenshot();",
+        "for (let i = 0; i < 16; i++) await printImage(block);",
+        "try { await printImage(block); } catch (error) { printText(error.message); }",
+      ].join("\n"),
+    });
+    expect(result.content.filter((part) => part.type === "image")).toEqual(Array(16).fill(block));
+    expect(getTextContent(result)).toContain("rejected");
+    expect(getTextContent(result)).toContain("at most 16 images");
+  });
+
+  it.concurrent("reserves the image helper name for the shared runtime", async () => {
+    await expect(
+      executeTauCodeMode({ ...createDefinition({ name: "printImage" }), code: "" }),
+    ).rejects.toThrow("non-reserved");
+  });
+
+  it("rejects oversized bridge arguments before calling the handler", async () => {
+    const echo = vi.fn(async ([value]) => value);
+
+    await expect(
+      executeTauCodeMode({
+        ...createDefinition({ api: { echo } }),
+        code: 'await linear.echo("x".repeat(64 * 1024 * 1024))',
+      }),
+    ).rejects.toThrow("bridge payload bytes");
+    expect(echo).not.toHaveBeenCalled();
+  });
+
+  it("rejects oversized handler results before returning them to the worker", async () => {
+    await expect(
+      executeTauCodeMode({
+        ...createDefinition({ api: { large: async () => "x".repeat(64 * 1024 * 1024) } }),
+        code: "await linear.large()",
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("rejects non-JSON handler results", async () => {
+    await expect(
+      executeTauCodeMode({
+        ...createDefinition({ api: { invalid: async () => undefined } }),
+        code: "printText(JSON.stringify(await linear.invalid()))",
+      }),
+    ).rejects.toThrow("linear.invalid returned a non-JSON value");
+  });
+
+  it("preserves structured capability error codes inside the sandbox", async () => {
+    const result = await executeTauCodeMode({
+      ...createDefinition({
+        api: {
+          fail: () => {
+            throw Object.assign(new Error("expired"), { code: "expired_content" });
+          },
+        },
+      }),
+      code: "try { await linear.fail(); } catch (error) { printText(error.code); }",
+    });
+    expect(getTextContent(result)).toContain("expired_content");
+  });
+
+  it("offers failed output to optional persistence", async () => {
+    const persistOutput = vi.fn(async () => undefined);
+
+    await expect(
+      executeTauCodeMode({
+        ...createDefinition({
+          api: {
+            fail: async () => {
+              throw new Error("integration unavailable");
+            },
+          },
+        }),
+        code: "await linear.fail()",
+        persistOutput,
+      }),
+    ).rejects.toThrow("integration unavailable");
+    expect(persistOutput).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "failed" }),
+      expect.any(Object),
+    );
+  });
+
+  it("settles cancellation when a handler ignores its abort signal and discards its late reply", async () => {
+    let markHandlerStarted;
+    const handlerStarted = new Promise((resolve) => {
+      markHandlerStarted = resolve;
+    });
+    let releaseHandler;
+    const release = new Promise((resolve) => {
+      releaseHandler = resolve;
+    });
+    let markHandlerFinished;
+    const handlerFinished = new Promise((resolve) => {
+      markHandlerFinished = resolve;
+    });
+    const controller = new AbortController();
+    const run = executeTauCodeMode({
+      ...createDefinition({
+        api: {
+          stuck: async () => {
+            markHandlerStarted();
+            await release;
+            markHandlerFinished();
+            return "late response";
+          },
+        },
+      }),
+      code: "await linear.stuck()",
+      signal: controller.signal,
+    });
+
+    await handlerStarted;
+    controller.abort();
+
+    await expect(run).rejects.toThrow("Program was cancelled.");
+    releaseHandler();
+    await handlerFinished;
+  });
+
+  it("provides client-tool execution access to trusted code-mode handlers", async () => {
+    const executionEnvironment = {
+      exec: vi.fn(async () => ({ output: "clean" })),
+    };
+    const tool = createTauCodeModeClientTool({
+      ...createDefinition({
+        api: {
+          workspace: {
+            status: async (_args, context) =>
+              (await context.executionEnvironment.exec("git status --short")).output,
+          },
+        },
+      }),
+      description: "Inspect the workspace.",
+    });
+
+    await expect(
+      tool.execute(
+        { code: "printText(await linear.workspace.status())" },
+        {
+          ...invocation,
+          signal: new AbortController().signal,
+          executionEnvironment,
+        },
+      ),
+    ).resolves.toEqual({
+      content: [{ type: "text", text: "clean" }],
+      presentation: {
+        subject: "printText(await linear.workspace.status())",
+        subjectWrap: "character",
+      },
+    });
+    expect(executionEnvironment.exec).toHaveBeenCalledWith("git status --short");
+  });
+
+  it("does not pass parent eval flags to the file-backed worker", () => {
+    const moduleUrl = pathToFileURL(resolve("dist/code_mode/index.js")).href;
+    const script = [
+      `import { executeTauCodeMode } from ${JSON.stringify(moduleUrl)};`,
+      "const result = await executeTauCodeMode({",
+      '  name: "linear",',
+      '  documentation: "# Linear API",',
+      "  api: { echo: async ([value]) => value },",
+      '  code: "printText(JSON.stringify(await linear.echo(42)))",',
+      "});",
+      "process.stdout.write(result.content[0].text);",
+    ].join("\n");
+    const result = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toBe("42");
+  });
+});
+
+describe("code-mode command adapter", () => {
+  it("stops when terminated during asynchronous command description", async () => {
+    const moduleUrl = pathToFileURL(resolve("dist/sdk/client_tool_command.js")).href;
+    const script = [
+      `import { runTauClientToolCommand } from ${JSON.stringify(moduleUrl)};`,
+      "await runTauClientToolCommand({",
+      '  name: "wait",',
+      "  describe: async () => {",
+      '    process.stderr.write("describing\\n");',
+      "    await new Promise(() => {});",
+      "  },",
+      '  execute: () => "unreachable",',
+      "});",
+    ].join("\n");
+    const result = await runCommandAndTerminate(
+      script,
+      {
+        version: 5,
+        type: "prepare",
+        ...invocation,
+        toolName: "wait",
+        arguments: {},
+      },
+      "stderr",
+      "describing",
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.signal).toBeNull();
+  });
+
+  it("stops when terminated while awaiting execution authorization", async () => {
+    const moduleUrl = pathToFileURL(resolve("dist/sdk/client_tool_command.js")).href;
+    const script = [
+      `import { runTauClientToolCommand } from ${JSON.stringify(moduleUrl)};`,
+      "await runTauClientToolCommand({",
+      '  name: "wait",',
+      '  execute: () => "unreachable",',
+      "});",
+    ].join("\n");
+    const result = await runCommandAndTerminate(
+      script,
+      {
+        version: 5,
+        type: "prepare",
+        ...invocation,
+        toolName: "wait",
+        arguments: {},
+      },
+      "stdout",
+      '"type":"ready"',
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.signal).toBeNull();
+  });
+
+  it("aborts the handler when protocol input closes", () => {
+    const moduleUrl = pathToFileURL(resolve("dist/sdk/client_tool_command.js")).href;
+    const script = [
+      `import { runTauClientToolCommand } from ${JSON.stringify(moduleUrl)};`,
+      "await runTauClientToolCommand({",
+      '  name: "wait",',
+      '  describe: () => ({ subject: "input" }),',
+      "  execute: async (_args, context) => {",
+      "    await new Promise((_resolve, reject) => {",
+      '      context.signal.addEventListener("abort", () => reject(context.signal.reason), { once: true });',
+      "    });",
+      '    return "unreachable";',
+      "  },",
+      "});",
+    ].join("\n");
+    const request = {
+      version: 5,
+      type: "prepare",
+      ...invocation,
+      toolName: "wait",
+      arguments: {},
+    };
+    const result = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      input: `${JSON.stringify(request)}\n`,
+      timeout: 2000,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.signal).toBeNull();
+    expect(result.stderr).toContain("client-tool command input closed during execution");
+  });
+});
+
+function runCommandAndTerminate(script, request, streamName, marker) {
+  return new Promise((resolveResult, rejectResult) => {
+    const child = spawn(process.execPath, ["--input-type=module", "--eval", script], {
+      cwd: process.cwd(),
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    let terminated = false;
+    const timeout = setTimeout(() => {
+      child.kill("SIGKILL");
+      rejectResult(new Error(`command did not emit ${streamName} marker '${marker}'`));
+    }, 2000);
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    const maybeTerminate = () => {
+      const content = streamName === "stdout" ? stdout : stderr;
+      if (!terminated && content.includes(marker)) {
+        terminated = true;
+        child.kill("SIGTERM");
+      }
+    };
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+      maybeTerminate();
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+      maybeTerminate();
+    });
+    child.on("error", rejectResult);
+    child.on("close", (status, signal) => {
+      clearTimeout(timeout);
+      resolveResult({ status, signal, stdout, stderr });
+    });
+    child.stdin.write(`${JSON.stringify(request)}\n`);
+  });
+}
+
+it.each([4097])("enforces the total bridge budget at %s requests", async (count) => {
+  const ping = vi.fn(() => null);
+  const result = await runTauCodeMode({
+    ...createDefinition({ api: { ping } }),
+    code: `for (let i = 0; i < ${count}; i++) await linear.ping(); printText("done");`,
+  });
+  expect(result.status).toBe(count === 4096 ? "succeeded" : "failed");
+  expect(ping).toHaveBeenCalledTimes(4096);
+});
+
+it.each([32, 33])("enforces the concurrent bridge budget at %s requests", async (count) => {
+  const gate = Promise.withResolvers();
+  let active = 0;
+  const ping = vi.fn(async () => {
+    if (++active === 32) gate.resolve();
+    await gate.promise;
+    active--;
+    return null;
+  });
+  const result = await runTauCodeMode({
+    ...createDefinition({ api: { ping } }),
+    code: `await Promise.all(Array.from({ length: ${count} }, () => linear.ping())); printText("done");`,
+  });
+  expect(result.status).toBe(count === 32 ? "succeeded" : "failed");
+  expect(ping.mock.calls.length).toBeLessThanOrEqual(32);
+  if (count === 32) expect(ping).toHaveBeenCalledTimes(32);
+});

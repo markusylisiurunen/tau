@@ -948,6 +948,55 @@ async function createControllerHarness({
 }
 
 describe("SessionChatController", () => {
+  it("orders startup context by specificity and catalog names alphabetically", async () => {
+    const session = new FakeSession();
+    const paths = [
+      "/home/session/AGENTS.md",
+      "/home/session/repo/src/AGENTS.md",
+      "/home/session/repo/AGENTS.md",
+    ];
+    session.snapshotValue.messages.find(
+      (entry) => entry.message.role === "system",
+    ).message.content = paths
+      .map((path) => `<file path="${path}">\ninstructions\n</file>`)
+      .join("\n");
+    session.snapshotValue.catalog.skills = ["zulu", "alpha", "bravo"].map((name) => ({
+      name,
+      description: name,
+      path: `/skills/${name}/SKILL.md`,
+    }));
+    session.snapshotValue.catalog.mcp = { status: "available", servers: ["z-server", "a-server"] };
+    const { controller, view } = await createControllerHarness({
+      session,
+      configuredClientToolNames: ["review", "browser"],
+    });
+    controller.start();
+    const { body } = view.messages.find((message) => message.model.type === "app_intro").model;
+    const contextIndex = body.indexOf("context files:");
+    expect(body.slice(contextIndex + 1, contextIndex + 4)).toEqual([
+      "  ~/repo/src/AGENTS.md",
+      "  ~/repo/AGENTS.md",
+      "  ~/AGENTS.md",
+    ]);
+    expect(body[body.indexOf("skills:") + 1]).toEqual({ names: ["alpha", "bravo", "zulu"] });
+    expect(body[body.indexOf("MCP servers:") + 1]).toEqual({ names: ["a-server", "z-server"] });
+    expect(body[body.indexOf("client tools:") + 1]).toEqual({ names: ["browser", "review"] });
+    await controller.dispose();
+  });
+
+  it("keeps unavailable MCP feedback as an indented text entry", async () => {
+    const session = new FakeSession();
+    session.snapshotValue.catalog.mcp = { status: "unavailable", reason: "remote-execution" };
+    const { controller, view } = await createControllerHarness({ session });
+    controller.start();
+    const { body } = view.messages.find((message) => message.model.type === "app_intro").model;
+    const explanation = body[body.indexOf("MCP servers:") + 1];
+    expect(typeof explanation).toBe("string");
+    expect(explanation.startsWith("  ")).toBe(true);
+    expect(explanation.trim().length).toBeGreaterThan(0);
+    await controller.dispose();
+  });
+
   it("waits for a failed receipt after idle and never auto-speaks its partial answer", async () => {
     const { session, view, controller } = await createControllerHarness({ deps: createMockDeps() });
     const speak = vi.spyOn(controller, "speakLastAssistantMessage").mockResolvedValue();

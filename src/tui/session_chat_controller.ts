@@ -1,4 +1,3 @@
-import { dirname } from "node:path/posix";
 import type { AssistantMessage, Message, ToolResultMessage } from "@earendil-works/pi-ai";
 import {
   formatAutoCompactThreshold,
@@ -127,6 +126,7 @@ import {
   createSdkToolExecutionBackend,
 } from "./session_tool_execution_backend.js";
 import { runSpeechPlaybackTask } from "./speech_playback.js";
+import type { AppIntroModel } from "./ui/app_intro.js";
 import type { ChatMessageModel } from "./ui/chat_message_model.js";
 import type { EditorSubmissionMode } from "./ui/custom_editor.js";
 import type { ToolUiModel } from "./ui/tool_ui_model.js";
@@ -282,7 +282,7 @@ export class SessionChatController {
     this.view.addMessage({
       type: "app_intro",
       title: this.buildStartupIntroTitle(),
-      body: this.buildStartupIntroBody().join("\n"),
+      body: this.buildStartupIntroBody(),
     });
     this.renderSnapshot(this.snapshot);
     this.hydrateRunningSnapshotState();
@@ -607,6 +607,10 @@ export class SessionChatController {
     if (this.snapshot.catalog.skills.length > 0) {
       parts.push(`${this.snapshot.catalog.skills.length} skills`);
     }
+    if (this.configuredClientToolNames.length > 0) {
+      const count = this.configuredClientToolNames.length;
+      parts.push(`${count} client tool${count === 1 ? "" : "s"}`);
+    }
     const { mcp } = this.snapshot.catalog;
     if (mcp.status === "unavailable") {
       parts.push("MCP unavailable");
@@ -614,59 +618,43 @@ export class SessionChatController {
       const count = mcp.servers.length;
       parts.push(`${count} MCP server${count === 1 ? "" : "s"}`);
     }
-    if (this.configuredClientToolNames.length > 0) {
-      const count = this.configuredClientToolNames.length;
-      parts.push(`${count} client tool${count === 1 ? "" : "s"}`);
-    }
     return parts.join(" · ");
   }
 
-  private buildStartupIntroBody(): string[] {
-    const lines = [
-      "type `/help` for commands and keybindings",
-      "mention files with `@`, agents and skills with `@@`",
-      "run bash commands with `!` or `!!`",
+  private buildStartupIntroBody(): AppIntroModel["body"] {
+    const lines: AppIntroModel["body"] = [
+      "`/help` commands · `@` files · `@@` skills and agents · `!` or `!!` bash",
     ];
 
-    if (this.snapshot.catalog.skills.length > 0) {
-      lines.push("", "skills:");
-      for (const skill of this.snapshot.catalog.skills) {
-        const skillsRoot = formatPathForSessionDisplay(
-          dirname(dirname(skill.path)),
-          this.snapshot.executionEnvironment.home,
-        );
-        lines.push(`  ${skill.name} (${skillsRoot})`);
-      }
-    }
-
-    const contextFiles = this.getContextFilePaths().map((path) =>
-      formatPathForSessionDisplay(path, this.snapshot.executionEnvironment.home),
-    );
+    const contextFiles = this.getContextFilePaths()
+      .sort((a, b) => b.split("/").length - a.split("/").length || a.localeCompare(b))
+      .map((path) => formatPathForSessionDisplay(path, this.snapshot.executionEnvironment.home));
     if (contextFiles.length > 0) {
-      lines.push("", "context:");
+      lines.push("", "context files:");
       for (const contextFile of contextFiles) {
         lines.push(`  ${contextFile}`);
       }
     }
 
+    if (this.snapshot.catalog.skills.length > 0) {
+      const names = this.snapshot.catalog.skills
+        .map((skill) => skill.name)
+        .sort((a, b) => a.localeCompare(b));
+      lines.push("", "skills:", { names });
+    }
+
     if (this.configuredClientToolNames.length > 0) {
-      lines.push("", "client tools:");
-      for (const clientToolName of this.configuredClientToolNames) {
-        lines.push(`  ${clientToolName}`);
-      }
+      const names = [...this.configuredClientToolNames].sort((a, b) => a.localeCompare(b));
+      lines.push("", "client tools:", { names });
     }
 
     const { mcp } = this.snapshot.catalog;
     if (mcp.status === "unavailable") {
-      lines.push("", "mcp servers:", `  ${MCP_UNAVAILABLE_EXPLANATIONS[mcp.reason]}`);
+      lines.push("", "MCP servers:", `  ${MCP_UNAVAILABLE_EXPLANATIONS[mcp.reason]}`);
     } else if (mcp.servers.length > 0) {
-      lines.push("", "mcp servers:");
-      for (const name of mcp.servers) {
-        lines.push(`  ${name}`);
-      }
+      const names = [...mcp.servers].sort((a, b) => a.localeCompare(b));
+      lines.push("", "MCP servers:", { names });
     }
-
-    lines.push("", this.formatSessionIdentityText());
 
     return lines;
   }
@@ -2977,10 +2965,6 @@ export class SessionChatController {
       this.snapshot.executionEnvironment.home,
     );
     return this.isRemoteSessionTarget() ? `remote · ${cwd}` : cwd;
-  }
-
-  private formatSessionIdentityText(): string {
-    return `session id: ${this.snapshot.sessionId}`;
   }
 
   private isRemoteSessionTarget(): boolean {

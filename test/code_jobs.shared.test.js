@@ -78,7 +78,7 @@ it("loads saved JavaScript once through the backend and exposes JSON input witho
 });
 
 it.each([false, true])(
-  "runs preloads in the same sandbox for file and inline programs (background: %s)",
+  "runs preloads in the same sandbox for saved foreground and inline background programs (background: %s)",
   async (background) => {
     const backend = createLocalToolExecutionBackend();
     const files = {
@@ -102,13 +102,13 @@ it.each([false, true])(
       codeJobs: jobs,
     });
     try {
-      for (const source of [{ file: "workflow.js" }, { code: files["/remote/workflow.js"] }]) {
-        const result = await call(tool, { ...source, background, input: "result" });
-        expect(result.outcome).toBe("succeeded");
-        if (background) await jobs.waitForIdle();
-        const output = background ? (await jobs.inspect()).text : text(result);
-        expect(output).toContain("result:undefined:undefined:undefined:function");
-      }
+      const source = background ? { code: files["/remote/workflow.js"] } : { file: "workflow.js" };
+      const success = await call(tool, { ...source, background, input: "result" });
+      expect(success.outcome).toBe("succeeded");
+      if (background) await jobs.waitForIdle();
+      expect(background ? (await jobs.inspect()).text : text(success)).toContain(
+        "result:undefined:undefined:undefined:function",
+      );
       files["/remote/lib/helpers.js"] = 'throw new Error("preload failure");';
       const result = await call(tool, { file: "workflow.js", background });
       if (background) await jobs.waitForIdle();

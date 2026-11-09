@@ -20,6 +20,21 @@ const searchInputSchema = z
   .object({
     query: z.string().trim().min(1).max(1_000).optional(),
     attributes: attributeFiltersSchema.optional(),
+    timeRange: z
+      .strictObject({
+        field: z.enum(["createdAt", "updatedAt"]),
+        since: z.number().optional(),
+        until: z.number().optional(),
+      })
+      .refine((range) => range.since !== undefined || range.until !== undefined, {
+        message: "timeRange requires since or until",
+      })
+      .refine(
+        (range) =>
+          range.since === undefined || range.until === undefined || range.since < range.until,
+        { message: "timeRange.since must be before timeRange.until" },
+      )
+      .optional(),
     parent: z
       .union([
         z.literal("none"),

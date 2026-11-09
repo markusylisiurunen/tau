@@ -71,7 +71,7 @@ const traceOptions = z.strictObject({
 export const agentsCapabilityMetadata = {
   name: "agents",
   description:
-    "Start delegated workers, send them queued or steering input, interrupt and wait for them, and read selected parts of their conversations. Access covers the workers you started and the workers they started. Follow the delegation policy in your instructions. Workers keep running when a program ends or is cancelled.",
+    "Inspect allowed launch models and capacity, start delegated workers, send them queued or steering input, interrupt and wait for them, and read selected parts of their conversations. Access covers the workers you started and the workers they started. Follow the delegation policy in your instructions. Workers keep running when a program ends or is cancelled.",
   documentation: `# tau.agents
 
 Start general-purpose workers, send them more input, and read what they did. Start workers only when the user or active instructions explicitly ask for delegation.
@@ -100,6 +100,7 @@ A worker's tools let it delegate, but it should start workers only when it is as
 
 \`\`\`ts
 type AgentsApi = {
+  launchOptions(): Promise<AgentLaunchOptions>;
   spawn(options: SpawnOptions): Promise<AgentState>;
   list(): Promise<ListResult>;
   read(options: { id: string }): Promise<AgentState>;
@@ -142,6 +143,24 @@ type AgentState = {
 A worker is idle when it has no active turn and no pending input. \`reason\` tells how its latest turn ended. \`completed\` means the turn ended normally. It does not mean the task succeeded, so read the worker's answer before relying on it. A failed or interrupted turn may leave only a partial answer, or none.
 
 \`pending\` counts input awaiting delivery by Tau. Delivery to a runtime does not confirm that the worker has read it. Token counts and \`cost\` are totals for the whole conversation. \`contextTokens\` estimates the current context size.
+
+## \`tau.agents.launchOptions()\`
+
+Takes no arguments and returns the calling agent's effective launch choices without starting a worker:
+
+\`\`\`ts
+type AgentLaunchOptions = {
+  inherited: { model: string }; // provider/model:effort
+  overrides: Array<{ model: string }>; // exact provider/model:effort strings accepted by spawn
+  capacity: { running: number; limit: number };
+};
+\`\`\`
+
+\`inherited\` describes the model and reasoning effort used when \`spawn\` omits \`model\`. That choice remains available when \`overrides\` is empty. Each override is recognized and permitted for this session; listing does not check credentials, provider availability, or quota, and does not guarantee a successful launch.
+
+\`capacity\` covers the whole session, just as in \`list()\`. It is a snapshot, not a reservation; another worker may take the last slot before you launch.
+
+Use this to check every model a workflow requires before starting work. These choices do not authorize delegation or model selection: follow the user and active instructions, and omit the override unless they request a specific model.
 
 ## \`tau.agents.spawn(options)\`
 
@@ -387,6 +406,17 @@ export function createAgentsCapability(
 ): CodeModeCapability {
   const supervisor = options.supervisor.scope(options.callerId);
   const api: Record<string, TauCodeModeHandler> = {
+    launchOptions: (args) => {
+      z.tuple([]).parse(args);
+      const inherited = resolveSubagentEffectiveSettings({ persona: options.persona });
+      return {
+        inherited: {
+          model: `${inherited.model.provider}/${inherited.model.id}:${inherited.settings.reasoning ?? "none"}`,
+        },
+        overrides: options.persona.subagentLaunchModels.map((model) => ({ model })),
+        capacity: supervisor.getCapacity(),
+      };
+    },
     spawn: async (args, context) => {
       const [input] = z.tuple([spawnOptions]).parse(args);
       context.signal.throwIfAborted();

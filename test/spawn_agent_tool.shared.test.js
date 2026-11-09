@@ -13,6 +13,7 @@ function fixture(overrides = {}) {
       return this;
     },
     prepareSpawn: vi.fn(() => 0),
+    getCapacity: vi.fn(() => ({ running: 0, limit: 16 })),
     spawn: vi.fn(() => ({ id: "worker", status: "working" })),
     read: vi.fn(() => ({ id: "worker", status: "working" })),
     sendInput: vi.fn(() => ({ id: "worker", status: "working" })),
@@ -38,6 +39,53 @@ function fixture(overrides = {}) {
 }
 
 describe("agents capability", () => {
+  it.each([undefined, "high"])(
+    "reports inherited launch settings with reasoning %s and no overrides without spawning",
+    async (reasoning) => {
+      const { api, options, supervisor } = fixture();
+      options.persona.settings = { ...options.persona.settings, reasoning };
+      expect(await api.launchOptions([], context())).toEqual({
+        inherited: {
+          model: `${options.persona.model.provider}/${options.persona.model.id}:${reasoning ?? "none"}`,
+        },
+        overrides: [],
+        capacity: { running: 0, limit: 16 },
+      });
+      expect(supervisor.prepareSpawn).not.toHaveBeenCalled();
+      expect(supervisor.spawn).not.toHaveBeenCalled();
+      await api.spawn([{ title: "child", prompt: "task" }], context());
+      expect(supervisor.spawn.mock.calls[0][0].runtimeConfig.settings.reasoning).toBe(reasoning);
+      supervisor.getCapacity.mockReturnValue({ running: 1, limit: 16 });
+      expect((await api.launchOptions([], context())).capacity).toEqual({ running: 1, limit: 16 });
+      await expect(api.launchOptions([{}], context())).rejects.toMatchObject({
+        code: "invalid_arguments",
+      });
+    },
+  );
+
+  it("reports exact native and Claude overrides accepted by spawn", async () => {
+    const { api, options, supervisor } = fixture();
+    options.persona.subagentLaunchModels = [
+      "openai/gpt-6.1-sol:high",
+      "claude-code/claude-sonnet-5-5:medium",
+    ];
+    const choices = await api.launchOptions([], context());
+    expect(choices.overrides).toEqual(
+      options.persona.subagentLaunchModels.map((model) => ({ model })),
+    );
+    expect(supervisor.spawn).not.toHaveBeenCalled();
+    for (const { model } of choices.overrides) {
+      await api.spawn([{ title: "child", prompt: "task", model }], context());
+      const config = supervisor.spawn.mock.lastCall[0].runtimeConfig;
+      const reasoning = config.kind === "native" ? config.settings.reasoning : config.effort;
+      expect(`${config.model.provider}/${config.model.id}:${reasoning}`).toBe(model);
+    }
+    await expect(
+      api.spawn([{ title: "child", prompt: "task", model: "openai/gpt-6.1-sol:low" }], context()),
+    ).rejects.toMatchObject({ code: "operation_failed" });
+    expect(supervisor.spawn).toHaveBeenCalledTimes(2);
+  });
+
   it("inherits launch settings and binds the launching conversation origin", async () => {
     const { api, options, supervisor } = fixture();
     await api.spawn([{ title: "child", prompt: "task" }], context());

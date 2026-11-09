@@ -223,6 +223,133 @@ async function callHistoryViewer(path, harness, options = {}) {
   );
 }
 
+describe("history search time ranges", () => {
+  it.each(["local", "remote"])(
+    "filters %s session timestamps before pagination without changing ordering",
+    async (source) => {
+      const store = source === "local" ? new LocalHistoryStore(":memory:") : undefined;
+      const now = store ? vi.spyOn(Date, "now").mockReturnValue(0) : undefined;
+      const harness = source === "remote" ? createSqliteD1Harness() : undefined;
+      if (harness) initializeHistoryD1(harness);
+      const history =
+        store ??
+        new RemoteHistoryClient(
+          { endpoint: "https://history.example.com", apiKey: "secret" },
+          async (url, init) =>
+            callHistoryWorker(new URL(url).pathname, JSON.parse(init.body), harness),
+        );
+      const capability = createHistoryCapability(history);
+      const context = { signal: new AbortController().signal };
+      const search = (input) => capability.api.search([input], context);
+      const ids = (page) => page.sessions.map((session) => session.sessionId);
+      try {
+        for (const [sessionId, createdAt, updatedAt, sourceAttribute, parentSessionId] of [
+          ["early", 10, 40, "test"],
+          ["start", 20, 55, "test"],
+          ["middle", 30, 90, "test"],
+          ["upper", 40, 60, "test"],
+          ["late", 50, 100, "test"],
+          ["other-source", 25, 50, "other"],
+          ["child", 25, 50, "test", "start"],
+        ]) {
+          const session = {
+            sessionId,
+            createdAt,
+            attributes: { source: sourceAttribute },
+            ...(parentSessionId ? { parentSessionId } : {}),
+          };
+          const entries = [createTextEntry(`${sessionId}-entry`, "user", "needle", updatedAt)];
+          if (store) {
+            store.createSession(session);
+            store.append(sessionId, entries);
+          } else {
+            await history.applyOperations([
+              { id: `create-${sessionId}`, sessionId, type: "create", session },
+              { id: `append-${sessionId}`, sessionId, type: "append", entries },
+            ]);
+          }
+        }
+        for (const query of [undefined, "needle"]) {
+          const filters = { query, attributes: { source: "test" }, limit: 1 };
+          for (const [field, since, until, expected] of [
+            ["createdAt", 20, 40, ["middle", "start"]],
+            ["updatedAt", 40, 60, ["start", "early"]],
+          ]) {
+            const input = { ...filters, timeRange: { field, since, until } };
+            const first = await search(input);
+            expect(ids(first)).toEqual(expected.slice(0, 1));
+            expect(first.nextCursor).toBeDefined();
+            const second = await search({ ...input, cursor: first.nextCursor });
+            expect(ids(second)).toEqual(expected.slice(1));
+            expect(second.nextCursor).toBeUndefined();
+          }
+          for (const [timeRange, expected] of [
+            [{ field: "createdAt", since: 40 }, ["late", "upper"]],
+            [{ field: "createdAt", until: 20 }, ["early"]],
+            [{ field: "updatedAt", since: 90 }, ["late", "middle"]],
+            [{ field: "updatedAt", until: 40 }, []],
+            [{ field: "createdAt", since: 0, until: 1 }, []],
+          ]) {
+            expect(ids(await search({ ...filters, timeRange, limit: 10 }))).toEqual(expected);
+          }
+          expect(ids(await search({ ...filters, limit: 10 }))).toEqual([
+            "late",
+            "middle",
+            "upper",
+            "start",
+            "early",
+          ]);
+          expect(
+            ids(
+              await search({
+                ...filters,
+                parent: { sessionId: "start" },
+                timeRange: { field: "createdAt", since: 20, until: 40 },
+              }),
+            ),
+          ).toEqual(["child"]);
+        }
+      } finally {
+        now?.mockRestore();
+        store?.close();
+        harness?.sqlite.close();
+      }
+    },
+  );
+
+  it("rejects malformed ranges before querying local or remote history", async () => {
+    const history = { search: vi.fn() };
+    const capability = createHistoryCapability(history);
+    const context = { signal: new AbortController().signal };
+    const harness = createD1Harness();
+    for (const timeRange of [
+      null,
+      [],
+      {},
+      { since: 0 },
+      { field: "timestamp", since: 0 },
+      { field: "createdAt" },
+      { field: "createdAt", since: "0" },
+      { field: "createdAt", until: null },
+      { field: "createdAt", since: 2, until: 2 },
+      { field: "updatedAt", since: 3, until: 2 },
+      { field: "updatedAt", since: 0, extra: 1 },
+    ]) {
+      await expect(capability.api.search([{ timeRange }], context)).rejects.toThrow();
+      const response = await callHistoryWorker("/v1/search", { timeRange }, harness);
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toMatchObject({ error: { code: "invalid_request" } });
+    }
+    for (const since of [NaN, Infinity, -Infinity]) {
+      await expect(
+        capability.api.search([{ timeRange: { field: "createdAt", since } }], context),
+      ).rejects.toThrow();
+    }
+    expect(history.search).not.toHaveBeenCalled();
+    expect(harness.prepared).toEqual([]);
+  });
+});
+
 describe("session history", () => {
   it("stores, searches, reads, and truncates active transcripts", async () => {
     const store = new LocalHistoryStore(":memory:");

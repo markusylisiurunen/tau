@@ -13,6 +13,7 @@ import type {
   HistorySearchParent,
   HistorySearchResult,
   HistorySessionDescriptor,
+  HistoryTimeRange,
   HistoryUserContent,
 } from "../../core/history/types.js";
 import VIEWER_CSS from "./viewer.css";
@@ -640,15 +641,30 @@ async function search(
   });
   const attributeClause =
     attributeFilters.length > 0 ? `AND ${attributeFilters.join(" AND ")}` : "";
+  const timeRange = parseTimeRange(input.timeRange);
+  const timeFilters: string[] = [];
+  const timeValues: number[] = [];
+  if (timeRange) {
+    const column = timeRange.field === "createdAt" ? "s.created_at" : "s.updated_at";
+    if (timeRange.since !== undefined) {
+      timeFilters.push(`${column} >= ?`);
+      timeValues.push(timeRange.since);
+    }
+    if (timeRange.until !== undefined) {
+      timeFilters.push(`${column} < ?`);
+      timeValues.push(timeRange.until);
+    }
+  }
+  const timeClause = timeFilters.length > 0 ? `AND ${timeFilters.join(" AND ")}` : "";
 
   if (!query) {
     const rows = await database
       .prepare(
         `SELECT s.*, ${CHILD_COUNT_COLUMN} FROM sessions s
-         WHERE 1 = 1 ${parentClause} ${attributeClause}
+         WHERE 1 = 1 ${parentClause} ${attributeClause} ${timeClause}
          ORDER BY s.updated_at DESC, s.session_id ASC LIMIT ? OFFSET ?`,
       )
-      .bind(...parentValues, ...attributeValues, limit + 1, offset)
+      .bind(...parentValues, ...attributeValues, ...timeValues, limit + 1, offset)
       .all<Record<string, unknown>>();
     return {
       sessions: rows.results.slice(0, limit).map((row) => descriptor(row, origin)),
@@ -677,11 +693,11 @@ async function search(
        SELECT s.*, ${CHILD_COUNT_COLUMN}
        FROM ranked_sessions r
        JOIN sessions s ON s.session_id = r.session_id
-       WHERE 1 = 1 ${parentClause} ${attributeClause}
+       WHERE 1 = 1 ${parentClause} ${attributeClause} ${timeClause}
        ORDER BY r.source_rank, s.updated_at DESC, s.session_id ASC
        LIMIT ? OFFSET ?`,
     )
-    .bind(ftsQuery, ftsQuery, ...parentValues, ...attributeValues, limit + 1, offset)
+    .bind(ftsQuery, ftsQuery, ...parentValues, ...attributeValues, ...timeValues, limit + 1, offset)
     .all<Record<string, unknown>>();
   const selectedRows = candidates.results.slice(0, limit);
   const sessions = selectedRows.map((row) => descriptor(row, origin));
@@ -1680,6 +1696,33 @@ function parseAttributeFilters(raw: unknown): Record<string, string | { contains
       );
     }),
   );
+}
+
+function parseTimeRange(raw: unknown): HistoryTimeRange | undefined {
+  if (raw === undefined) return undefined;
+  const range = asRecord(raw, "timeRange");
+  if (Object.keys(range).some((key) => !["field", "since", "until"].includes(key))) {
+    throw invalidRequest("timeRange may contain only field, since, and until");
+  }
+  if (range.field !== "createdAt" && range.field !== "updatedAt") {
+    throw invalidRequest('timeRange.field must be "createdAt" or "updatedAt"');
+  }
+  if (range.since === undefined && range.until === undefined) {
+    throw invalidRequest("timeRange requires since or until");
+  }
+  const bounds: { since?: number; until?: number } = {};
+  for (const bound of ["since", "until"] as const) {
+    const value = range[bound];
+    if (value === undefined) continue;
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      throw invalidRequest(`timeRange.${bound} must be a finite number`);
+    }
+    bounds[bound] = value;
+  }
+  if (bounds.since !== undefined && bounds.until !== undefined && bounds.since >= bounds.until) {
+    throw invalidRequest("timeRange.since must be before timeRange.until");
+  }
+  return { field: range.field, ...bounds };
 }
 
 function parseSearchParent(raw: unknown): HistorySearchParent {

@@ -257,6 +257,17 @@ export class LocalHistoryStore {
       return "EXISTS (SELECT 1 FROM history_attributes a WHERE a.session_id = s.session_id AND a.key = ? AND INSTR(a.value, ?) > 0)";
     });
     const clauses = [...parentFilter.clauses, ...attributeClauses];
+    if (input.timeRange) {
+      const column = input.timeRange.field === "createdAt" ? "s.created_at" : "s.updated_at";
+      if (input.timeRange.since !== undefined) {
+        clauses.push(`${column} >= ?`);
+        values.push(input.timeRange.since);
+      }
+      if (input.timeRange.until !== undefined) {
+        clauses.push(`${column} < ?`);
+        values.push(input.timeRange.until);
+      }
+    }
     const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
     const query = input.query?.trim();
     let sql: string;

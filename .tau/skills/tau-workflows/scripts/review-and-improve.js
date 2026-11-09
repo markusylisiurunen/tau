@@ -11,7 +11,15 @@
 //
 // Only the final agent edits files, and the working tree must start clean.
 
-const { startRun, responseFormat, object, log, oneLine, ensure } = workflow;
+const {
+  preflightModels,
+  startRun,
+  responseFormat,
+  object,
+  log,
+  oneLine,
+  ensure,
+} = workflow;
 const {
   FINDINGS,
   readInputs,
@@ -157,6 +165,14 @@ function planSummary(plan, choice) {
 const { base, head, context, depth, workingDirectory } = readInputs(input);
 
 // ── Workflow ────────────────────────────────────────────────────────────
+
+await preflightModels([
+  MODELS.classifier,
+  MODELS.general,
+  MODELS.peer,
+  MODELS.final,
+  ...(["auto", "deep"].includes(depth) ? [MODELS.focused] : []),
+]);
 
 const repo = await repositoryRoot(workingDirectory);
 log(`Review and improve: ${base.slice(0, 7)}..${head.slice(0, 7)} in ${repo}`);

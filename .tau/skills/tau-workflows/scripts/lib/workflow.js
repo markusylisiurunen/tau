@@ -7,6 +7,16 @@ globalThis.workflow = (() => {
   // 196,608 bytes, safely below Tau's 262,144-character subagent prompt limit.
   const MAX_PROMPT_TOKENS = 32_768;
 
+  async function preflightModels(models) {
+    const { overrides } = await tau.agents.launchOptions();
+    const allowed = new Set(overrides.map(({ model }) => model));
+    const missing = [...new Set(models)].filter((model) => !allowed.has(model));
+    ensure(
+      !missing.length,
+      `Missing subagent launch choices:\n${missing.map((model) => `- ${model}`).join("\n")}`,
+    );
+  }
+
   // A run owns the temporary folder for intermediate results, tracks the total
   // cost and any warnings, and prints the final result.
   async function startRun({ prefix, workingDirectory }) {
@@ -262,6 +272,7 @@ ${JSON.stringify(output.schema, null, 2)}
   }
 
   return {
+    preflightModels,
     startRun,
     responseFormat,
     object,

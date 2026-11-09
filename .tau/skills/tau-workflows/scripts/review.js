@@ -9,7 +9,15 @@
 //
 // Every agent works read-only, and the working tree must be clean.
 
-const { startRun, responseFormat, object, log, oneLine, ensure } = workflow;
+const {
+  preflightModels,
+  startRun,
+  responseFormat,
+  object,
+  log,
+  oneLine,
+  ensure,
+} = workflow;
 const {
   FINDINGS,
   readInputs,
@@ -105,6 +113,14 @@ function planSummary(plan, choice) {
 const { base, head, context, depth, workingDirectory } = readInputs(input);
 
 // ── Workflow ────────────────────────────────────────────────────────────
+
+await preflightModels([
+  MODELS.classifier,
+  MODELS.general,
+  MODELS.final,
+  ...(depth !== "light" ? [MODELS.peer] : []),
+  ...(["auto", "deep"].includes(depth) ? [MODELS.focused] : []),
+]);
 
 const repo = await repositoryRoot(workingDirectory);
 log(`Review: ${base.slice(0, 7)}..${head.slice(0, 7)} in ${repo}`);

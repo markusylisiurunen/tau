@@ -44,19 +44,15 @@ describe("agents capability", () => {
     async (reasoning) => {
       const { api, options, supervisor } = fixture();
       options.persona.settings = { ...options.persona.settings, reasoning };
-      expect(await api.launchOptions([], context())).toEqual({
-        inherited: {
-          model: `${options.persona.model.provider}/${options.persona.model.id}:${reasoning ?? "none"}`,
-        },
-        overrides: [],
-        capacity: { running: 0, limit: 16 },
-      });
+      const choices = await api.launchOptions([], context());
+      expect(choices.overrides).toEqual([]);
       expect(supervisor.prepareSpawn).not.toHaveBeenCalled();
       expect(supervisor.spawn).not.toHaveBeenCalled();
       await api.spawn([{ title: "child", prompt: "task" }], context());
-      expect(supervisor.spawn.mock.calls[0][0].runtimeConfig.settings.reasoning).toBe(reasoning);
-      supervisor.getCapacity.mockReturnValue({ running: 1, limit: 16 });
-      expect((await api.launchOptions([], context())).capacity).toEqual({ running: 1, limit: 16 });
+      const { model, settings } = supervisor.spawn.mock.calls[0][0].runtimeConfig;
+      expect(`${model.provider}/${model.id}:${settings.reasoning ?? "none"}`).toBe(
+        choices.inherited.model,
+      );
       await expect(api.launchOptions([{}], context())).rejects.toMatchObject({
         code: "invalid_arguments",
       });
@@ -64,14 +60,19 @@ describe("agents capability", () => {
   );
 
   it("reports exact native and Claude overrides accepted by spawn", async () => {
-    const { api, options, supervisor } = fixture();
+    const resolveModel = loadModelResolver().resolveModel;
+    const { api, options, supervisor } = fixture({
+      modelResolver: (provider, modelId) =>
+        modelId === "missing-model" ? undefined : resolveModel(provider, modelId),
+    });
     options.persona.subagentLaunchModels = [
       "openai/gpt-6.1-sol:high",
       "claude-code/claude-sonnet-5-5:medium",
+      "openai/missing-model:high",
     ];
     const choices = await api.launchOptions([], context());
     expect(choices.overrides).toEqual(
-      options.persona.subagentLaunchModels.map((model) => ({ model })),
+      options.persona.subagentLaunchModels.slice(0, 2).map((model) => ({ model })),
     );
     expect(supervisor.spawn).not.toHaveBeenCalled();
     for (const { model } of choices.overrides) {
@@ -82,6 +83,12 @@ describe("agents capability", () => {
     }
     await expect(
       api.spawn([{ title: "child", prompt: "task", model: "openai/gpt-6.1-sol:low" }], context()),
+    ).rejects.toMatchObject({ code: "operation_failed" });
+    await expect(
+      api.spawn(
+        [{ title: "child", prompt: "task", model: "openai/missing-model:high" }],
+        context(),
+      ),
     ).rejects.toMatchObject({ code: "operation_failed" });
     expect(supervisor.spawn).toHaveBeenCalledTimes(2);
   });

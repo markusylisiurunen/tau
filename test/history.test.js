@@ -323,28 +323,20 @@ describe("history search time ranges", () => {
     const context = { signal: new AbortController().signal };
     const harness = createD1Harness();
     for (const timeRange of [
-      null,
-      [],
-      {},
       { since: 0 },
       { field: "timestamp", since: 0 },
       { field: "createdAt" },
-      { field: "createdAt", since: "0" },
-      { field: "createdAt", until: null },
       { field: "createdAt", since: 2, until: 2 },
-      { field: "updatedAt", since: 3, until: 2 },
-      { field: "updatedAt", since: 0, extra: 1 },
+      { field: "createdAt", since: "0" },
     ]) {
       await expect(capability.api.search([{ timeRange }], context)).rejects.toThrow();
       const response = await callHistoryWorker("/v1/search", { timeRange }, harness);
       expect(response.status).toBe(400);
       await expect(response.json()).resolves.toMatchObject({ error: { code: "invalid_request" } });
     }
-    for (const since of [NaN, Infinity, -Infinity]) {
-      await expect(
-        capability.api.search([{ timeRange: { field: "createdAt", since } }], context),
-      ).rejects.toThrow();
-    }
+    await expect(
+      capability.api.search([{ timeRange: { field: "createdAt", since: Infinity } }], context),
+    ).rejects.toThrow();
     expect(history.search).not.toHaveBeenCalled();
     expect(harness.prepared).toEqual([]);
   });

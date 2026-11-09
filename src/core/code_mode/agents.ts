@@ -9,7 +9,10 @@ import { getEffectiveAutoCompactThresholdTokens } from "../session/auto_compacti
 import type { AgentSupervisor } from "../subagents/agent_supervisor.js";
 import { AgentRequestError } from "../subagents/errors.js";
 import { parseSubagentLaunchModel } from "../subagents/launch_model.js";
-import { resolveSubagentEffectiveSettings } from "../subagents/registry.js";
+import {
+  describeSubagentLaunchChoices,
+  resolveSubagentEffectiveSettings,
+} from "../subagents/registry.js";
 import type {
   ResolveSubagentPrompt,
   SubagentLaunchModel,
@@ -156,11 +159,9 @@ type AgentLaunchOptions = {
 };
 \`\`\`
 
-\`inherited\` describes the model and reasoning effort used when \`spawn\` omits \`model\`. That choice remains available when \`overrides\` is empty. Each override is recognized and permitted for this session; listing does not check credentials, provider availability, or quota, and does not guarantee a successful launch.
+\`inherited.model\` is used when \`spawn\` omits \`model\`; each \`overrides\` entry contains an exact model string \`spawn\` accepts. Listing does not check credentials, provider availability, or quota.
 
 \`capacity\` covers the whole session, just as in \`list()\`. It is a snapshot, not a reservation; another worker may take the last slot before you launch.
-
-Use this to check every model a workflow requires before starting work. These choices do not authorize delegation or model selection: follow the user and active instructions, and omit the override unless they request a specific model.
 
 ## \`tau.agents.spawn(options)\`
 
@@ -405,15 +406,25 @@ export function createAgentsCapability(
   originHistoryEntryId: string,
 ): CodeModeCapability {
   const supervisor = options.supervisor.scope(options.callerId);
+  const parseAllowedLaunchModel = (model: string) => {
+    const parsed = parseSubagentLaunchModel(model, { resolveModel: options.modelResolver });
+    if (
+      !parsed.launchModel ||
+      !options.persona.subagentLaunchModels.includes(parsed.launchModel.normalized)
+    )
+      return { error: parsed.error ?? "Subagent launch model is not allowed" };
+    return parsed;
+  };
   const api: Record<string, TauCodeModeHandler> = {
     launchOptions: (args) => {
       z.tuple([]).parse(args);
-      const inherited = resolveSubagentEffectiveSettings({ persona: options.persona });
+      const choices = describeSubagentLaunchChoices(options.persona);
       return {
-        inherited: {
-          model: `${inherited.model.provider}/${inherited.model.id}:${inherited.settings.reasoning ?? "none"}`,
-        },
-        overrides: options.persona.subagentLaunchModels.map((model) => ({ model })),
+        inherited: { model: choices.inherited },
+        overrides: choices.overrides.flatMap((model) => {
+          const { launchModel } = parseAllowedLaunchModel(model);
+          return launchModel ? [{ model: launchModel.normalized }] : [];
+        }),
         capacity: supervisor.getCapacity(),
       };
     },
@@ -423,14 +434,8 @@ export function createAgentsCapability(
       const launchEpoch = supervisor.prepareSpawn();
       let launchModel: SubagentLaunchModel | undefined;
       if (input.model) {
-        const parsed = parseSubagentLaunchModel(input.model, {
-          resolveModel: options.modelResolver,
-        });
-        if (
-          !parsed.launchModel ||
-          !options.persona.subagentLaunchModels.includes(parsed.launchModel.normalized)
-        )
-          throw new Error(parsed.error ?? "Subagent launch model is not allowed");
+        const parsed = parseAllowedLaunchModel(input.model);
+        if (!parsed.launchModel) throw new Error(parsed.error);
         launchModel = parsed.launchModel;
       }
       const settings = resolveSubagentEffectiveSettings({

@@ -97,14 +97,23 @@ export function resolveSubagentEffectiveSettings(args: {
   };
 }
 
+export function describeSubagentLaunchChoices(persona: Persona): {
+  inherited: string;
+  overrides: string[];
+} {
+  const { model, settings } = resolveSubagentEffectiveSettings({ persona });
+  return {
+    inherited: `${model.provider}/${model.id}:${settings.reasoning ?? "none"}`,
+    overrides: persona.subagentLaunchModels,
+  };
+}
+
 export function formatSubagentsForPrompt(persona: Persona): string | undefined {
   if (!persona.tools.includes(TOOL_NAME_AGENTS)) {
     return undefined;
   }
 
-  const effective = resolveSubagentEffectiveSettings({ persona });
-  const reasoning = effective.settings.reasoning ?? "none";
-  const launchModels = persona.subagentLaunchModels;
+  const { inherited, overrides: launchModels } = describeSubagentLaunchChoices(persona);
   const launchModelsText =
     launchModels.length > 0 ? launchModels.map((entry) => `\`${entry}\``).join(", ") : "none";
 
@@ -117,7 +126,7 @@ export function formatSubagentsForPrompt(persona: Persona): string | undefined {
     "",
     'Start and manage subagents with `tau.agents` in the `code` tool, and read its reference with `tau.docs("agents")` first. It can send a subagent queued or steering input, interrupt it, and read selected parts of its conversation. Use the `wait_for_agents` tool when you want to wait for subagents yourself instead of from a program.',
     "",
-    `Inherited model: \`${effective.model.provider}/${effective.model.id}:${reasoning}\``,
+    `Inherited model: \`${inherited}\``,
     `Allowed model overrides: ${launchModelsText}`,
     "",
     "Omit the model override unless the user explicitly requests a specific model.",

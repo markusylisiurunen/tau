@@ -207,7 +207,7 @@ export class SubagentPanelComponent implements Component {
     const output: string[] = [];
 
     for (const line of recentLines) {
-      output.push(palette.actionOutput(`  · ${line}`));
+      output.push(palette.actionOutput(`· ${line}`));
     }
 
     for (let i = recentLines.length; i < MAX_PANEL_LINES; i++) {

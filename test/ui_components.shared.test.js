@@ -3,9 +3,11 @@ import stripAnsi from "strip-ansi";
 import { expect, test, vi } from "vitest";
 import { createCommandRegistry } from "../dist/core/commands/index.js";
 import { AppIntroComponent } from "../dist/tui/ui/app_intro.js";
+import { renderHorizontalRule } from "../dist/tui/ui/components/horizontal_rule.js";
 import { CustomEditor } from "../dist/tui/ui/custom_editor.js";
 import { PendingMessagesComponent } from "../dist/tui/ui/pending_messages.js";
 import { SlashAutocompleteProvider } from "../dist/tui/ui/slash_autocomplete.js";
+import { SubagentEditorPaneComponent } from "../dist/tui/ui/subagent_editor_pane.js";
 import { SubagentPanelComponent } from "../dist/tui/ui/subagent_panel.js";
 import { createUiTheme } from "../dist/tui/ui/theme/index.js";
 import { createTagTheme, renderLines } from "./ui_helpers.js";
@@ -218,6 +220,120 @@ test("CustomEditor preview styling preserves wrapped Unicode layout and cursor p
   expect(editor.getText()).toBe(plain.getText());
   preview.commit(text);
   expect(editor.render(80).join("\n")).not.toContain("\x1b[3m");
+});
+
+test("horizontal rules preserve label priority and two end dashes within the available width", () => {
+  const style = (text) => `\x1b[2m${text}\x1b[22m`;
+  const label = (text) => ({ text, style });
+  for (const labels of [
+    {},
+    { left: label("subagents") },
+    { right: label("right-side") },
+    { left: label("こんにちは é"), right: label("right-side") },
+  ]) {
+    for (let width = 0; width <= 40; width++) {
+      const line = renderHorizontalRule(width, { style, ...labels });
+      expect(visibleWidth(line)).toBe(width);
+      if (width >= 4) expect(stripAnsi(line)).toMatch(/^──.*──$/);
+    }
+  }
+  expect(
+    stripAnsi(
+      renderHorizontalRule(16, {
+        style,
+        left: label("left-side"),
+        right: label("right-side"),
+      }),
+    ),
+  ).toBe("── right-side ──");
+});
+
+test("SubagentPanelComponent gives activity rows the full panel width without indentation", () => {
+  const panel = new SubagentPanelComponent(createUiTheme("plain"));
+  const title = "a".repeat(76);
+  panel.reconcile([
+    {
+      state: createSubagentState("a", "worker"),
+      activities: [{ type: "notice", severity: "info", title }],
+    },
+  ]);
+  expect(panel.render(78)[1]).toBe(`· ${title}`);
+});
+
+test("SubagentEditorPaneComponent composes complete sections within one shared margin", () => {
+  const theme = createUiTheme("ansi");
+  const editor = new CustomEditor(theme);
+  const panel = new SubagentPanelComponent(theme);
+  const pane = new SubagentEditorPaneComponent(theme, panel, editor);
+  editor.setText("こんにちは é words that wrap");
+  editor.setHeader("left-heading", "right-heading");
+
+  for (const active of [false, true]) {
+    panel.reconcile(active ? [{ state: createSubagentState("a", "worker"), activities: [] }] : []);
+    for (const width of [0, 1, 2, 3, 4, 5, 8, 12, 22, 80]) {
+      const lines = pane.render(width);
+      expect(lines.every((line) => visibleWidth(line) === width)).toBe(true);
+      if (width <= 2) {
+        expect(lines).toEqual([" ".repeat(width)]);
+        continue;
+      }
+      expect(lines.every((line) => line.startsWith(" ") && line.endsWith(" "))).toBe(true);
+      const editorLines = editor.render(width - 2).map((line) => ` ${line} `);
+      expect(lines.slice(-editorLines.length)).toEqual(editorLines);
+      if (active)
+        expect(lines.length).toBe(editorLines.length + panel.render(width - 2).length + 1);
+      else expect(lines).toEqual(editorLines);
+    }
+  }
+});
+
+test("SubagentEditorPaneComponent keeps the rendered cursor inset after wrapping and resizing", () => {
+  const theme = createUiTheme("plain");
+  theme.text.cursor = (text) => `\x1b[7m${text}\x1b[27m`;
+  const editor = new CustomEditor(theme);
+  const pane = new SubagentEditorPaneComponent(theme, new SubagentPanelComponent(theme), editor);
+
+  for (const text of ["", "abcdefgh", "こんにちは é words that wrap"]) {
+    editor.setText(text);
+    for (const width of [10, 22, 10]) {
+      const lines = pane.render(width);
+      const cursorLine = lines.find((line) => line.includes("\x1b[7m"));
+      expect(cursorLine).toBeDefined();
+      const [before, rest] = cursorLine.split("\x1b[7m");
+      const [cursor] = rest.split("\x1b[27m");
+      expect(visibleWidth(before)).toBeGreaterThanOrEqual(1);
+      expect(visibleWidth(before) + visibleWidth(cursor)).toBeLessThanOrEqual(width - 1);
+    }
+  }
+
+  editor.setText("abcdefghij");
+  pane.render(10);
+  editor.handleInput("\x1b[A");
+  expect(editor.getCursor()).toEqual({ line: 0, col: 2 });
+  pane.render(22);
+  editor.handleInput("\x1b[B");
+  expect(editor.getCursor()).toEqual({ line: 0, col: 2 });
+});
+
+test("SubagentEditorPaneComponent includes autocomplete within the shared margin", async () => {
+  const theme = createUiTheme("ansi");
+  const editor = new CustomEditor(theme);
+  const panel = new SubagentPanelComponent(theme);
+  const pane = new SubagentEditorPaneComponent(theme, panel, editor);
+  editor.setAutocompleteProvider(createSlashProvider());
+  editor.handleInput("/");
+  await waitForAutocomplete();
+  expect(editor.isShowingAutocomplete()).toBe(true);
+
+  for (const active of [false, true]) {
+    panel.reconcile(active ? [{ state: createSubagentState("a", "worker"), activities: [] }] : []);
+    for (const width of [3, 8, 40, 80]) {
+      const editorLines = editor.render(width - 2);
+      const lines = pane.render(width);
+      expect(lines.every((line) => visibleWidth(line) === width)).toBe(true);
+      expect(lines.slice(-editorLines.length)).toEqual(editorLines.map((line) => ` ${line} `));
+    }
+  }
 });
 
 test("CustomEditor caps height and scrolls within the viewport", () => {

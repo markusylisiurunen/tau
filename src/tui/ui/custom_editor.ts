@@ -8,6 +8,7 @@ import {
 import type { RecordingShortcut } from "../../core/config/schema.js";
 import { DOUBLE_PRESS_WINDOW_MS } from "../constants.js";
 import { Editor } from "./components/editor.js";
+import { renderHorizontalRule } from "./components/horizontal_rule.js";
 import {
   truncateFromEndByWidth,
   truncateFromEndByWidthPreserveAnsi,
@@ -33,8 +34,6 @@ export class CustomEditor extends Editor {
   private uiTheme: Theme;
   private headerLeft = "";
   private headerRight = "";
-  private headerLeftStyle?: (text: string) => string;
-  private headerRightStyle?: (text: string) => string;
 
   private maxVisibleLines = DEFAULT_EDITOR_MAX_LINES;
   private scrollTop = 0;
@@ -112,52 +111,27 @@ export class CustomEditor extends Editor {
     this.placeholderVisible = visible;
   }
 
-  setHeader(
-    left: string,
-    right: string,
-    styles?: { leftStyle?: (text: string) => string; rightStyle?: (text: string) => string },
-  ): void {
+  setHeader(left: string, right: string): void {
     this.headerLeft = left;
     this.headerRight = right;
-    this.headerLeftStyle = styles?.leftStyle;
-    this.headerRightStyle = styles?.rightStyle;
   }
 
   render(width: number): string[] {
+    this.lastWidth = Math.max(1, width);
     if (width <= 0) return [""];
-    if (width === 1) return [this.borderColor("─")];
-    if (width === 2) return [this.renderHeaderLine(width)];
-
-    const innerWidth = width - 2;
-    this.lastWidth = innerWidth;
 
     const { minLines, maxLines } = this.getVisibleLineBounds();
     const maxContentLines = Math.max(1, maxLines - 2);
     const minContentLines = Math.max(1, minLines - 2);
-    const contentLines = this.renderEditorContent(innerWidth, maxContentLines, minContentLines);
+    const contentLines = this.renderEditorContent(width, maxContentLines, minContentLines);
     const autocompleteLines = this.renderAutocompleteLines(width);
 
-    const vertical = this.borderColor("│");
-    const rendered: string[] = [];
-    rendered.push(this.renderHeaderLine(width));
-
-    if (contentLines.length === 0) {
-      rendered.push(`${vertical}${" ".repeat(innerWidth)}${vertical}`);
-    } else {
-      for (const line of contentLines) {
-        rendered.push(`${vertical}${this.fitContentLine(line, innerWidth)}${vertical}`);
-      }
-    }
-
-    rendered.push(this.renderFooterLine(width));
-
-    if (autocompleteLines.length > 0) {
-      for (const line of autocompleteLines) {
-        rendered.push(this.padToWidth(line, width));
-      }
-    }
-
-    return rendered;
+    return [
+      this.renderHeaderLine(width),
+      ...contentLines.map((line) => this.fitContentLine(line, width)),
+      renderHorizontalRule(width, { style: this.borderColor }),
+      ...autocompleteLines.map((line) => this.padToWidth(line, width)),
+    ];
   }
 
   setText(text: string): void {
@@ -506,83 +480,12 @@ export class CustomEditor extends Editor {
     return visualLines.length - 1;
   }
 
-  renderDividerLine(width: number): string {
-    return this.renderHeaderLineWithCorners(width, "├", "┤");
-  }
-
-  renderDividerLineWithCornerStyle(width: number, cornerStyle: (text: string) => string): string {
-    return this.renderHeaderLineWithCorners(width, "├", "┤", cornerStyle);
-  }
-
   private renderHeaderLine(width: number): string {
-    return this.renderHeaderLineWithCorners(width, "┌", "┐");
-  }
-
-  private renderHeaderLineWithCorners(
-    width: number,
-    leftCornerChar: string,
-    rightCornerChar: string,
-    cornerStyle?: (text: string) => string,
-  ): string {
-    if (width <= 1) return this.borderColor("─").repeat(Math.max(0, width));
-    const corner = cornerStyle ?? this.borderColor;
-    if (width === 2) {
-      return `${corner(leftCornerChar)}${corner(rightCornerChar)}`;
-    }
-
-    const innerWidth = width - 2;
-    const dash = this.borderColor("─");
-    const leftCorner = corner(leftCornerChar);
-    const rightCorner = corner(rightCornerChar);
-
-    let left = this.headerLeft.trim();
-    let right = this.headerRight.trim();
-
-    const measure = () => {
-      const leftWidth = left ? visibleWidth(left) : 0;
-      const rightWidth = right ? visibleWidth(right) : 0;
-      const leftPad = left ? 2 : 0;
-      const rightPad = right ? 2 : 0;
-      const fixed = 1 + 1 + leftPad + rightPad + leftWidth + rightWidth;
-      return { leftWidth, rightWidth, leftPad, rightPad, fixed };
-    };
-
-    let metrics = measure();
-
-    if (metrics.fixed > innerWidth && left) {
-      const allowed = Math.max(0, innerWidth - (1 + 1 + (right ? visibleWidth(right) + 2 : 0) + 2));
-      left = truncateFromEndByWidth(left, allowed);
-      if (visibleWidth(left) === 0) left = "";
-      metrics = measure();
-    }
-
-    if (metrics.fixed > innerWidth && right) {
-      const allowed = Math.max(0, innerWidth - (1 + 1 + (left ? visibleWidth(left) + 2 : 0) + 2));
-      right = truncateFromEndByWidth(right, allowed);
-      if (visibleWidth(right) === 0) right = "";
-      metrics = measure();
-    }
-
-    if (metrics.fixed > innerWidth) {
-      left = "";
-      right = "";
-      metrics = measure();
-    }
-
-    const fillWidth = Math.max(0, innerWidth - metrics.fixed);
-    const leftStyle = this.headerLeftStyle ?? this.uiTheme.palette.textDim;
-    const rightStyle = this.headerRightStyle ?? this.uiTheme.palette.textDim;
-    const leftSegment = left ? ` ${leftStyle(left)} ` : "";
-    const rightSegment = right ? ` ${rightStyle(right)} ` : "";
-    const fill = dash.repeat(fillWidth);
-
-    return `${leftCorner}${dash}${leftSegment}${fill}${rightSegment}${dash}${rightCorner}`;
-  }
-
-  private renderFooterLine(width: number): string {
-    if (width <= 1) return this.borderColor("─").repeat(Math.max(0, width));
-    const innerWidth = Math.max(0, width - 2);
-    return `${this.borderColor("└")}${this.borderColor("─").repeat(innerWidth)}${this.borderColor("┘")}`;
+    return renderHorizontalRule(width, {
+      style: this.borderColor,
+      left: this.headerLeft,
+      right: this.headerRight,
+    });
   }
 
   private padToWidth(line: string, width: number): string {

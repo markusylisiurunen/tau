@@ -468,7 +468,7 @@ export class TuiChatView implements ChatView {
 
     if (state.mode === "bash" || state.mode === "bash_incognito") {
       const label = state.mode === "bash_incognito" ? "$ bash incognito" : "$ bash";
-      this.editor.setHeader(label, "", { leftStyle: this.editor.borderColor });
+      this.editor.setHeader(label, "");
       return;
     }
 
@@ -476,10 +476,6 @@ export class TuiChatView implements ChatView {
       this.editor.setHeader(
         `${this.getRecordingIndicator()} recording (${this.getRecordingDurationLabel()})`,
         state.recordingStyle,
-        {
-          leftStyle: this.editor.borderColor,
-          rightStyle: state.recordingStyle === "off" ? undefined : this.editor.borderColor,
-        },
       );
       return;
     }

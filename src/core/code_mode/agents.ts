@@ -9,7 +9,10 @@ import { getEffectiveAutoCompactThresholdTokens } from "../session/auto_compacti
 import type { AgentSupervisor } from "../subagents/agent_supervisor.js";
 import { AgentRequestError } from "../subagents/errors.js";
 import { parseSubagentLaunchModel } from "../subagents/launch_model.js";
-import { resolveSubagentEffectiveSettings } from "../subagents/registry.js";
+import {
+  describeSubagentLaunchChoices,
+  resolveSubagentEffectiveSettings,
+} from "../subagents/registry.js";
 import type {
   ResolveSubagentPrompt,
   SubagentLaunchModel,
@@ -71,7 +74,7 @@ const traceOptions = z.strictObject({
 export const agentsCapabilityMetadata = {
   name: "agents",
   description:
-    "Start delegated workers, send them queued or steering input, interrupt and wait for them, and read selected parts of their conversations. Access covers the workers you started and the workers they started. Follow the delegation policy in your instructions. Workers keep running when a program ends or is cancelled.",
+    "Inspect allowed launch models and capacity, start delegated workers, send them queued or steering input, interrupt and wait for them, and read selected parts of their conversations. Access covers the workers you started and the workers they started. Follow the delegation policy in your instructions. Workers keep running when a program ends or is cancelled.",
   documentation: `# tau.agents
 
 Start general-purpose workers, send them more input, and read what they did. Start workers only when the user or active instructions explicitly ask for delegation.
@@ -100,6 +103,7 @@ A worker's tools let it delegate, but it should start workers only when it is as
 
 \`\`\`ts
 type AgentsApi = {
+  launchOptions(): Promise<AgentLaunchOptions>;
   spawn(options: SpawnOptions): Promise<AgentState>;
   list(): Promise<ListResult>;
   read(options: { id: string }): Promise<AgentState>;
@@ -142,6 +146,22 @@ type AgentState = {
 A worker is idle when it has no active turn and no pending input. \`reason\` tells how its latest turn ended. \`completed\` means the turn ended normally. It does not mean the task succeeded, so read the worker's answer before relying on it. A failed or interrupted turn may leave only a partial answer, or none.
 
 \`pending\` counts input awaiting delivery by Tau. Delivery to a runtime does not confirm that the worker has read it. Token counts and \`cost\` are totals for the whole conversation. \`contextTokens\` estimates the current context size.
+
+## \`tau.agents.launchOptions()\`
+
+Takes no arguments and returns the calling agent's effective launch choices without starting a worker:
+
+\`\`\`ts
+type AgentLaunchOptions = {
+  inherited: { model: string }; // provider/model:effort
+  overrides: Array<{ model: string }>; // exact provider/model:effort strings accepted by spawn
+  capacity: { running: number; limit: number };
+};
+\`\`\`
+
+\`inherited.model\` is used when \`spawn\` omits \`model\`; each \`overrides\` entry contains an exact model string \`spawn\` accepts. Listing does not check credentials, provider availability, or quota.
+
+\`capacity\` covers the whole session, just as in \`list()\`. It is a snapshot, not a reservation; another worker may take the last slot before you launch.
 
 ## \`tau.agents.spawn(options)\`
 
@@ -386,21 +406,36 @@ export function createAgentsCapability(
   originHistoryEntryId: string,
 ): CodeModeCapability {
   const supervisor = options.supervisor.scope(options.callerId);
+  const parseAllowedLaunchModel = (model: string) => {
+    const parsed = parseSubagentLaunchModel(model, { resolveModel: options.modelResolver });
+    if (
+      !parsed.launchModel ||
+      !options.persona.subagentLaunchModels.includes(parsed.launchModel.normalized)
+    )
+      return { error: parsed.error ?? "Subagent launch model is not allowed" };
+    return parsed;
+  };
   const api: Record<string, TauCodeModeHandler> = {
+    launchOptions: (args) => {
+      z.tuple([]).parse(args);
+      const choices = describeSubagentLaunchChoices(options.persona);
+      return {
+        inherited: { model: choices.inherited },
+        overrides: choices.overrides.flatMap((model) => {
+          const { launchModel } = parseAllowedLaunchModel(model);
+          return launchModel ? [{ model: launchModel.normalized }] : [];
+        }),
+        capacity: supervisor.getCapacity(),
+      };
+    },
     spawn: async (args, context) => {
       const [input] = z.tuple([spawnOptions]).parse(args);
       context.signal.throwIfAborted();
       const launchEpoch = supervisor.prepareSpawn();
       let launchModel: SubagentLaunchModel | undefined;
       if (input.model) {
-        const parsed = parseSubagentLaunchModel(input.model, {
-          resolveModel: options.modelResolver,
-        });
-        if (
-          !parsed.launchModel ||
-          !options.persona.subagentLaunchModels.includes(parsed.launchModel.normalized)
-        )
-          throw new Error(parsed.error ?? "Subagent launch model is not allowed");
+        const parsed = parseAllowedLaunchModel(input.model);
+        if (!parsed.launchModel) throw new Error(parsed.error);
         launchModel = parsed.launchModel;
       }
       const settings = resolveSubagentEffectiveSettings({

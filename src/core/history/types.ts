@@ -50,10 +50,17 @@ export type HistorySessionDescriptor = {
 // Absent means "none": only sessions without a parent.
 export type HistorySearchParent = "none" | "any" | { sessionId: string };
 
+export type HistoryTimeRange = {
+  field: "createdAt" | "updatedAt";
+  since?: number;
+  until?: number;
+};
+
 export type HistorySearchInput = {
   query?: string;
   attributes?: HistoryAttributeFilters;
   parent?: HistorySearchParent;
+  timeRange?: HistoryTimeRange;
   limit: number;
   cursor?: string;
 };

@@ -22,6 +22,11 @@ type SearchOptions = {
   query?: string;
   attributes?: Record<string, string | { contains: string }>;
   parent?: "none" | "any" | { sessionId: string };
+  timeRange?: {
+    field: "createdAt" | "updatedAt";
+    since?: number;
+    until?: number;
+  };
   limit?: number;
   cursor?: string;
 };
@@ -48,10 +53,11 @@ type SearchResult = { sessions: Session[]; nextCursor?: string };
 - `query`: nonblank text, at most 1,000 characters. Every tokenized term must occur in the same digest or transcript entry, not necessarily as a phrase. Use separate searches for alternative terminology.
 - `attributes`: up to 32 filters with 1–64-character names and values up to 1,024 characters. Strings require exact matches; `{ contains }` requires a nonempty, case-sensitive substring. All attribute filters, the text query, and `parent` combine.
 - `parent`: which sessions to search. Omitted or `"none"` covers only sessions without a parent. `"any"` covers all sessions. `{ sessionId }` covers the direct children of that session, with a nonblank ID of at most 256 characters.
+- `timeRange`: filters the chosen session timestamp before pagination, in combination with the other filters. `since` is inclusive and `until` exclusive, both finite Unix milliseconds. At least one bound is required; when both are present, `since` must be before `until`. `updatedAt` means last active, not any activity within the window: a session that continued after `until` is excluded. Filtering does not change search ordering.
 - `limit`: integer 1–75, default 10.
-- `cursor`: opaque `nextCursor` from the preceding page; keep the query, attributes, and `parent` unchanged.
+- `cursor`: opaque `nextCursor` from the preceding page; keep the query, attributes, `parent`, and `timeRange` unchanged.
 
-Without a query, attributes, or `parent`, search returns the most recently updated sessions without a parent. Conventional attributes include `source` (often `tui` or `telegram`) and `repository` (`host/owner/repository`; composite workspaces use comma-delimited repositories), `machine` (execution environment hostname), `cwd` (working directory in that environment), and `telegram_bot` (configured Telegram bot ID). Attributes may be absent. A repository substring filter can match both individual and composite workspaces.
+Without filters, search returns the most recently updated sessions without a parent. Conventional attributes include `source` (often `tui` or `telegram`) and `repository` (`host/owner/repository`; composite workspaces use comma-delimited repositories), `machine` (execution environment hostname), `cwd` (working directory in that environment), and `telegram_bot` (configured Telegram bot ID). Attributes may be absent. A repository substring filter can match both individual and composite workspaces.
 
 Timestamps are Unix milliseconds. A digest can be absent or stale; `updatedThroughEntryId` identifies the latest entry it covers. Snippets are bounded excerpts. A digest or snippet may already answer the question; read the transcript only when needed. When `webUrl` is present, return it directly if the user asks for a conversation link. Local-only sessions have no browser URL.
 

@@ -73,9 +73,9 @@ globalThis.history = (() => {
       for (const attributes of scopes) {
         let cursor;
         do {
-          // Without a query, search returns the most recently updated first.
           const page = await tau.history.search({
             attributes,
+            timeRange: { field: "updatedAt", since: selection.start },
             limit: 75,
             cursor,
           });
@@ -88,11 +88,7 @@ globalThis.history = (() => {
             found.size <= MAX_SESSIONS,
             `More than ${MAX_SESSIONS} sessions match. Narrow the time window or scopes.`,
           );
-          const oldest = page.sessions.at(-1);
-          cursor =
-            oldest && oldest.updatedAt >= selection.start
-              ? page.nextCursor
-              : undefined;
+          cursor = page.nextCursor;
         } while (cursor);
       }
     }

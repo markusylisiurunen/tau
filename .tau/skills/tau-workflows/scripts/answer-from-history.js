@@ -9,7 +9,15 @@
 //
 // With preview, the workflow stops after selection.
 
-const { startRun, responseFormat, object, log, tokens, ensure } = workflow;
+const {
+  preflightModels,
+  startRun,
+  responseFormat,
+  object,
+  log,
+  tokens,
+  ensure,
+} = workflow;
 const {
   readSelection,
   selectCandidates,
@@ -72,6 +80,7 @@ log(`Candidates: ${describeCandidates(candidates)}`);
 if (preview) {
   printText(`\n${previewNote(selection)}`);
 } else {
+  await preflightModels(Object.values(MODELS));
   const run = await startRun({ prefix: "tau-answer-from-history" });
   await run.save("candidates.json", JSON.stringify(candidates, null, 2));
 

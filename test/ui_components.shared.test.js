@@ -222,30 +222,37 @@ test("CustomEditor preview styling preserves wrapped Unicode layout and cursor p
   expect(editor.render(80).join("\n")).not.toContain("\x1b[3m");
 });
 
-test("horizontal rules preserve label priority and two end dashes within the available width", () => {
+test("horizontal rules preserve label priority and align labels to the available edges", () => {
   const style = (text) => `\x1b[2m${text}\x1b[22m`;
-  const label = (text) => ({ text, style });
   for (const labels of [
     {},
-    { left: label("subagents") },
-    { right: label("right-side") },
-    { left: label("こんにちは é"), right: label("right-side") },
+    { left: "subagents" },
+    { right: "right-side" },
+    { left: "こんにちは é", right: "right-side" },
   ]) {
     for (let width = 0; width <= 40; width++) {
       const line = renderHorizontalRule(width, { style, ...labels });
       expect(visibleWidth(line)).toBe(width);
-      if (width >= 4) expect(stripAnsi(line)).toMatch(/^──.*──$/);
+      if (width > 0) expect(line).toBe(style(stripAnsi(line)));
+      const labelWidth = Object.values(labels).reduce(
+        (total, label) => total + visibleWidth(label) + 1,
+        0,
+      );
+      if (width >= labelWidth) {
+        if (labels.left) expect(stripAnsi(line).startsWith(labels.left)).toBe(true);
+        if (labels.right) expect(stripAnsi(line).endsWith(labels.right)).toBe(true);
+      }
     }
   }
   expect(
     stripAnsi(
-      renderHorizontalRule(16, {
+      renderHorizontalRule(11, {
         style,
-        left: label("left-side"),
-        right: label("right-side"),
+        left: "left-side",
+        right: "right-side",
       }),
     ),
-  ).toBe("── right-side ──");
+  ).toBe(" right-side");
 });
 
 test("SubagentPanelComponent gives activity rows the full panel width without indentation", () => {

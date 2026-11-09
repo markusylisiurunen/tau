@@ -29,7 +29,7 @@ export class SubagentEditorPaneComponent implements Component {
       lines.push(
         renderHorizontalRule(contentWidth, {
           style: this.theme.palette.editorSubagentBorder,
-          left: { text: "subagents", style: this.theme.palette.textDim },
+          left: "subagents",
         }),
         ...this.subagentPanel.render(contentWidth),
       );

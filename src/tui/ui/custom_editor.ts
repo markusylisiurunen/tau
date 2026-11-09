@@ -34,8 +34,6 @@ export class CustomEditor extends Editor {
   private uiTheme: Theme;
   private headerLeft = "";
   private headerRight = "";
-  private headerLeftStyle?: (text: string) => string;
-  private headerRightStyle?: (text: string) => string;
 
   private maxVisibleLines = DEFAULT_EDITOR_MAX_LINES;
   private scrollTop = 0;
@@ -113,15 +111,9 @@ export class CustomEditor extends Editor {
     this.placeholderVisible = visible;
   }
 
-  setHeader(
-    left: string,
-    right: string,
-    styles?: { leftStyle?: (text: string) => string; rightStyle?: (text: string) => string },
-  ): void {
+  setHeader(left: string, right: string): void {
     this.headerLeft = left;
     this.headerRight = right;
-    this.headerLeftStyle = styles?.leftStyle;
-    this.headerRightStyle = styles?.rightStyle;
   }
 
   render(width: number): string[] {
@@ -491,14 +483,8 @@ export class CustomEditor extends Editor {
   private renderHeaderLine(width: number): string {
     return renderHorizontalRule(width, {
       style: this.borderColor,
-      left: {
-        text: this.headerLeft,
-        style: this.headerLeftStyle ?? this.uiTheme.palette.textDim,
-      },
-      right: {
-        text: this.headerRight,
-        style: this.headerRightStyle ?? this.uiTheme.palette.textDim,
-      },
+      left: this.headerLeft,
+      right: this.headerRight,
     });
   }
 

@@ -314,10 +314,10 @@ const PERSONA_SPECS: PersonaSpec[] = [
     settings: { reasoning: "medium", serviceTier: "priority" },
   },
   {
-    id: "fable-5.1",
-    description: "Claude Fable 5.1",
+    id: "fable-5.2",
+    description: "Claude Fable 5.2",
     provider: "anthropic",
-    modelId: "claude-fable-5-1",
+    modelId: "claude-fable-5-2",
     catalogOnly: true,
     allowedReasoningLevels: ["low", "medium", "high", "xhigh", "max"],
     settings: { reasoning: "medium" },

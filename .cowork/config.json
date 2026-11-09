@@ -9,8 +9,8 @@
       "reasoning": "medium"
     },
     "pull-request-review": {
-      "persona": "gpt-6-astra-chatgpt-coder",
-      "reasoning": "high"
+      "persona": "gpt-6.1-terra-chatgpt-coder",
+      "reasoning": "medium"
     },
     "pull-request-diff": {
       "persona": "gpt-6.1-terra-chatgpt-coder",

@@ -33,6 +33,7 @@ type SubagentRecord = {
   depth: number;
   launchEpoch: number;
   canDelegate: boolean;
+  notifyOnCompletion: boolean;
   subtreeStops: number;
   kind: "delegated";
   title: string;
@@ -83,6 +84,7 @@ export class AgentSupervisor {
     private readonly options: {
       mainAgentId: string;
       onEvent: (event: SubagentEvent) => void | Promise<void>;
+      onCompletion?: (state: SubagentStateSnapshot) => void;
       recordUsage?: UsageRecorder;
       openHistory?: OpenSubagentHistory;
       deps?: CoreDeps;
@@ -187,6 +189,7 @@ export class AgentSupervisor {
 
   spawn(options: {
     parentId: string;
+    notifyOnCompletion: boolean;
     launchEpoch: number;
     agents?: AgentsCapabilityOptions;
     runtimeConfig: SubagentRuntimeConfig;
@@ -200,6 +203,8 @@ export class AgentSupervisor {
     mcp?: McpManager;
     personaId?: string;
   }): SubagentConversationState {
+    if (options.notifyOnCompletion && options.parentId !== this.mainAgentId)
+      throw new AgentRequestError("invalid_arguments", "Only main can subscribe to completions");
     if (this.getActiveCount() >= MAX_ACTIVE_SUBAGENTS) {
       throw new AgentRequestError(
         "operation_failed",
@@ -256,6 +261,7 @@ export class AgentSupervisor {
       parentId,
       depth,
       launchEpoch: 0,
+      notifyOnCompletion: options.notifyOnCompletion,
       canDelegate: runtimeConfig.kind === "native" && runtimeConfig.tools.includes("agents"),
       subtreeStops: 0,
       kind: "delegated",
@@ -293,6 +299,13 @@ export class AgentSupervisor {
     });
     this.startRun(record, options.prompt, "subagent_spawned");
     return this.read(record.id);
+  }
+
+  setCompletionNotification(callerId: string, id: string, enabled: boolean): void {
+    const record = this.requireRecord(id);
+    if (callerId !== this.mainAgentId || record.parentId !== callerId)
+      throw new AgentRequestError("unknown_agent", `Unknown subagent ID: ${id}`);
+    record.notifyOnCompletion = enabled;
   }
 
   sendInput(options: {
@@ -501,6 +514,7 @@ export class AgentSupervisor {
                 ? "interrupted"
                 : "failed",
         });
+        if (record.notifyOnCompletion) this.options.onCompletion?.(this.toSnapshot(record));
         await this.emit({ type: "subagent_finished", state: this.toSnapshot(record) });
       }
     })();
@@ -646,6 +660,9 @@ export class ScopedAgentSupervisor {
   read(id: string) {
     this.check(id);
     return this.supervisor.read(id);
+  }
+  setCompletionNotification(id: string, enabled: boolean): void {
+    this.supervisor.setCompletionNotification(this.callerId, id, enabled);
   }
   sendInput(options: Parameters<AgentSupervisor["sendInput"]>[0]) {
     this.check(options.id);

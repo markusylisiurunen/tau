@@ -70,6 +70,8 @@ const { id } = await tau.agents.spawn({
 
 `wait_for_agents` returns as soon as one requested subagent is idle, with its last response. A `completed` status means the turn ended normally, so the parent still has to read the answer to know whether the task succeeded.
 
+When a subagent that the main agent started becomes idle, Tau notifies the main agent. An idle main agent then starts a turn on its own, even with no client attached. After you interrupt the main agent, or one of its turns fails, it waits for your next message instead.
+
 In the TUI, Alt+Down selects a running subagent and Ctrl+G interrupts it. Interrupting the main session does not interrupt subagents.
 
 ## Lifetime

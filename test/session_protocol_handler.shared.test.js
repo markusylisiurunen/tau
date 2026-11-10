@@ -185,6 +185,12 @@ function createHarness(options = {}) {
       get isTurnRunning() {
         return running;
       },
+      setPendingUserInput: vi.fn(),
+      holdTurnAdmission: () => () => {},
+      waitForActiveTurn: async () => {
+        await activeTurnSettlement;
+      },
+      onTurnIdle: () => () => {},
       get canAcceptSteering() {
         return running;
       },
@@ -1826,6 +1832,36 @@ describe("SessionProtocolHandler", () => {
     expect(harness.lines.find((line) => line.id === "exec-second")).toEqual(
       expect.objectContaining({ ok: true }),
     );
+  });
+
+  it("waits for host-owned turns before applying an interrupting mutation", async () => {
+    let release;
+    let unwinding = false;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const harness = createHarness({
+      afterTurnRelease: async () => {
+        unwinding = true;
+        await gate;
+      },
+    });
+    const compact = vi.spyOn(harness.seededSession, "compact");
+    const automatic = harness.seededSession.runTurn();
+    const mutation = harness.connection.handleRequest(
+      request("compact-automatic", "session.compact", {
+        sessionId: "session-1",
+        mode: "summary-only",
+      }),
+    );
+    await waitFor(() => unwinding);
+    expect(compact).not.toHaveBeenCalled();
+    release();
+    await Promise.all([automatic, mutation]);
+    expect(compact).toHaveBeenCalledTimes(1);
+    expect(harness.lines.find((line) => line.id === "compact-automatic")).toMatchObject({
+      ok: true,
+    });
   });
 
   it("interrupts manual compaction while it holds the mutation queue", async () => {

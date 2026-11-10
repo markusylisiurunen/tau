@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { AgentRuntime } from "../dist/core/agent/agent_runtime.js";
+import { NotificationInbox } from "../dist/core/agent/notification_inbox.js";
 import { personas } from "../dist/core/personas.js";
 import { renderSubagentPrefixPrompt } from "../dist/core/static/index.js";
 import { AgentSupervisor } from "../dist/core/subagents/agent_supervisor.js";
@@ -47,6 +48,7 @@ function createStream(message, gate) {
 function createSpawnOptions(overrides = {}) {
   return {
     parentId: "main",
+    notifyOnCompletion: (overrides.parentId ?? "main") === "main",
     launchEpoch: 0,
     runtimeConfig: {
       kind: "native",
@@ -76,6 +78,41 @@ function getRecord(supervisor, id) {
 }
 
 describe("AgentSupervisor", () => {
+  it("notifies every subscribed direct-child idle transition independently of waits", async () => {
+    const completions = [];
+    const supervisor = new AgentSupervisor({
+      mainAgentId: "main",
+      onEvent: () => {},
+      onCompletion: (state) => completions.push(state),
+    });
+    const child = supervisor.spawn(createSpawnOptions());
+    const record = getRecord(supervisor, child.id);
+    record.runtime.agent.spec.model.stream = () => createStream(createAssistant("done"));
+    await supervisor.waitForAgents([child.id]);
+    expect(completions.map((state) => state.run.revision)).toEqual([1]);
+    supervisor.setCompletionNotification("main", child.id, false);
+    supervisor.sendInput({ id: child.id, prompt: "again", mode: "queue" });
+    await supervisor.waitForAgents([child.id]);
+    expect(completions).toHaveLength(1);
+    supervisor.setCompletionNotification("main", child.id, true);
+    supervisor.sendInput({ id: child.id, prompt: "again", mode: "queue" });
+    await supervisor.waitForAgents([child.id]);
+    expect(completions.map((state) => state.run.revision)).toEqual([1, 3]);
+    record.canDelegate = true;
+    const nested = supervisor.spawn(
+      createSpawnOptions({ parentId: child.id, launchEpoch: supervisor.prepareSpawn(child.id) }),
+    );
+    getRecord(supervisor, nested.id).runtime.agent.spec.model.stream = () =>
+      createStream(createAssistant("nested"));
+    await supervisor.waitForAgents([nested.id]);
+    expect(completions).toHaveLength(2);
+    expect(() => supervisor.setCompletionNotification("main", nested.id, true)).toThrow();
+    expect(() =>
+      supervisor.spawn(createSpawnOptions({ parentId: child.id, notifyOnCompletion: true })),
+    ).toThrow();
+    supervisor.dispose();
+  });
+
   it("opens native history only after runtime construction succeeds", () => {
     const openHistory = vi.fn();
     const supervisor = new AgentSupervisor({ mainAgentId: "main", onEvent: () => {}, openHistory });
@@ -181,6 +218,7 @@ describe("AgentSupervisor", () => {
     });
     try {
       const main = ToolCatalog.createSessionRegistry({
+        notifications: new NotificationInbox(),
         backend: createLocalToolExecutionBackend(),
         jobs: new AgentJobRegistry(),
         cwd: "/repo",
@@ -652,6 +690,7 @@ it("keeps background orchestration attribution and cancels only its wait", async
   });
   try {
     const registry = ToolCatalog.createSessionRegistry({
+      notifications: new NotificationInbox(),
       backend: createLocalToolExecutionBackend(),
       jobs,
       codeJobs,
@@ -725,6 +764,7 @@ describe("nested supervision", () => {
       const state = supervisor.spawn({
         ...options,
         parentId,
+        notifyOnCompletion: parentId === "main",
         launchEpoch: supervisor.prepareSpawn(parentId),
       });
       getRecord(supervisor, state.id).runtime.agent.spec.model.stream = () =>
@@ -781,7 +821,7 @@ describe("nested supervision", () => {
       await Promise.all([a, b, sibling].map(({ id }) => supervisor.waitForAgents([id])));
       supervisor.retainOrigins(new Set());
       expect(supervisor.list()).toEqual([]);
-      expect(() => scope.spawn(createSpawnOptions())).toThrow(
+      expect(() => scope.spawn(createSpawnOptions({ notifyOnCompletion: false }))).toThrow(
         expect.objectContaining({ code: "unknown_agent" }),
       );
     } finally {

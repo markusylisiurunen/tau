@@ -89,6 +89,7 @@ type SessionProtocolHandlerSessionState = {
   session: TauHostedSession;
   live: SessionProtocolLiveSessionState;
   unsubscribeDelta?: () => void;
+  unsubscribeTurnIdle?: () => void;
   unsubscribeEphemeral?: () => void;
   unsubscribePendingUserMessages?: () => void;
   unsubscribeSubagentActivities?: () => void;
@@ -153,6 +154,7 @@ function publishPendingUserMessages(
   session: TauHostedSession,
   state: SessionProtocolLiveSessionState,
 ): void {
+  session.setPendingUserInput(state.pendingSubmissions.length > 0);
   state.revision += 1;
   const message = createSessionProtocolPendingUserMessagesMessage({
     sessionId: session.sessionId,
@@ -1538,6 +1540,9 @@ export class SessionProtocolHandler {
       released: false,
     };
 
+    state.unsubscribeTurnIdle = session.onTurnIdle(() =>
+      this.schedulePendingSubmissionDrain(state),
+    );
     state.unsubscribeDelta = session.onDelta((delta) => {
       if (this.closed || !this.sessionStates.has(session.sessionId)) {
         return;
@@ -1711,10 +1716,12 @@ export class SessionProtocolHandler {
   ): Promise<T> {
     const queue = getSessionMutationQueueState(state.session);
     queue.pending += 1;
+    const release = state.session.holdTurnAdmission();
     try {
       return await this.enqueueMutation(state, handler);
     } finally {
       queue.pending -= 1;
+      release();
     }
   }
 
@@ -1731,9 +1738,8 @@ export class SessionProtocolHandler {
     }
 
     state.session.interruptTurn();
-    if (!activeSubmit) {
-      return;
-    }
+    await state.session.waitForActiveTurn();
+    if (!activeSubmit) return;
 
     try {
       await activeSubmit.promise;
@@ -1749,6 +1755,8 @@ export class SessionProtocolHandler {
       this.host.releaseSession(state.session);
     }
 
+    state.unsubscribeTurnIdle?.();
+    state.unsubscribeTurnIdle = undefined;
     state.unsubscribeDelta?.();
     state.unsubscribeDelta = undefined;
     state.unsubscribeEphemeral?.();

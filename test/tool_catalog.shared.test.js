@@ -68,6 +68,8 @@ describe("ToolCatalog", () => {
       "wait_for_agents",
       "send_input_to_agent",
       "interrupt_agent",
+      "list_notifications",
+      "read_notification",
     ];
     expect(child.schemas.map((tool) => tool.name)).toEqual(
       main.schemas.filter((tool) => !management.includes(tool.name)).map((tool) => tool.name),
@@ -95,7 +97,11 @@ describe("ToolCatalog", () => {
       new CodeJobRegistry(),
     );
     const intrinsicTools = ["tau_docs"];
-    expect(main.schemas.map((tool) => tool.name)).toEqual(intrinsicTools);
+    expect(main.schemas.map((tool) => tool.name)).toEqual([
+      ...intrinsicTools,
+      "list_notifications",
+      "read_notification",
+    ]);
     expect(child.schemas.map((tool) => tool.name)).toEqual(intrinsicTools);
   });
 

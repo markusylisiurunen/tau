@@ -401,11 +401,35 @@ for (const entry of page.entries) {
 `,
 } satisfies Omit<CodeModeCapability, "api">;
 
+const mainNotificationsDocumentation = `
+## Completion notifications
+
+As the main agent, you get a notification each time a worker you started goes from working to idle, including after follow-up input. Workers started by your workers never notify you. If you are idle when a notification arrives, Tau starts a turn for you, so you can end your turn while workers run and continue when they finish. Use the \`list_notifications\` and \`read_notification\` tools to see notifications.
+
+A notification tells you which worker became idle. It does not contain the answer, so read that with \`wait_for_agents\`, or with \`trace\` and \`readText\`.
+
+Notifications are on by default. Waiting for a worker does not affect them, so turn them off for a worker whose result you will wait for anyway:
+
+\`\`\`ts
+type MainSpawnOptions = SpawnOptions & { notifyOnCompletion?: boolean }; // default true
+
+type MainAgentsApi = AgentsApi & {
+  setCompletionNotification(options: { id: string; enabled: boolean }): Promise<AgentState>;
+};
+\`\`\`
+
+\`setCompletionNotification\` works only for workers you started yourself and applies to their later completions.
+`;
+
 export function createAgentsCapability(
   options: AgentsCapabilityOptions,
   originHistoryEntryId: string,
 ): CodeModeCapability {
   const supervisor = options.supervisor.scope(options.callerId);
+  const isMain = options.callerId === options.supervisor.mainAgentId;
+  const callerSpawnOptions = isMain
+    ? spawnOptions.extend({ notifyOnCompletion: z.boolean().default(true) })
+    : spawnOptions.transform((input) => ({ ...input, notifyOnCompletion: false }));
   const parseAllowedLaunchModel = (model: string) => {
     const parsed = parseSubagentLaunchModel(model, { resolveModel: options.modelResolver });
     if (
@@ -429,7 +453,7 @@ export function createAgentsCapability(
       };
     },
     spawn: async (args, context) => {
-      const [input] = z.tuple([spawnOptions]).parse(args);
+      const [input] = z.tuple([callerSpawnOptions]).parse(args);
       context.signal.throwIfAborted();
       const launchEpoch = supervisor.prepareSpawn();
       let launchModel: SubagentLaunchModel | undefined;
@@ -470,6 +494,7 @@ export function createAgentsCapability(
       return supervisor.spawn({
         ...options,
         runtimeConfig,
+        notifyOnCompletion: input.notifyOnCompletion,
         launchEpoch,
         agents: options,
         prompt: input.prompt,
@@ -552,6 +577,13 @@ export function createAgentsCapability(
       return supervisor.getTrace(input.id).readText(input.seq, input.maxChars);
     },
   };
+  if (isMain) {
+    api.setCompletionNotification = (args) => {
+      const [input] = z.tuple([z.strictObject({ id, enabled: z.boolean() })]).parse(args);
+      supervisor.setCompletionNotification(input.id, input.enabled);
+      return supervisor.read(input.id);
+    };
+  }
   for (const [name, handler] of Object.entries(api)) {
     api[name] = async (args, context) => {
       try {
@@ -570,5 +602,10 @@ export function createAgentsCapability(
       }
     };
   }
-  return { ...agentsCapabilityMetadata, api };
+  return {
+    ...agentsCapabilityMetadata,
+    documentation:
+      agentsCapabilityMetadata.documentation + (isMain ? mainNotificationsDocumentation : ""),
+    api,
+  };
 }

@@ -58,6 +58,10 @@ function createHostedSession(sessionId, sessions, options = {}) {
     get isTurnRunning() {
       return running;
     },
+    setPendingUserInput: vi.fn(),
+    holdTurnAdmission: () => () => {},
+    waitForActiveTurn: async () => {},
+    onTurnIdle: () => () => {},
     get canAcceptSteering() {
       return running;
     },

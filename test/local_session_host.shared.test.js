@@ -458,6 +458,274 @@ describe("HostedEphemeralAgentSession", () => {
 });
 
 describe("LocalSessionHost", () => {
+  it("owns automatic notification turns without clients and pauses wakes until user input", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const session = await host.createSession(localCreateInput);
+    let projected = await session.snapshot();
+    session.onDelta((delta) => {
+      projected = applySessionProtocolDelta(projected, delta);
+    });
+    const stream = vi.fn(() => ({
+      async *[Symbol.asyncIterator]() {},
+      async result() {
+        return fauxAssistantMessage("notification handled");
+      },
+    }));
+    session.runtime.agent.spec.model.stream = stream;
+    try {
+      session.runtime.notifications.add("first", "body");
+      session.runtime.notifications.add("second");
+      expect(projected.timeline.items.filter((item) => item.type === "notice")).toHaveLength(0);
+      await vi.waitFor(() =>
+        expect(
+          Object.values(projected.turns).filter((turn) => turn.state === "settled"),
+        ).toHaveLength(1),
+      );
+      await session.waitForActiveWork();
+      expect(stream).toHaveBeenCalledTimes(1);
+      expect(session.runtime.notifications.list().every((entry) => !entry.read)).toBe(true);
+      const notices = projected.timeline.items.filter(
+        (item) => item.type === "notice" && item.notice.kind === "tau.notifications",
+      );
+      expect(notices).toHaveLength(1);
+      expect(JSON.stringify(notices)).not.toContain("<system>");
+      expect(
+        projected.messages
+          .filter((entry) => entry.message.role === "user")
+          .every((entry) => isTauUserMessageHidden(entry.message)),
+      ).toBe(true);
+      expect(projected).toEqual(await session.snapshot());
+      session.interruptTurn();
+      session.runtime.notifications.add("paused");
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(stream).toHaveBeenCalledTimes(1);
+      const accepted = await session.acceptTurn({ text: "resume" });
+      await session.runAcceptedTurn(accepted.userHistoryEntryId);
+      expect(stream).toHaveBeenCalledTimes(2);
+      expect(session.runtime.notifications.signal()).toBeUndefined();
+      expect(
+        projected.timeline.items.filter(
+          (item) => item.type === "notice" && item.notice.kind === "tau.notifications",
+        ),
+      ).toHaveLength(2);
+    } finally {
+      await host.shutdown();
+    }
+  });
+
+  it("defers notification delivery until manual compaction finishes", async () => {
+    const host = createHost(new MemorySessionStore());
+    const session = await host.createSession(localCreateInput);
+    const gate = deferred();
+    const started = deferred();
+    let calls = 0;
+    session.runtime.agent.spec.model.stream = () => {
+      const compacting = ++calls === 2;
+      return {
+        async *[Symbol.asyncIterator]() {},
+        async result() {
+          if (compacting) {
+            started.resolve();
+            await gate.promise;
+          }
+          return fauxAssistantMessage(compacting ? "summary" : "done");
+        },
+      };
+    };
+    try {
+      await session.record({ text: "task" });
+      await session.runTurn();
+      const compacting = session.compact({ mode: "summary-only" });
+      await started.promise;
+      session.runtime.notifications.add("child finished");
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(calls).toBe(2);
+      expect(session.runtime.notifications.hasUndelivered()).toBe(true);
+      await expect(session.runtime.commitNotifications()).rejects.toThrow();
+      gate.resolve();
+      await compacting;
+      await vi.waitFor(() => expect(calls).toBe(3));
+      await session.waitForActiveWork();
+      expect(session.runtime.notifications.hasUndelivered()).toBe(false);
+      const turns = Object.values((await session.snapshot()).turns);
+      expect(turns).toHaveLength(1);
+      expect(turns[0]).toMatchObject({ state: "settled", outcome: { status: "completed" } });
+    } finally {
+      gate.resolve();
+      await host.shutdown();
+    }
+  });
+
+  it.each(["stop", "error"])(
+    "settles the accepted receipt from its notification continuation (%s)",
+    async (stopReason) => {
+      const host = createHost(new MemorySessionStore());
+      const session = await host.createSession(localCreateInput);
+      let calls = 0;
+      session.runtime.agent.spec.retryPolicy.maxRetries = 0;
+      session.runtime.agent.spec.model.stream = () => {
+        const first = ++calls === 1;
+        return {
+          async *[Symbol.asyncIterator]() {},
+          async result() {
+            if (first) session.runtime.notifications.add("child finished");
+            return fauxAssistantMessage(first ? "initial" : "continued", {
+              stopReason: first ? "stop" : stopReason,
+            });
+          },
+        };
+      };
+      try {
+        const accepted = await session.acceptTurn({ text: "task" });
+        const result = await session.runAcceptedTurn(accepted.userHistoryEntryId);
+        expect(calls).toBe(2);
+        expect(result.turn).toMatchObject({
+          status: stopReason === "error" ? "failed" : "completed",
+          stopReason,
+        });
+        expect((await session.snapshot()).turns[accepted.userHistoryEntryId]).toMatchObject({
+          state: "settled",
+          outcome: result.turn,
+        });
+      } finally {
+        await host.shutdown();
+      }
+    },
+  );
+
+  it("waits for automatic turn interruption and receipt settlement", async () => {
+    const host = createHost(new MemorySessionStore());
+    const session = await host.createSession(localCreateInput);
+    const started = deferred();
+    const gate = deferred();
+    session.runtime.agent.spec.model.stream = () => ({
+      async *[Symbol.asyncIterator]() {
+        started.resolve();
+        await gate.promise;
+        yield* [];
+      },
+      async result() {
+        return fauxAssistantMessage("done");
+      },
+    });
+    try {
+      session.runtime.notifications.add("child finished");
+      await started.promise;
+      session.interruptTurn();
+      let stopped = false;
+      const waiting = session.waitForActiveTurn().then(() => {
+        stopped = true;
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(stopped).toBe(false);
+      gate.resolve();
+      await waiting;
+      expect(session.isTurnRunning).toBe(false);
+      expect(Object.values((await session.snapshot()).turns)).toEqual([
+        expect.objectContaining({
+          state: "settled",
+          outcome: expect.objectContaining({ status: "aborted" }),
+        }),
+      ]);
+    } finally {
+      gate.resolve();
+      await host.shutdown();
+    }
+  });
+
+  it("surfaces automatic admission failures and leaves the notification undelivered", async () => {
+    const host = createHost(new MemorySessionStore());
+    const session = await host.createSession(localCreateInput);
+    const commit = vi
+      .spyOn(session.runtime, "commitNotifications")
+      .mockRejectedValueOnce(new Error("write failed"));
+    try {
+      session.runtime.notifications.add("child finished");
+      await vi.waitFor(() => expect(commit).toHaveBeenCalledTimes(1));
+      await session.waitForActiveWork();
+      expect(session.runtime.notifications.hasUndelivered()).toBe(true);
+      expect((await session.snapshot()).timeline.items).toContainEqual(
+        expect.objectContaining({
+          type: "notice",
+          notice: expect.objectContaining({ kind: "tau.turn.failed", severity: "error" }),
+        }),
+      );
+      session.runtime.notifications.add("another child finished");
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(commit).toHaveBeenCalledTimes(1);
+    } finally {
+      await host.shutdown();
+    }
+  });
+
+  it.each(["failed", "blocked"])(
+    "pauses notifications after a %s turn until another user turn",
+    async (kind) => {
+      const host = createHost(new MemorySessionStore());
+      const session = await host.createSession(localCreateInput);
+      const failed =
+        kind === "blocked"
+          ? { aborted: false, blocked: { reason: "auto-compaction-failed", message: "blocked" } }
+          : { aborted: false, finalMessage: fauxAssistantMessage("", { stopReason: "error" }) };
+      session.runtime.agent.spec.model.stream = () => ({
+        async *[Symbol.asyncIterator]() {},
+        async result() {
+          return fauxAssistantMessage("done");
+        },
+      });
+      const run = vi
+        .spyOn(session.runtime, "runTurn")
+        .mockResolvedValueOnce({ ...failed, terminalResult: failed });
+      try {
+        session.runtime.notifications.add("first");
+        await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+        await session.waitForActiveWork();
+        session.runtime.notifications.add("pending");
+        await new Promise((resolve) => setImmediate(resolve));
+        expect(run).toHaveBeenCalledTimes(1);
+        const accepted = await session.acceptTurn({ text: "resume" });
+        await session.runAcceptedTurn(accepted.userHistoryEntryId);
+        expect(run).toHaveBeenCalledTimes(2);
+        expect(session.runtime.notifications.signal()).toBeUndefined();
+      } finally {
+        await host.shutdown();
+      }
+    },
+  );
+
+  it("keeps an automatic wake alive across release and gives pending user input priority", async () => {
+    const host = createHost(new MemorySessionStore());
+    const session = await host.createSession(localCreateInput);
+    const gate = deferred();
+    const started = deferred();
+    session.runtime.agent.spec.model.stream = () => ({
+      async *[Symbol.asyncIterator]() {
+        started.resolve();
+        await gate.promise;
+        yield* [];
+      },
+      async result() {
+        return fauxAssistantMessage("done");
+      },
+    });
+    try {
+      session.setPendingUserInput(true);
+      session.runtime.notifications.add("pending");
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(Object.keys((await session.snapshot()).turns)).toHaveLength(0);
+      session.setPendingUserInput(false);
+      host.releaseSession(session);
+      await started.promise;
+      expect(session.isDisposed).toBe(false);
+      gate.resolve();
+      await vi.waitFor(() => expect(session.isDisposed).toBe(true));
+    } finally {
+      gate.resolve();
+      await host.shutdown();
+    }
+  });
+
   it("records execution attributes in snapshots and history without changing them on recovery", async () => {
     const store = new MemorySessionStore();
     const historyStore = new LocalHistoryStore(":memory:");
@@ -4169,6 +4437,7 @@ describe("LocalSessionHost", () => {
       const supervisor = session.runtime.supervisor;
       const child = supervisor.spawn({
         parentId: supervisor.mainAgentId,
+        notifyOnCompletion: false,
         launchEpoch: supervisor.prepareSpawn(supervisor.mainAgentId),
         runtimeConfig: {
           kind: "native",

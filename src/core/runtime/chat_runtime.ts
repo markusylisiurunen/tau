@@ -13,6 +13,7 @@ import {
   type SteeringSubmission,
 } from "../agent/agent_runtime.js";
 import type { AgentEventSink } from "../agent/events.js";
+import { NotificationInbox } from "../agent/notification_inbox.js";
 import type { SessionRuntimeSettings } from "../config/index.js";
 import type { OpenSubagentHistory } from "../history/agent_history_recorder.js";
 import type { HistoryQuery } from "../history/types.js";
@@ -72,6 +73,7 @@ export class ChatRuntime {
   readonly jobs = new AgentJobRegistry();
   readonly backgroundJobs = this.jobs.create();
   readonly supervisor: AgentSupervisor;
+  readonly notifications = new NotificationInbox();
   private currentPersona: Persona;
   private readonly autoCompactDefaults: AutoCompactDefaults | undefined;
   private autoCompactOverride: number | null = null;
@@ -130,6 +132,11 @@ export class ChatRuntime {
     this.supervisor = new AgentSupervisor({
       mainAgentId: options.sessionId,
       onEvent: options.subagentEventSink,
+      onCompletion: (state) => {
+        this.notifications.add(
+          `subagent ${state.id} is idle (${state.run.status}): ${state.title}`,
+        );
+      },
       openHistory: options.openSubagentHistory,
       ...(options.recordUsage ? { recordUsage: options.recordUsage } : {}),
       deps: this.deps,
@@ -137,6 +144,7 @@ export class ChatRuntime {
     const tools = this.buildToolRegistry(composition);
     this.agent = this.supervisor.createMainRuntime({
       agentId: options.sessionId,
+      notifications: this.notifications,
       spec: createAgentSpec({
         ...this.resolvedModel,
         autoCompactThresholdTokens: this.resolvedAutoCompactThresholdTokens,
@@ -214,6 +222,10 @@ export class ChatRuntime {
   runTurn(): Promise<AgentTurnResult> {
     this.refreshSpec();
     return this.agent.runTurn();
+  }
+
+  commitNotifications(historyEntryId?: string): Promise<boolean> {
+    return this.agent.commitNotifications(historyEntryId);
   }
 
   steer(text: string): SteeringSubmission {
@@ -366,6 +378,7 @@ export class ChatRuntime {
       subagentSystemPrompt: composition.subagentSystemPrompt,
       modelResolver: this.currentModelResolver,
       supervisor: this.supervisor,
+      notifications: this.notifications,
       jobs: this.jobs,
       ...this.backgroundJobs,
       history: this.historyQuery,

@@ -66,6 +66,7 @@ import type {
   AgentEvent,
   AgentEventSink,
 } from "./events.js";
+import { formatNotificationSignal, type NotificationInbox } from "./notification_inbox.js";
 
 const DEFAULT_RETRY_POLICY = { maxRetries: 1, delayMs: 3_000 } as const;
 const COMPACTION_MAX_ATTEMPTS = 2;
@@ -119,6 +120,7 @@ export type AgentSpec = {
 };
 
 type AgentRuntimeOptions = {
+  notifications?: NotificationInbox;
   agentId?: string;
   spec: AgentSpec;
   eventSink: AgentEventSink;
@@ -377,10 +379,12 @@ export class AgentRuntime {
     rejectApplied: (error: Error) => void;
     rejectResult: (error: Error) => void;
   }> = [];
+  private readonly notifications?: NotificationInbox;
   private disposed = false;
   private agentId: string;
 
   constructor(options: AgentRuntimeOptions) {
+    this.notifications = options.notifications;
     this.currentSpec = options.spec;
     this.eventSink = options.eventSink;
     this.clock = options.clock;
@@ -728,6 +732,29 @@ export class AgentRuntime {
     }
   }
 
+  async commitNotifications(historyEntryId?: string): Promise<boolean> {
+    this.assertHistoryMutable();
+    const inbox = this.notifications;
+    if (!inbox) return false;
+    const signal = inbox.signal();
+    if (!signal) return false;
+    const message: UserMessage = {
+      role: "user",
+      content: [{ type: "text", text: formatNotificationSignal(signal) }],
+      timestamp: this.clock.now(),
+    };
+    await this.commitHistoryMessage(message, historyEntryId, (id, revision) => ({
+      type: "user_message",
+      historyEntryId: id,
+      message,
+      origin: "notification",
+      notificationTitles: signal.notifications.map((entry) => entry.title),
+      revision,
+    }));
+    inbox.delivered(signal);
+    return true;
+  }
+
   steer(text: string, options: { metadata?: readonly TauUserMetadata[] } = {}): SteeringSubmission {
     if (this.status !== "running") {
       throw new Error("cannot steer an idle agent");
@@ -809,6 +836,7 @@ export class AgentRuntime {
     let turnSpec = this.captureTurnSettings();
 
     try {
+      if (await this.commitNotifications()) turnSpec = this.continueTurnSettings(turnSpec);
       while (true) {
         await this.deliver({
           type: "turn_started",
@@ -876,14 +904,16 @@ export class AgentRuntime {
 
         associatedSteering = this.pendingSteering.splice(0);
         this.stopAtBoundaryRequested = false;
-        await this.commitUserTextWithModelNotice(
-          formatSteeringUserMessage(
-            associatedSteering.map((item) => item.text),
-            associatedSteering.flatMap((item) => item.metadata),
-          ),
-          turnSpec.modelNotice,
-          { origin: "steering" },
-        );
+        await this.commitNotifications();
+        if (associatedSteering.length > 0)
+          await this.commitUserTextWithModelNotice(
+            formatSteeringUserMessage(
+              associatedSteering.map((item) => item.text),
+              associatedSteering.flatMap((item) => item.metadata),
+            ),
+            turnSpec.modelNotice,
+            { origin: "steering" },
+          );
         turnSpec = this.continueTurnSettings(turnSpec);
         for (const submission of associatedSteering) {
           submission.resolveApplied({
@@ -1223,19 +1253,20 @@ export class AgentRuntime {
       );
       if (finalMessage) lastFinalMessage = finalMessage;
 
-      if (signal.aborted) break;
+      if (signal.aborted || this.stopAtBoundaryRequested) break;
+      const deliverNotifications =
+        finalMessage?.stopReason !== "error" && this.notifications?.hasUndelivered();
+      const hasToolCalls =
+        finalMessage?.stopReason === "toolUse" &&
+        finalMessage.content.some((content) => content.type === "toolCall");
+      if (!continueAfterToolRecovery && !hasToolCalls && !deliverNotifications) break;
+      if (deliverNotifications && subturns < turnSettings.maxModelSubturns) {
+        await this.commitNotifications();
+      }
       if (continueAfterToolRecovery) {
-        if (this.stopAtBoundaryRequested) break;
         needsAnotherSubturn = true;
         continue;
       }
-      if (finalMessage?.stopReason !== "toolUse") break;
-      const toolCalls = finalMessage.content.filter(
-        (content): content is ToolCall => content.type === "toolCall",
-      );
-      if (toolCalls.length === 0) break;
-      if (this.stopAtBoundaryRequested) break;
-
       needsAnotherSubturn = true;
       retryBudget = { remaining: turnSettings.retryPolicy.maxRetries };
     }

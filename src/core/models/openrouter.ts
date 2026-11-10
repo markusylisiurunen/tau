@@ -66,7 +66,7 @@ export const openRouterModels: Record<Operation, OpenRouterModel[]> = {
       role: "Audio/video understanding and image-heavy analysis.",
     },
     {
-      id: "google/gemini-4-argon",
+      id: "google/gemini-4-carbon",
       inputs: ["text", "image", "audio", "video"],
       reasoning: ["low", "medium", "high"],
       role: "Multimodal analysis of text, images, audio, and video.",

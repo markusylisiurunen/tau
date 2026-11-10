@@ -18,7 +18,7 @@ tau tool openrouter chat --list-models
 | `decisions` | `openai/gpt-6-luna-decisions` | First choice, supports text and images |
 | `decisions` | `typesafe/jev-1.14` | High volume when cost matters most |
 | `chat` | `google/gemini-3.8-flash` | First choice for audio, video, and images |
-| `chat` | `google/gemini-4-argon` | Multimodal analysis |
+| `chat` | `google/gemini-4-carbon` | Multimodal analysis |
 | `chat` | `openai/gpt-6-luna` | Cheap extraction and summaries |
 | `chat` | `openai/gpt-6.1-terra` | Visual reasoning, writing, everyday coding |
 | `chat` | `openai/gpt-6.1-sol` | Coding and technical reasoning |

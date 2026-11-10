@@ -1253,18 +1253,16 @@ export class AgentRuntime {
       );
       if (finalMessage) lastFinalMessage = finalMessage;
 
-      if (signal.aborted || this.stopAtBoundaryRequested) break;
-      const deliverNotifications =
-        subturns < turnSettings.maxModelSubturns &&
-        finalMessage?.stopReason !== "error" &&
-        this.notifications?.hasUndelivered();
+      if (signal.aborted || this.stopAtBoundaryRequested || finalMessage?.stopReason === "aborted")
+        break;
       const hasToolCalls =
         finalMessage?.stopReason === "toolUse" &&
         finalMessage.content.some((content) => content.type === "toolCall");
-      if (!continueAfterToolRecovery && !hasToolCalls && !deliverNotifications) break;
-      if (deliverNotifications && subturns < turnSettings.maxModelSubturns) {
-        await this.commitNotifications();
-      }
+      const notified =
+        subturns < turnSettings.maxModelSubturns &&
+        finalMessage?.stopReason !== "error" &&
+        (await this.commitNotifications());
+      if (!continueAfterToolRecovery && !hasToolCalls && !notified) break;
       if (continueAfterToolRecovery) {
         needsAnotherSubturn = true;
         continue;

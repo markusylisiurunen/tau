@@ -145,6 +145,6 @@ The server listens on loopback and has no authentication, so put it behind a pro
 
 Errors extend `TauSessionClientError`. `TauSessionProtocolResponseError` means the host returned an error, so branch on its `code`. `TauTransportError` means the connection failed.
 
-Most methods take no `AbortSignal`, so call `session.interrupt()` to stop work on the host. `session.exec` accepts a signal for that command. Always call `client.close()` in `finally`. It rejects open requests and waits for running client tool handlers.
+Most methods take no `AbortSignal`, so call `session.interrupt()` to stop work on the host. `session.exec` and `session.bash` accept a signal for that command. Always call `client.close()` in `finally`. It rejects open requests and waits for running client tool handlers.
 
 To keep a session loaded without clients, or to confirm it is unloaded before deleting its files, see [session protocol](session-protocol.md).

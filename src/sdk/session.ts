@@ -413,9 +413,13 @@ class TauSdkClientImpl implements TauSdkClient {
 
   sendBash(
     sessionId: string,
-    input: Omit<SessionProtocolBashParams, "sessionId" | "execId">,
+    input: Omit<SessionProtocolBashParams, "sessionId" | "execId"> & { signal?: AbortSignal },
   ): Promise<SessionProtocolBashResult> {
-    return this.transport.request("session.bash", { ...input, sessionId, execId: randomUUID() });
+    const { signal, ...params } = input;
+    const execId = randomUUID();
+    return this.runExecRequest(sessionId, execId, signal, () =>
+      this.transport.request("session.bash", { ...params, sessionId, execId }),
+    );
   }
 
   sendSample(
@@ -791,7 +795,7 @@ class TauSdkSessionImpl implements TauSdkSession {
   }
 
   bash(
-    input: Omit<SessionProtocolBashParams, "sessionId" | "execId">,
+    input: Omit<SessionProtocolBashParams, "sessionId" | "execId"> & { signal?: AbortSignal },
   ): Promise<SessionProtocolBashResult> {
     return this.client.sendBash(this.activeSessionId(), input);
   }

@@ -60,8 +60,8 @@ export type TauHostedSession = {
   readonly sessionId: string;
   readonly isDisposed?: boolean;
   readonly isTurnRunning: boolean;
+  readonly isContextBashRunning: boolean;
   readonly canAcceptSteering: boolean;
-  setPendingUserInput(pending: boolean): void;
   onTurnIdle(handler: () => void): () => void;
   onDelta(handler: (delta: SessionProtocolDeltaMessage) => void): () => void;
   onEphemeral(handler: (message: SessionProtocolEphemeralMessage) => void): () => void;

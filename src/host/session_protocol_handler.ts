@@ -76,6 +76,7 @@ type SessionProtocolUserSubmissionAction =
 type SessionProtocolLiveSessionState = {
   activeSubmit?: SessionProtocolActiveSubmit;
   interrupting: boolean;
+  releasePendingAdmission?: () => void;
   revision: number;
   pendingSubmissions: SessionProtocolPendingUserSubmission[];
   listeners: Set<(message: SessionProtocolPendingUserMessagesMessage) => void>;
@@ -154,7 +155,12 @@ function publishPendingUserMessages(
   session: TauHostedSession,
   state: SessionProtocolLiveSessionState,
 ): void {
-  session.setPendingUserInput(state.pendingSubmissions.length > 0);
+  if (state.pendingSubmissions.length > 0) {
+    state.releasePendingAdmission ??= session.holdTurnAdmission();
+  } else {
+    state.releasePendingAdmission?.();
+    state.releasePendingAdmission = undefined;
+  }
   state.revision += 1;
   const message = createSessionProtocolPendingUserMessagesMessage({
     sessionId: session.sessionId,
@@ -690,38 +696,17 @@ export class SessionProtocolHandler {
   private async handleBash(
     request: Extract<SessionProtocolRequestMessage, { method: "session.bash" }>,
   ): Promise<void> {
-    const state = await this.getSessionState(request.params.sessionId);
-    if (!state) {
-      this.sendSessionNotFound(request.id, request.params.sessionId);
-      return;
-    }
-    await this.runSideChannel(async (signal) => {
-      try {
-        await this.runSessionMutation(state, async () => {
-          signal.throwIfAborted();
-          const result = await state.session.bash({ ...request.params, signal });
-          this.sendMessage(
-            createSessionProtocolSuccessResponse(request.id, "session.bash", result),
-          );
-        });
-      } catch (error) {
-        const cancelled = signal.aborted || isAbortError(error);
-        this.sendMessage(
-          createSessionProtocolErrorResponse(
-            request.id,
-            cancelled
-              ? SESSION_PROTOCOL_ERROR_CODES.cancelled
-              : SESSION_PROTOCOL_ERROR_CODES.internalError,
-            cancelled ? "execution was cancelled" : "failed to run shell command",
-            { cause: error instanceof Error ? error.message : String(error) },
-          ),
-        );
-      }
-    });
+    await this.handleExecution(request);
   }
 
   private async handleExec(
     request: Extract<SessionProtocolRequestMessage, { method: "session.exec" }>,
+  ): Promise<void> {
+    await this.handleExecution(request);
+  }
+
+  private async handleExecution(
+    request: Extract<SessionProtocolRequestMessage, { method: "session.exec" | "session.bash" }>,
   ): Promise<void> {
     const key = this.execKey(request.params.sessionId, request.params.execId);
     if (this.activeExecAbortControllers.has(key)) {
@@ -996,6 +981,7 @@ export class SessionProtocolHandler {
         return { type: "idle" as const };
       }
 
+      const release = state.session.holdTurnAdmission();
       const [pending] = state.live.pendingSubmissions.splice(pendingIndex, 1) as [
         SessionProtocolPendingIdleSubmission,
       ];
@@ -1008,6 +994,8 @@ export class SessionProtocolHandler {
       } catch (error) {
         this.sendUserMessageDrainFailure([pending], error);
         return { type: "failed" as const, error };
+      } finally {
+        release();
       }
     });
 
@@ -1130,26 +1118,22 @@ export class SessionProtocolHandler {
 
   private async executeExec(
     state: SessionProtocolHandlerSessionState,
-    request: Extract<SessionProtocolRequestMessage, { method: "session.exec" }>,
+    request: Extract<SessionProtocolRequestMessage, { method: "session.exec" | "session.bash" }>,
     signal: AbortSignal,
   ): Promise<void> {
     try {
-      const result = await state.session.exec({
-        execId: request.params.execId,
-        command: request.params.command,
-        ...(request.params.args !== undefined ? { args: request.params.args } : {}),
-        ...(request.params.env !== undefined ? { env: request.params.env } : {}),
-        ...(request.params.stdinBase64 !== undefined
-          ? { stdinBase64: request.params.stdinBase64 }
-          : {}),
-        ...(request.params.cwd !== undefined ? { cwd: request.params.cwd } : {}),
-        ...(request.params.timeoutMs !== undefined ? { timeoutMs: request.params.timeoutMs } : {}),
-        ...(request.params.maxCaptureBytes !== undefined
-          ? { maxCaptureBytes: request.params.maxCaptureBytes }
-          : {}),
-        signal,
-      });
-      this.sendMessage(createSessionProtocolSuccessResponse(request.id, "session.exec", result));
+      signal.throwIfAborted();
+      if (request.method === "session.bash") {
+        if (request.params.addToContext && this.getPendingMutationCount(state) > 0) {
+          this.sendSubmitBusy(state, request.id);
+          return;
+        }
+        const result = await state.session.bash({ ...request.params, signal });
+        this.sendMessage(createSessionProtocolSuccessResponse(request.id, request.method, result));
+      } else {
+        const result = await state.session.exec({ ...request.params, signal });
+        this.sendMessage(createSessionProtocolSuccessResponse(request.id, request.method, result));
+      }
     } catch (error) {
       const cancelled = signal.aborted || isAbortError(error);
       const busy = error instanceof SessionExecBusyError;
@@ -1486,6 +1470,16 @@ export class SessionProtocolHandler {
       }
       if (state.session.sessionId !== request.params.sessionId) {
         this.sendSessionNotFound(request.id, request.params.sessionId);
+        return;
+      }
+      if (state.session.isContextBashRunning) {
+        this.sendMessage(
+          createSessionProtocolErrorResponse(
+            request.id,
+            SESSION_PROTOCOL_ERROR_CODES.busy,
+            "a context-adding shell command is in progress",
+          ),
+        );
         return;
       }
       await this.interruptAndWaitForActiveSubmit(state);

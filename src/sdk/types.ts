@@ -212,7 +212,7 @@ export type TauSdkSession = {
   cancelPendingMessages(): Promise<TauSdkSessionCancelPendingMessagesResult>;
   retry(): Promise<TauSdkSessionRetryResult>;
   bash(
-    input: Omit<SessionProtocolBashParams, "sessionId" | "execId">,
+    input: Omit<SessionProtocolBashParams, "sessionId" | "execId"> & { signal?: AbortSignal },
   ): Promise<SessionProtocolBashResult>;
   exec(command: string, options?: TauSdkSessionExecOptions): Promise<TauSdkSessionExecResult>;
   sample(input: TauSdkSessionSampleInput): Promise<TauSdkSessionSampleResult>;

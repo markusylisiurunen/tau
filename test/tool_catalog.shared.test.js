@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import { NotificationInbox } from "../dist/core/agent/notification_inbox.js";
+import { AgentSupervisor } from "../dist/core/subagents/agent_supervisor.js";
+import { AgentJobRegistry } from "../dist/core/tools/agent_jobs.js";
 import { BashJobRegistry } from "../dist/core/tools/bash_jobs.js";
 import { ToolCatalog } from "../dist/core/tools/catalog.js";
 import { CodeJobRegistry } from "../dist/core/tools/code_jobs.js";
@@ -53,6 +56,8 @@ describe("ToolCatalog", () => {
       history: {},
     };
     const main = ToolCatalog.createDebugRegistry(options);
+    expect(main.get("list_notifications")).toBeUndefined();
+    expect(main.get("read_notification")).toBeUndefined();
     const child = ToolCatalog.createSubagentRegistry(
       tools,
       options.backend,
@@ -97,12 +102,28 @@ describe("ToolCatalog", () => {
       new CodeJobRegistry(),
     );
     const intrinsicTools = ["tau_docs"];
-    expect(main.schemas.map((tool) => tool.name)).toEqual([
-      ...intrinsicTools,
+    expect(main.schemas.map((tool) => tool.name)).toEqual(intrinsicTools);
+    expect(child.schemas.map((tool) => tool.name)).toEqual(intrinsicTools);
+  });
+
+  it("keeps main-session inbox tools when the agents capability is disabled", () => {
+    const jobs = new AgentJobRegistry();
+    const registry = ToolCatalog.createSessionRegistry({
+      backend: createBackend(),
+      cwd: "/workspace",
+      config: {},
+      persona: { tools: [] },
+      modelResolver: () => undefined,
+      jobs,
+      ...jobs.create(),
+      supervisor: new AgentSupervisor({ mainAgentId: "main", onEvent: () => {} }),
+      notifications: new NotificationInbox(),
+    });
+    expect(registry.schemas.map((tool) => tool.name)).toEqual([
+      "tau_docs",
       "list_notifications",
       "read_notification",
     ]);
-    expect(child.schemas.map((tool) => tool.name)).toEqual(intrinsicTools);
   });
 
   it("isolates Bash jobs across child registries without losing their working directory", async () => {

@@ -66,8 +66,7 @@ function createHostedSession(sessionId, sessions, options = {}) {
     get isTurnRunning() {
       return running;
     },
-    setPendingUserInput: vi.fn(),
-    holdTurnAdmission: () => () => {},
+    holdTurnAdmission: vi.fn(() => () => {}),
     waitForActiveTurn: async () => {},
     onTurnIdle: () => () => {},
     get canAcceptSteering() {

@@ -904,12 +904,10 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   private readonly activeExecAbortControllers = new Map<string, AbortController>();
   private readonly turnIdleListeners = new Set<() => void>();
   private wakeScheduled = false;
-  private notificationTurnPromise?: Promise<void>;
   private turnAdmissionHolds = 0;
   private readonly unsubscribeNotifications: () => void;
-  private automaticTurnPending = false;
+  private contextBashCount = 0;
   private notificationWakePaused = false;
-  private pendingUserInput = false;
   private activeTurnPromise?: Promise<unknown>;
   private activeLogicalTurn?: ActiveLogicalTurn;
   private disposePromise?: Promise<void>;
@@ -971,8 +969,12 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
   get isTurnRunning(): boolean {
     return (
-      this.automaticTurnPending || Boolean(this.activeLogicalTurn) || this.runtime.isTurnRunning
+      this.contextBashCount > 0 || Boolean(this.activeLogicalTurn) || this.runtime.isTurnRunning
     );
+  }
+
+  get isContextBashRunning(): boolean {
+    return this.contextBashCount > 0;
   }
 
   onTurnIdle(handler: () => void): () => void {
@@ -993,18 +995,12 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     }
   }
 
-  setPendingUserInput(pending: boolean): void {
-    this.pendingUserInput = pending;
-    if (!pending) this.scheduleNotificationWake();
-  }
-
   private canWakeForNotifications(): boolean {
     return (
       !this.disposed &&
       !this.disposing &&
       !this.notificationWakePaused &&
       !this.isTurnRunning &&
-      !this.pendingUserInput &&
       this.turnAdmissionHolds === 0 &&
       this.activeExecAbortControllers.size === 0 &&
       !this.pendingAcceptedTurnHistoryEntryIds.size &&
@@ -1022,10 +1018,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   }
 
   async waitForActiveTurn(): Promise<void> {
-    await Promise.allSettled([
-      ...(this.activeTurnPromise ? [this.activeTurnPromise] : []),
-      ...(this.notificationTurnPromise ? [this.notificationTurnPromise] : []),
-    ]);
+    await Promise.allSettled([...(this.activeTurnPromise ? [this.activeTurnPromise] : [])]);
     await this.mutationQueue;
   }
 
@@ -1036,15 +1029,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       await new Promise<void>((resolve) => setImmediate(resolve));
       this.wakeScheduled = false;
       if (!this.canWakeForNotifications()) return;
-      this.automaticTurnPending = true;
-      try {
-        this.notificationTurnPromise = this.runNotificationTurn();
-        await this.notificationTurnPromise;
-      } finally {
-        this.notificationTurnPromise = undefined;
-        this.automaticTurnPending = false;
-        this.notifyTurnIdle();
-      }
+      await this.runNotificationTurn();
     });
   }
 
@@ -1052,18 +1037,23 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     const id = this.createTurnHistoryEntryId();
     this.pendingAcceptedTurnHistoryEntryIds.add(id);
     try {
-      if (await this.runtime.commitNotifications(id)) {
-        if (this.notificationWakePaused) await this.settleTurn(id, abortedTurnOutcome());
-        else await this.runAcceptedTurn(id);
-      }
+      await this.runLogicalTurn(async (logicalTurn) => {
+        if (!(await this.runtime.commitNotifications(id))) return;
+        const outcome = await this.runTurnNow(logicalTurn, id);
+        try {
+          await this.settleTurn(id, outcome);
+        } catch (error) {
+          this.notificationWakePaused = true;
+          await this.settleTurn(id, await this.cleanupFailedTurn(id, error));
+        }
+      });
     } catch (error) {
       this.notificationWakePaused = true;
+      if (this.turns.has(id)) {
+        this.invalidateProjection(error);
+        return;
+      }
       try {
-        if (this.turns.get(id)?.state === "running") {
-          const outcome = await this.cleanupFailedTurn(id, error);
-          await this.settleTurn(id, outcome);
-          return;
-        }
         await this.enqueueMutation(async () => {
           const item = this.appendNoticeTimelineItem(
             `automatic-turn-failed-${randomUUID()}`,
@@ -1095,7 +1085,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   }
 
   get canAcceptSteering(): boolean {
-    return this.runtime.isTurnRunning;
+    return this.contextBashCount === 0 && this.runtime.isTurnRunning;
   }
 
   get sessionId(): string {
@@ -1405,8 +1395,20 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     options: Omit<SessionProtocolBashParams, "sessionId"> & { signal?: AbortSignal },
   ): Promise<SessionProtocolBashResult> {
     this.assertActive();
-    if (options.addToContext) this.createTurnHistoryEntryId(options.historyEntryId);
+    if (!options.addToContext) {
+      return await this.runExec(options.execId, options.signal, async (signal) => {
+        signal.throwIfAborted();
+        return await runDirectBashCommand({
+          ...options,
+          backend: this.executionEnvironment.getToolExecutionBackend(),
+          workingDirectory: this.executionEnvironment.snapshot().cwd,
+          signal,
+        });
+      });
+    }
+    this.createTurnHistoryEntryId(options.historyEntryId);
     const release = this.holdTurnAdmission();
+    this.contextBashCount += 1;
     try {
       return await this.runExec(options.execId, options.signal, async (signal) => {
         await new Promise<void>((resolve, reject) => {
@@ -1428,7 +1430,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
           actionLabel: options.actionLabel,
           addToContext: options.addToContext,
           addUserText: async (text) => {
-            signal.throwIfAborted();
             return (await this.record({ text, historyEntryId: options.historyEntryId }))
               .userHistoryEntryId;
           },
@@ -1437,7 +1438,9 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         return result;
       });
     } finally {
+      this.contextBashCount -= 1;
       release();
+      this.notifyTurnIdle();
     }
   }
 
@@ -1750,6 +1753,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       ? AbortSignal.any([externalSignal, abortController.signal])
       : abortController.signal;
     try {
+      signal.throwIfAborted();
       return await this.runActiveWork(operation, signal);
     } finally {
       if (this.activeExecAbortControllers.get(execId) === abortController) {
@@ -1810,6 +1814,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
   async interruptSubagent(subagentId: string): Promise<SessionProtocolInterruptSubagentResult> {
     this.assertActive();
+    this.notificationWakePaused = true;
     return { found: await this.session.interruptSubagent(subagentId) };
   }
 
@@ -2124,7 +2129,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
           ? { usageCheckpoint: { ...agentState.usageCheckpoint } }
           : {}),
       },
-      lifecycle: this.activeTurnPromise || this.runtime.isTurnRunning ? "running" : "idle",
+      lifecycle: this.activeLogicalTurn || this.runtime.isTurnRunning ? "running" : "idle",
       costTotal: this.costTotal,
       settings: {
         autoCompactThresholdTokens: this.runtime.autoCompactOverrideTokens,

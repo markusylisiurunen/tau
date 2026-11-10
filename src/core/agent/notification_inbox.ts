@@ -1,5 +1,9 @@
 import { formatTauHiddenSystemBlock } from "../utils/user_metadata.js";
 
+export const MAX_NOTIFICATIONS = 256;
+export const MAX_NOTIFICATION_TITLE_CHARS = 512;
+export const MAX_NOTIFICATION_BODY_CHARS = 8192;
+
 export type Notification = { id: string; title: string; body?: string; read: boolean };
 export type NotificationSignal = {
   generation: number;
@@ -23,11 +27,12 @@ export class NotificationInbox {
     const id = `n-${++this.generation}`;
     this.entries.set(id, {
       id,
-      title: title.replace(/[\r\n]/g, " ").slice(0, 512),
-      ...(body === undefined ? {} : { body: body.slice(0, 8192) }),
+      title: title.replace(/[\r\n]/g, " ").slice(0, MAX_NOTIFICATION_TITLE_CHARS),
+      ...(body === undefined ? {} : { body: body.slice(0, MAX_NOTIFICATION_BODY_CHARS) }),
       read: false,
     });
-    if (this.entries.size > 256) this.entries.delete(this.entries.keys().next().value!);
+    if (this.entries.size > MAX_NOTIFICATIONS)
+      this.entries.delete(this.entries.keys().next().value!);
     for (const listener of this.listeners) listener();
   }
 

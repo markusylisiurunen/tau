@@ -1,6 +1,6 @@
 import {
-  parseSessionProtocolToolRunPresentation,
-  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES,
+  parseSessionProtocolToolRunPresentation as parseToolRunPresentation,
+  SESSION_PROTOCOL_MAX_TOOL_RUN_PRESENTATION_BYTES,
   type SessionProtocolToolRunPresentation,
 } from "../../protocol/session_protocol.js";
 import {
@@ -19,15 +19,14 @@ import {
   TOOL_NAME_WRITE,
 } from "./tool_names.js";
 
-export type ToolCardLineTone = "added" | "removed";
-
-export type ToolCardWrap = "word" | "character";
-
-export type ToolCardLine = {
-  text: string;
-  tone?: ToolCardLineTone;
-  wrap: ToolCardWrap;
+export {
+  parseToolRunPresentation,
+  SESSION_PROTOCOL_MAX_TOOL_RUN_PRESENTATION_BYTES as TOOL_RUN_PRESENTATION_MAX_BYTES,
 };
+
+export type ToolCardLine = SessionProtocolToolRunPresentation["details"][number];
+export type ToolCardLineTone = NonNullable<ToolCardLine["tone"]>;
+export type ToolCardWrap = ToolCardLine["wrap"];
 
 export type ToolCardLineInput = Omit<ToolCardLine, "wrap"> & { wrap?: ToolCardWrap };
 
@@ -53,8 +52,6 @@ export type ToolRunActionLabels = Record<ToolRunPresentationStatus, string>;
 export type ToolRunPresentation = SessionProtocolToolRunPresentation;
 
 export const TOOL_UI_FACET_VERSION = 3;
-export const TOOL_RUN_PRESENTATION_MAX_BYTES =
-  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES * 2;
 export const TOOL_CARD_SUBJECT_MAX_LINES = 8;
 export const TOOL_CARD_DEFAULT_DETAILS_MAX_LINES = 7;
 export const TOOL_CARD_TRUNCATED_DETAILS_MAX_LINES = 33;
@@ -316,10 +313,6 @@ export function truncateToolRunSubject(
     maxLineChars,
     strategy: options.strategy,
   });
-}
-
-export function parseToolRunPresentation(value: unknown): ToolRunPresentation {
-  return parseSessionProtocolToolRunPresentation(value);
 }
 
 function getToolRunActionLabels(toolName: string): ToolRunActionLabels {

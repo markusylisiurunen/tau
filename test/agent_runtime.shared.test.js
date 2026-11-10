@@ -247,7 +247,7 @@ describe("AgentRuntime", () => {
     },
   );
 
-  it.each(["steering", "boundary"])(
+  it.each(["steering", "boundary", "aborted"])(
     "preserves %s rules when notifications arrive",
     async (mode) => {
       const notifications = new NotificationInbox();
@@ -263,7 +263,7 @@ describe("AgentRuntime", () => {
           },
           async result() {
             return createAssistant(persona, "first", {
-              stopReason: mode === "steering" ? "error" : "stop",
+              stopReason: mode === "steering" ? "error" : mode === "aborted" ? "aborted" : "stop",
             });
           },
         },
@@ -273,9 +273,10 @@ describe("AgentRuntime", () => {
       await started.promise;
       notifications.add("child finished");
       const steering = mode === "steering" ? runtime.steer("correction") : undefined;
-      if (!steering) runtime.requestStopAtBoundary();
+      if (mode === "boundary") runtime.requestStopAtBoundary();
       gate.resolve();
-      await running;
+      const result = await running;
+      if (mode === "aborted") expect(result.finalMessage.stopReason).toBe("aborted");
       if (steering) expect((await steering.result).result.finalMessage.stopReason).toBe("stop");
       expect(stream).toHaveBeenCalledTimes(steering ? 2 : 1);
       expect(notifications.hasUndelivered()).toBe(!steering);

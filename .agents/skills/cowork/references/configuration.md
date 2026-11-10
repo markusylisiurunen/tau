@@ -42,7 +42,7 @@ Prompts are refreshed from the default branch on every invocation, including res
 
 Planning, PR conversation, and explanation sessions keep their workflow instructions, including the repository prompt, in the session history and follow the newest copy from the next request. Compaction tries to keep these instructions word for word but may still shorten or lose them. If a long-running planning session or PR conversation stops following its guidance, `/restart` gives it a fresh copy on the next request.
 
-Built-in reviews can use parallel subreviews when trusted append guidance specifies an exact launch model. If that prompt is centrally managed, change its source instead of editing the generated prompt by hand. A replacement review prompt must define its own subagent behavior.
+Built-in reviews can use parallel subreviews when trusted append guidance specifies an exact launch model. The review mentions its subagents only when one fails, to say which coverage is missing. Anything else the summary should report, such as review depth or cost, belongs in the append guidance. If that prompt is centrally managed, change its source instead of editing the generated prompt by hand. A replacement review prompt must define its own subagent behavior.
 
 ## PR commands
 

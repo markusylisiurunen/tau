@@ -11,6 +11,7 @@ import { LocalHistoryStore } from "../dist/core/history/local_history_store.js";
 import { resolveModel } from "../dist/core/models/catalog.js";
 import { personas } from "../dist/core/personas.js";
 import { buildAutoCompactionContinuationMessage } from "../dist/core/session/compaction.js";
+import { runDirectBashCommand } from "../dist/core/session/direct_bash.js";
 import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
 import {
   buildToolRunPresentation,
@@ -318,6 +319,17 @@ class FakeSession {
     }
     return createProtocolExecResult({ output });
   });
+  bash = vi.fn(async (input) =>
+    runDirectBashCommand({
+      ...input,
+      workingDirectory: "/session/repo",
+      backend: {
+        runBash: (command, options) => this.exec(command, { ...options, cwd: "/session/repo" }),
+      },
+      addUserText: async (text) =>
+        (await this.record(text, { historyEntryId: input.historyEntryId })).userHistoryEntryId,
+    }),
+  );
   record = vi.fn(async (text, options = {}) => {
     this.operationLog.push("record");
     const historyEntryId = options.historyEntryId ?? "added-user";
@@ -2487,9 +2499,11 @@ describe("SessionChatController", () => {
     controller.getInputHandlers().onSubmit("!pwd");
     await flush();
 
-    expect(session.exec).toHaveBeenCalledWith("pwd", {
-      cwd: "/session/repo",
-      timeoutMs: 60000,
+    expect(session.bash).toHaveBeenCalledWith({
+      command: "pwd",
+      addToContext: true,
+      actionLabel: "you ran",
+      historyEntryId: expect.stringMatching(/^bash-user-/),
     });
     expect(session.record).toHaveBeenCalledWith(
       expect.stringContaining("Bash command output:"),
@@ -2544,9 +2558,11 @@ describe("SessionChatController", () => {
     controller.getInputHandlers().onSubmit("!!pwd");
     await flush();
 
-    expect(session.exec).toHaveBeenCalledWith("pwd", {
-      cwd: "/session/repo",
-      timeoutMs: 60000,
+    expect(session.bash).toHaveBeenCalledWith({
+      command: "pwd",
+      addToContext: false,
+      actionLabel: "incognito",
+      historyEntryId: expect.stringMatching(/^bash-user-/),
     });
     expect(session.record).not.toHaveBeenCalled();
     expect(view.localToolModels).toEqual(

@@ -23,7 +23,6 @@ import { buildDiffReviewInstructions } from "../core/diff_review/review_instruct
 import type { HistoryDiagnostic } from "../core/history/history_manager.js";
 import { type CoreDeps, createDefaultCoreDeps } from "../core/runtime/deps.js";
 import { getEffectiveAutoCompactThresholdTokens } from "../core/session/auto_compaction_threshold.js";
-import { runDirectBashCommand } from "../core/session/direct_bash.js";
 import type { SubagentEvent } from "../core/subagents/types.js";
 import {
   buildToolRunPresentation,
@@ -689,22 +688,11 @@ export class SessionChatController {
     this.refreshStatus();
 
     try {
-      const backend = createSdkToolExecutionBackend({
-        executionEnvironment: this.session,
-        cwd: this.snapshot.executionEnvironment.cwd,
-      });
-      const result = await runDirectBashCommand({
+      const result = await this.session.bash({
         command,
-        backend,
-        workingDirectory,
         actionLabel: options.labelOverride,
         addToContext: options.addToContext,
-        addUserText: async (text) => {
-          const recorded = await this.session.record(text, {
-            historyEntryId: toolCallId,
-          });
-          return recorded.userHistoryEntryId;
-        },
+        historyEntryId: toolCallId,
       });
       if (result.userHistoryEntryId) {
         this.hiddenHistoryEntryIds.add(result.userHistoryEntryId);

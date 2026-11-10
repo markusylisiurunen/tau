@@ -1,6 +1,8 @@
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import type {
   SessionProtocolAutocompletePathsResult,
+  SessionProtocolBashParams,
+  SessionProtocolBashResult,
   SessionProtocolCancelPendingMessagesResult,
   SessionProtocolClientToolDefinition,
   SessionProtocolCompactResult,
@@ -209,6 +211,9 @@ export type TauSdkSession = {
   steer(text: string): Promise<TauSdkSessionSteerResult>;
   cancelPendingMessages(): Promise<TauSdkSessionCancelPendingMessagesResult>;
   retry(): Promise<TauSdkSessionRetryResult>;
+  bash(
+    input: Omit<SessionProtocolBashParams, "sessionId" | "execId">,
+  ): Promise<SessionProtocolBashResult>;
   exec(command: string, options?: TauSdkSessionExecOptions): Promise<TauSdkSessionExecResult>;
   sample(input: TauSdkSessionSampleInput): Promise<TauSdkSessionSampleResult>;
   interrupt(): Promise<TauSdkSessionInterruptResult>;

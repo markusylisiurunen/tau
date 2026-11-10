@@ -4,6 +4,8 @@ export type {
   SessionProtocolAgentRunState,
   SessionProtocolAutocompletePathsParams,
   SessionProtocolAutocompletePathsResult,
+  SessionProtocolBashParams,
+  SessionProtocolBashResult,
   SessionProtocolBootstrapSnapshot,
   SessionProtocolCancelExecParams,
   SessionProtocolCancelExecResult,

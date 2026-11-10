@@ -2,6 +2,8 @@ import type { CancelledSteeringSubmission } from "../core/agent/agent_runtime.js
 import type {
   SessionProtocolAutocompletePathsParams,
   SessionProtocolAutocompletePathsResult,
+  SessionProtocolBashParams,
+  SessionProtocolBashResult,
   SessionProtocolClientToolCallMessage,
   SessionProtocolClientToolCancelMessage,
   SessionProtocolClientToolDefinition,
@@ -92,6 +94,9 @@ export type TauHostedSession = {
     }>;
   };
   cancelSteering(): CancelledSteeringSubmission[];
+  bash(
+    options: Omit<SessionProtocolBashParams, "sessionId"> & { signal?: AbortSignal },
+  ): Promise<SessionProtocolBashResult>;
   exec(
     options: Omit<SessionProtocolExecParams, "sessionId"> & {
       signal?: AbortSignal;

@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type {
+  SessionProtocolBashParams,
+  SessionProtocolBashResult,
   SessionProtocolClientToolCallMessage,
   SessionProtocolClientToolCancelMessage,
   SessionProtocolCreateParams,
@@ -409,6 +411,13 @@ class TauSdkClientImpl implements TauSdkClient {
     });
   }
 
+  sendBash(
+    sessionId: string,
+    input: Omit<SessionProtocolBashParams, "sessionId" | "execId">,
+  ): Promise<SessionProtocolBashResult> {
+    return this.transport.request("session.bash", { ...input, sessionId, execId: randomUUID() });
+  }
+
   sendSample(
     sessionId: string,
     input: Omit<SessionProtocolSampleParams, "sessionId">,
@@ -779,6 +788,12 @@ class TauSdkSessionImpl implements TauSdkSession {
     options: TauSdkSessionExecOptions = {},
   ): Promise<SessionProtocolResultByMethod["session.exec"]> {
     return await this.client.executeInSession(this.activeSessionId(), command, options);
+  }
+
+  bash(
+    input: Omit<SessionProtocolBashParams, "sessionId" | "execId">,
+  ): Promise<SessionProtocolBashResult> {
+    return this.client.sendBash(this.activeSessionId(), input);
   }
 
   async sample(

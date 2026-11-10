@@ -36,6 +36,7 @@ import {
   SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_SUBJECT_BYTES,
   SESSION_PROTOCOL_VERSION,
 } from "../dist/protocol/session_protocol.js";
+import { createTauSdkClientFromTransport } from "../dist/sdk/session.js";
 import { FileSessionStore } from "../dist/store/file_session_store.js";
 import { MemorySessionStore } from "../dist/store/memory_session_store.js";
 import {
@@ -43,6 +44,7 @@ import {
   STORED_SESSION_DOCUMENT_FORMAT,
   STORED_SESSION_DOCUMENT_VERSION,
 } from "../dist/store/session_snapshot_migrations.js";
+import { InProcessSessionProtocolTransport } from "../dist/transport/in_process_session_transport.js";
 import {
   createProtocolImage,
   createProtocolSnapshot,
@@ -458,6 +460,180 @@ describe("HostedEphemeralAgentSession", () => {
 });
 
 describe("LocalSessionHost", () => {
+  it("defers notification wakes through SDK shell execution and durable output recording", async () => {
+    const store = new MemorySessionStore();
+    const { backend, complete } = createPendingBashBackend();
+    const host = createHost(store, {
+      executionEnvironmentResolver: {
+        resolve: async () => createTestExecutionEnvironment(undefined, backend),
+      },
+    });
+    const session = await host.createSession(localCreateInput);
+    const client = await createTauSdkClientFromTransport(
+      new InProcessSessionProtocolTransport({ host }),
+    );
+    const observed = await client.sessions.observe(session.sessionId);
+    let projected = await observed.snapshot();
+    observed.onDelta((delta) => {
+      projected = applySessionProtocolDelta(projected, delta);
+    });
+    const recordGate = deferred();
+    let recording = false;
+    const commit = store.commitSessionSnapshot.bind(store);
+    vi.spyOn(store, "commitSessionSnapshot").mockImplementation(async (snapshot, options) => {
+      if (!recording && snapshot.messages.some((message) => message.id === "shell-output")) {
+        recording = true;
+        await recordGate.promise;
+      }
+      return await commit(snapshot, options);
+    });
+    const stream = vi.fn(() => ({
+      async *[Symbol.asyncIterator]() {},
+      async result() {
+        expect(
+          (await store.loadSession(session.sessionId)).messages.some(
+            (message) => message.id === "shell-output",
+          ),
+        ).toBe(true);
+        return fauxAssistantMessage("done");
+      },
+    }));
+    session.runtime.agent.spec.model.stream = stream;
+    try {
+      const shell = observed.bash({
+        command: "pwd",
+        addToContext: true,
+        historyEntryId: "shell-output",
+        actionLabel: "you ran",
+      });
+      await vi.waitFor(() => expect(backend.runBash).toHaveBeenCalledTimes(1));
+      session.runtime.notifications.add("child finished");
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(stream).not.toHaveBeenCalled();
+      complete();
+      await vi.waitFor(() => expect(recording).toBe(true));
+      expect(stream).not.toHaveBeenCalled();
+      expect(session.runtime.notifications.hasUndelivered()).toBe(true);
+      recordGate.resolve();
+      expect(await shell).toMatchObject({ exitCode: 0, userHistoryEntryId: "shell-output" });
+      await vi.waitFor(() => expect(stream).toHaveBeenCalledTimes(1));
+      await session.waitForActiveWork();
+      expect(projected).toEqual(await observed.snapshot());
+      expect(Object.values(projected.turns)).toEqual([
+        expect.objectContaining({
+          state: "settled",
+          outcome: expect.objectContaining({ status: "completed" }),
+        }),
+      ]);
+      session.runtime.notifications.add("later completion");
+      await vi.waitFor(() => expect(stream).toHaveBeenCalledTimes(2));
+      await session.waitForActiveWork();
+    } finally {
+      complete();
+      recordGate.resolve();
+      await client.close();
+      await host.shutdown();
+    }
+  });
+
+  it("releases shell admission when its client disconnects", async () => {
+    const { backend, complete } = createPendingBashBackend();
+    const host = createHost(new MemorySessionStore(), {
+      executionEnvironmentResolver: {
+        resolve: async () => createTestExecutionEnvironment(undefined, backend),
+      },
+    });
+    const session = await host.createSession(localCreateInput);
+    host.setRetention(session.sessionId, 60_000);
+    const client = await createTauSdkClientFromTransport(
+      new InProcessSessionProtocolTransport({ host }),
+    );
+    const observed = await client.sessions.observe(session.sessionId);
+    const stream = vi.fn(() => ({
+      async *[Symbol.asyncIterator]() {},
+      async result() {
+        return fauxAssistantMessage("done");
+      },
+    }));
+    session.runtime.agent.spec.model.stream = stream;
+    try {
+      const shell = observed
+        .bash({
+          command: "pwd",
+          addToContext: true,
+          historyEntryId: "shell-output",
+          actionLabel: "you ran",
+        })
+        .catch((error) => error);
+      await vi.waitFor(() => expect(backend.runBash).toHaveBeenCalledTimes(1));
+      session.runtime.notifications.add("child finished");
+      await client.close();
+      expect(await shell).toBeInstanceOf(Error);
+      await vi.waitFor(() => expect(stream).toHaveBeenCalledTimes(1));
+      await session.waitForActiveWork();
+      expect(
+        (await session.snapshot()).messages.some((message) => message.id === "shell-output"),
+      ).toBe(false);
+    } finally {
+      complete();
+      await client.close();
+      await host.shutdown();
+    }
+  });
+
+  it.each(["failure", "cancel", "incognito", "exec"])(
+    "releases notification admission after shell %s",
+    async (ending) => {
+      const { backend, complete } = createPendingBashBackend();
+      const pendingRun = backend.runBash;
+      backend.runBash = vi.fn(async (...args) => {
+        const result = await pendingRun(...args);
+        if (ending === "failure") throw new Error("execution failed");
+        return result;
+      });
+      const host = createHost(new MemorySessionStore(), {
+        executionEnvironmentResolver: {
+          resolve: async () => createTestExecutionEnvironment(undefined, backend),
+        },
+      });
+      const session = await host.createSession(localCreateInput);
+      const stream = vi.fn(() => ({
+        async *[Symbol.asyncIterator]() {},
+        async result() {
+          return fauxAssistantMessage("done");
+        },
+      }));
+      session.runtime.agent.spec.model.stream = stream;
+      try {
+        const options = {
+          execId: "shell",
+          command: "pwd",
+          addToContext: ending !== "incognito",
+          historyEntryId: "shell-output",
+          actionLabel: "you ran",
+        };
+        const shell = ending === "exec" ? session.exec(options) : session.bash(options);
+        const settled = shell.catch((error) => error);
+        await vi.waitFor(() => expect(backend.runBash).toHaveBeenCalledTimes(1));
+        session.runtime.notifications.add("child finished");
+        await new Promise((resolve) => setImmediate(resolve));
+        expect(stream).not.toHaveBeenCalled();
+        if (ending === "cancel") expect(session.cancelExec("shell")).toBe(true);
+        else complete();
+        const result = await settled;
+        if (ending === "failure" || ending === "cancel") expect(result).toBeInstanceOf(Error);
+        await vi.waitFor(() => expect(stream).toHaveBeenCalledTimes(1));
+        await session.waitForActiveWork();
+        expect(
+          (await session.snapshot()).messages.some((message) => message.id === "shell-output"),
+        ).toBe(false);
+      } finally {
+        complete();
+        await host.shutdown();
+      }
+    },
+  );
+
   it("owns automatic notification turns without clients and pauses wakes until user input", async () => {
     const store = new MemorySessionStore();
     const host = createHost(store);

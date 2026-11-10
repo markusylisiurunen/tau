@@ -17,7 +17,7 @@ import {
 import { environmentVariablesSchema } from "./environment_variables.js";
 import { type IntermediateSystemMessage, isIntermediateSystemMessage } from "./system_message.js";
 
-export const SESSION_PROTOCOL_VERSION = 19 as const;
+export const SESSION_PROTOCOL_VERSION = 20 as const;
 export const MIN_AUTO_COMPACT_THRESHOLD_TOKENS = 50_000;
 export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_IMAGES = 16;
 export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_CONTENT_BLOCKS = 1024;
@@ -61,6 +61,7 @@ export const SESSION_PROTOCOL_METHODS = [
   "session.steer",
   "session.cancelPendingMessages",
   "session.retry",
+  "session.bash",
   "session.exec",
   "session.cancelExec",
   "session.sample",
@@ -184,6 +185,29 @@ export type SessionProtocolRecordParams = SessionProtocolSessionIdParams & {
   historyEntryId?: string;
 };
 export type SessionProtocolRetryParams = SessionProtocolSessionIdParams;
+export type SessionProtocolBashParams = SessionProtocolSessionIdParams & {
+  execId: string;
+  command: string;
+  addToContext: boolean;
+  historyEntryId: string;
+  actionLabel: string;
+};
+export type SessionProtocolToolRunPresentation = {
+  actionByStatus: Record<
+    "preparing" | "queued" | "running" | "succeeded" | "failed" | "blocked" | "cancelled",
+    string
+  >;
+  operation?: string;
+  subject: string;
+  subjectWrap: "word" | "character";
+  details: Array<{ text: string; tone?: "added" | "removed"; wrap: "word" | "character" }>;
+  metadata: string[];
+};
+export type SessionProtocolBashResult = {
+  exitCode: number | null;
+  presentation: SessionProtocolToolRunPresentation;
+  userHistoryEntryId?: string;
+};
 export type SessionProtocolExecParams = SessionProtocolSessionIdParams & {
   execId: string;
   command: string;
@@ -308,6 +332,7 @@ export type SessionProtocolParamsByMethod = {
   "session.steer": SessionProtocolSteerParams;
   "session.cancelPendingMessages": SessionProtocolCancelPendingMessagesParams;
   "session.retry": SessionProtocolRetryParams;
+  "session.bash": SessionProtocolBashParams;
   "session.exec": SessionProtocolExecParams;
   "session.cancelExec": SessionProtocolCancelExecParams;
   "session.sample": SessionProtocolSampleParams;
@@ -1148,6 +1173,7 @@ export type SessionProtocolResultByMethod = {
   "session.steer": SessionProtocolSteerResult;
   "session.cancelPendingMessages": SessionProtocolCancelPendingMessagesResult;
   "session.retry": SessionProtocolRetryResult;
+  "session.bash": SessionProtocolBashResult;
   "session.exec": SessionProtocolExecResult;
   "session.cancelExec": SessionProtocolCancelExecResult;
   "session.sample": SessionProtocolSampleResult;
@@ -1765,6 +1791,87 @@ const sessionProtocolSteerParamsSchema = z
   .strip();
 
 const sessionProtocolRecordParamsSchema = sessionProtocolUserMessageParamsSchema;
+
+const singleLineSchema = z
+  .string()
+  .refine((text) => !text.includes("\n") && !text.includes("\r"), "must be one line");
+const boundedLabelSchema = singleLineSchema
+  .min(1)
+  .refine(
+    (value) => utf8ByteLength(value) <= SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_LABEL_BYTES,
+    `must not exceed ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_LABEL_BYTES} UTF-8 bytes`,
+  );
+const boundedDetailSchema = singleLineSchema.refine(
+  (value) => utf8ByteLength(value) <= SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAIL_BYTES,
+  `must not exceed ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAIL_BYTES} UTF-8 bytes`,
+);
+const boundedMetadataSchema = singleLineSchema.refine(
+  (value) =>
+    utf8ByteLength(value) <= SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_METADATA_VALUE_BYTES,
+  `must not exceed ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_METADATA_VALUE_BYTES} UTF-8 bytes`,
+);
+
+const toolCardLineSchema = z
+  .object({
+    text: boundedDetailSchema,
+    tone: z.enum(["added", "removed"]).optional(),
+    wrap: z.enum(["word", "character"]),
+  })
+  .strict();
+
+const sessionProtocolToolRunPresentationSchema: z.ZodType<SessionProtocolToolRunPresentation> = z
+  .object({
+    actionByStatus: z
+      .object({
+        preparing: boundedLabelSchema,
+        queued: boundedLabelSchema,
+        running: boundedLabelSchema,
+        succeeded: boundedLabelSchema,
+        failed: boundedLabelSchema,
+        blocked: boundedLabelSchema,
+        cancelled: boundedLabelSchema,
+      })
+      .strict(),
+    operation: boundedLabelSchema.optional(),
+    subject: z
+      .string()
+      .min(1)
+      .refine((value) => !value.includes("\r"), "must not contain carriage returns")
+      .refine(
+        (value) =>
+          utf8ByteLength(value) <= SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_SUBJECT_BYTES,
+        `must not exceed ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_SUBJECT_BYTES} UTF-8 bytes`,
+      ),
+    subjectWrap: z.enum(["word", "character"]),
+    details: z.array(toolCardLineSchema).max(SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAILS),
+    metadata: z
+      .array(boundedMetadataSchema)
+      .max(SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_METADATA),
+  })
+  .strict()
+  .refine(
+    (value) =>
+      utf8ByteLength(JSON.stringify(value)) <=
+      SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES * 2,
+    `must not exceed ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES * 2} UTF-8 bytes`,
+  );
+
+export function parseSessionProtocolToolRunPresentation(
+  value: unknown,
+): SessionProtocolToolRunPresentation {
+  return sessionProtocolToolRunPresentationSchema.parse(value);
+}
+
+const sessionProtocolBashParamsSchema = z
+  .object({
+    sessionId: nonEmptyStringSchema,
+    execId: nonEmptyStringSchema,
+    command: nonEmptyProcessStringSchema,
+    addToContext: z.boolean(),
+    historyEntryId: historyEntryIdSchema,
+    actionLabel: boundedLabelSchema,
+  })
+  .strip();
 
 const sessionProtocolExecParamsSchema = z
   .object({
@@ -3456,6 +3563,14 @@ const sessionProtocolRecordResultSchema = z
   })
   .strip();
 
+const sessionProtocolBashResultSchema = z
+  .object({
+    exitCode: z.number().int().nullable(),
+    userHistoryEntryId: historyEntryIdSchema.optional(),
+    presentation: sessionProtocolToolRunPresentationSchema,
+  })
+  .strip();
+
 const sessionProtocolExecResultSchema = z
   .object({
     output: z.string(),
@@ -4610,6 +4725,10 @@ export function validateSessionProtocolParams(
   params: unknown,
 ): SessionProtocolParamsValidationResult<SessionProtocolRetryParams>;
 export function validateSessionProtocolParams(
+  method: "session.bash",
+  params: unknown,
+): SessionProtocolParamsValidationResult<SessionProtocolBashParams>;
+export function validateSessionProtocolParams(
   method: "session.exec",
   params: unknown,
 ): SessionProtocolParamsValidationResult<SessionProtocolExecParams>;
@@ -4717,6 +4836,12 @@ export function validateSessionProtocolParams(
       return validateUserMessageParams(method, params);
     case "session.steer":
       return validateSteerParams(params);
+    case "session.bash": {
+      const parsed = sessionProtocolBashParamsSchema.safeParse(params);
+      return parsed.success
+        ? { ok: true, value: parsed.data }
+        : invalidParams(formatZodError(parsed.error));
+    }
     case "session.exec":
       return validateExecParams(params);
     case "session.cancelExec":
@@ -4821,6 +4946,8 @@ export function validateSessionProtocolResult(
       return validateResult(method, result, sessionProtocolRecordResultSchema);
     case "session.retry":
       return validateResult(method, result, sessionProtocolRetryResultSchema);
+    case "session.bash":
+      return validateResult(method, result, sessionProtocolBashResultSchema);
     case "session.exec":
       return validateResult(method, result, sessionProtocolExecResultSchema);
     case "session.cancelExec":

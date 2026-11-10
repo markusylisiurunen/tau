@@ -271,6 +271,9 @@ export class SessionProtocolHandler {
         case "session.retry":
           await this.handleRetry(request);
           return;
+        case "session.bash":
+          await this.handleBash(request);
+          return;
         case "session.exec":
           await this.handleExec(request);
           return;
@@ -682,6 +685,39 @@ export class SessionProtocolHandler {
         cancelled,
       }),
     );
+  }
+
+  private async handleBash(
+    request: Extract<SessionProtocolRequestMessage, { method: "session.bash" }>,
+  ): Promise<void> {
+    const state = await this.getSessionState(request.params.sessionId);
+    if (!state) {
+      this.sendSessionNotFound(request.id, request.params.sessionId);
+      return;
+    }
+    await this.runSideChannel(async (signal) => {
+      try {
+        await this.runSessionMutation(state, async () => {
+          signal.throwIfAborted();
+          const result = await state.session.bash({ ...request.params, signal });
+          this.sendMessage(
+            createSessionProtocolSuccessResponse(request.id, "session.bash", result),
+          );
+        });
+      } catch (error) {
+        const cancelled = signal.aborted || isAbortError(error);
+        this.sendMessage(
+          createSessionProtocolErrorResponse(
+            request.id,
+            cancelled
+              ? SESSION_PROTOCOL_ERROR_CODES.cancelled
+              : SESSION_PROTOCOL_ERROR_CODES.internalError,
+            cancelled ? "execution was cancelled" : "failed to run shell command",
+            { cause: error instanceof Error ? error.message : String(error) },
+          ),
+        );
+      }
+    });
   }
 
   private async handleExec(

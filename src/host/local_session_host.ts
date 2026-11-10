@@ -19,6 +19,7 @@ import {
   type AutoCompactDefaults,
   getEffectiveAutoCompactThresholdTokens,
 } from "../core/session/auto_compaction_threshold.js";
+import { runDirectBashCommand } from "../core/session/direct_bash.js";
 import type { SubagentEvent } from "../core/subagents/types.js";
 import type { ToolActivity } from "../core/tools/activity.js";
 import { buildToolRunPresentation, TOOL_UI_FACET_VERSION } from "../core/tools/presentation.js";
@@ -41,6 +42,8 @@ import type {
   SessionProtocolAgentRun,
   SessionProtocolAutocompletePathsParams,
   SessionProtocolAutocompletePathsResult,
+  SessionProtocolBashParams,
+  SessionProtocolBashResult,
   SessionProtocolChange,
   SessionProtocolClientToolPresentation,
   SessionProtocolClientToolResult,
@@ -1003,6 +1006,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       !this.isTurnRunning &&
       !this.pendingUserInput &&
       this.turnAdmissionHolds === 0 &&
+      this.activeExecAbortControllers.size === 0 &&
       !this.pendingAcceptedTurnHistoryEntryIds.size &&
       ![...this.turns.values()].some((turn) => turn.state === "running") &&
       this.runtime.notifications.hasUndelivered()
@@ -1397,6 +1401,46 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     return this.runtime.cancelSteering();
   }
 
+  async bash(
+    options: Omit<SessionProtocolBashParams, "sessionId"> & { signal?: AbortSignal },
+  ): Promise<SessionProtocolBashResult> {
+    this.assertActive();
+    if (options.addToContext) this.createTurnHistoryEntryId(options.historyEntryId);
+    const release = this.holdTurnAdmission();
+    try {
+      return await this.runExec(options.execId, options.signal, async (signal) => {
+        await new Promise<void>((resolve, reject) => {
+          const onAbort = () => reject(signal.reason);
+          signal.addEventListener("abort", onAbort, { once: true });
+          void this.waitForActiveTurn()
+            .then(resolve, reject)
+            .finally(() => {
+              signal.removeEventListener("abort", onAbort);
+            });
+          if (signal.aborted) onAbort();
+        });
+        signal.throwIfAborted();
+        const result = await runDirectBashCommand({
+          command: options.command,
+          backend: this.executionEnvironment.getToolExecutionBackend(),
+          signal,
+          workingDirectory: this.executionEnvironment.snapshot().cwd,
+          actionLabel: options.actionLabel,
+          addToContext: options.addToContext,
+          addUserText: async (text) => {
+            signal.throwIfAborted();
+            return (await this.record({ text, historyEntryId: options.historyEntryId }))
+              .userHistoryEntryId;
+          },
+        });
+        signal.throwIfAborted();
+        return result;
+      });
+    } finally {
+      release();
+    }
+  }
+
   async exec(
     options: Omit<SessionProtocolExecParams, "sessionId"> & {
       signal?: AbortSignal;
@@ -1711,6 +1755,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       if (this.activeExecAbortControllers.get(execId) === abortController) {
         this.activeExecAbortControllers.delete(execId);
       }
+      this.scheduleNotificationWake();
     }
   }
 

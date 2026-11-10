@@ -187,6 +187,23 @@ describe("AgentRuntime", () => {
     runtime.dispose();
   });
 
+  it("leaves a last-subturn notification for the next turn without failing the response", async () => {
+    const notifications = new NotificationInbox();
+    const { runtime, persona } = createRuntime({ notifications, maxModelSubturns: 1 });
+    runtime.spec.model.stream = () => ({
+      async *[Symbol.asyncIterator]() {},
+      async result() {
+        notifications.add("child finished");
+        return createAssistant(persona, "done", { stopReason: "stop" });
+      },
+    });
+    const result = await runtime.submit("task");
+    expect(result.limitReached).toBeUndefined();
+    expect(result.finalMessage.stopReason).toBe("stop");
+    expect(notifications.hasUndelivered()).toBe(true);
+    runtime.dispose();
+  });
+
   it.each(["stop", "error", "limit"])(
     "keeps notification continuations in the current turn (%s)",
     async (ending) => {

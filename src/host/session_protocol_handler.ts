@@ -48,7 +48,7 @@ type SessionProtocolPendingIdleSubmission = {
   id: string;
   delivery: "when-idle";
   handler: SessionProtocolHandler;
-  request: Extract<SessionProtocolRequestMessage, { method: "session.queue" | "session.steer" }>;
+  request: SessionProtocolUserSubmissionRequest;
 };
 
 type SessionProtocolPendingBoundarySubmission = {
@@ -136,7 +136,7 @@ function toPendingUserMessage(
 ): SessionProtocolPendingUserMessage {
   return {
     id: pending.id,
-    mode: pending.request.method === "session.queue" ? "queue" : "steer",
+    mode: pending.request.method === "session.steer" ? "steer" : "queue",
     text: pending.request.params.text,
   };
 }
@@ -546,7 +546,7 @@ export class SessionProtocolHandler {
     }
 
     if (state.live.activeSubmit || state.session.isTurnRunning) {
-      if (request.method === "session.submit") {
+      if (request.method === "session.submit" && state.live.activeSubmit) {
         return { type: "busy" as const };
       }
       const pending: SessionProtocolPendingIdleSubmission = {

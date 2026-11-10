@@ -1055,6 +1055,11 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     } catch (error) {
       this.notificationWakePaused = true;
       try {
+        if (this.turns.get(id)?.state === "running") {
+          const outcome = await this.cleanupFailedTurn(id, error);
+          await this.settleTurn(id, outcome);
+          return;
+        }
         await this.enqueueMutation(async () => {
           const item = this.appendNoticeTimelineItem(
             `automatic-turn-failed-${randomUUID()}`,

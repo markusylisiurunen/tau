@@ -594,6 +594,36 @@ describe("LocalSessionHost", () => {
     },
   );
 
+  it("wakes again for a notification arriving on the last automatic subturn", async () => {
+    const host = createHost(new MemorySessionStore());
+    const session = await host.createSession(localCreateInput);
+    const updateSpec = session.runtime.agent.updateSpec.bind(session.runtime.agent);
+    vi.spyOn(session.runtime.agent, "updateSpec").mockImplementation((spec) =>
+      updateSpec({ ...spec, maxModelSubturns: 1 }),
+    );
+    let calls = 0;
+    session.runtime.agent.spec.model.stream = () => ({
+      async *[Symbol.asyncIterator]() {},
+      async result() {
+        if (++calls === 1) session.runtime.notifications.add("another child finished");
+        return fauxAssistantMessage("done");
+      },
+    });
+    try {
+      session.runtime.notifications.add("child finished");
+      await vi.waitFor(() => expect(calls).toBe(2));
+      await session.waitForActiveWork();
+      const turns = Object.values((await session.snapshot()).turns);
+      expect(turns).toHaveLength(2);
+      expect(
+        turns.every((turn) => turn.state === "settled" && turn.outcome.status === "completed"),
+      ).toBe(true);
+      expect(session.runtime.notifications.hasUndelivered()).toBe(false);
+    } finally {
+      await host.shutdown();
+    }
+  });
+
   it("waits for automatic turn interruption and receipt settlement", async () => {
     const host = createHost(new MemorySessionStore());
     const session = await host.createSession(localCreateInput);
@@ -633,6 +663,65 @@ describe("LocalSessionHost", () => {
       await host.shutdown();
     }
   });
+
+  it.each([false, true])(
+    "recovers automatic receipt settlement failures (persistent: %s)",
+    async (persistent) => {
+      const store = new MemorySessionStore();
+      const host = createHost(store);
+      const session = await host.createSession(localCreateInput);
+      session.runtime.agent.spec.model.stream = () => ({
+        async *[Symbol.asyncIterator]() {},
+        async result() {
+          return fauxAssistantMessage("done");
+        },
+      });
+      const commit = store.commitSessionSnapshot.bind(store);
+      let failures = 0;
+      vi.spyOn(store, "commitSessionSnapshot").mockImplementation(async (snapshot, options) => {
+        if (
+          Object.values(snapshot.turns).some((turn) => turn.state === "settled") &&
+          (persistent || failures === 0)
+        ) {
+          failures += 1;
+          throw new Error("settlement write failed");
+        }
+        return await commit(snapshot, options);
+      });
+      try {
+        session.runtime.notifications.add("child finished");
+        await vi.waitFor(() => expect(failures).toBeGreaterThan(0));
+        await session.waitForActiveWork();
+        if (persistent) {
+          await expect(session.snapshot()).rejects.toThrow();
+          await session.dispose();
+        } else {
+          const snapshot = await session.snapshot();
+          expect(Object.values(snapshot.turns)).toEqual([
+            expect.objectContaining({
+              state: "settled",
+              outcome: expect.objectContaining({ status: "failed" }),
+            }),
+          ]);
+          expect(await store.loadSession(session.sessionId)).toEqual(snapshot);
+          const accepted = await session.acceptTurn({ text: "continue" });
+          await session.runAcceptedTurn(accepted.userHistoryEntryId);
+          session.runtime.notifications.add("another child finished");
+          await vi.waitFor(async () =>
+            expect(Object.values((await session.snapshot()).turns)).toHaveLength(3),
+          );
+          await session.waitForActiveWork();
+          expect(
+            Object.values((await session.snapshot()).turns).every(
+              (turn) => turn.state === "settled",
+            ),
+          ).toBe(true);
+        }
+      } finally {
+        await host.shutdown();
+      }
+    },
+  );
 
   it("surfaces automatic admission failures and leaves the notification undelivered", async () => {
     const host = createHost(new MemorySessionStore());

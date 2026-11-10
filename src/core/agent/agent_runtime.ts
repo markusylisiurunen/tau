@@ -1255,7 +1255,9 @@ export class AgentRuntime {
 
       if (signal.aborted || this.stopAtBoundaryRequested) break;
       const deliverNotifications =
-        finalMessage?.stopReason !== "error" && this.notifications?.hasUndelivered();
+        subturns < turnSettings.maxModelSubturns &&
+        finalMessage?.stopReason !== "error" &&
+        this.notifications?.hasUndelivered();
       const hasToolCalls =
         finalMessage?.stopReason === "toolUse" &&
         finalMessage.content.some((content) => content.type === "toolCall");

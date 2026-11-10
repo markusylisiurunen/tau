@@ -128,6 +128,7 @@ function createHarness(options = {}) {
 
   const createHostedSession = (recoveredSessionId) => {
     const deltaHandlers = new Set();
+    const turnIdleHandlers = new Set();
     const subagentActivitiesHandlers = new Set();
     const subagentActivitiesByAgent = {};
     let subagentActivitiesRevision = 1;
@@ -190,7 +191,10 @@ function createHarness(options = {}) {
       waitForActiveTurn: async () => {
         await activeTurnSettlement;
       },
-      onTurnIdle: () => () => {},
+      onTurnIdle(handler) {
+        turnIdleHandlers.add(handler);
+        return () => turnIdleHandlers.delete(handler);
+      },
       get canAcceptSteering() {
         return running;
       },
@@ -331,6 +335,7 @@ function createHarness(options = {}) {
           pendingTurn = null;
           pendingTurnResult = { status: "completed", stopReason: "stop" };
           settleTurn();
+          for (const handler of turnIdleHandlers) handler();
         }
       },
       async retryTurn() {
@@ -1832,6 +1837,28 @@ describe("SessionProtocolHandler", () => {
     expect(harness.lines.find((line) => line.id === "exec-second")).toEqual(
       expect.objectContaining({ ok: true }),
     );
+  });
+
+  it("queues a submit racing with a host-owned turn and drains it when idle", async () => {
+    const harness = createHarness();
+    const automatic = harness.seededSession.runTurn();
+    await harness.connection.handleRequest(
+      request("user-during-automatic", "session.submit", {
+        sessionId: "session-1",
+        text: "follow my instruction",
+      }),
+    );
+    expect(harness.lines.some((line) => line.id === "user-during-automatic")).toBe(false);
+    expect(harness.seededSession.setPendingUserInput).toHaveBeenCalledWith(true);
+    harness.releaseTurn();
+    await automatic;
+    await waitFor(() => harness.seededSession.isTurnRunning);
+    harness.releaseTurn();
+    await waitFor(() => harness.lines.some((line) => line.id === "user-during-automatic"));
+    expect(harness.lines.find((line) => line.id === "user-during-automatic")).toMatchObject({
+      ok: true,
+      result: { turn: { status: "completed" } },
+    });
   });
 
   it("waits for host-owned turns before applying an interrupting mutation", async () => {

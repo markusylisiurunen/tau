@@ -131,6 +131,7 @@ Every request has `params`, even if empty. All `session.*` methods take `session
 | `session.cancelPendingMessages` | Cancel queued and steering input. |
 | `session.retry` | Run a turn from current history. |
 | `session.interrupt` | Stop turns, commands, samples, and maintenance. |
+| `session.bash` | Run a user shell command and optionally record its output before automatic follow-ups resume. |
 | `session.exec` | Run a command in the execution environment, outside the conversation. |
 | `session.cancelExec` | Cancel one running command. |
 | `session.sample` | Run a standalone model call with supplied context. |

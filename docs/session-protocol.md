@@ -100,7 +100,7 @@ Three other channels are separate from the snapshot, are not saved, and are empt
 
 One main-session turn runs at a time. `session.submit` returns `busy` while a client's turn runs, but waits for a turn the agent started on its own, as `session.queue` always does. `session.retry` returns `busy` during any turn. `session.steer` joins the running turn. Session changes run one at a time across all clients, and waiting client input runs before the agent starts another turn on its own.
 
-`session.bash` with `addToContext` waits for the running turn to finish. Until the command's output is recorded, new input waits, and `session.retry`, `session.record`, `session.setPersona`, `session.reload`, `session.compact`, and `session.rewind` return `busy`. `session.interrupt` stops the command. `session.exec`, `session.bash` without `addToContext`, `session.sample`, and ephemeral threads run alongside a turn. The agent does not start a turn on its own while `session.exec` or `session.bash` runs.
+`session.bash` with `addToContext` waits for the running turn to finish. Until the command's output is recorded, new input waits, and `session.retry`, `session.record`, `session.setPersona`, `session.reload`, `session.compact`, `session.rewind`, and another `session.bash` with `addToContext` return `busy`. `session.interrupt` stops the command. `session.exec`, `session.bash` without `addToContext`, `session.sample`, and ephemeral threads run alongside a turn. The agent does not start a turn on its own while `session.exec` or `session.bash` runs.
 
 ## Client tools
 

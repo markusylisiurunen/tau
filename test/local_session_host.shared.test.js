@@ -514,6 +514,9 @@ describe("LocalSessionHost", () => {
         code: "busy",
       });
       await expect(observed.reload()).rejects.toMatchObject({ code: "busy" });
+      await expect(
+        observed.bash({ command: "pwd", addToContext: true, historyEntryId: "second-shell" }),
+      ).rejects.toMatchObject({ code: "busy" });
       const queued = observed.queue("next task").catch((error) => error);
       const steered = observed.steer("correction").catch((error) => error);
       await vi.waitFor(() => expect(observed.pendingUserMessages().messages).toHaveLength(2));

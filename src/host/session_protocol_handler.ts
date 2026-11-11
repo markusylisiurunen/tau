@@ -1109,7 +1109,10 @@ export class SessionProtocolHandler {
   ): Promise<void> {
     try {
       if (request.method === "session.bash") {
-        if (request.params.addToContext && this.getPendingMutationCount(state) > 0) {
+        if (
+          request.params.addToContext &&
+          (this.getPendingMutationCount(state) > 0 || state.session.isContextBashRunning)
+        ) {
           this.sendSubmitBusy(state, request.id);
           return;
         }

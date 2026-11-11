@@ -835,8 +835,9 @@ export class AgentRuntime {
     let associatedSteering: typeof this.pendingSteering = [];
 
     try {
-      await this.commitNotifications();
+      // The turn belongs to the message that started it, not to notifications delivered with it.
       let turnSpec = this.captureTurnSettings();
+      await this.commitNotifications();
       while (true) {
         await this.deliver({
           type: "turn_started",

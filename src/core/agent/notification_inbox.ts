@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { formatTauHiddenSystemBlock } from "../utils/user_metadata.js";
 
 export const MAX_NOTIFICATIONS = 256;
@@ -12,6 +13,8 @@ export type Notification = { id: string; title: string; body?: string; read: boo
  */
 export class NotificationInbox {
   private readonly entries = new Map<string, Notification & { delivered: boolean }>();
+  /** History from before a restart still names old IDs, so each inbox uses its own prefix. */
+  private readonly idPrefix = `n-${randomBytes(3).toString("hex")}`;
   private nextId = 1;
   private readonly listeners = new Set<() => void>();
 
@@ -23,7 +26,7 @@ export class NotificationInbox {
   }
 
   add(title: string, body?: string): void {
-    const id = `n-${this.nextId++}`;
+    const id = `${this.idPrefix}-${this.nextId++}`;
     this.entries.set(id, {
       id,
       title: title.replace(/[\r\n]/g, " ").slice(0, MAX_NOTIFICATION_TITLE_CHARS),

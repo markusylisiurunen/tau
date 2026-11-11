@@ -76,7 +76,8 @@ export function createNotificationTools(inbox: NotificationInbox): AgentTool[] {
             id: Type.String({
               minLength: 1,
               maxLength: 256,
-              description: "The notification id, such as n-1.",
+              description:
+                "The notification id, as listed in a notification message or list_notifications.",
             }),
           },
           { additionalProperties: false },

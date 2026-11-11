@@ -1057,6 +1057,8 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       await this.recoverFailedNotificationTurn(id, error);
     } finally {
       this.pendingAcceptedTurnHistoryEntryIds.delete(id);
+      // A notification that arrived while this turn was being admitted could not wake it.
+      this.scheduleNotificationWake();
     }
   }
 
@@ -1185,7 +1187,8 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       const normalizedId = normalizeExplicitHistoryEntryId(preferredId);
       if (
         this.turns.has(normalizedId) ||
-        this.pendingAcceptedTurnHistoryEntryIds.has(normalizedId)
+        this.pendingAcceptedTurnHistoryEntryIds.has(normalizedId) ||
+        this.session.rawHistoryEntries.some((entry) => entry.id === normalizedId)
       ) {
         throw new Error(`turn '${normalizedId}' was already accepted`);
       }
@@ -1809,7 +1812,8 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
   async interruptSubagent(subagentId: string): Promise<SessionProtocolInterruptSubagentResult> {
     this.assertActive();
-    this.notificationWakePaused = true;
+    // Pause before interrupting, so the worker's own completion cannot wake the agent.
+    if (this.session.hasSubagent(subagentId)) this.notificationWakePaused = true;
     return { found: await this.session.interruptSubagent(subagentId) };
   }
 

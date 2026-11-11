@@ -170,7 +170,7 @@ The convention is unusual, so keep to it in new text. User content, saved prompt
 - Feedback titles are short fragments without trailing punctuation, and failures read `failed to ...`. Diagnostics and IDs go in the content. Only failures use the error tone, not expected cancellation or nonfatal degradation.
 - Telegram messages are natural sentences that weave in identifiers and translate internal states, instead of metadata-style labels.
 - XML-like prompt tags use dash-case, as in `<available-skills>`.
-- Tool cards use one generic renderer and a bounded `ToolRunPresentation`, without tool-specific renderers or an expanded mode. A new tool defaults to the shared middle-truncated preview of the exact result returned to the model.
+- Tool cards use one generic renderer and a bounded `ToolRunPresentation`, without tool-specific renderers or an expanded mode. When a tool reports no result activity, the tool runner shows the shared middle-truncated preview of the text returned to the model, under the subject from `describe`. So a new tool usually needs only a `describe` subject that tells its calls apart, such as the path or ID it acts on. Report a result activity only when the preview would mislead, as for Bash output.
 - TUI colors use semantic palette tokens, and a new state gets its own token.
 
 ## Writing

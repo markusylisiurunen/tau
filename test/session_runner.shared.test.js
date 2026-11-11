@@ -444,6 +444,66 @@ describe("session runner", () => {
     });
   });
 
+  it("previews the result for tools that report no result of their own", async () => {
+    const tool = (name, execute) => ({
+      schema: {
+        name,
+        description: name,
+        parameters: { type: "object", properties: {}, additionalProperties: false },
+      },
+      describe: () => ({
+        presentation: buildToolRunPresentation({ toolName: name, subject: `${name}-subject` }),
+      }),
+      execute,
+    });
+    const result = { content: [{ type: "text", text: "line 1\nline 2" }], outcome: "succeeded" };
+    const ownPresentation = buildToolRunPresentation({ toolName: "reported", subject: "own" });
+    const runner = new SequentialToolCallRunner(
+      {
+        toolRegistry: new ToolRegistry([
+          tool("plain", async () => result),
+          tool("reported", async (call, context) => {
+            await context.emitActivity({
+              type: "tool_call_finished",
+              toolCallId: call.id,
+              toolName: call.name,
+              presentation: ownPresentation,
+              status: "success",
+            });
+            return result;
+          }),
+        ]),
+        executionContext: { agentId: "agent-1", turnId: "turn-1", assistantMessageId: "a-1" },
+      },
+      new AbortController().signal,
+    );
+    for (const name of ["plain", "reported"]) {
+      runner.prepare({ id: `${name}-call`, type: "toolCall", name, arguments: {} }).start();
+    }
+    const completion = runner.finish();
+    const activities = [];
+    for await (const event of runner) {
+      if (event.type === "tool_activity") activities.push(event.activity);
+      event.acknowledge?.();
+    }
+    await completion;
+    expect(activities).toEqual([
+      expect.objectContaining({
+        type: "tool_call_finished",
+        toolCallId: "plain-call",
+        status: "success",
+        presentation: expect.objectContaining({
+          subject: "plain-subject",
+          details: [
+            expect.objectContaining({ text: "line 1" }),
+            expect.objectContaining({ text: "line 2" }),
+          ],
+        }),
+      }),
+      expect.objectContaining({ toolCallId: "reported-call", presentation: ownPresentation }),
+    ]);
+  });
+
   it("releases pending tool acknowledgements when event consumption stops", async () => {
     const call = {
       id: "activity-call",

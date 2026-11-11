@@ -34,9 +34,9 @@
     "access": "public"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "1.5.1",
-    "@earendil-works/pi-mcp": "1.5.1",
-    "@earendil-works/pi-tui": "1.5.1",
+    "@earendil-works/pi-ai": "1.5.2",
+    "@earendil-works/pi-mcp": "1.5.2",
+    "@earendil-works/pi-tui": "1.5.2",
     "@fly/sprites": "^0.2.4",
     "chalk": "^6.0.1",
     "colorjs.io": "^0.7.1",
@@ -60,7 +60,7 @@
     "prettier": "^3.9.10",
     "typescript": "^7.0.2",
     "vitest": "^5.1.0",
-    "wrangler": "^4.159.0"
+    "wrangler": "^4.160.0"
   },
   "engines": {
     "node": ">=24.0.0"
@@ -71,6 +71,6 @@
     "fsevents@2.3.3": true,
     "@google/genai@2.21.0": false,
     "workerd@1.20261104.1": true,
-    "workerd@1.20261109.1": true
+    "workerd@1.20261110.1": true
   }
 }

@@ -145,7 +145,6 @@ describe("bundled Claude Agent SDK runner", () => {
       const options = createRuntimeOptions(directory, []);
       let sent = false;
       const supervisor = new AgentSupervisor({
-        onCompletion: () => {},
         mainAgentId: "main",
         recordUsage: vi.fn(),
         onEvent: (event) => {
@@ -297,7 +296,6 @@ describe("bundled Claude Agent SDK runner", () => {
     const recordUsage = vi.fn();
     const events = [];
     const supervisor = new AgentSupervisor({
-      onCompletion: () => {},
       mainAgentId: "main",
       recordUsage,
       onEvent: (event) => events.push(event),

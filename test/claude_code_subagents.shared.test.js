@@ -52,7 +52,6 @@ function fixture(run) {
   };
   const openHistory = vi.fn();
   const supervisor = new AgentSupervisor({
-    onCompletion: () => {},
     mainAgentId: "main",
     onEvent: (event) => events.push(event),
     recordUsage,

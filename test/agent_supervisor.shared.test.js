@@ -48,7 +48,7 @@ function createStream(message, gate) {
 function createSpawnOptions(overrides = {}) {
   return {
     parentId: "main",
-    notifyOnCompletion: (overrides.parentId ?? "main") === "main",
+    notifyOnCompletion: false,
     launchEpoch: 0,
     runtimeConfig: {
       kind: "native",
@@ -85,7 +85,7 @@ describe("AgentSupervisor", () => {
       onEvent: () => {},
       onCompletion: (state) => completions.push(state),
     });
-    const child = supervisor.spawn(createSpawnOptions());
+    const child = supervisor.spawn(createSpawnOptions({ notifyOnCompletion: true }));
     const record = getRecord(supervisor, child.id);
     record.runtime.agent.spec.model.stream = () => createStream(createAssistant("done"));
     await supervisor.waitForAgents([child.id]);
@@ -116,7 +116,6 @@ describe("AgentSupervisor", () => {
   it("opens native history only after runtime construction succeeds", () => {
     const openHistory = vi.fn();
     const supervisor = new AgentSupervisor({
-      onCompletion: () => {},
       mainAgentId: "main",
       onEvent: () => {},
       openHistory,
@@ -136,7 +135,6 @@ describe("AgentSupervisor", () => {
 
   it("rejects delegation tools without their management dependencies before creating jobs", () => {
     const supervisor = new AgentSupervisor({
-      onCompletion: () => {},
       mainAgentId: "main",
       onEvent: vi.fn(),
     });
@@ -151,7 +149,6 @@ describe("AgentSupervisor", () => {
 
   it("binds the parent's MCP manager without resolving servers from the child workspace", async () => {
     const supervisor = new AgentSupervisor({
-      onCompletion: () => {},
       mainAgentId: "main",
       onEvent: () => {},
     });
@@ -285,7 +282,6 @@ describe("AgentSupervisor", () => {
       releaseSpawn = resolve;
     });
     const supervisor = new AgentSupervisor({
-      onCompletion: () => {},
       mainAgentId: "main",
       onEvent: async (event) => {
         if (event.type === "subagent_spawned") {
@@ -318,7 +314,6 @@ describe("AgentSupervisor", () => {
     });
     const events = [];
     const supervisor = new AgentSupervisor({
-      onCompletion: () => {},
       mainAgentId: "main",
       onEvent: async (event) => {
         events.push(event);
@@ -352,7 +347,6 @@ describe("AgentSupervisor", () => {
       releaseSubmit = resolve;
     });
     const supervisor = new AgentSupervisor({
-      onCompletion: () => {},
       mainAgentId: "main",
       onEvent: async () => {},
       recordUsage: () => {},
@@ -385,7 +379,6 @@ describe("AgentSupervisor", () => {
     });
     let finishedEventSeen = false;
     const supervisor = new AgentSupervisor({
-      onCompletion: () => {},
       mainAgentId: "main",
       onEvent: async (event) => {
         if (event.type === "subagent_finished") {
@@ -423,7 +416,6 @@ describe("AgentSupervisor", () => {
       releaseProgress = resolve;
     });
     const supervisor = new AgentSupervisor({
-      onCompletion: () => {},
       mainAgentId: "main",
       recordUsage: () => {},
       onEvent: async (event) => {
@@ -455,7 +447,6 @@ describe("AgentSupervisor", () => {
 it("isolates main and sibling jobs while retaining child jobs across follow-ups", async () => {
   const jobs = new AgentJobRegistry();
   const supervisor = new AgentSupervisor({
-    onCompletion: () => {},
     mainAgentId: "main",
     onEvent: () => {},
   });
@@ -577,7 +568,6 @@ describe("worker conversation scheduling", () => {
       release = resolve;
     });
     const supervisor = new AgentSupervisor({
-      onCompletion: () => {},
       mainAgentId: "main",
       onEvent: () => {},
       recordUsage: () => {},
@@ -614,7 +604,6 @@ describe("worker conversation scheduling", () => {
       release = resolve;
     });
     const supervisor = new AgentSupervisor({
-      onCompletion: () => {},
       mainAgentId: "main",
       onEvent: () => {},
       recordUsage: () => {},
@@ -641,7 +630,6 @@ describe("worker conversation scheduling", () => {
 
   it("does not return an earlier turn's answer when a follow-up has no text", async () => {
     const supervisor = new AgentSupervisor({
-      onCompletion: () => {},
       mainAgentId: "main",
       onEvent: () => {},
       recordUsage: () => {},
@@ -671,7 +659,6 @@ describe("worker conversation scheduling", () => {
       release = resolve;
     });
     const supervisor = new AgentSupervisor({
-      onCompletion: () => {},
       mainAgentId: "main",
       onEvent: () => {},
       recordUsage: () => {},
@@ -769,7 +756,6 @@ it("keeps background orchestration attribution and cancels only its wait", async
 describe("nested supervision", () => {
   function pool() {
     const supervisor = new AgentSupervisor({
-      onCompletion: () => {},
       mainAgentId: "main",
       onEvent: () => {},
       recordUsage: () => {},
@@ -793,7 +779,7 @@ describe("nested supervision", () => {
       const state = supervisor.spawn({
         ...options,
         parentId,
-        notifyOnCompletion: parentId === "main",
+        notifyOnCompletion: false,
         launchEpoch: supervisor.prepareSpawn(parentId),
       });
       getRecord(supervisor, state.id).runtime.agent.spec.model.stream = () =>
@@ -850,7 +836,7 @@ describe("nested supervision", () => {
       await Promise.all([a, b, sibling].map(({ id }) => supervisor.waitForAgents([id])));
       supervisor.retainOrigins(new Set());
       expect(supervisor.list()).toEqual([]);
-      expect(() => scope.spawn(createSpawnOptions({ notifyOnCompletion: false }))).toThrow(
+      expect(() => scope.spawn(createSpawnOptions())).toThrow(
         expect.objectContaining({ code: "unknown_agent" }),
       );
     } finally {

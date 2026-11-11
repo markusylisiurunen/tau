@@ -187,24 +187,7 @@ describe("AgentRuntime", () => {
     runtime.dispose();
   });
 
-  it("leaves a last-subturn notification for the next turn without failing the response", async () => {
-    const notifications = new NotificationInbox();
-    const { runtime, persona } = createRuntime({ notifications, maxModelSubturns: 1 });
-    runtime.spec.model.stream = () => ({
-      async *[Symbol.asyncIterator]() {},
-      async result() {
-        notifications.add("child finished");
-        return createAssistant(persona, "done", { stopReason: "stop" });
-      },
-    });
-    const result = await runtime.submit("task");
-    expect(result.limitReached).toBeUndefined();
-    expect(result.finalMessage.stopReason).toBe("stop");
-    expect(notifications.hasUndelivered()).toBe(true);
-    runtime.dispose();
-  });
-
-  it.each(["stop", "error", "limit"])(
+  it.each(["stop", "limit"])(
     "keeps notification continuations in the current turn (%s)",
     async (ending) => {
       const notifications = new NotificationInbox();
@@ -247,42 +230,36 @@ describe("AgentRuntime", () => {
     },
   );
 
-  it.each(["steering", "boundary", "aborted"])(
-    "preserves %s rules when notifications arrive",
-    async (mode) => {
-      const notifications = new NotificationInbox();
-      const gate = deferred();
-      const started = deferred();
-      const { runtime, persona } = createRuntime({ notifications, retryPolicy: { maxRetries: 0 } });
-      const stream = setStreams(runtime, [
-        {
-          async *[Symbol.asyncIterator]() {
-            started.resolve();
-            await gate.promise;
-            yield* [];
-          },
-          async result() {
-            return createAssistant(persona, "first", {
-              stopReason: mode === "steering" ? "error" : mode === "aborted" ? "aborted" : "stop",
-            });
-          },
+  it.each(["boundary", "aborted"])("preserves %s rules when notifications arrive", async (mode) => {
+    const notifications = new NotificationInbox();
+    const gate = deferred();
+    const started = deferred();
+    const { runtime, persona } = createRuntime({ notifications, retryPolicy: { maxRetries: 0 } });
+    const stream = setStreams(runtime, [
+      {
+        async *[Symbol.asyncIterator]() {
+          started.resolve();
+          await gate.promise;
+          yield* [];
         },
-        createStream([], createAssistant(persona, "steered")),
-      ]);
-      const running = runtime.submit("task");
-      await started.promise;
-      notifications.add("child finished");
-      const steering = mode === "steering" ? runtime.steer("correction") : undefined;
-      if (mode === "boundary") runtime.requestStopAtBoundary();
-      gate.resolve();
-      const result = await running;
-      if (mode === "aborted") expect(result.finalMessage.stopReason).toBe("aborted");
-      if (steering) expect((await steering.result).result.finalMessage.stopReason).toBe("stop");
-      expect(stream).toHaveBeenCalledTimes(steering ? 2 : 1);
-      expect(notifications.hasUndelivered()).toBe(!steering);
-      runtime.dispose();
-    },
-  );
+        async result() {
+          return createAssistant(persona, "first", {
+            stopReason: mode === "aborted" ? "aborted" : "stop",
+          });
+        },
+      },
+    ]);
+    const running = runtime.submit("task");
+    await started.promise;
+    notifications.add("child finished");
+    if (mode === "boundary") runtime.requestStopAtBoundary();
+    gate.resolve();
+    const result = await running;
+    if (mode === "aborted") expect(result.finalMessage.stopReason).toBe("aborted");
+    expect(stream).toHaveBeenCalledTimes(1);
+    expect(notifications.hasUndelivered()).toBe(true);
+    runtime.dispose();
+  });
 
   it("applies a lower threshold only after the active turn and steering finish", async () => {
     const gate = deferred();

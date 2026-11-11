@@ -43,9 +43,12 @@ params: {
   personaId?: string;
   reasoning?: Reasoning;
   autoCompactThresholdTokens?: number | null;
+  wakeOnNotifications?: boolean; // default true
 }
 result: { sessionId: string }
 ```
+
+With `wakeOnNotifications`, the main agent starts a turn on its own when a subagent it started finishes. Set it to `false` when the end of a turn means the work is done, as in automations. The agent then waits for its subagents before it ends its turn.
 
 `session.create` does not observe a session. `session.observe` starts updates on this connection and returns three starting states: `snapshot`, `pendingUserMessages`, and `subagentActivities`. Install all three before processing later messages. Several connections can observe one session, and each can change it.
 

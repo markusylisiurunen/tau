@@ -52,6 +52,8 @@ export type CreateChatRuntimeOptions = {
   createdAt: number;
   persona: Persona;
   autoCompactDefaults?: AutoCompactDefaults;
+  /** Whether the host starts a turn on its own for notifications. */
+  wakeOnNotifications: boolean;
   backend: ToolExecutionBackend;
   clientTools?: () => ReturnType<ToolRegistry["getEnabledTools"]>;
   modelResolver: ModelResolver;
@@ -74,6 +76,7 @@ export class ChatRuntime {
   readonly backgroundJobs = this.jobs.create();
   readonly supervisor: AgentSupervisor;
   readonly notifications = new NotificationInbox();
+  readonly wakeOnNotifications: boolean;
   private currentPersona: Persona;
   private readonly autoCompactDefaults: AutoCompactDefaults | undefined;
   private autoCompactOverride: number | null = null;
@@ -111,6 +114,7 @@ export class ChatRuntime {
 
   private constructor(options: CreateChatRuntimeOptions, composition: SessionPromptComposition) {
     this.currentPersona = structuredClone(options.persona);
+    this.wakeOnNotifications = options.wakeOnNotifications;
     this.autoCompactDefaults = structuredClone(options.autoCompactDefaults);
     this.currentConfig = options.config;
     this.hostApiKeys = structuredClone(options.config.apiKeys);
@@ -377,6 +381,7 @@ export class ChatRuntime {
       modelResolver: this.currentModelResolver,
       supervisor: this.supervisor,
       notifications: this.notifications,
+      wakeOnNotifications: this.wakeOnNotifications,
       jobs: this.jobs,
       ...this.backgroundJobs,
       history: this.historyQuery,

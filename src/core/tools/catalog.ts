@@ -74,6 +74,7 @@ export const ToolCatalog = {
         onCompletion: () => {},
       }),
       notifications: new NotificationInbox(),
+      wakeOnNotifications: true,
     });
   },
 
@@ -87,6 +88,7 @@ export const ToolCatalog = {
     modelResolver: ModelResolver;
     supervisor: AgentSupervisor;
     notifications: NotificationInbox;
+    wakeOnNotifications: boolean;
     jobs: AgentJobRegistry;
     bashJobs: BashJobRegistry;
     codeJobs: CodeJobRegistry;

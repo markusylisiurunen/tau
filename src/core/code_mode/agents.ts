@@ -37,6 +37,8 @@ export type AgentsCapabilityOptions = {
   mcp?: McpManager;
   cwd: string;
   resolveSubagentPrompt?: ResolveSubagentPrompt;
+  /** Whether Tau starts a main-agent turn on its own for notifications. */
+  wakeOnNotifications: boolean;
 };
 const id = z.string().min(1).max(256);
 const idOptions = z.strictObject({ id });
@@ -401,13 +403,21 @@ for (const entry of page.entries) {
 `,
 } satisfies Omit<CodeModeCapability, "api">;
 
-const mainNotificationsDocumentation = `
+const mainNotificationsIntroduction = `
 ## Completion notifications
 
 As the main agent, you get a notification each time a worker you started goes from working to idle, including after follow-up input. Workers started by your workers never notify you.
+`;
 
-You don't need to stay in a turn while workers run. If you are idle when a notification arrives, Tau starts a turn for you, so you can end your turn and continue when they finish. When you end a turn with workers still running, tell the user what is still running. After the user interrupts you or a worker, or after a turn fails, Tau does not start turns for notifications until the user's next message.
+const mainNotificationsWithWake = `
+Wait with \`wait_for_agents\` when your next step needs a worker's result and it should arrive soon. When workers will run for a while and you have nothing else to do, tell the user what is running and end your turn instead. If you are idle when a notification arrives, Tau starts a turn for you, so you continue when the workers finish, and the user can talk to you in the meantime. If the user asks you to wait, wait. After the user interrupts you or a worker, or after a turn fails, Tau does not start turns for notifications until the user's next message.
+`;
 
+const mainNotificationsWithoutWake = `
+In this session, Tau does not start a turn for you when workers finish. Before you end your turn, wait with \`wait_for_agents\` for every worker whose result you need.
+`;
+
+const mainNotificationsReference = `
 A notification names the worker and its status, not what it found. Read the notification as usual, then get the worker's answer with \`wait_for_agents\`, which returns at once for an idle worker, or with \`trace\` and \`readText\`.
 
 Notifications are on by default, and waiting for a worker does not turn them off. If you will wait for a worker's result anyway, turn its notifications off so the same completion does not reach you twice:
@@ -422,6 +432,14 @@ type MainAgentsApi = AgentsApi & {
 
 \`setCompletionNotification\` works only for workers you started yourself and applies to their later completions.
 `;
+
+function mainNotificationsDocumentation(wakeOnNotifications: boolean): string {
+  return [
+    mainNotificationsIntroduction,
+    wakeOnNotifications ? mainNotificationsWithWake : mainNotificationsWithoutWake,
+    mainNotificationsReference,
+  ].join("");
+}
 
 export function createAgentsCapability(
   options: AgentsCapabilityOptions,
@@ -607,7 +625,8 @@ export function createAgentsCapability(
   return {
     ...agentsCapabilityMetadata,
     documentation:
-      agentsCapabilityMetadata.documentation + (isMain ? mainNotificationsDocumentation : ""),
+      agentsCapabilityMetadata.documentation +
+      (isMain ? mainNotificationsDocumentation(options.wakeOnNotifications) : ""),
     api,
   };
 }

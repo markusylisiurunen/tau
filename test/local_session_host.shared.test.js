@@ -282,6 +282,7 @@ function expectedSettings(persona = personas[0]) {
     autoCompactThresholdTokens: null,
     effectiveAutoCompactThresholdTokens: persona.model.contextWindow - 16384,
     personaId: persona.id,
+    wakeOnNotifications: true,
     ...(persona.settings.reasoning !== undefined ? { reasoning: persona.settings.reasoning } : {}),
     ...(persona.settings.serviceTier !== undefined
       ? { serviceTier: persona.settings.serviceTier }
@@ -873,6 +874,27 @@ describe("LocalSessionHost", () => {
       expect(commit).toHaveBeenCalledTimes(1);
     } finally {
       await host.shutdown();
+    }
+  });
+
+  it("never wakes a session created without notification wakes, also after recovery", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const created = await host.createSession({ ...localCreateInput, wakeOnNotifications: false });
+    await host.shutdown();
+    const recoveredHost = createHost(store);
+    const session = await recoveredHost.observeSession(created.sessionId);
+    const stream = vi.fn();
+    session.runtime.agent.spec.model.stream = stream;
+    try {
+      expect((await session.snapshot()).settings.wakeOnNotifications).toBe(false);
+      session.runtime.notifications.add("child finished");
+      await new Promise((resolve) => setImmediate(resolve));
+      await session.waitForActiveWork();
+      expect(stream).not.toHaveBeenCalled();
+      expect(session.runtime.notifications.hasUndelivered()).toBe(true);
+    } finally {
+      await recoveredHost.shutdown();
     }
   });
 

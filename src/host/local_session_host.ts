@@ -401,6 +401,10 @@ export class LocalSessionHost implements TauSessionHost {
       createdAt,
       persona: bootstrap.persona,
       autoCompactDefaults: this.sessionOptions.autoCompactDefaults,
+      wakeOnNotifications:
+        committedSnapshot?.settings.wakeOnNotifications ??
+        createParams?.wakeOnNotifications ??
+        true,
       backend: executionEnvironment.getToolExecutionBackend(),
       clientTools: () => this.clientToolBroker.getToolDefinitions(sessionId),
       modelResolver: bootstrap.modelResolver,
@@ -1018,6 +1022,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     return (
       !this.disposing &&
       !this.disposed &&
+      this.runtime.wakeOnNotifications &&
       !this.notificationWakePaused &&
       this.turnAdmissionHolds === 0 &&
       !this.isTurnRunning &&
@@ -2134,6 +2139,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         ...(this.runtime.persona.settings.serviceTier !== undefined
           ? { serviceTier: this.runtime.persona.settings.serviceTier }
           : {}),
+        wakeOnNotifications: this.runtime.wakeOnNotifications,
       },
       bootstrap: {
         model: modelSnapshotFromModel(this.runtime.persona.model),

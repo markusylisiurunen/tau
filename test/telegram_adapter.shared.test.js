@@ -187,6 +187,7 @@ function createStatusSnapshot(overrides = {}) {
     settings: {
       autoCompactThresholdTokens: null,
       effectiveAutoCompactThresholdTokens: 183616,
+      wakeOnNotifications: true,
       personaId: "default",
       reasoning: "medium",
     },

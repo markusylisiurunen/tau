@@ -15,7 +15,7 @@ export type HistoryStore = {
 
 type PendingRequest = {
   resolve: (value: unknown) => void;
-  reject: (error: Error) => void;
+  reject: (error: unknown) => void;
 };
 
 export class ThreadedHistoryStore implements HistoryStore {
@@ -124,7 +124,7 @@ export class ThreadedHistoryStore implements HistoryStore {
     });
   }
 
-  private fail(error: Error): void {
+  private fail(error: unknown): void {
     this.worker = undefined;
     for (const pending of this.pending.values()) pending.reject(error);
     this.pending.clear();

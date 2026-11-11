@@ -133,9 +133,7 @@ export class ChatRuntime {
       mainAgentId: options.sessionId,
       onEvent: options.subagentEventSink,
       onCompletion: (state) => {
-        this.notifications.add(
-          `subagent ${state.id} is idle (${state.run.status}): ${state.title}`,
-        );
+        this.notifications.add(`subagent ${state.id} is idle (${state.run.status})`);
       },
       openHistory: options.openSubagentHistory,
       ...(options.recordUsage ? { recordUsage: options.recordUsage } : {}),

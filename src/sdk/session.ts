@@ -1,7 +1,5 @@
 import { randomUUID } from "node:crypto";
 import type {
-  SessionProtocolBashParams,
-  SessionProtocolBashResult,
   SessionProtocolClientToolCallMessage,
   SessionProtocolClientToolCancelMessage,
   SessionProtocolCreateParams,
@@ -33,6 +31,8 @@ import type {
   TauSdkInitializeParams,
   TauSdkPendingUserMessagesListener,
   TauSdkSession,
+  TauSdkSessionBashInput,
+  TauSdkSessionBashResult,
   TauSdkSessionClient,
   TauSdkSessionExecOptions,
   TauSdkSessionUserMessageOptions,
@@ -411,10 +411,7 @@ class TauSdkClientImpl implements TauSdkClient {
     });
   }
 
-  sendBash(
-    sessionId: string,
-    input: Omit<SessionProtocolBashParams, "sessionId" | "execId"> & { signal?: AbortSignal },
-  ): Promise<SessionProtocolBashResult> {
+  sendBash(sessionId: string, input: TauSdkSessionBashInput): Promise<TauSdkSessionBashResult> {
     const { signal, ...params } = input;
     const execId = randomUUID();
     return this.runExecRequest(sessionId, execId, signal, () =>
@@ -794,9 +791,7 @@ class TauSdkSessionImpl implements TauSdkSession {
     return await this.client.executeInSession(this.activeSessionId(), command, options);
   }
 
-  bash(
-    input: Omit<SessionProtocolBashParams, "sessionId" | "execId"> & { signal?: AbortSignal },
-  ): Promise<SessionProtocolBashResult> {
+  bash(input: TauSdkSessionBashInput): Promise<TauSdkSessionBashResult> {
     return this.client.sendBash(this.activeSessionId(), input);
   }
 

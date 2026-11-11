@@ -17,10 +17,15 @@ it("keeps unread and delivery state separate across tool reads and concurrent ar
   inbox.add("second");
   inbox.delivered(signal);
   expect(inbox.hasUndelivered()).toBe(true);
-  expect(inbox.signal().notifications.map((entry) => entry.id)).toEqual(["n-1", "n-2"]);
+  expect(inbox.signal().map((entry) => entry.id)).toEqual(["n-1", "n-2"]);
   expect((await execute("read_notification", { id: "n-1" })).outcome).toBe("succeeded");
   expect(inbox.list()[0]).toMatchObject({ read: true, body: "details" });
-  expect(inbox.signal().notifications.map((entry) => entry.id)).toEqual(["n-2"]);
+  const unread = await execute("list_notifications", {});
+  expect(unread.content[0].text).not.toContain("n-1");
+  expect((await execute("list_notifications", { includeRead: true })).content[0].text).toContain(
+    "n-1",
+  );
+  expect(inbox.signal().map((entry) => entry.id)).toEqual(["n-2"]);
   inbox.delivered(inbox.signal());
   expect(inbox.signal()).toBeUndefined();
   expect(inbox.list()[1].read).toBe(false);

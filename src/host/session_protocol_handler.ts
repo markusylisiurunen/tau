@@ -278,10 +278,8 @@ export class SessionProtocolHandler {
           await this.handleRetry(request);
           return;
         case "session.bash":
-          await this.handleBash(request);
-          return;
         case "session.exec":
-          await this.handleExec(request);
+          await this.handleExecution(request);
           return;
         case "session.cancelExec":
           await this.handleCancelExec(request);
@@ -691,18 +689,6 @@ export class SessionProtocolHandler {
         cancelled,
       }),
     );
-  }
-
-  private async handleBash(
-    request: Extract<SessionProtocolRequestMessage, { method: "session.bash" }>,
-  ): Promise<void> {
-    await this.handleExecution(request);
-  }
-
-  private async handleExec(
-    request: Extract<SessionProtocolRequestMessage, { method: "session.exec" }>,
-  ): Promise<void> {
-    await this.handleExecution(request);
   }
 
   private async handleExecution(
@@ -1122,7 +1108,6 @@ export class SessionProtocolHandler {
     signal: AbortSignal,
   ): Promise<void> {
     try {
-      signal.throwIfAborted();
       if (request.method === "session.bash") {
         if (request.params.addToContext && this.getPendingMutationCount(state) > 0) {
           this.sendSubmitBusy(state, request.id);

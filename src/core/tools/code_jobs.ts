@@ -114,7 +114,9 @@ export class CodeJobRegistry {
       content.push({ type: "text", text: header });
       if (output) {
         truncated ||= output.truncated;
-        for (const part of output.content) {
+        const parts = output.content.filter((part) => part.type !== "text" || part.text);
+        if (parts.length === 0) content.push({ type: "text", text: "(none)" });
+        for (const part of parts) {
           if (part.type === "image" && ++images > SESSION_PROTOCOL_MAX_CLIENT_TOOL_IMAGES) continue;
           content.push(part);
         }

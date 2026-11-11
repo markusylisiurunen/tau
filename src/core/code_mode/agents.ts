@@ -404,11 +404,13 @@ for (const entry of page.entries) {
 const mainNotificationsDocumentation = `
 ## Completion notifications
 
-As the main agent, you get a notification each time a worker you started goes from working to idle, including after follow-up input. Workers started by your workers never notify you. If you are idle when a notification arrives, Tau starts a turn for you, so you can end your turn while workers run and continue when they finish. Use the \`list_notifications\` and \`read_notification\` tools to see notifications.
+As the main agent, you get a notification each time a worker you started goes from working to idle, including after follow-up input. Workers started by your workers never notify you.
 
-A notification tells you which worker became idle. It does not contain the answer, so read that with \`wait_for_agents\`, or with \`trace\` and \`readText\`.
+You don't need to stay in a turn while workers run. If you are idle when a notification arrives, Tau starts a turn for you, so you can end your turn and continue when they finish. When you end a turn with workers still running, tell the user what is still running. After the user interrupts you or a worker, or after a turn fails, Tau does not start turns for notifications until the user's next message.
 
-Notifications are on by default. Waiting for a worker does not affect them, so turn them off for a worker whose result you will wait for anyway:
+A notification names the worker and its status, not what it found. Read the notification as usual, then get the worker's answer with \`wait_for_agents\`, which returns at once for an idle worker, or with \`trace\` and \`readText\`.
+
+Notifications are on by default, and waiting for a worker does not turn them off. If you will wait for a worker's result anyway, turn its notifications off so the same completion does not reach you twice:
 
 \`\`\`ts
 type MainSpawnOptions = SpawnOptions & { notifyOnCompletion?: boolean }; // default true

@@ -1795,7 +1795,6 @@ describe("SessionProtocolHandler", () => {
           historyEntryId: "shell-output",
           command: "pwd",
           addToContext: true,
-          actionLabel: "you ran",
         }),
       );
       expect(harness.seededSession.bash).not.toHaveBeenCalled();

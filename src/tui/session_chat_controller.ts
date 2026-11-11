@@ -504,20 +504,14 @@ export class SessionChatController {
       if (trimmed.startsWith("!!")) {
         const command = trimmed.slice(2).trim();
         if (command) {
-          await this.runSessionBashCommand(command, {
-            addToContext: false,
-            labelOverride: "incognito",
-          });
+          await this.runSessionBashCommand(command, { addToContext: false });
         }
         return;
       }
 
       const command = trimmed.slice(1).trim();
       if (command) {
-        await this.runSessionBashCommand(command, {
-          addToContext: true,
-          labelOverride: "you ran",
-        });
+        await this.runSessionBashCommand(command, { addToContext: true });
       }
       return;
     }
@@ -664,7 +658,7 @@ export class SessionChatController {
 
   private async runSessionBashCommand(
     command: string,
-    options: { addToContext: boolean; labelOverride: string },
+    options: { addToContext: boolean },
   ): Promise<void> {
     if (this.isSessionOperationActive()) {
       return;
@@ -687,17 +681,14 @@ export class SessionChatController {
     });
     this.refreshStatus();
 
+    // The tool card shows the output, also when an interrupted command still records it.
+    if (options.addToContext) this.hiddenHistoryEntryIds.add(toolCallId);
     try {
       const result = await this.session.bash({
         command,
-        actionLabel: options.labelOverride,
         addToContext: options.addToContext,
         historyEntryId: toolCallId,
       });
-      if (result.userHistoryEntryId) {
-        this.hiddenHistoryEntryIds.add(result.userHistoryEntryId);
-        this.renderedMessageIds.push(this.getViewMessageId(result.userHistoryEntryId));
-      }
       this.view.updateLocalToolUi({
         toolCallId,
         status: result.exitCode === 0 ? "succeeded" : "failed",

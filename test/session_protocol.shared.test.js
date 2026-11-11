@@ -46,13 +46,11 @@ describe("session_protocol", () => {
       command: "pwd",
       addToContext: true,
       historyEntryId: "shell-output",
-      actionLabel: "you ran",
     };
     for (const invalid of [
       { command: "pwd\0" },
       { addToContext: undefined },
       { historyEntryId: " " },
-      { actionLabel: "bad\nlabel" },
     ]) {
       expect(validateSessionProtocolParams("session.bash", { ...input, ...invalid }).ok).toBe(
         false,
@@ -726,7 +724,6 @@ describe("session_protocol", () => {
           command: "pwd",
           addToContext: true,
           historyEntryId: "shell-output",
-          actionLabel: "you ran",
         },
       ],
       [
@@ -1476,7 +1473,6 @@ describe("session_protocol", () => {
         "session.bash",
         {
           exitCode: 0,
-          userHistoryEntryId: "shell-output",
           presentation: buildToolRunPresentation({ toolName: "bash", subject: "pwd" }),
         },
       ],

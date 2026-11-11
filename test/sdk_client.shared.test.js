@@ -723,7 +723,6 @@ describe("sdk_client", () => {
           : session.bash({
               command: "sleep 60",
               addToContext: true,
-              actionLabel: "you ran",
               signal: abortController.signal,
             });
       await vi.waitFor(() => {
@@ -733,7 +732,7 @@ describe("sdk_client", () => {
             sessionId: "session-1",
             execId: expect.any(String),
             command: "sleep 60",
-            ...(kind === "bash" ? { addToContext: true, actionLabel: "you ran" } : {}),
+            ...(kind === "bash" ? { addToContext: true } : {}),
           },
         });
       });

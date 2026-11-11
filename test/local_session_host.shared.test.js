@@ -506,7 +506,6 @@ describe("LocalSessionHost", () => {
           command: "pwd",
           addToContext: true,
           historyEntryId: "shell-output",
-          actionLabel: "you ran",
         });
         await vi.waitFor(() => expect(backend.runBash).toHaveBeenCalledTimes(1));
         session.runtime.notifications.add("child finished");
@@ -532,7 +531,7 @@ describe("LocalSessionHost", () => {
         expect(stream).not.toHaveBeenCalled();
         expect(session.runtime.notifications.hasUndelivered()).toBe(true);
         recordGate.resolve();
-        expect(await shell).toMatchObject({ exitCode: 0, userHistoryEntryId: "shell-output" });
+        expect(await shell).toMatchObject({ exitCode: 0 });
         await vi.waitFor(() => expect(stream).toHaveBeenCalledTimes(1));
         await nextTurn;
         await session.waitForActiveWork();
@@ -588,7 +587,6 @@ describe("LocalSessionHost", () => {
         historyEntryId: "waiting-shell-output",
         command: "pwd",
         addToContext: true,
-        actionLabel: "you ran",
       };
       const shell = transport.request("session.bash", params).catch((error) => error);
       await new Promise((resolve) => setImmediate(resolve));
@@ -639,7 +637,6 @@ describe("LocalSessionHost", () => {
           command: "pwd",
           addToContext: true,
           historyEntryId: "shell-output",
-          actionLabel: "you ran",
         })
         .catch((error) => error);
       await vi.waitFor(() => expect(backend.runBash).toHaveBeenCalledTimes(1));
@@ -687,7 +684,6 @@ describe("LocalSessionHost", () => {
           command: "pwd",
           addToContext: ending !== "incognito",
           historyEntryId: "shell-output",
-          actionLabel: "you ran",
         };
         const shell = ending === "exec" ? session.exec(options) : session.bash(options);
         const settled = shell.catch((error) => error);

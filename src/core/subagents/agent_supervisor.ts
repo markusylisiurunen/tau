@@ -84,7 +84,7 @@ export class AgentSupervisor {
     private readonly options: {
       mainAgentId: string;
       onEvent: (event: SubagentEvent) => void | Promise<void>;
-      onCompletion?: (state: SubagentStateSnapshot) => void;
+      onCompletion: (state: SubagentStateSnapshot) => void;
       recordUsage?: UsageRecorder;
       openHistory?: OpenSubagentHistory;
       deps?: CoreDeps;
@@ -514,7 +514,7 @@ export class AgentSupervisor {
                 ? "interrupted"
                 : "failed",
         });
-        if (record.notifyOnCompletion) this.options.onCompletion?.(this.toSnapshot(record));
+        if (record.notifyOnCompletion) this.options.onCompletion(this.toSnapshot(record));
         await this.emit({ type: "subagent_finished", state: this.toSnapshot(record) });
       }
     })();

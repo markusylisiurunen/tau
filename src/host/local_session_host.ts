@@ -903,11 +903,13 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   private readonly activeWorkPromises = new Set<Promise<unknown>>();
   private readonly activeExecAbortControllers = new Map<string, AbortController>();
   private readonly turnIdleListeners = new Set<() => void>();
-  private wakeScheduled = false;
-  private turnAdmissionHolds = 0;
   private readonly unsubscribeNotifications: () => void;
+  /** Work that must finish before the agent starts a turn on its own. */
+  private turnAdmissionHolds = 0;
   private contextBashCount = 0;
+  /** Set after an interruption or a failed turn, and cleared by the next client turn. */
   private notificationWakePaused = false;
+  private notificationWakeScheduled = false;
   private activeTurnPromise?: Promise<unknown>;
   private activeLogicalTurn?: ActiveLogicalTurn;
   private disposePromise?: Promise<void>;
@@ -984,7 +986,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     };
   }
 
-  private notifyTurnIdle(): void {
+  private turnBecameIdle(): void {
     if (this.isTurnRunning) return;
     for (const listener of this.turnIdleListeners) {
       try {
@@ -993,43 +995,46 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         /* Observers cannot fail session work. */
       }
     }
-  }
-
-  private canWakeForNotifications(): boolean {
-    return (
-      !this.disposed &&
-      !this.disposing &&
-      !this.notificationWakePaused &&
-      !this.isTurnRunning &&
-      this.turnAdmissionHolds === 0 &&
-      this.activeExecAbortControllers.size === 0 &&
-      !this.pendingAcceptedTurnHistoryEntryIds.size &&
-      ![...this.turns.values()].some((turn) => turn.state === "running") &&
-      this.runtime.notifications.hasUndelivered()
-    );
+    this.scheduleNotificationWake();
   }
 
   holdTurnAdmission(): () => void {
     this.turnAdmissionHolds += 1;
+    let released = false;
     return () => {
+      if (released) return;
+      released = true;
       this.turnAdmissionHolds -= 1;
       this.scheduleNotificationWake();
     };
   }
 
   async waitForActiveTurn(): Promise<void> {
-    await Promise.allSettled([...(this.activeTurnPromise ? [this.activeTurnPromise] : [])]);
+    await this.activeTurnPromise?.catch(() => undefined);
     await this.mutationQueue;
   }
 
+  private canWakeForNotifications(): boolean {
+    return (
+      !this.disposing &&
+      !this.disposed &&
+      !this.notificationWakePaused &&
+      this.turnAdmissionHolds === 0 &&
+      !this.isTurnRunning &&
+      this.pendingAcceptedTurnHistoryEntryIds.size === 0 &&
+      ![...this.turns.values()].some((turn) => turn.state === "running") &&
+      this.runtime.notifications.hasUndelivered()
+    );
+  }
+
+  /** Deferred by one macrotask so that client work released at the same time is admitted first. */
   private scheduleNotificationWake(): void {
-    if (this.wakeScheduled || !this.canWakeForNotifications()) return;
-    this.wakeScheduled = true;
+    if (this.notificationWakeScheduled || !this.canWakeForNotifications()) return;
+    this.notificationWakeScheduled = true;
     void this.trackActiveWork(async () => {
       await new Promise<void>((resolve) => setImmediate(resolve));
-      this.wakeScheduled = false;
-      if (!this.canWakeForNotifications()) return;
-      await this.runNotificationTurn();
+      this.notificationWakeScheduled = false;
+      if (this.canWakeForNotifications()) await this.runNotificationTurn();
     });
   }
 
@@ -1038,49 +1043,47 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     this.pendingAcceptedTurnHistoryEntryIds.add(id);
     try {
       await this.runLogicalTurn(async (logicalTurn) => {
-        if (!(await this.runtime.commitNotifications(id))) return;
-        const outcome = await this.runTurnNow(logicalTurn, id);
-        try {
-          await this.settleTurn(id, outcome);
-        } catch (error) {
-          this.notificationWakePaused = true;
-          await this.settleTurn(id, await this.cleanupFailedTurn(id, error));
+        if (await this.runtime.commitNotifications(id)) {
+          await this.runAndSettleTurn(logicalTurn, id);
         }
       });
     } catch (error) {
       this.notificationWakePaused = true;
-      if (this.turns.has(id)) {
-        this.invalidateProjection(error);
-        return;
-      }
-      try {
-        await this.enqueueMutation(async () => {
-          const item = this.appendNoticeTimelineItem(
-            `automatic-turn-failed-${randomUUID()}`,
-            Date.now(),
-            {
-              kind: "tau.turn.failed",
-              version: 1,
-              severity: "error",
-              subject: { type: "session" },
-              presentation: projectSessionProtocolNoticePresentation(
-                "failed to start automatic turn",
-                [formatErrorDiagnostic(error)],
-              ),
-              data: { reason: "runtime-error" },
-            },
-          );
-          await this.emitPatch("notice", [
-            { type: "timeline.append", item: structuredClone(item) },
-          ]);
-        });
-      } catch (noticeError) {
-        this.invalidateProjection(
-          new AggregateError([error, noticeError], "automatic turn failed"),
-        );
-      }
+      await this.recoverFailedNotificationTurn(id, error);
     } finally {
       this.pendingAcceptedTurnHistoryEntryIds.delete(id);
+    }
+  }
+
+  /** No client waits for an automatic turn, so its failure must end up in the snapshot. */
+  private async recoverFailedNotificationTurn(id: string, error: unknown): Promise<void> {
+    try {
+      if (this.turns.has(id)) {
+        await this.settleTurn(id, await this.cleanupFailedTurn(id, error));
+        return;
+      }
+      await this.enqueueMutation(async () => {
+        const item = this.appendNoticeTimelineItem(
+          `automatic-turn-failed-${randomUUID()}`,
+          Date.now(),
+          {
+            kind: "tau.turn.failed",
+            version: 1,
+            severity: "error",
+            subject: { type: "session" },
+            presentation: projectSessionProtocolNoticePresentation(
+              "failed to start automatic turn",
+              [formatErrorDiagnostic(error)],
+            ),
+            data: { reason: "runtime-error" },
+          },
+        );
+        await this.emitPatch("notice", [{ type: "timeline.append", item: structuredClone(item) }]);
+      });
+    } catch (recoveryError) {
+      this.invalidateProjection(
+        new AggregateError([error, recoveryError], "automatic turn failed"),
+      );
     }
   }
 
@@ -1203,10 +1206,18 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       throw new Error(`turn '${userHistoryEntryId}' was already settled`);
     }
     const turn = await this.runLogicalTurn((logicalTurn) =>
-      this.runTurnNow(logicalTurn, userHistoryEntryId),
+      this.runAndSettleTurn(logicalTurn, userHistoryEntryId),
     );
-    await this.settleTurn(userHistoryEntryId, turn);
     return { userHistoryEntryId, turn };
+  }
+
+  private async runAndSettleTurn(
+    logicalTurn: ActiveLogicalTurn,
+    userHistoryEntryId: string,
+  ): Promise<SessionProtocolTurnOutcome> {
+    const outcome = await this.runTurnNow(logicalTurn, userHistoryEntryId);
+    await this.settleTurn(userHistoryEntryId, outcome);
+    return outcome;
   }
 
   async runTurn(): Promise<SessionProtocolTurnOutcome> {
@@ -1234,7 +1245,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       ]);
       this.emitDelta(delta);
     });
-    this.scheduleNotificationWake();
   }
 
   async retryTurn(): Promise<SessionProtocolTurnOutcome> {
@@ -1267,8 +1277,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         this.activeTurnPromise = undefined;
         this.activeLogicalTurn = undefined;
         await this.enqueueSnapshotResetIfChanged("assistant-message");
-        this.notifyTurnIdle();
-        this.scheduleNotificationWake();
+        this.turnBecameIdle();
       }
     }
   }
@@ -1286,25 +1295,24 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       throw new Error("cannot run a turn without a user message");
     }
     if (logicalTurn.cancellationRequested) return abortedTurnOutcome();
-    let outcome: SessionProtocolTurnOutcome;
-    let acceptedOutcome: SessionProtocolTurnOutcome;
     try {
       const result = await this.runtime.runTurn();
       if (result.terminalResult.aborted && this.draftAssistantMessage) {
         await this.interruptDraftAssistantMessage();
       }
       await this.enqueueSnapshotResetIfChanged("assistant-message");
-      acceptedOutcome = logicalTurn.cancellationRequested
-        ? abortedTurnOutcome()
-        : turnOutcomeFromResult(result, result.finalMessage);
-      outcome = logicalTurn.cancellationRequested
-        ? abortedTurnOutcome()
-        : turnOutcomeFromResult(result.terminalResult, result.terminalResult.finalMessage);
+      if (logicalTurn.cancellationRequested) return abortedTurnOutcome();
+      const { terminalResult } = result;
+      if (
+        turnOutcomeFromResult(terminalResult, terminalResult.finalMessage).status !== "completed"
+      ) {
+        this.notificationWakePaused = true;
+      }
+      return turnOutcomeFromResult(result, result.finalMessage);
     } catch (error) {
-      outcome = acceptedOutcome = await this.cleanupFailedTurn(rootUserMessage.id, error);
+      this.notificationWakePaused = true;
+      return await this.cleanupFailedTurn(rootUserMessage.id, error);
     }
-    if (outcome.status !== "completed") this.notificationWakePaused = true;
-    return acceptedOutcome;
   }
 
   interruptTurn(): boolean {
@@ -1395,52 +1403,34 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     options: Omit<SessionProtocolBashParams, "sessionId"> & { signal?: AbortSignal },
   ): Promise<SessionProtocolBashResult> {
     this.assertActive();
-    if (!options.addToContext) {
-      return await this.runExec(options.execId, options.signal, async (signal) => {
-        signal.throwIfAborted();
-        return await runDirectBashCommand({
-          ...options,
-          backend: this.executionEnvironment.getToolExecutionBackend(),
-          workingDirectory: this.executionEnvironment.snapshot().cwd,
-          signal,
-        });
+    const run = async (signal: AbortSignal, recordOutput?: (text: string) => Promise<void>) => {
+      const result = await runDirectBashCommand({
+        command: options.command,
+        backend: this.executionEnvironment.getToolExecutionBackend(),
+        workingDirectory: this.executionEnvironment.snapshot().cwd,
+        signal,
+        recordOutput,
       });
+      // Interrupted output is still recorded, but the request reports the cancellation.
+      signal.throwIfAborted();
+      return result;
+    };
+    if (!options.addToContext) {
+      return await this.runExec(options.execId, options.signal, (signal) => run(signal));
     }
+    // Reject a taken history entry ID before the command runs.
     this.createTurnHistoryEntryId(options.historyEntryId);
-    const release = this.holdTurnAdmission();
     this.contextBashCount += 1;
     try {
       return await this.runExec(options.execId, options.signal, async (signal) => {
-        await new Promise<void>((resolve, reject) => {
-          const onAbort = () => reject(signal.reason);
-          signal.addEventListener("abort", onAbort, { once: true });
-          void this.waitForActiveTurn()
-            .then(resolve, reject)
-            .finally(() => {
-              signal.removeEventListener("abort", onAbort);
-            });
-          if (signal.aborted) onAbort();
+        await raceAbort(this.waitForActiveTurn(), signal);
+        return await run(signal, async (text) => {
+          await this.record({ text, historyEntryId: options.historyEntryId });
         });
-        signal.throwIfAborted();
-        const result = await runDirectBashCommand({
-          command: options.command,
-          backend: this.executionEnvironment.getToolExecutionBackend(),
-          signal,
-          workingDirectory: this.executionEnvironment.snapshot().cwd,
-          actionLabel: options.actionLabel,
-          addToContext: options.addToContext,
-          addUserText: async (text) => {
-            return (await this.record({ text, historyEntryId: options.historyEntryId }))
-              .userHistoryEntryId;
-          },
-        });
-        signal.throwIfAborted();
-        return result;
       });
     } finally {
       this.contextBashCount -= 1;
-      release();
-      this.notifyTurnIdle();
+      this.turnBecameIdle();
     }
   }
 
@@ -1752,6 +1742,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     const signal = externalSignal
       ? AbortSignal.any([externalSignal, abortController.signal])
       : abortController.signal;
+    const releaseAdmission = this.holdTurnAdmission();
     try {
       signal.throwIfAborted();
       return await this.runActiveWork(operation, signal);
@@ -1759,7 +1750,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       if (this.activeExecAbortControllers.get(execId) === abortController) {
         this.activeExecAbortControllers.delete(execId);
       }
-      this.scheduleNotificationWake();
+      releaseAdmission();
     }
   }
 
@@ -1786,7 +1777,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       return await promise;
     } finally {
       this.activeWorkPromises.delete(promise);
-      this.scheduleNotificationWake();
     }
   }
 
@@ -3320,6 +3310,20 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       await this.emitSnapshotResetIfChanged("assistant-message");
     });
     return { status: "failed", stopReason: "error", errorMessage: diagnostic };
+  }
+}
+
+async function raceAbort(promise: Promise<void>, signal: AbortSignal): Promise<void> {
+  signal.throwIfAborted();
+  let onAbort!: () => void;
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    await Promise.race([promise, aborted]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
   }
 }
 

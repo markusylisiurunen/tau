@@ -87,6 +87,11 @@ export type TauSdkEphemeralCreateResult = SessionProtocolEphemeralCreateResult;
 export type TauSdkEphemeralSubmitResult = SessionProtocolEphemeralSubmitResult;
 export type TauSdkEphemeralCloseResult = SessionProtocolEphemeralCloseResult;
 
+export type TauSdkSessionBashInput = Omit<SessionProtocolBashParams, "sessionId" | "execId"> & {
+  signal?: AbortSignal;
+};
+export type TauSdkSessionBashResult = SessionProtocolBashResult;
+
 export type TauSdkSessionExecOptions = {
   args?: string[];
   env?: Record<string, string>;
@@ -211,9 +216,7 @@ export type TauSdkSession = {
   steer(text: string): Promise<TauSdkSessionSteerResult>;
   cancelPendingMessages(): Promise<TauSdkSessionCancelPendingMessagesResult>;
   retry(): Promise<TauSdkSessionRetryResult>;
-  bash(
-    input: Omit<SessionProtocolBashParams, "sessionId" | "execId"> & { signal?: AbortSignal },
-  ): Promise<SessionProtocolBashResult>;
+  bash(input: TauSdkSessionBashInput): Promise<TauSdkSessionBashResult>;
   exec(command: string, options?: TauSdkSessionExecOptions): Promise<TauSdkSessionExecResult>;
   sample(input: TauSdkSessionSampleInput): Promise<TauSdkSessionSampleResult>;
   interrupt(): Promise<TauSdkSessionInterruptResult>;

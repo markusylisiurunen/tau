@@ -736,11 +736,11 @@ export class AgentRuntime {
     this.assertHistoryMutable();
     const inbox = this.notifications;
     if (!inbox) return false;
-    const signal = inbox.signal();
-    if (!signal) return false;
+    const notifications = inbox.signal();
+    if (!notifications) return false;
     const message: UserMessage = {
       role: "user",
-      content: [{ type: "text", text: formatNotificationSignal(signal) }],
+      content: [{ type: "text", text: formatNotificationSignal(notifications) }],
       timestamp: this.clock.now(),
     };
     await this.commitHistoryMessage(message, historyEntryId, (id, revision) => ({
@@ -748,10 +748,10 @@ export class AgentRuntime {
       historyEntryId: id,
       message,
       origin: "notification",
-      notificationTitles: signal.notifications.map((entry) => entry.title),
+      notificationTitles: notifications.map((entry) => entry.title),
       revision,
     }));
-    inbox.delivered(signal);
+    inbox.delivered(notifications);
     return true;
   }
 
@@ -833,10 +833,10 @@ export class AgentRuntime {
     this.activeAbortController = controller;
     let initialResult: AgentSubturnResult | undefined;
     let associatedSteering: typeof this.pendingSteering = [];
-    let turnSpec = this.captureTurnSettings();
 
     try {
-      if (await this.commitNotifications()) turnSpec = this.continueTurnSettings(turnSpec);
+      await this.commitNotifications();
+      let turnSpec = this.captureTurnSettings();
       while (true) {
         await this.deliver({
           type: "turn_started",
@@ -905,15 +905,14 @@ export class AgentRuntime {
         associatedSteering = this.pendingSteering.splice(0);
         this.stopAtBoundaryRequested = false;
         await this.commitNotifications();
-        if (associatedSteering.length > 0)
-          await this.commitUserTextWithModelNotice(
-            formatSteeringUserMessage(
-              associatedSteering.map((item) => item.text),
-              associatedSteering.flatMap((item) => item.metadata),
-            ),
-            turnSpec.modelNotice,
-            { origin: "steering" },
-          );
+        await this.commitUserTextWithModelNotice(
+          formatSteeringUserMessage(
+            associatedSteering.map((item) => item.text),
+            associatedSteering.flatMap((item) => item.metadata),
+          ),
+          turnSpec.modelNotice,
+          { origin: "steering" },
+        );
         turnSpec = this.continueTurnSettings(turnSpec);
         for (const submission of associatedSteering) {
           submission.resolveApplied({
@@ -1258,17 +1257,16 @@ export class AgentRuntime {
       const hasToolCalls =
         finalMessage?.stopReason === "toolUse" &&
         finalMessage.content.some((content) => content.type === "toolCall");
+      // A notification continues the turn only when another subturn can still answer it.
       const notified =
         subturns < turnSettings.maxModelSubturns &&
         finalMessage?.stopReason !== "error" &&
         (await this.commitNotifications());
       if (!continueAfterToolRecovery && !hasToolCalls && !notified) break;
-      if (continueAfterToolRecovery) {
-        needsAnotherSubturn = true;
-        continue;
-      }
       needsAnotherSubturn = true;
-      retryBudget = { remaining: turnSettings.retryPolicy.maxRetries };
+      if (!continueAfterToolRecovery) {
+        retryBudget = { remaining: turnSettings.retryPolicy.maxRetries };
+      }
     }
 
     const limitReached =

@@ -745,16 +745,14 @@ describe("session execution backend plumbing", () => {
         };
       },
     };
-    const addUserText = vi.fn(async () => "history-1");
+    const recordOutput = vi.fn(async () => {});
 
     const result = await runDirectBashCommand({
       command: "echo hello",
       backend,
       workingDirectory: "/repo",
-      actionLabel: "ran",
       signal,
-      addToContext: true,
-      addUserText,
+      recordOutput,
       now: () => 100,
     });
 
@@ -764,30 +762,26 @@ describe("session execution backend plumbing", () => {
         options: { signal, timeoutMs: BASH_DEFAULT_TIMEOUT_MS },
       },
     ]);
-    expect(addUserText).toHaveBeenCalledWith("Bash command output:\n$ echo hello\nhello");
-    expect(result.userHistoryEntryId).toBe("history-1");
+    expect(recordOutput).toHaveBeenCalledWith("Bash command output:\n$ echo hello\nhello");
+    expect(result.presentation.actionByStatus.succeeded).toBe("you ran");
 
-    await runDirectBashCommand({
+    const incognito = await runDirectBashCommand({
       command: "echo skipped",
       backend,
       workingDirectory: "/repo",
-      actionLabel: "ran",
-      addToContext: false,
-      addUserText,
       now: () => 100,
     });
 
-    expect(addUserText).toHaveBeenCalledTimes(1);
+    expect(recordOutput).toHaveBeenCalledTimes(1);
+    expect(incognito.presentation.actionByStatus.succeeded).toBe("incognito");
 
     const terminated = await runDirectBashCommand({
       command: "sleep 60",
       backend,
       workingDirectory: "/repo",
-      actionLabel: "ran",
-      addToContext: true,
-      addUserText,
+      recordOutput,
     });
-    expect(addUserText).toHaveBeenLastCalledWith(
+    expect(recordOutput).toHaveBeenLastCalledWith(
       `Bash command output:\n$ sleep 60\npartial output\n\n[Command timed out after ${BASH_DEFAULT_TIMEOUT_MS}ms.]`,
     );
     expect(terminated.presentation.details.at(-1)).toEqual({

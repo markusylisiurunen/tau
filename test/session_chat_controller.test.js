@@ -326,8 +326,11 @@ class FakeSession {
       backend: {
         runBash: (command, options) => this.exec(command, { ...options, cwd: "/session/repo" }),
       },
-      addUserText: async (text) =>
-        (await this.record(text, { historyEntryId: input.historyEntryId })).userHistoryEntryId,
+      recordOutput: input.addToContext
+        ? async (text) => {
+            await this.record(text, { historyEntryId: input.historyEntryId });
+          }
+        : undefined,
     }),
   );
   record = vi.fn(async (text, options = {}) => {
@@ -2502,7 +2505,6 @@ describe("SessionChatController", () => {
     expect(session.bash).toHaveBeenCalledWith({
       command: "pwd",
       addToContext: true,
-      actionLabel: "you ran",
       historyEntryId: expect.stringMatching(/^bash-user-/),
     });
     expect(session.record).toHaveBeenCalledWith(
@@ -2561,7 +2563,6 @@ describe("SessionChatController", () => {
     expect(session.bash).toHaveBeenCalledWith({
       command: "pwd",
       addToContext: false,
-      actionLabel: "incognito",
       historyEntryId: expect.stringMatching(/^bash-user-/),
     });
     expect(session.record).not.toHaveBeenCalled();

@@ -192,7 +192,6 @@ export type SessionProtocolBashParams = SessionProtocolSessionIdParams & {
   command: string;
   addToContext: boolean;
   historyEntryId: string;
-  actionLabel: string;
 };
 export type SessionProtocolToolRunPresentation = {
   actionByStatus: Record<
@@ -208,7 +207,6 @@ export type SessionProtocolToolRunPresentation = {
 export type SessionProtocolBashResult = {
   exitCode: number | null;
   presentation: SessionProtocolToolRunPresentation;
-  userHistoryEntryId?: string;
 };
 export type SessionProtocolExecParams = SessionProtocolSessionIdParams & {
   execId: string;
@@ -1870,7 +1868,6 @@ const sessionProtocolBashParamsSchema = z
     command: nonEmptyProcessStringSchema,
     addToContext: z.boolean(),
     historyEntryId: historyEntryIdSchema,
-    actionLabel: boundedLabelSchema,
   })
   .strip();
 
@@ -3567,7 +3564,6 @@ const sessionProtocolRecordResultSchema = z
 const sessionProtocolBashResultSchema = z
   .object({
     exitCode: z.number().int().nullable(),
-    userHistoryEntryId: historyEntryIdSchema.optional(),
     presentation: sessionProtocolToolRunPresentationSchema,
   })
   .strip();

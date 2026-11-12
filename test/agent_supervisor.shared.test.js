@@ -98,6 +98,21 @@ describe("AgentSupervisor", () => {
     supervisor.sendInput({ id: child.id, prompt: "again", mode: "queue" });
     await supervisor.waitForAgents([child.id]);
     expect(completions.map((state) => state.run.revision)).toEqual([1, 3]);
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    record.runtime.agent.spec.model.stream = () => createStream(createAssistant("slow"), gate);
+    supervisor.sendInput({ id: child.id, prompt: "slow", mode: "queue" });
+    await vi.waitFor(() => expect(supervisor.getSnapshot(child.id).availability).toBe("running"));
+    const interrupted = supervisor.scope("main").interrupt(child.id);
+    release();
+    await interrupted;
+    expect(completions).toHaveLength(2);
+    record.runtime.agent.spec.model.stream = () => createStream(createAssistant("done"));
+    supervisor.sendInput({ id: child.id, prompt: "again", mode: "queue" });
+    await supervisor.waitForAgents([child.id]);
+    expect(completions).toHaveLength(3);
     record.canDelegate = true;
     const nested = supervisor.spawn(
       createSpawnOptions({ parentId: child.id, launchEpoch: supervisor.prepareSpawn(child.id) }),
@@ -105,7 +120,7 @@ describe("AgentSupervisor", () => {
     getRecord(supervisor, nested.id).runtime.agent.spec.model.stream = () =>
       createStream(createAssistant("nested"));
     await supervisor.waitForAgents([nested.id]);
-    expect(completions).toHaveLength(2);
+    expect(completions).toHaveLength(3);
     expect(() => supervisor.setCompletionNotification("main", nested.id, true)).toThrow();
     expect(() =>
       supervisor.spawn(createSpawnOptions({ parentId: child.id, notifyOnCompletion: true })),

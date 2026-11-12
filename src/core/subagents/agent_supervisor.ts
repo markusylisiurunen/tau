@@ -34,6 +34,8 @@ type SubagentRecord = {
   launchEpoch: number;
   canDelegate: boolean;
   notifyOnCompletion: boolean;
+  /** The main agent interrupted this run itself, so its completion is not news to it. */
+  interruptedByMain: boolean;
   subtreeStops: number;
   kind: "delegated";
   title: string;
@@ -262,6 +264,7 @@ export class AgentSupervisor {
       depth,
       launchEpoch: 0,
       notifyOnCompletion: options.notifyOnCompletion,
+      interruptedByMain: false,
       canDelegate: runtimeConfig.kind === "native" && runtimeConfig.tools.includes("agents"),
       subtreeStops: 0,
       kind: "delegated",
@@ -299,6 +302,18 @@ export class AgentSupervisor {
     });
     this.startRun(record, options.prompt, "subagent_spawned");
     return this.read(record.id);
+  }
+
+  /** Only a direct child of main can notify, and only while it runs. */
+  noteInterruptBy(callerId: string, id: string): void {
+    const record = this.requireRecord(id);
+    if (
+      callerId === this.mainAgentId &&
+      record.parentId === callerId &&
+      record.run.status === "running"
+    ) {
+      record.interruptedByMain = true;
+    }
   }
 
   setCompletionNotification(callerId: string, id: string, enabled: boolean): void {
@@ -514,7 +529,11 @@ export class AgentSupervisor {
                 ? "interrupted"
                 : "failed",
         });
-        if (record.notifyOnCompletion) this.options.onCompletion(this.toSnapshot(record));
+        const interruptedByMain = record.interruptedByMain && record.run.status === "interrupted";
+        record.interruptedByMain = false;
+        if (record.notifyOnCompletion && !interruptedByMain) {
+          this.options.onCompletion(this.toSnapshot(record));
+        }
         await this.emit({ type: "subagent_finished", state: this.toSnapshot(record) });
       }
     })();
@@ -670,6 +689,7 @@ export class ScopedAgentSupervisor {
   }
   interrupt(id: string, signal?: AbortSignal, wait = true, scope: "agent" | "subtree" = "agent") {
     this.check(id);
+    this.supervisor.noteInterruptBy(this.callerId, id);
     return this.supervisor.interrupt(id, signal, wait, scope);
   }
   waitForAgents(ids: string[], signal?: AbortSignal) {

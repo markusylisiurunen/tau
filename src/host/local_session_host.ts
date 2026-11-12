@@ -19,7 +19,6 @@ import {
   type AutoCompactDefaults,
   getEffectiveAutoCompactThresholdTokens,
 } from "../core/session/auto_compaction_threshold.js";
-import { runDirectBashCommand } from "../core/session/direct_bash.js";
 import type { SubagentEvent } from "../core/subagents/types.js";
 import type { ToolActivity } from "../core/tools/activity.js";
 import { buildToolRunPresentation, TOOL_UI_FACET_VERSION } from "../core/tools/presentation.js";
@@ -42,8 +41,6 @@ import type {
   SessionProtocolAgentRun,
   SessionProtocolAutocompletePathsParams,
   SessionProtocolAutocompletePathsResult,
-  SessionProtocolBashParams,
-  SessionProtocolBashResult,
   SessionProtocolChange,
   SessionProtocolClientToolPresentation,
   SessionProtocolClientToolResult,
@@ -908,7 +905,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   private readonly unsubscribeNotifications: () => void;
   /** Work that must finish before the agent starts a turn on its own. */
   private turnAdmissionHolds = 0;
-  private contextBashCount = 0;
   /** Set after an interruption or a failed turn, and cleared by the next client turn. */
   private notificationWakePaused = false;
   private notificationWakeScheduled = false;
@@ -973,13 +969,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   }
 
   get isTurnRunning(): boolean {
-    return (
-      this.contextBashCount > 0 || Boolean(this.activeLogicalTurn) || this.runtime.isTurnRunning
-    );
-  }
-
-  get isContextBashRunning(): boolean {
-    return this.contextBashCount > 0;
+    return Boolean(this.activeLogicalTurn) || this.runtime.isTurnRunning;
   }
 
   onTurnIdle(handler: () => void): () => void {
@@ -1100,7 +1090,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   }
 
   get canAcceptSteering(): boolean {
-    return this.contextBashCount === 0 && this.runtime.isTurnRunning;
+    return this.runtime.isTurnRunning;
   }
 
   get sessionId(): string {
@@ -1160,12 +1150,11 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     ) {
       throw new Error(`history entry id '${historyEntryId}' belongs to an accepted turn`);
     }
-    const userHistoryEntryId = await this.runAgentStateMutation(() =>
-      this.session.commitUserText(
-        options.text,
-        historyEntryId === undefined ? undefined : { historyEntryId },
-      ),
-    );
+    const recordOptions = historyEntryId === undefined ? undefined : { historyEntryId };
+    // During a turn, the text joins it and the turn owns any failure.
+    const userHistoryEntryId = this.runtime.isTurnRunning
+      ? await this.session.record(options.text, recordOptions)
+      : await this.runAgentStateMutation(() => this.session.record(options.text, recordOptions));
     return {
       snapshot: await this.snapshot(),
       userHistoryEntryId,
@@ -1419,43 +1408,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   cancelSteering(): ReturnType<ChatRuntime["cancelSteering"]> {
     this.assertActive();
     return this.runtime.cancelSteering();
-  }
-
-  async bash(
-    options: Omit<SessionProtocolBashParams, "sessionId"> & { signal?: AbortSignal },
-  ): Promise<SessionProtocolBashResult> {
-    this.assertActive();
-    const run = async (signal: AbortSignal, recordOutput?: (text: string) => Promise<void>) => {
-      return await runDirectBashCommand({
-        command: options.command,
-        backend: this.executionEnvironment.getToolExecutionBackend(),
-        workingDirectory: this.executionEnvironment.snapshot().cwd,
-        signal,
-        recordOutput,
-      });
-    };
-    if (!options.addToContext) {
-      return await this.runExec(options.execId, options.signal, (signal) => run(signal));
-    }
-    // Reject a taken history entry ID before the command runs.
-    this.createTurnHistoryEntryId(options.historyEntryId);
-    // An accepted turn that has not started yet cannot be waited for, so its output would land
-    // inside that turn.
-    if (!this.activeLogicalTurn && this.hasUnsettledTurn) {
-      throw new SessionExecBusyError("a turn is starting");
-    }
-    this.contextBashCount += 1;
-    try {
-      return await this.runExec(options.execId, options.signal, async (signal) => {
-        await raceAbort(this.waitForActiveTurn(), signal);
-        return await run(signal, async (text) => {
-          await this.record({ text, historyEntryId: options.historyEntryId });
-        });
-      });
-    } finally {
-      this.contextBashCount -= 1;
-      this.turnBecameIdle();
-    }
   }
 
   async exec(
@@ -1759,14 +1711,13 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   ): Promise<T> {
     this.assertActive();
     if (this.activeExecAbortControllers.has(execId)) {
-      throw new SessionExecBusyError(`execution '${execId}' is already active`);
+      throw new SessionExecBusyError(execId);
     }
     const abortController = new AbortController();
     this.activeExecAbortControllers.set(execId, abortController);
     const signal = externalSignal
       ? AbortSignal.any([externalSignal, abortController.signal])
       : abortController.signal;
-    const releaseAdmission = this.holdTurnAdmission();
     try {
       signal.throwIfAborted();
       return await this.runActiveWork(operation, signal);
@@ -1774,7 +1725,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       if (this.activeExecAbortControllers.get(execId) === abortController) {
         this.activeExecAbortControllers.delete(execId);
       }
-      releaseAdmission();
     }
   }
 
@@ -3341,20 +3291,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       await this.emitSnapshotResetIfChanged("assistant-message");
     });
     return { status: "failed", stopReason: "error", errorMessage: diagnostic };
-  }
-}
-
-async function raceAbort(promise: Promise<void>, signal: AbortSignal): Promise<void> {
-  signal.throwIfAborted();
-  let onAbort!: () => void;
-  const aborted = new Promise<never>((_, reject) => {
-    onAbort = () => reject(signal.reason);
-    signal.addEventListener("abort", onAbort, { once: true });
-  });
-  try {
-    await Promise.race([promise, aborted]);
-  } finally {
-    signal.removeEventListener("abort", onAbort);
   }
 }
 

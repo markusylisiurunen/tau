@@ -23,6 +23,7 @@ import { buildDiffReviewInstructions } from "../core/diff_review/review_instruct
 import type { HistoryDiagnostic } from "../core/history/history_manager.js";
 import { type CoreDeps, createDefaultCoreDeps } from "../core/runtime/deps.js";
 import { getEffectiveAutoCompactThresholdTokens } from "../core/session/auto_compaction_threshold.js";
+import { runDirectBashCommand } from "../core/session/direct_bash.js";
 import type { SubagentEvent } from "../core/subagents/types.js";
 import {
   buildToolRunPresentation,
@@ -504,14 +505,20 @@ export class SessionChatController {
       if (trimmed.startsWith("!!")) {
         const command = trimmed.slice(2).trim();
         if (command) {
-          await this.runSessionBashCommand(command, { addToContext: false });
+          await this.runSessionBashCommand(command, {
+            addToContext: false,
+            labelOverride: "incognito",
+          });
         }
         return;
       }
 
       const command = trimmed.slice(1).trim();
       if (command) {
-        await this.runSessionBashCommand(command, { addToContext: true });
+        await this.runSessionBashCommand(command, {
+          addToContext: true,
+          labelOverride: "you ran",
+        });
       }
       return;
     }
@@ -658,7 +665,7 @@ export class SessionChatController {
 
   private async runSessionBashCommand(
     command: string,
-    options: { addToContext: boolean },
+    options: { addToContext: boolean; labelOverride: string },
   ): Promise<void> {
     if (this.isSessionOperationActive()) {
       return;
@@ -681,14 +688,28 @@ export class SessionChatController {
     });
     this.refreshStatus();
 
-    // The tool card shows the output, also when an interrupted command still records it.
-    if (options.addToContext) this.hiddenHistoryEntryIds.add(toolCallId);
     try {
-      const result = await this.session.bash({
-        command,
-        addToContext: options.addToContext,
-        historyEntryId: toolCallId,
+      const backend = createSdkToolExecutionBackend({
+        executionEnvironment: this.session,
+        cwd: this.snapshot.executionEnvironment.cwd,
       });
+      const result = await runDirectBashCommand({
+        command,
+        backend,
+        workingDirectory,
+        actionLabel: options.labelOverride,
+        addToContext: options.addToContext,
+        addUserText: async (text) => {
+          const recorded = await this.session.record(text, {
+            historyEntryId: toolCallId,
+          });
+          return recorded.userHistoryEntryId;
+        },
+      });
+      if (result.userHistoryEntryId) {
+        this.hiddenHistoryEntryIds.add(result.userHistoryEntryId);
+        this.renderedMessageIds.push(this.getViewMessageId(result.userHistoryEntryId));
+      }
       this.view.updateLocalToolUi({
         toolCallId,
         status: result.exitCode === 0 ? "succeeded" : "failed",

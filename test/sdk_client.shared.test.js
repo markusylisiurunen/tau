@@ -696,63 +696,52 @@ describe("sdk_client", () => {
     expect(transport.closed).toBe(true);
   });
 
-  it.each(["exec", "bash"])(
-    "cancels only the in-flight %s whose abort signal fires",
-    async (kind) => {
-      const transport = new FakeSessionProtocolTransport();
-      let finishExec;
-      transport.onRequest = async (method) => {
-        if (method === `session.${kind}`) {
-          return await new Promise((resolve) => {
-            finishExec = resolve;
-          });
-        }
-        if (method === "session.cancelExec") {
-          finishExec(createProtocolExecResult({ output: "cancelled", aborted: true }));
-          return { cancelled: true };
-        }
-        return undefined;
-      };
-      const client = await createTauSdkClientFromTransport(transport);
-      const session = await client.sessions.observe("session-1");
-      const abortController = new AbortController();
-
-      const execution =
-        kind === "exec"
-          ? session.exec("sleep 60", { signal: abortController.signal })
-          : session.bash({
-              command: "sleep 60",
-              addToContext: true,
-              signal: abortController.signal,
-            });
-      await vi.waitFor(() => {
-        expect(transport.requests).toContainEqual({
-          method: `session.${kind}`,
-          params: {
-            sessionId: "session-1",
-            execId: expect.any(String),
-            command: "sleep 60",
-            ...(kind === "bash" ? { addToContext: true } : {}),
-          },
+  it("cancels only the in-flight exec whose abort signal fires", async () => {
+    const transport = new FakeSessionProtocolTransport();
+    let finishExec;
+    transport.onRequest = async (method) => {
+      if (method === "session.exec") {
+        return await new Promise((resolve) => {
+          finishExec = resolve;
         });
-      });
-      const execId = transport.requests.find((request) => request.method === `session.${kind}`)
-        .params.execId;
-      abortController.abort();
+      }
+      if (method === "session.cancelExec") {
+        finishExec(createProtocolExecResult({ output: "cancelled", aborted: true }));
+        return { cancelled: true };
+      }
+      return undefined;
+    };
+    const client = await createTauSdkClientFromTransport(transport);
+    const session = await client.sessions.observe("session-1");
+    const abortController = new AbortController();
 
-      await expect(execution).rejects.toMatchObject({ name: "AbortError" });
-      await vi.waitFor(() => {
-        expect(transport.requests).toContainEqual({
-          method: "session.cancelExec",
-          params: { sessionId: "session-1", execId },
-        });
+    const execution = session.exec("sleep 60", { signal: abortController.signal });
+    await vi.waitFor(() => {
+      expect(transport.requests).toContainEqual({
+        method: "session.exec",
+        params: {
+          sessionId: "session-1",
+          execId: expect.any(String),
+          command: "sleep 60",
+        },
       });
-      expect(transport.requests.some((request) => request.method === "session.interrupt")).toBe(
-        false,
-      );
-      await client.close();
-    },
-  );
+    });
+    const execId = transport.requests.find((request) => request.method === "session.exec").params
+      .execId;
+    abortController.abort();
+
+    await expect(execution).rejects.toMatchObject({ name: "AbortError" });
+    await vi.waitFor(() => {
+      expect(transport.requests).toContainEqual({
+        method: "session.cancelExec",
+        params: { sessionId: "session-1", execId },
+      });
+    });
+    expect(transport.requests.some((request) => request.method === "session.interrupt")).toBe(
+      false,
+    );
+    await client.close();
+  });
 
   it("consumes failures from abort-triggered targeted cancellation", async () => {
     const transport = new FakeSessionProtocolTransport();

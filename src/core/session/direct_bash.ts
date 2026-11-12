@@ -13,6 +13,7 @@ import { TOOL_NAME_BASH } from "../tools/tool_names.js";
 export type DirectBashExecutionResult = {
   exitCode: number | null;
   presentation: ToolRunPresentation;
+  userHistoryEntryId?: string;
 };
 
 export type DirectBashExecutionOptions = {
@@ -20,8 +21,9 @@ export type DirectBashExecutionOptions = {
   backend: ToolExecutionBackend;
   signal?: AbortSignal;
   workingDirectory: string;
-  /** Adds the output to the model's context. Without it, the command runs incognito. */
-  recordOutput?: (text: string) => Promise<void>;
+  actionLabel: string;
+  addToContext: boolean;
+  addUserText?: (text: string) => string | Promise<string>;
   now?: () => number;
 };
 
@@ -69,13 +71,21 @@ export async function runDirectBashCommand(
     workingDirectory: options.workingDirectory,
     includeExitCode: !terminationNotice,
     terminationNotice,
-    actionLabel: options.recordOutput ? "you ran" : "incognito",
+    actionLabel: options.actionLabel,
     detailTruncation: {
       maxLines: 33,
       maxLineChars: TOOL_CARD_MAX_LINE_CHARS,
       strategy: "middle",
     },
   });
-  await options.recordOutput?.(userMessageText);
-  return { exitCode, presentation };
+  const userHistoryEntryId =
+    options.addToContext && options.addUserText
+      ? await options.addUserText(userMessageText)
+      : undefined;
+
+  return {
+    exitCode,
+    presentation,
+    ...(userHistoryEntryId !== undefined ? { userHistoryEntryId } : {}),
+  };
 }

@@ -2,8 +2,6 @@ import type { CancelledSteeringSubmission } from "../core/agent/agent_runtime.js
 import type {
   SessionProtocolAutocompletePathsParams,
   SessionProtocolAutocompletePathsResult,
-  SessionProtocolBashParams,
-  SessionProtocolBashResult,
   SessionProtocolClientToolCallMessage,
   SessionProtocolClientToolCancelMessage,
   SessionProtocolClientToolDefinition,
@@ -46,7 +44,11 @@ import type {
 
 export class EphemeralThreadBusyError extends Error {}
 
-export class SessionExecBusyError extends Error {}
+export class SessionExecBusyError extends Error {
+  constructor(execId: string) {
+    super(`execution '${execId}' is already active`);
+  }
+}
 
 export class SessionRetryUnavailableError extends Error {}
 
@@ -56,7 +58,6 @@ export type TauHostedSession = {
   readonly sessionId: string;
   readonly isDisposed?: boolean;
   readonly isTurnRunning: boolean;
-  readonly isContextBashRunning: boolean;
   readonly canAcceptSteering: boolean;
   onTurnIdle(handler: () => void): () => void;
   onDelta(handler: (delta: SessionProtocolDeltaMessage) => void): () => void;
@@ -90,9 +91,6 @@ export type TauHostedSession = {
     }>;
   };
   cancelSteering(): CancelledSteeringSubmission[];
-  bash(
-    options: Omit<SessionProtocolBashParams, "sessionId"> & { signal?: AbortSignal },
-  ): Promise<SessionProtocolBashResult>;
   exec(
     options: Omit<SessionProtocolExecParams, "sessionId"> & {
       signal?: AbortSignal;

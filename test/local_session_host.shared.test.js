@@ -461,190 +461,42 @@ describe("HostedEphemeralAgentSession", () => {
 });
 
 describe("LocalSessionHost", () => {
-  it("defers queued input and notification turns until shell output is recorded", async () => {
-    const store = new MemorySessionStore();
-    const { backend, complete } = createPendingBashBackend();
-    const host = createHost(store, {
-      executionEnvironmentResolver: {
-        resolve: async () => createTestExecutionEnvironment(undefined, backend),
-      },
-    });
+  it("records text during a running turn without interrupting it", async () => {
+    const host = createHost(new MemorySessionStore());
     const session = await host.createSession(localCreateInput);
     const client = await createTauSdkClientFromTransport(
       new InProcessSessionProtocolTransport({ host }),
     );
     const observed = await client.sessions.observe(session.sessionId);
-    let projected = await observed.snapshot();
-    observed.onDelta((delta) => {
-      projected = applySessionProtocolDelta(projected, delta);
-    });
-    const recordGate = deferred();
-    let recording = false;
-    const commit = store.commitSessionSnapshot.bind(store);
-    vi.spyOn(store, "commitSessionSnapshot").mockImplementation(async (snapshot, options) => {
-      if (!recording && snapshot.messages.some((message) => message.id === "shell-output")) {
-        recording = true;
-        await recordGate.promise;
-      }
-      return await commit(snapshot, options);
-    });
-    const stream = vi.fn(() => ({
-      async *[Symbol.asyncIterator]() {},
-      async result() {
-        expect(
-          (await store.loadSession(session.sessionId)).messages.some(
-            (message) => message.id === "shell-output",
-          ),
-        ).toBe(true);
-        return fauxAssistantMessage("done");
-      },
-    }));
-    session.runtime.agent.spec.model.stream = stream;
-    try {
-      const shell = observed.bash({
-        command: "pwd",
-        addToContext: true,
-        historyEntryId: "shell-output",
-      });
-      await vi.waitFor(() => expect(backend.runBash).toHaveBeenCalledTimes(1));
-      session.runtime.notifications.add("child finished");
-      await new Promise((resolve) => setImmediate(resolve));
-      expect(stream).not.toHaveBeenCalled();
-      await expect(observed.compact("summary-only")).rejects.toMatchObject({
-        code: "busy",
-      });
-      await expect(observed.reload()).rejects.toMatchObject({ code: "busy" });
-      await expect(
-        observed.bash({ command: "pwd", addToContext: true, historyEntryId: "second-shell" }),
-      ).rejects.toMatchObject({ code: "busy" });
-      const queued = observed.queue("next task").catch((error) => error);
-      const steered = observed.steer("correction").catch((error) => error);
-      await vi.waitFor(() => expect(observed.pendingUserMessages().messages).toHaveLength(2));
-      expect((await observed.cancelPendingMessages()).cancelled).toHaveLength(2);
-      expect(await queued).toBeInstanceOf(Error);
-      expect(await steered).toBeInstanceOf(Error);
-      const nextTurn = observed.queue("next task", { historyEntryId: "queued-user" });
-      await vi.waitFor(() => expect(observed.pendingUserMessages().messages).toHaveLength(1));
-      complete();
-      await vi.waitFor(() => expect(recording).toBe(true));
-      expect(stream).not.toHaveBeenCalled();
-      expect(session.runtime.notifications.hasUndelivered()).toBe(true);
-      recordGate.resolve();
-      expect(await shell).toMatchObject({ exitCode: 0 });
-      await vi.waitFor(() => expect(stream).toHaveBeenCalledTimes(1));
-      await nextTurn;
-      await session.waitForActiveWork();
-      expect(projected.turns["queued-user"].state).toBe("settled");
-      expect(projected).toEqual(await observed.snapshot());
-      expect(Object.values(projected.turns)).toEqual([
-        expect.objectContaining({
-          state: "settled",
-          outcome: expect.objectContaining({ status: "completed" }),
-        }),
-      ]);
-      session.runtime.notifications.add("later completion");
-      await vi.waitFor(() => expect(stream).toHaveBeenCalledTimes(2));
-      await session.waitForActiveWork();
-    } finally {
-      complete();
-      recordGate.resolve();
-      await client.close();
-      await host.shutdown();
-    }
-  });
-
-  it("cancels a shell while it waits for the running turn", async () => {
-    const { backend, complete } = createPendingBashBackend();
-    const host = createHost(new MemorySessionStore(), {
-      executionEnvironmentResolver: {
-        resolve: async () => createTestExecutionEnvironment(undefined, backend),
-      },
-    });
-    const session = await host.createSession(localCreateInput);
-    const transport = new InProcessSessionProtocolTransport({ host });
-    const client = await createTauSdkClientFromTransport(transport);
-    await client.sessions.observe(session.sessionId);
     const started = deferred();
     const gate = deferred();
-    session.runtime.agent.spec.model.stream = () => ({
-      async *[Symbol.asyncIterator]() {
-        started.resolve();
-        await gate.promise;
-        yield* [];
-      },
-      async result() {
-        return fauxAssistantMessage("done");
-      },
-    });
+    let calls = 0;
+    session.runtime.agent.spec.model.stream = () => {
+      const first = ++calls === 1;
+      return {
+        async *[Symbol.asyncIterator]() {
+          if (first) {
+            started.resolve();
+            await gate.promise;
+          }
+          yield* [];
+        },
+        async result() {
+          return fauxAssistantMessage(first ? "working" : "done");
+        },
+      };
+    };
     try {
-      session.runtime.notifications.add("child finished");
+      const turn = observed.submit("task");
       await started.promise;
-      const params = {
-        sessionId: session.sessionId,
-        execId: "waiting-shell",
-        historyEntryId: "waiting-shell-output",
-        command: "pwd",
-        addToContext: true,
-      };
-      const shell = transport.request("session.bash", params).catch((error) => error);
-      await new Promise((resolve) => setImmediate(resolve));
-      expect(
-        await transport.request("session.cancelExec", {
-          sessionId: session.sessionId,
-          execId: params.execId,
-        }),
-      ).toEqual({ cancelled: true });
-      expect(await shell).toBeInstanceOf(Error);
+      const recorded = observed.record("command output", { historyEntryId: "command-output" });
       gate.resolve();
-      await session.waitForActiveWork();
-      expect(backend.runBash).not.toHaveBeenCalled();
+      expect((await turn).turn.status).toBe("completed");
+      expect((await recorded).userHistoryEntryId).toBe("command-output");
+      expect(calls).toBe(2);
     } finally {
       gate.resolve();
-      complete();
       await client.close();
-      await host.shutdown();
-    }
-  });
-
-  it.each(["cancel", "exec"])("releases notification admission after shell %s", async (ending) => {
-    const { backend, complete } = createPendingBashBackend();
-    const host = createHost(new MemorySessionStore(), {
-      executionEnvironmentResolver: {
-        resolve: async () => createTestExecutionEnvironment(undefined, backend),
-      },
-    });
-    const session = await host.createSession(localCreateInput);
-    const stream = vi.fn(() => ({
-      async *[Symbol.asyncIterator]() {},
-      async result() {
-        return fauxAssistantMessage("done");
-      },
-    }));
-    session.runtime.agent.spec.model.stream = stream;
-    try {
-      const options = {
-        execId: "shell",
-        command: "pwd",
-        addToContext: true,
-        historyEntryId: "shell-output",
-      };
-      const shell = ending === "exec" ? session.exec(options) : session.bash(options);
-      const settled = shell.catch((error) => error);
-      await vi.waitFor(() => expect(backend.runBash).toHaveBeenCalledTimes(1));
-      session.runtime.notifications.add("child finished");
-      await new Promise((resolve) => setImmediate(resolve));
-      expect(stream).not.toHaveBeenCalled();
-      if (ending === "cancel") expect(session.cancelExec("shell")).toBe(true);
-      else complete();
-      const result = await settled;
-      expect(result).not.toBeInstanceOf(Error);
-      await vi.waitFor(() => expect(stream).toHaveBeenCalledTimes(1));
-      await session.waitForActiveWork();
-      expect(
-        (await session.snapshot()).messages.some((message) => message.id === "shell-output"),
-      ).toBe(ending === "cancel");
-    } finally {
-      complete();
       await host.shutdown();
     }
   });

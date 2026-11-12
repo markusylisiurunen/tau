@@ -444,63 +444,6 @@ describe("session runner", () => {
     });
   });
 
-  it("previews the result only for tools that report no activity of their own", async () => {
-    const tool = (name, execute) => ({
-      schema: {
-        name,
-        description: name,
-        parameters: { type: "object", properties: {}, additionalProperties: false },
-      },
-      describe: () => ({
-        presentation: buildToolRunPresentation({ toolName: name, subject: `${name}-subject` }),
-      }),
-      execute,
-    });
-    const result = { content: [{ type: "text", text: "line 1\nline 2" }], outcome: "succeeded" };
-    const runner = new SequentialToolCallRunner(
-      {
-        toolRegistry: new ToolRegistry([
-          tool("plain", async () => result),
-          tool("reported", async (call, context) => {
-            await context.emitActivity({
-              type: "write_success",
-              toolCallId: call.id,
-              path: "/repo/file.txt",
-            });
-            return result;
-          }),
-        ]),
-        executionContext: { agentId: "agent-1", turnId: "turn-1", assistantMessageId: "a-1" },
-      },
-      new AbortController().signal,
-    );
-    for (const name of ["plain", "reported"]) {
-      runner.prepare({ id: `${name}-call`, type: "toolCall", name, arguments: {} }).start();
-    }
-    const completion = runner.finish();
-    const activities = [];
-    for await (const event of runner) {
-      if (event.type === "tool_activity") activities.push(event.activity);
-      event.acknowledge?.();
-    }
-    await completion;
-    expect(activities).toEqual([
-      expect.objectContaining({
-        type: "tool_call_finished",
-        toolCallId: "plain-call",
-        status: "success",
-        presentation: expect.objectContaining({
-          subject: "plain-subject",
-          details: [
-            expect.objectContaining({ text: "line 1" }),
-            expect.objectContaining({ text: "line 2" }),
-          ],
-        }),
-      }),
-      { type: "write_success", toolCallId: "reported-call", path: "/repo/file.txt" },
-    ]);
-  });
-
   it("releases pending tool acknowledgements when event consumption stops", async () => {
     const call = {
       id: "activity-call",
@@ -802,14 +745,16 @@ describe("session execution backend plumbing", () => {
         };
       },
     };
-    const recordOutput = vi.fn(async () => {});
+    const addUserText = vi.fn(async () => "history-1");
 
     const result = await runDirectBashCommand({
       command: "echo hello",
       backend,
       workingDirectory: "/repo",
+      actionLabel: "ran",
       signal,
-      recordOutput,
+      addToContext: true,
+      addUserText,
       now: () => 100,
     });
 
@@ -819,26 +764,30 @@ describe("session execution backend plumbing", () => {
         options: { signal, timeoutMs: BASH_DEFAULT_TIMEOUT_MS },
       },
     ]);
-    expect(recordOutput).toHaveBeenCalledWith("Bash command output:\n$ echo hello\nhello");
-    expect(result.presentation.actionByStatus.succeeded).toBe("you ran");
+    expect(addUserText).toHaveBeenCalledWith("Bash command output:\n$ echo hello\nhello");
+    expect(result.userHistoryEntryId).toBe("history-1");
 
-    const incognito = await runDirectBashCommand({
+    await runDirectBashCommand({
       command: "echo skipped",
       backend,
       workingDirectory: "/repo",
+      actionLabel: "ran",
+      addToContext: false,
+      addUserText,
       now: () => 100,
     });
 
-    expect(recordOutput).toHaveBeenCalledTimes(1);
-    expect(incognito.presentation.actionByStatus.succeeded).toBe("incognito");
+    expect(addUserText).toHaveBeenCalledTimes(1);
 
     const terminated = await runDirectBashCommand({
       command: "sleep 60",
       backend,
       workingDirectory: "/repo",
-      recordOutput,
+      actionLabel: "ran",
+      addToContext: true,
+      addUserText,
     });
-    expect(recordOutput).toHaveBeenLastCalledWith(
+    expect(addUserText).toHaveBeenLastCalledWith(
       `Bash command output:\n$ sleep 60\npartial output\n\n[Command timed out after ${BASH_DEFAULT_TIMEOUT_MS}ms.]`,
     );
     expect(terminated.presentation.details.at(-1)).toEqual({

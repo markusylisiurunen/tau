@@ -109,8 +109,6 @@ export type {
   TauSdkRequestId,
   TauSdkResolvePromptResult,
   TauSdkSession,
-  TauSdkSessionBashInput,
-  TauSdkSessionBashResult,
   TauSdkSessionCancelPendingMessagesResult,
   TauSdkSessionClient,
   TauSdkSessionCompactResult,

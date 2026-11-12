@@ -1,7 +1,12 @@
+import { z } from "zod";
 import {
-  parseSessionProtocolToolRunPresentation as parseToolRunPresentation,
-  SESSION_PROTOCOL_MAX_TOOL_RUN_PRESENTATION_BYTES,
-  type SessionProtocolToolRunPresentation,
+  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES,
+  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAIL_BYTES,
+  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAILS,
+  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_LABEL_BYTES,
+  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_METADATA,
+  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_METADATA_VALUE_BYTES,
+  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_SUBJECT_BYTES,
 } from "../../protocol/session_protocol.js";
 import {
   TOOL_NAME_BASH,
@@ -19,14 +24,15 @@ import {
   TOOL_NAME_WRITE,
 } from "./tool_names.js";
 
-export {
-  parseToolRunPresentation,
-  SESSION_PROTOCOL_MAX_TOOL_RUN_PRESENTATION_BYTES as TOOL_RUN_PRESENTATION_MAX_BYTES,
-};
+export type ToolCardLineTone = "added" | "removed";
 
-export type ToolCardLine = SessionProtocolToolRunPresentation["details"][number];
-export type ToolCardLineTone = NonNullable<ToolCardLine["tone"]>;
-export type ToolCardWrap = ToolCardLine["wrap"];
+export type ToolCardWrap = "word" | "character";
+
+export type ToolCardLine = {
+  text: string;
+  tone?: ToolCardLineTone;
+  wrap: ToolCardWrap;
+};
 
 export type ToolCardLineInput = Omit<ToolCardLine, "wrap"> & { wrap?: ToolCardWrap };
 
@@ -49,9 +55,18 @@ export type ToolRunPresentationStatus =
 
 export type ToolRunActionLabels = Record<ToolRunPresentationStatus, string>;
 
-export type ToolRunPresentation = SessionProtocolToolRunPresentation;
+export type ToolRunPresentation = {
+  actionByStatus: ToolRunActionLabels;
+  operation?: string;
+  subject: string;
+  subjectWrap: ToolCardWrap;
+  details: ToolCardLine[];
+  metadata: string[];
+};
 
 export const TOOL_UI_FACET_VERSION = 3;
+export const TOOL_RUN_PRESENTATION_MAX_BYTES =
+  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES * 2;
 export const TOOL_CARD_SUBJECT_MAX_LINES = 8;
 export const TOOL_CARD_DEFAULT_DETAILS_MAX_LINES = 7;
 export const TOOL_CARD_TRUNCATED_DETAILS_MAX_LINES = 33;
@@ -68,6 +83,74 @@ export type ToolTextTruncation = {
   maxLineChars: number;
   strategy?: "head" | "middle";
 };
+
+function isSingleLine(text: string): boolean {
+  return !text.includes("\n") && !text.includes("\r");
+}
+
+function utf8ByteLength(text: string): number {
+  return Buffer.byteLength(text, "utf8");
+}
+
+const singleLineSchema = z.string().refine(isSingleLine, "must be one line");
+const boundedLabelSchema = singleLineSchema
+  .min(1)
+  .refine(
+    (value) => utf8ByteLength(value) <= SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_LABEL_BYTES,
+    `must not exceed ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_LABEL_BYTES} UTF-8 bytes`,
+  );
+const boundedDetailSchema = singleLineSchema.refine(
+  (value) => utf8ByteLength(value) <= SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAIL_BYTES,
+  `must not exceed ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAIL_BYTES} UTF-8 bytes`,
+);
+const boundedMetadataSchema = singleLineSchema.refine(
+  (value) =>
+    utf8ByteLength(value) <= SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_METADATA_VALUE_BYTES,
+  `must not exceed ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_METADATA_VALUE_BYTES} UTF-8 bytes`,
+);
+
+const toolCardLineSchema = z
+  .object({
+    text: boundedDetailSchema,
+    tone: z.enum(["added", "removed"]).optional(),
+    wrap: z.enum(["word", "character"]),
+  })
+  .strict();
+
+const toolRunPresentationSchema: z.ZodType<ToolRunPresentation> = z
+  .object({
+    actionByStatus: z
+      .object({
+        preparing: boundedLabelSchema,
+        queued: boundedLabelSchema,
+        running: boundedLabelSchema,
+        succeeded: boundedLabelSchema,
+        failed: boundedLabelSchema,
+        blocked: boundedLabelSchema,
+        cancelled: boundedLabelSchema,
+      })
+      .strict(),
+    operation: boundedLabelSchema.optional(),
+    subject: z
+      .string()
+      .min(1)
+      .refine((value) => !value.includes("\r"), "must not contain carriage returns")
+      .refine(
+        (value) =>
+          utf8ByteLength(value) <= SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_SUBJECT_BYTES,
+        `must not exceed ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_SUBJECT_BYTES} UTF-8 bytes`,
+      ),
+    subjectWrap: z.enum(["word", "character"]),
+    details: z.array(toolCardLineSchema).max(SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAILS),
+    metadata: z
+      .array(boundedMetadataSchema)
+      .max(SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_METADATA),
+  })
+  .strict()
+  .refine(
+    (value) => utf8ByteLength(JSON.stringify(value)) <= TOOL_RUN_PRESENTATION_MAX_BYTES,
+    `must not exceed ${TOOL_RUN_PRESENTATION_MAX_BYTES} UTF-8 bytes`,
+  );
 
 const GENERIC_TOOL_RUN_ACTION_LABELS: ToolRunActionLabels = {
   preparing: "preparing",
@@ -313,6 +396,10 @@ export function truncateToolRunSubject(
     maxLineChars,
     strategy: options.strategy,
   });
+}
+
+export function parseToolRunPresentation(value: unknown): ToolRunPresentation {
+  return toolRunPresentationSchema.parse(value);
 }
 
 function getToolRunActionLabels(toolName: string): ToolRunActionLabels {

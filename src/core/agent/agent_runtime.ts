@@ -384,6 +384,13 @@ export class AgentRuntime {
     rejectResult: (error: Error) => void;
   }> = [];
   private readonly notifications?: NotificationInbox;
+  /** Text recorded during a turn, added at its next step boundary or when it ends. */
+  private pendingRecords: Array<{
+    text: string;
+    historyEntryId?: string;
+    resolve: (historyEntryId: string) => void;
+    reject: (error: Error) => void;
+  }> = [];
   private disposed = false;
   private agentId: string;
 
@@ -471,6 +478,7 @@ export class AgentRuntime {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.rejectPendingRecords(new Error("agent was disposed"));
     this.interrupt();
     this.closeProviderSessions();
   }
@@ -736,6 +744,43 @@ export class AgentRuntime {
     }
   }
 
+  /**
+   * Adds user text without starting a turn. During a turn, the text joins it at the next step
+   * boundary, or is added when the turn ends.
+   */
+  record(text: string, options: { historyEntryId?: string } = {}): Promise<string> {
+    if (this.status === "idle") return this.commitUserText(text, options);
+    return new Promise((resolve, reject) => {
+      this.pendingRecords.push({ text, ...options, resolve, reject });
+    });
+  }
+
+  private async commitPendingRecords(): Promise<boolean> {
+    const records = this.pendingRecords.splice(0);
+    for (const [index, record] of records.entries()) {
+      try {
+        const options = record.historyEntryId ? { historyEntryId: record.historyEntryId } : {};
+        record.resolve(await this.commitUserText(record.text, options));
+      } catch (error) {
+        const failure = error instanceof Error ? error : new Error(String(error));
+        for (const rest of records.slice(index)) rest.reject(failure);
+        throw error;
+      }
+    }
+    return records.length > 0;
+  }
+
+  private rejectPendingRecords(error: Error): void {
+    for (const record of this.pendingRecords.splice(0)) record.reject(error);
+  }
+
+  /** Delivers recorded text and notifications at a step boundary. */
+  private async commitPendingInput(): Promise<boolean> {
+    const recorded = await this.commitPendingRecords();
+    const notified = await this.commitNotifications();
+    return recorded || notified;
+  }
+
   async commitNotifications(historyEntryId?: string): Promise<boolean> {
     this.assertHistoryMutable();
     const inbox = this.notifications;
@@ -906,12 +951,13 @@ export class AgentRuntime {
           if (this.pendingSteering.length > 0) {
             this.rejectPendingSteering(new Error("steering was not applied before the turn ended"));
           }
+          await this.commitPendingRecords();
           return { ...initialResult, terminalResult: result };
         }
 
         associatedSteering = this.pendingSteering.splice(0);
         this.stopAtBoundaryRequested = false;
-        await this.commitNotifications();
+        await this.commitPendingInput();
         await this.commitUserTextWithModelNotice(
           formatSteeringUserMessage(
             associatedSteering.map((item) => item.text),
@@ -935,6 +981,7 @@ export class AgentRuntime {
         submission.rejectResult(steeringError);
       }
       this.rejectPendingSteering(steeringError);
+      this.rejectPendingRecords(steeringError);
       throw error;
     } finally {
       if (this.activeAbortController === controller) {
@@ -1264,12 +1311,12 @@ export class AgentRuntime {
       const hasToolCalls =
         finalMessage?.stopReason === "toolUse" &&
         finalMessage.content.some((content) => content.type === "toolCall");
-      // A notification continues the turn only when another subturn can still answer it.
-      const notified =
+      // New input continues the turn only when another subturn can still answer it.
+      const delivered =
         subturns < turnSettings.maxModelSubturns &&
         finalMessage?.stopReason !== "error" &&
-        (await this.commitNotifications());
-      if (!continueAfterToolRecovery && !hasToolCalls && !notified) break;
+        (await this.commitPendingInput());
+      if (!continueAfterToolRecovery && !hasToolCalls && !delivered) break;
       needsAnotherSubturn = true;
       if (!continueAfterToolRecovery) {
         retryBudget = { remaining: turnSettings.retryPolicy.maxRetries };

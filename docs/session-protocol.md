@@ -100,7 +100,7 @@ Three other channels are separate from the snapshot, are not saved, and are empt
 
 One main-session turn runs at a time. `session.submit` returns `busy` while a client's turn runs, but waits for a turn the agent started on its own, as `session.queue` always does. `session.retry` returns `busy` during any turn. `session.steer` joins the running turn. Session changes run one at a time across all clients, and waiting client input runs before the agent starts another turn on its own.
 
-`session.bash` with `addToContext` waits for the running turn to finish. Until the command's output is recorded, new input waits, and `session.retry`, `session.record`, `session.setPersona`, `session.reload`, `session.compact`, `session.rewind`, and another `session.bash` with `addToContext` return `busy`. `session.interrupt` stops the command. `session.exec`, `session.bash` without `addToContext`, `session.sample`, and ephemeral threads run alongside a turn. The agent does not start a turn on its own while `session.exec` or `session.bash` runs.
+`session.record` adds user text without starting a turn and never interrupts one. During a turn, the text joins it at its next step, or is added when the turn ends, and the request returns once the text is in the history. `session.exec`, `session.sample`, and ephemeral threads run alongside everything else.
 
 ## Client tools
 
@@ -136,7 +136,6 @@ Every request has `params`, even if empty. All `session.*` methods take `session
 | `session.cancelPendingMessages` | Cancel queued and steering input. |
 | `session.retry` | Run a turn from current history. |
 | `session.interrupt` | Stop turns, commands, samples, and maintenance. |
-| `session.bash` | Run a user's shell command, optionally adding its output to the model's context. |
 | `session.exec` | Run a command in the execution environment, outside the conversation. |
 | `session.cancelExec` | Cancel one running command. |
 | `session.sample` | Run a standalone model call with supplied context. |

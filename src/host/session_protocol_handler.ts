@@ -277,9 +277,8 @@ export class SessionProtocolHandler {
         case "session.retry":
           await this.handleRetry(request);
           return;
-        case "session.bash":
         case "session.exec":
-          await this.handleExecution(request);
+          await this.handleExec(request);
           return;
         case "session.cancelExec":
           await this.handleCancelExec(request);
@@ -691,8 +690,8 @@ export class SessionProtocolHandler {
     );
   }
 
-  private async handleExecution(
-    request: Extract<SessionProtocolRequestMessage, { method: "session.exec" | "session.bash" }>,
+  private async handleExec(
+    request: Extract<SessionProtocolRequestMessage, { method: "session.exec" }>,
   ): Promise<void> {
     const key = this.execKey(request.params.sessionId, request.params.execId);
     if (this.activeExecAbortControllers.has(key)) {
@@ -903,14 +902,34 @@ export class SessionProtocolHandler {
       return;
     }
 
-    await this.withSessionMutation(request, "user message added", async (mutationState) => {
-      const result = await mutationState.session.record({
+    await this.withNonInterruptingSessionMutation(request, async (mutationState) => {
+      const joinsTurn = mutationState.session.canAcceptSteering;
+      const recording = mutationState.session.record({
         text: request.params.text,
         ...(request.params.historyEntryId !== undefined
           ? { historyEntryId: request.params.historyEntryId }
           : {}),
       });
-      this.sendMessage(createSessionProtocolSuccessResponse(request.id, "session.record", result));
+      const respond = (result: Awaited<typeof recording>) =>
+        this.sendMessage(
+          createSessionProtocolSuccessResponse(request.id, "session.record", result),
+        );
+      if (!joinsTurn) {
+        respond(await recording);
+        return;
+      }
+      // Text that joins a running turn is added at its next step boundary, so other session
+      // changes need not wait for that.
+      void recording.then(respond, (error: unknown) => {
+        this.sendMessage(
+          createSessionProtocolErrorResponse(
+            request.id,
+            SESSION_PROTOCOL_ERROR_CODES.internalError,
+            "failed to record user text",
+            { cause: error instanceof Error ? error.message : String(error) },
+          ),
+        );
+      });
     });
   }
 
@@ -1104,24 +1123,12 @@ export class SessionProtocolHandler {
 
   private async executeExec(
     state: SessionProtocolHandlerSessionState,
-    request: Extract<SessionProtocolRequestMessage, { method: "session.exec" | "session.bash" }>,
+    request: Extract<SessionProtocolRequestMessage, { method: "session.exec" }>,
     signal: AbortSignal,
   ): Promise<void> {
     try {
-      if (request.method === "session.bash") {
-        if (
-          request.params.addToContext &&
-          (this.getPendingMutationCount(state) > 0 || state.session.isContextBashRunning)
-        ) {
-          this.sendSubmitBusy(state, request.id);
-          return;
-        }
-        const result = await state.session.bash({ ...request.params, signal });
-        this.sendMessage(createSessionProtocolSuccessResponse(request.id, request.method, result));
-      } else {
-        const result = await state.session.exec({ ...request.params, signal });
-        this.sendMessage(createSessionProtocolSuccessResponse(request.id, request.method, result));
-      }
+      const result = await state.session.exec({ ...request.params, signal });
+      this.sendMessage(createSessionProtocolSuccessResponse(request.id, "session.exec", result));
     } catch (error) {
       const cancelled = signal.aborted || isAbortError(error);
       const busy = error instanceof SessionExecBusyError;
@@ -1458,16 +1465,6 @@ export class SessionProtocolHandler {
       }
       if (state.session.sessionId !== request.params.sessionId) {
         this.sendSessionNotFound(request.id, request.params.sessionId);
-        return;
-      }
-      if (state.session.isContextBashRunning) {
-        this.sendMessage(
-          createSessionProtocolErrorResponse(
-            request.id,
-            SESSION_PROTOCOL_ERROR_CODES.busy,
-            "a context-adding shell command is in progress",
-          ),
-        );
         return;
       }
       await this.interruptAndWaitForActiveSubmit(state);

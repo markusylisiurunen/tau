@@ -1,8 +1,6 @@
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import type {
   SessionProtocolAutocompletePathsResult,
-  SessionProtocolBashParams,
-  SessionProtocolBashResult,
   SessionProtocolCancelPendingMessagesResult,
   SessionProtocolClientToolDefinition,
   SessionProtocolCompactResult,
@@ -86,11 +84,6 @@ export type TauSdkReasoningEffort = SessionProtocolReasoningEffort;
 export type TauSdkEphemeralCreateResult = SessionProtocolEphemeralCreateResult;
 export type TauSdkEphemeralSubmitResult = SessionProtocolEphemeralSubmitResult;
 export type TauSdkEphemeralCloseResult = SessionProtocolEphemeralCloseResult;
-
-export type TauSdkSessionBashInput = Omit<SessionProtocolBashParams, "sessionId" | "execId"> & {
-  signal?: AbortSignal;
-};
-export type TauSdkSessionBashResult = SessionProtocolBashResult;
 
 export type TauSdkSessionExecOptions = {
   args?: string[];
@@ -216,7 +209,6 @@ export type TauSdkSession = {
   steer(text: string): Promise<TauSdkSessionSteerResult>;
   cancelPendingMessages(): Promise<TauSdkSessionCancelPendingMessagesResult>;
   retry(): Promise<TauSdkSessionRetryResult>;
-  bash(input: TauSdkSessionBashInput): Promise<TauSdkSessionBashResult>;
   exec(command: string, options?: TauSdkSessionExecOptions): Promise<TauSdkSessionExecResult>;
   sample(input: TauSdkSessionSampleInput): Promise<TauSdkSessionSampleResult>;
   interrupt(): Promise<TauSdkSessionInterruptResult>;

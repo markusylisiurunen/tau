@@ -1759,59 +1759,10 @@ describe("SessionProtocolHandler", () => {
     );
   });
 
-  it("rejects a context-adding shell before execution while compaction is pending", async () => {
-    let release;
-    let markStarted;
-    const gate = new Promise((resolve) => {
-      release = resolve;
-    });
-    const started = new Promise((resolve) => {
-      markStarted = resolve;
-    });
-    const harness = createHarness({
-      compact: async () => {
-        markStarted();
-        await gate;
-        return {
-          snapshot: createProtocolSnapshot(),
-          compactionMessage: "summary",
-          includedLastAssistant: false,
-        };
-      },
-    });
-    harness.seededSession.bash = vi.fn();
-    const compact = harness.connection.handleRequest(
-      request("compact", "session.compact", {
-        sessionId: "session-1",
-        mode: "summary-only",
-      }),
-    );
-    await started;
-    try {
-      await harness.connection.handleRequest(
-        request("shell", "session.bash", {
-          sessionId: "session-1",
-          execId: "shell",
-          historyEntryId: "shell-output",
-          command: "pwd",
-          addToContext: true,
-        }),
-      );
-      expect(harness.seededSession.bash).not.toHaveBeenCalled();
-      expect(harness.lines.find((line) => line.id === "shell")).toMatchObject({
-        ok: false,
-        error: { code: SESSION_PROTOCOL_ERROR_CODES.busy },
-      });
-    } finally {
-      release();
-      await compact;
-    }
-  });
-
   it("reports host-wide exec id collisions as busy", async () => {
     const harness = createHarness({
       exec: ({ execId }) => {
-        throw new SessionExecBusyError(`execution '${execId}' is already active`);
+        throw new SessionExecBusyError(execId);
       },
     });
 

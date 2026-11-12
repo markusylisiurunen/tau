@@ -261,6 +261,42 @@ describe("AgentRuntime", () => {
     runtime.dispose();
   });
 
+  it.each([
+    [2, "joins the turn at the next step", 2],
+    [1, "is added after a turn with no step left", 1],
+  ])("records text during a turn so it %s (%s subturns)", async (maxModelSubturns, _, calls) => {
+    const gate = deferred();
+    const started = deferred();
+    const { runtime, persona } = createRuntime({ maxModelSubturns });
+    const stream = setStreams(runtime, [
+      {
+        async *[Symbol.asyncIterator]() {
+          started.resolve();
+          await gate.promise;
+          yield* [];
+        },
+        async result() {
+          return createAssistant(persona, "first");
+        },
+      },
+      createStream([], createAssistant(persona, "second")),
+    ]);
+    const running = runtime.submit("task");
+    await started.promise;
+    const recorded = runtime.record("command output");
+    gate.resolve();
+    await running;
+    const id = await recorded;
+    expect(stream).toHaveBeenCalledTimes(calls);
+    expect(runtime.status).toBe("idle");
+    const roles = runtime.rawHistoryEntriesSnapshot.map((entry) => entry.message.role);
+    const index = runtime.rawHistoryEntriesSnapshot.findIndex((entry) => entry.id === id);
+    expect(roles.slice(index - 1)).toEqual(
+      calls === 2 ? ["assistant", "user", "assistant"] : ["assistant", "user"],
+    );
+    runtime.dispose();
+  });
+
   it("applies a lower threshold only after the active turn and steering finish", async () => {
     const gate = deferred();
     const started = deferred();

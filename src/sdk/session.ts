@@ -31,8 +31,6 @@ import type {
   TauSdkInitializeParams,
   TauSdkPendingUserMessagesListener,
   TauSdkSession,
-  TauSdkSessionBashInput,
-  TauSdkSessionBashResult,
   TauSdkSessionClient,
   TauSdkSessionExecOptions,
   TauSdkSessionUserMessageOptions,
@@ -411,14 +409,6 @@ class TauSdkClientImpl implements TauSdkClient {
     });
   }
 
-  sendBash(sessionId: string, input: TauSdkSessionBashInput): Promise<TauSdkSessionBashResult> {
-    const { signal, ...params } = input;
-    const execId = randomUUID();
-    return this.runExecRequest(sessionId, execId, signal, () =>
-      this.transport.request("session.bash", { ...params, sessionId, execId }),
-    );
-  }
-
   sendSample(
     sessionId: string,
     input: Omit<SessionProtocolSampleParams, "sessionId">,
@@ -789,10 +779,6 @@ class TauSdkSessionImpl implements TauSdkSession {
     options: TauSdkSessionExecOptions = {},
   ): Promise<SessionProtocolResultByMethod["session.exec"]> {
     return await this.client.executeInSession(this.activeSessionId(), command, options);
-  }
-
-  bash(input: TauSdkSessionBashInput): Promise<TauSdkSessionBashResult> {
-    return this.client.sendBash(this.activeSessionId(), input);
   }
 
   async sample(

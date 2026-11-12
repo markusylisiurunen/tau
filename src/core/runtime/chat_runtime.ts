@@ -216,6 +216,10 @@ export class ChatRuntime {
     return await this.agent.commitSystemMessage(content, metadata);
   }
 
+  record(text: string, options?: { historyEntryId?: string }): Promise<string> {
+    return this.agent.record(text, options);
+  }
+
   async commitUserText(text: string, options?: { historyEntryId?: string }): Promise<string> {
     return await this.agent.commitUserText(text, options);
   }

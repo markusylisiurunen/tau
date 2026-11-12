@@ -39,35 +39,6 @@ const bootstrap = createProtocolBootstrap();
 const catalog = createProtocolCatalog();
 
 describe("session_protocol", () => {
-  it("validates shell admission inputs and bounded presentation results", () => {
-    const input = {
-      sessionId: "session-1",
-      execId: "shell",
-      command: "pwd",
-      addToContext: true,
-      historyEntryId: "shell-output",
-    };
-    for (const invalid of [
-      { command: "pwd\0" },
-      { addToContext: undefined },
-      { historyEntryId: " " },
-    ]) {
-      expect(validateSessionProtocolParams("session.bash", { ...input, ...invalid }).ok).toBe(
-        false,
-      );
-    }
-    const presentation = buildToolRunPresentation({ toolName: "bash", subject: "pwd" });
-    expect(
-      validateSessionProtocolResult("session.bash", {
-        exitCode: 0,
-        presentation: {
-          ...presentation,
-          subject: "é".repeat(SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_SUBJECT_BYTES),
-        },
-      }).ok,
-    ).toBe(false);
-  });
-
   it("validates bounded retention and non-loading collection", () => {
     for (const durationMs of [null, 1, 259_200_000, 2_147_483_647]) {
       expect(
@@ -714,16 +685,6 @@ describe("session_protocol", () => {
           sessionId: "session-1",
           query: "src",
           limit: 25,
-        },
-      ],
-      [
-        "session.bash",
-        {
-          sessionId: "session-1",
-          execId: "shell",
-          command: "pwd",
-          addToContext: true,
-          historyEntryId: "shell-output",
         },
       ],
       [
@@ -1467,13 +1428,6 @@ describe("session_protocol", () => {
         "session.retry",
         {
           turn: { status: "completed", stopReason: "stop" },
-        },
-      ],
-      [
-        "session.bash",
-        {
-          exitCode: 0,
-          presentation: buildToolRunPresentation({ toolName: "bash", subject: "pwd" }),
         },
       ],
       ["session.exec", createProtocolExecResult({ command: "pwd" })],

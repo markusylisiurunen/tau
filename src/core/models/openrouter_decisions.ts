@@ -68,26 +68,23 @@ export const decisionResponse = z.object({
   }),
 });
 
-type DecisionLimits = {
+export type DecisionLimits = {
   questions?: number;
   choices?: number;
   scoreLevels?: [min: number, max: number];
 };
-const decisionLimits: Record<string, DecisionLimits> = {
-  "openai/gpt-6-luna-decisions": { questions: 200, choices: 255, scoreLevels: [2, 10] },
-  "google/gemini-decision-1": { choices: 255 },
-  "typesafe/jev-1.14": {},
-};
 
-export function parseDecisionInput(model: string, value: unknown): z.infer<typeof decisionInput> {
+export function parseDecisionInput(
+  model: string,
+  value: unknown,
+  limits: DecisionLimits = {},
+): z.infer<typeof decisionInput> {
   const parsed = decisionInput.safeParse(value);
   if (!parsed.success) {
     throw new Error(
       `invalid decisions input: ${parsed.error.issues.map((issue) => `${issue.path.join(".") || "document"}: ${mediaValidationConstraint(issue)}`).join("; ")}`,
     );
   }
-  const limits = Object.hasOwn(decisionLimits, model) ? decisionLimits[model] : undefined;
-  if (!limits) throw new Error(`unsupported decision model: ${model}`);
   const questions = Object.entries(parsed.data.questions);
   if (limits.questions !== undefined && questions.length > limits.questions) {
     throw new Error(`${model} supports at most ${limits.questions} questions`);

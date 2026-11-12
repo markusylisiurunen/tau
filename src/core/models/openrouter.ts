@@ -4,6 +4,7 @@ import { getApiKeyForProvider } from "../config/schema.js";
 import { parseMediaJson, readMediaResponse } from "../utils/media_validation.js";
 import { withOpenRouterBudget } from "./openrouter_budget.js";
 import {
+  type DecisionLimits,
   decisionResponse,
   parseDecisionInput,
   validateDecisionAnswers,
@@ -42,17 +43,25 @@ export type OpenRouterDecisionsInput = {
 };
 
 export type Operation = "decisions" | "chat";
-export type OpenRouterModel = { id: string; inputs: string[]; reasoning: string[]; role: string };
+export type OpenRouterModel = {
+  id: string;
+  inputs: string[];
+  reasoning: string[];
+  role: string;
+  decisionLimits?: DecisionLimits;
+};
 export const openRouterModels: Record<Operation, OpenRouterModel[]> = {
   decisions: [
     {
       id: "openai/gpt-6-luna-decisions",
+      decisionLimits: { questions: 200, choices: 255, scoreLevels: [2, 10] },
       inputs: ["state", "questions", "image"],
       reasoning: [],
       role: "Recommended first choice for classification, scoring, and verification with text or images.",
     },
     {
       id: "google/gemini-decision-1",
+      decisionLimits: { choices: 255 },
       inputs: ["state", "questions", "image", "audio", "video"],
       reasoning: [],
       role: "Classification and scoring with text, images, audio, or video.",
@@ -214,7 +223,7 @@ export async function requestOpenRouterDecisions(
   const spec = resolveOpenRouterModel("decisions", model);
   if (attachments.some((item) => !spec.inputs.includes(item.kind)))
     throw new Error("unsupported attachment modality for the selected decision model");
-  const input = parseDecisionInput(model, value);
+  const input = parseDecisionInput(model, value, spec.decisionLimits);
   const textBytes = Buffer.byteLength(JSON.stringify(input));
   if (textBytes > OPENROUTER_TEXT_BYTES) throw new Error("decisions input exceeds its byte limit");
   return await withOpenRouterBudget(attachments, textBytes, options.signal, async () => {

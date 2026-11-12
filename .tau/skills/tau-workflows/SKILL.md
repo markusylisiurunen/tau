@@ -5,7 +5,7 @@ description: "Run reusable JavaScript workflows through Tau's code tool: `find-s
 
 Each workflow is a script in `scripts/`. Its header comment lists its steps, and its prompts show what each agent is asked to do. Read the script when you need more detail than this file gives.
 
-Run a script as a background code job, with its absolute path as `file` and its inputs in `input`. Wait with `wait_for_code_jobs` at its maximum timeout of `300000` milliseconds, and repeat until the job finishes. A wait timeout leaves the job running, but the default foreground deadline can stop a workflow while its agents keep working.
+Run a script as a background code job, with its absolute path as `file` and its inputs in `input`. The script collects its workers' results and suppresses their completion notifications. Wait with `wait_for_code_jobs` at its maximum timeout of `300000` milliseconds, and repeat until the job finishes. A wait timeout leaves the job running, but the default foreground deadline can stop a workflow while its agents keep working.
 
 The output is a timestamped log, with each step's duration, cost, running total, and key results such as finding titles, followed by any warnings and the final result. It is normally enough. Each step's prompt and results are also saved in the run folder printed at the start. Read them only when the output is not enough, or to continue after a failure, because rerunning a script starts from the beginning. The log and agent IDs do not survive a Tau restart.
 

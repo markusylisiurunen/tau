@@ -99,7 +99,7 @@ export function createProtocolSnapshot(overrides = {}) {
       autoCompactThresholdTokens: null,
       effectiveAutoCompactThresholdTokens:
         (bootstrap.model ?? bootstrap.persona?.model ?? model).contextWindow - 16_384,
-      wakeOnNotifications: true,
+      notifications: true,
       ...(overrides.settings ?? {
         personaId: bootstrap.persona?.id ?? "persona-1",
         ...(bootstrap.persona?.settings?.reasoning !== undefined

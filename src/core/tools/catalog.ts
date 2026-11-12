@@ -74,7 +74,6 @@ export const ToolCatalog = {
         onCompletion: () => {},
       }),
       notifications: new NotificationInbox(),
-      wakeOnNotifications: true,
     });
   },
 
@@ -87,8 +86,8 @@ export const ToolCatalog = {
     autoCompactThresholdTokens: number | null;
     modelResolver: ModelResolver;
     supervisor: AgentSupervisor;
-    notifications: NotificationInbox;
-    wakeOnNotifications: boolean;
+    /** Absent when the session has notifications turned off. */
+    notifications?: NotificationInbox;
     jobs: AgentJobRegistry;
     bashJobs: BashJobRegistry;
     codeJobs: CodeJobRegistry;
@@ -110,7 +109,7 @@ export const ToolCatalog = {
           : {}),
       }),
       ...(enabledToolNames.has("agents") ? tools : []),
-      ...createNotificationTools(options.notifications),
+      ...(options.notifications ? createNotificationTools(options.notifications) : []),
       ...(options.clientTools?.() ?? []),
     ]);
   },

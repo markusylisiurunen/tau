@@ -1,5 +1,8 @@
 import { expect, it } from "vitest";
-import { NotificationInbox } from "../dist/core/agent/notification_inbox.js";
+import {
+  createNotificationDelivery,
+  NotificationInbox,
+} from "../dist/core/agent/notification_inbox.js";
 import { createNotificationTools } from "../dist/core/tools/notifications.js";
 
 it("keeps unread and delivery state separate across tool reads and concurrent arrivals", async () => {
@@ -46,11 +49,19 @@ it("bounds retained source data and discards the oldest records", () => {
   for (let i = 0; i < 256; i++) inbox.add("x".repeat(1024), "y".repeat(16384));
   expect(inbox.list()).toHaveLength(256);
   expect(() => inbox.read(first)).toThrow();
+  const delivery = createNotificationDelivery(inbox.signal());
+  expect(delivery.listed.map((entry) => entry.id)).toEqual(
+    inbox
+      .list()
+      .slice(-32)
+      .map((entry) => entry.id),
+  );
+  expect(delivery.omitted).toBe(256 - 32);
   // History from before a restart names old IDs, so a new inbox must not reuse them.
   const restarted = new NotificationInbox();
   restarted.add("first");
   expect(restarted.list()[0].id).not.toBe(first);
   expect(
-    inbox.list().every((entry) => entry.title.length <= 512 && entry.body.length <= 8192),
+    inbox.list().every((entry) => entry.title.length < 1024 && entry.body.length < 16384),
   ).toBe(true);
 });

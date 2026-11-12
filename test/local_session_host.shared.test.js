@@ -282,7 +282,7 @@ function expectedSettings(persona = personas[0]) {
     autoCompactThresholdTokens: null,
     effectiveAutoCompactThresholdTokens: persona.model.contextWindow - 16384,
     personaId: persona.id,
-    wakeOnNotifications: true,
+    notifications: true,
     ...(persona.settings.reasoning !== undefined ? { reasoning: persona.settings.reasoning } : {}),
     ...(persona.settings.serviceTier !== undefined
       ? { serviceTier: persona.settings.serviceTier }
@@ -649,7 +649,7 @@ describe("LocalSessionHost", () => {
     }
   });
 
-  it("owns automatic notification turns without clients and pauses wakes until user input", async () => {
+  it("owns automatic notification turns without clients, also after a stop while idle", async () => {
     const store = new MemorySessionStore();
     const host = createHost(store);
     const session = await host.createSession(localCreateInput);
@@ -687,13 +687,10 @@ describe("LocalSessionHost", () => {
           .every((entry) => isTauUserMessageHidden(entry.message)),
       ).toBe(true);
       expect(projected).toEqual(await session.snapshot());
-      session.interruptTurn();
-      session.runtime.notifications.add("paused");
-      await new Promise((resolve) => setImmediate(resolve));
-      expect(stream).toHaveBeenCalledTimes(1);
-      const accepted = await session.acceptTurn({ text: "resume" });
-      await session.runAcceptedTurn(accepted.userHistoryEntryId);
-      expect(stream).toHaveBeenCalledTimes(2);
+      expect(session.interruptTurn()).toBe(false);
+      session.runtime.notifications.add("after an idle stop");
+      await vi.waitFor(() => expect(stream).toHaveBeenCalledTimes(2));
+      await session.waitForActiveWork();
       expect(session.runtime.notifications.signal()).toBeUndefined();
       expect(
         projected.timeline.items.filter(
@@ -800,6 +797,10 @@ describe("LocalSessionHost", () => {
           outcome: expect.objectContaining({ status: "aborted" }),
         }),
       ]);
+      session.runtime.notifications.add("after the interruption");
+      await new Promise((resolve) => setImmediate(resolve));
+      await session.waitForActiveWork();
+      expect(Object.values((await session.snapshot()).turns)).toHaveLength(1);
     } finally {
       gate.resolve();
       await host.shutdown();
@@ -880,22 +881,17 @@ describe("LocalSessionHost", () => {
     }
   });
 
-  it("never wakes a session created without notification wakes, also after recovery", async () => {
+  it("keeps notifications off for a session created without them, also after recovery", async () => {
     const store = new MemorySessionStore();
     const host = createHost(store);
-    const created = await host.createSession({ ...localCreateInput, wakeOnNotifications: false });
+    const created = await host.createSession({ ...localCreateInput, notifications: false });
     await host.shutdown();
     const recoveredHost = createHost(store);
     const session = await recoveredHost.observeSession(created.sessionId);
-    const stream = vi.fn();
-    session.runtime.agent.spec.model.stream = stream;
     try {
-      expect((await session.snapshot()).settings.wakeOnNotifications).toBe(false);
-      session.runtime.notifications.add("child finished");
-      await new Promise((resolve) => setImmediate(resolve));
-      await session.waitForActiveWork();
-      expect(stream).not.toHaveBeenCalled();
-      expect(session.runtime.notifications.hasUndelivered()).toBe(true);
+      expect((await session.snapshot()).settings.notifications).toBe(false);
+      expect(session.runtime.notifications).toBeUndefined();
+      expect(session.runtime.agent.spec.tools.get("list_notifications")).toBeUndefined();
     } finally {
       await recoveredHost.shutdown();
     }

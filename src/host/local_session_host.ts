@@ -401,10 +401,8 @@ export class LocalSessionHost implements TauSessionHost {
       createdAt,
       persona: bootstrap.persona,
       autoCompactDefaults: this.sessionOptions.autoCompactDefaults,
-      wakeOnNotifications:
-        committedSnapshot?.settings.wakeOnNotifications ??
-        createParams?.wakeOnNotifications ??
-        true,
+      notifications:
+        committedSnapshot?.settings.notifications ?? createParams?.notifications ?? true,
       backend: executionEnvironment.getToolExecutionBackend(),
       clientTools: () => this.clientToolBroker.getToolDefinitions(sessionId),
       modelResolver: bootstrap.modelResolver,
@@ -947,9 +945,10 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     ) => void,
   ) {
     this.session = runtime;
-    this.unsubscribeNotifications = runtime.notifications.subscribe(() => {
-      this.scheduleNotificationWake();
-    });
+    this.unsubscribeNotifications =
+      runtime.notifications?.subscribe(() => {
+        this.scheduleNotificationWake();
+      }) ?? (() => {});
     this.boundMcpServers = structuredClone(
       catalog.mcp.status === "available" ? bootstrap.config.mcpServers : {},
     );
@@ -1022,12 +1021,11 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     return (
       !this.disposing &&
       !this.disposed &&
-      this.runtime.wakeOnNotifications &&
       !this.notificationWakePaused &&
       this.turnAdmissionHolds === 0 &&
       !this.isTurnRunning &&
       !this.hasUnsettledTurn &&
-      this.runtime.notifications.hasUndelivered()
+      this.runtime.notifications?.hasUndelivered() === true
     );
   }
 
@@ -1340,16 +1338,16 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
   interruptTurn(): boolean {
     this.assertActive();
-    this.notificationWakePaused = true;
     const logicalTurn = this.activeLogicalTurn;
     if (logicalTurn) {
       logicalTurn.cancellationRequested = true;
     }
-    return this.runtime.interruptTurn() || Boolean(logicalTurn);
+    const interrupted = this.runtime.interruptTurn() || Boolean(logicalTurn);
+    if (interrupted) this.notificationWakePaused = true;
+    return interrupted;
   }
 
   interruptActiveWork(): boolean {
-    this.notificationWakePaused = true;
     const logicalTurn = this.activeLogicalTurn;
     if (logicalTurn) {
       logicalTurn.cancellationRequested = true;
@@ -1361,6 +1359,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         interrupted = true;
       }
     }
+    if (interrupted) this.notificationWakePaused = true;
     return interrupted;
   }
 
@@ -1829,8 +1828,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
   async interruptSubagent(subagentId: string): Promise<SessionProtocolInterruptSubagentResult> {
     this.assertActive();
-    // Pause before interrupting, so the worker's own completion cannot wake the agent.
-    if (this.session.hasSubagent(subagentId)) this.notificationWakePaused = true;
     return { found: await this.session.interruptSubagent(subagentId) };
   }
 
@@ -2160,7 +2157,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         ...(this.runtime.persona.settings.serviceTier !== undefined
           ? { serviceTier: this.runtime.persona.settings.serviceTier }
           : {}),
-        wakeOnNotifications: this.runtime.wakeOnNotifications,
+        notifications: this.runtime.notifications !== undefined,
       },
       bootstrap: {
         model: modelSnapshotFromModel(this.runtime.persona.model),
@@ -2692,8 +2689,15 @@ class LocalHostedSessionHandle implements LocalHostedSession {
                   severity: "info",
                   subject: { type: "message", id: event.historyEntryId },
                   presentation: projectSessionProtocolNoticePresentation(
-                    event.notificationTitles.length === 1 ? "notification" : "notifications",
-                    event.notificationTitles,
+                    event.notificationTitles.length === 1 && event.omittedNotifications === 0
+                      ? "notification"
+                      : "notifications",
+                    [
+                      ...event.notificationTitles,
+                      ...(event.omittedNotifications > 0
+                        ? [`and ${event.omittedNotifications} more`]
+                        : []),
+                    ],
                   ),
                   data: {},
                 },

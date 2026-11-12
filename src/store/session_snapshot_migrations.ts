@@ -112,7 +112,7 @@ function migrateStoredSessionV16ToV17(value: unknown): unknown {
   if (!isRecord(value) || !isRecord(value.settings)) {
     throw new Error("invalid stored session settings");
   }
-  return { ...value, settings: { ...value.settings, wakeOnNotifications: true } };
+  return { ...value, settings: { ...value.settings, notifications: true } };
 }
 
 function migrateStoredSessionV15ToV16(value: unknown): unknown {

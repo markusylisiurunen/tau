@@ -52,8 +52,8 @@ export type CreateChatRuntimeOptions = {
   createdAt: number;
   persona: Persona;
   autoCompactDefaults?: AutoCompactDefaults;
-  /** Whether the host starts a turn on its own for notifications. */
-  wakeOnNotifications: boolean;
+  /** Whether the main agent gets notifications and starts turns on its own for them. */
+  notifications: boolean;
   backend: ToolExecutionBackend;
   clientTools?: () => ReturnType<ToolRegistry["getEnabledTools"]>;
   modelResolver: ModelResolver;
@@ -75,8 +75,9 @@ export class ChatRuntime {
   readonly jobs = new AgentJobRegistry();
   readonly backgroundJobs = this.jobs.create();
   readonly supervisor: AgentSupervisor;
-  readonly notifications = new NotificationInbox();
-  readonly wakeOnNotifications: boolean;
+  /** Absent when the session has notifications turned off. */
+  readonly notifications: NotificationInbox | undefined;
+  private readonly userInterruptedSubagents = new Set<string>();
   private currentPersona: Persona;
   private readonly autoCompactDefaults: AutoCompactDefaults | undefined;
   private autoCompactOverride: number | null = null;
@@ -114,7 +115,7 @@ export class ChatRuntime {
 
   private constructor(options: CreateChatRuntimeOptions, composition: SessionPromptComposition) {
     this.currentPersona = structuredClone(options.persona);
-    this.wakeOnNotifications = options.wakeOnNotifications;
+    this.notifications = options.notifications ? new NotificationInbox() : undefined;
     this.autoCompactDefaults = structuredClone(options.autoCompactDefaults);
     this.currentConfig = options.config;
     this.hostApiKeys = structuredClone(options.config.apiKeys);
@@ -137,7 +138,12 @@ export class ChatRuntime {
       mainAgentId: options.sessionId,
       onEvent: options.subagentEventSink,
       onCompletion: (state) => {
-        this.notifications.add(`subagent ${state.id} is idle (${state.run.status})`);
+        const byUser = this.userInterruptedSubagents.delete(state.id);
+        const status =
+          byUser && state.run.status === "interrupted"
+            ? "interrupted by the user"
+            : state.run.status;
+        this.notifications?.add(`subagent ${state.id} is idle (${status})`);
       },
       openHistory: options.openSubagentHistory,
       ...(options.recordUsage ? { recordUsage: options.recordUsage } : {}),
@@ -262,8 +268,11 @@ export class ChatRuntime {
     return this.supervisor.getSnapshot(id) !== undefined;
   }
 
+  /** Interrupts a subagent for the user, so its completion notification can say so. */
   async interruptSubagent(id: string): Promise<boolean> {
-    if (!this.hasSubagent(id)) return false;
+    const state = this.supervisor.getSnapshot(id);
+    if (!state) return false;
+    if (state.availability === "running") this.userInterruptedSubagents.add(id);
     await this.supervisor.interrupt(id);
     return true;
   }
@@ -380,8 +389,7 @@ export class ChatRuntime {
       subagentSystemPrompt: composition.subagentSystemPrompt,
       modelResolver: this.currentModelResolver,
       supervisor: this.supervisor,
-      notifications: this.notifications,
-      wakeOnNotifications: this.wakeOnNotifications,
+      ...(this.notifications ? { notifications: this.notifications } : {}),
       jobs: this.jobs,
       ...this.backgroundJobs,
       history: this.historyQuery,

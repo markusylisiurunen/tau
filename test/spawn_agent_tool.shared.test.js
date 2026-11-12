@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { NotificationInbox } from "../dist/core/agent/notification_inbox.js";
 import { createAgentsCapability } from "../dist/core/code_mode/agents.js";
 import { loadModelResolver } from "../dist/core/models/catalog.js";
 import { personas } from "../dist/core/personas.js";
@@ -24,6 +25,7 @@ function fixture(overrides = {}) {
     ...overrides.supervisor,
   };
   const options = {
+    notifications: new NotificationInbox(),
     callerId: "main",
     backend: {},
     jobs: {},

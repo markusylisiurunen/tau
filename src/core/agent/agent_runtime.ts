@@ -66,7 +66,11 @@ import type {
   AgentEvent,
   AgentEventSink,
 } from "./events.js";
-import { formatNotificationSignal, type NotificationInbox } from "./notification_inbox.js";
+import {
+  createNotificationDelivery,
+  formatNotificationDelivery,
+  type NotificationInbox,
+} from "./notification_inbox.js";
 
 const DEFAULT_RETRY_POLICY = { maxRetries: 1, delayMs: 3_000 } as const;
 const COMPACTION_MAX_ATTEMPTS = 2;
@@ -738,9 +742,10 @@ export class AgentRuntime {
     if (!inbox) return false;
     const notifications = inbox.signal();
     if (!notifications) return false;
+    const delivery = createNotificationDelivery(notifications);
     const message: UserMessage = {
       role: "user",
-      content: [{ type: "text", text: formatNotificationSignal(notifications) }],
+      content: [{ type: "text", text: formatNotificationDelivery(delivery) }],
       timestamp: this.clock.now(),
     };
     await this.commitHistoryMessage(message, historyEntryId, (id, revision) => ({
@@ -748,7 +753,8 @@ export class AgentRuntime {
       historyEntryId: id,
       message,
       origin: "notification",
-      notificationTitles: notifications.map((entry) => entry.title),
+      notificationTitles: delivery.listed.map((entry) => entry.title),
+      omittedNotifications: delivery.omitted,
       revision,
     }));
     inbox.delivered(notifications);

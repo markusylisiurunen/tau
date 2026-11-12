@@ -53,7 +53,7 @@ export type AgentEvent =
       revision: number;
     } & (
       | { origin: "input" | "steering" }
-      | { origin: "notification"; notificationTitles: string[] }
+      | { origin: "notification"; notificationTitles: string[]; omittedNotifications: number }
     ))
   | {
       type: "history_rewound";

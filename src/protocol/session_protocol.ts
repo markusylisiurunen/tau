@@ -162,8 +162,11 @@ export type SessionProtocolCreateParams = {
   personaId?: string;
   autoCompactThresholdTokens?: number | null;
   reasoning?: SessionProtocolReasoningEffort;
-  /** Whether the agent starts a turn on its own for notifications. Defaults to true. */
-  wakeOnNotifications?: boolean;
+  /**
+   * Whether the main agent gets notifications, such as finished subagents, and starts a turn on
+   * its own for them. Defaults to true.
+   */
+  notifications?: boolean;
 };
 export type SessionProtocolSetRetentionParams = {
   sessionId: string;
@@ -939,7 +942,7 @@ export type SessionProtocolSettingsSnapshot = {
   personaId: string;
   reasoning?: SessionProtocolReasoningEffort;
   serviceTier?: SessionProtocolServiceTier;
-  wakeOnNotifications: boolean;
+  notifications: boolean;
 };
 
 export type SessionProtocolLocalExecutionEnvironmentSnapshot = {
@@ -2196,7 +2199,7 @@ const sessionProtocolCreateParamsSchema = z
     personaId: nonEmptyStringSchema.optional(),
     autoCompactThresholdTokens: autoCompactThresholdTokensSchema.optional(),
     reasoning: sessionProtocolReasoningEffortSchema.optional(),
-    wakeOnNotifications: z.boolean().optional(),
+    notifications: z.boolean().optional(),
   })
   .strip();
 
@@ -2317,7 +2320,7 @@ const sessionProtocolSettingsSnapshotSchema = z
     personaId: nonEmptyStringSchema,
     reasoning: sessionProtocolReasoningEffortSchema.optional(),
     serviceTier: sessionProtocolServiceTierSchema.optional(),
-    wakeOnNotifications: z.boolean(),
+    notifications: z.boolean(),
   })
   .strip();
 

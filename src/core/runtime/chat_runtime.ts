@@ -231,13 +231,9 @@ export class ChatRuntime {
     await this.agent.commitInterruptedAssistant(message, historyEntryId);
   }
 
-  runTurn(): Promise<AgentTurnResult> {
+  runTurn(options: { notificationHistoryEntryId?: string } = {}): Promise<AgentTurnResult> {
     this.refreshSpec();
-    return this.agent.runTurn();
-  }
-
-  commitNotifications(historyEntryId?: string): Promise<boolean> {
-    return this.agent.commitNotifications(historyEntryId);
+    return this.agent.runTurn(options);
   }
 
   steer(text: string): SteeringSubmission {

@@ -1041,11 +1041,9 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     const id = this.createTurnHistoryEntryId();
     this.pendingAcceptedTurnHistoryEntryIds.add(id);
     try {
-      await this.runLogicalTurn(async (logicalTurn) => {
-        if (await this.runtime.commitNotifications(id)) {
-          await this.runAndSettleTurn(logicalTurn, id);
-        }
-      });
+      await this.runLogicalTurn((logicalTurn) =>
+        this.runAndSettleTurn(logicalTurn, id, { notificationTurn: true }),
+      );
     } catch (error) {
       this.notificationWakePaused = true;
       await this.recoverFailedNotificationTurn(id, error);
@@ -1208,7 +1206,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       throw new Error(`turn '${userHistoryEntryId}' was already settled`);
     }
     const turn = await this.runLogicalTurn((logicalTurn) =>
-      this.runAndSettleTurn(logicalTurn, userHistoryEntryId),
+      this.runAndSettleTurn(logicalTurn, userHistoryEntryId, { notificationTurn: false }),
     );
     return { userHistoryEntryId, turn };
   }
@@ -1216,8 +1214,11 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   private async runAndSettleTurn(
     logicalTurn: ActiveLogicalTurn,
     userHistoryEntryId: string,
+    { notificationTurn }: { notificationTurn: boolean },
   ): Promise<SessionProtocolTurnOutcome> {
-    const outcome = await this.runTurnNow(logicalTurn, userHistoryEntryId);
+    const outcome = notificationTurn
+      ? await this.runTurnNow(logicalTurn, { notificationHistoryEntryId: userHistoryEntryId })
+      : await this.runTurnNow(logicalTurn, { rootHistoryEntryId: userHistoryEntryId });
     try {
       await this.settleTurn(userHistoryEntryId, outcome);
       return outcome;
@@ -1292,21 +1293,20 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     }
   }
 
+  /**
+   * Runs a turn rooted at an existing user message, or at the notification message the runtime
+   * commits under `notificationHistoryEntryId` once the turn has started.
+   */
   private async runTurnNow(
     logicalTurn: ActiveLogicalTurn,
-    rootHistoryEntryId?: string,
+    root: { rootHistoryEntryId?: string; notificationHistoryEntryId?: string } = {},
   ): Promise<SessionProtocolTurnOutcome> {
-    const rootUserMessage = rootHistoryEntryId
-      ? this.session.rawHistoryEntries.find(
-          (entry) => entry.id === rootHistoryEntryId && entry.message.role === "user",
-        )
-      : this.session.rawHistoryEntries.findLast((entry) => entry.message.role === "user");
-    if (!rootUserMessage) {
-      throw new Error("cannot run a turn without a user message");
-    }
+    const { notificationHistoryEntryId } = root;
+    const rootHistoryEntryId =
+      notificationHistoryEntryId ?? this.findTurnRootUserMessage(root.rootHistoryEntryId).id;
     if (logicalTurn.cancellationRequested) return abortedTurnOutcome();
     try {
-      const result = await this.runtime.runTurn();
+      const result = await this.runtime.runTurn({ notificationHistoryEntryId });
       if (result.terminalResult.aborted && this.draftAssistantMessage) {
         await this.interruptDraftAssistantMessage();
       }
@@ -1321,8 +1321,22 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       return turnOutcomeFromResult(result, result.finalMessage);
     } catch (error) {
       this.notificationWakePaused = true;
-      return await this.cleanupFailedTurn(rootUserMessage.id, error);
+      // An automatic turn that failed before its message was saved has no turn to fail.
+      if (notificationHistoryEntryId && !this.turns.has(notificationHistoryEntryId)) throw error;
+      return await this.cleanupFailedTurn(rootHistoryEntryId, error);
     }
+  }
+
+  private findTurnRootUserMessage(historyEntryId: string | undefined) {
+    const rootUserMessage = historyEntryId
+      ? this.session.rawHistoryEntries.find(
+          (entry) => entry.id === historyEntryId && entry.message.role === "user",
+        )
+      : this.session.rawHistoryEntries.findLast((entry) => entry.message.role === "user");
+    if (!rootUserMessage) {
+      throw new Error("cannot run a turn without a user message");
+    }
+    return rootUserMessage;
   }
 
   interruptTurn(): boolean {

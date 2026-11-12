@@ -266,6 +266,42 @@ describe("AgentRuntime", () => {
     runtime.dispose();
   });
 
+  it("adds text recorded while the turn's last recorded text is being saved", async () => {
+    const gate = deferred();
+    const started = deferred();
+    let runtime;
+    let late;
+    const { runtime: created, persona } = createRuntime({
+      maxModelSubturns: 1,
+      eventSink: async (event) => {
+        if (event.type === "user_message" && event.message.content[0]?.text === "first output") {
+          late = runtime.record("second output");
+        }
+      },
+    });
+    runtime = created;
+    setStreams(runtime, [
+      {
+        async *[Symbol.asyncIterator]() {
+          started.resolve();
+          await gate.promise;
+          yield* [];
+        },
+        async result() {
+          return createAssistant(persona, "done");
+        },
+      },
+    ]);
+    const running = runtime.submit("task");
+    await started.promise;
+    const first = runtime.record("first output");
+    gate.resolve();
+    await running;
+    await expect(first).resolves.toBeTruthy();
+    await expect(late).resolves.toBeTruthy();
+    runtime.dispose();
+  });
+
   it("applies a lower threshold only after the active turn and steering finish", async () => {
     const gate = deferred();
     const started = deferred();

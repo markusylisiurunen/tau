@@ -554,6 +554,43 @@ describe("LocalSessionHost", () => {
     }
   });
 
+  it("keeps the notification message as the root of an automatic turn joined by a record", async () => {
+    const host = createHost(new MemorySessionStore());
+    const session = await host.createSession(localCreateInput);
+    session.runtime.agent.spec.model.stream = () => ({
+      async *[Symbol.asyncIterator]() {},
+      async result() {
+        return fauxAssistantMessage("handled");
+      },
+    });
+    const agent = session.runtime.agent;
+    const commit = agent.commitNotifications.bind(agent);
+    let recorded;
+    vi.spyOn(agent, "commitNotifications").mockImplementation((id) => {
+      recorded ??= session.record({ text: "command output" });
+      return commit(id);
+    });
+    try {
+      session.runtime.notifications.add("child finished");
+      await vi.waitFor(() => expect(recorded).toBeDefined());
+      await expect(recorded).resolves.toBeTruthy();
+      await session.waitForActiveWork();
+      const turns = Object.values((await session.snapshot()).turns);
+      expect(turns).toEqual([
+        expect.objectContaining({
+          state: "settled",
+          outcome: expect.objectContaining({ status: "completed" }),
+        }),
+      ]);
+      const users = session.runtime.agent.rawHistoryEntriesSnapshot.filter(
+        (entry) => entry.message.role === "user",
+      );
+      expect(users.map((entry) => entry.id)[0]).toBe(turns[0].userHistoryEntryId);
+    } finally {
+      await host.shutdown();
+    }
+  });
+
   it("settles the accepted receipt from its failed notification continuation", async () => {
     const host = createHost(new MemorySessionStore());
     const session = await host.createSession(localCreateInput);
@@ -712,7 +749,7 @@ describe("LocalSessionHost", () => {
     const host = createHost(new MemorySessionStore());
     const session = await host.createSession(localCreateInput);
     const commit = vi
-      .spyOn(session.runtime, "commitNotifications")
+      .spyOn(session.runtime.agent, "commitNotifications")
       .mockRejectedValueOnce(new Error("write failed"));
     try {
       session.runtime.notifications.add("child finished");

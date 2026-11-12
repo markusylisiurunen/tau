@@ -755,19 +755,22 @@ export class AgentRuntime {
     });
   }
 
+  /** Drains until empty, because text can arrive while an earlier record is being saved. */
   private async commitPendingRecords(): Promise<boolean> {
-    const records = this.pendingRecords.splice(0);
-    for (const [index, record] of records.entries()) {
+    let committed = false;
+    for (let record = this.pendingRecords.shift(); record; record = this.pendingRecords.shift()) {
       try {
         const options = record.historyEntryId ? { historyEntryId: record.historyEntryId } : {};
         record.resolve(await this.commitUserText(record.text, options));
+        committed = true;
       } catch (error) {
         const failure = error instanceof Error ? error : new Error(String(error));
-        for (const rest of records.slice(index)) rest.reject(failure);
+        record.reject(failure);
+        this.rejectPendingRecords(failure);
         throw error;
       }
     }
-    return records.length > 0;
+    return committed;
   }
 
   private rejectPendingRecords(error: Error): void {
@@ -873,12 +876,19 @@ export class AgentRuntime {
     return true;
   }
 
-  async runTurn(): Promise<AgentTurnResult> {
+  /**
+   * Runs a turn from the latest user message, or, with `notificationHistoryEntryId`, a turn that
+   * starts by delivering pending notifications under that ID. Text recorded while either one
+   * starts joins the turn.
+   */
+  async runTurn(options: { notificationHistoryEntryId?: string } = {}): Promise<AgentTurnResult> {
     this.assertHistoryMutable();
     if (this.activeAbortController) {
       throw new Error("agent is already running");
     }
-    this.getCurrentTurnUserHistoryEntryId();
+    if (options.notificationHistoryEntryId === undefined) {
+      this.getCurrentTurnUserHistoryEntryId();
+    }
 
     const controller = new AbortController();
     this.activeAbortController = controller;
@@ -886,6 +896,12 @@ export class AgentRuntime {
     let associatedSteering: typeof this.pendingSteering = [];
 
     try {
+      if (
+        options.notificationHistoryEntryId !== undefined &&
+        !(await this.commitNotifications(options.notificationHistoryEntryId))
+      ) {
+        throw new Error("no notifications to deliver");
+      }
       // The turn belongs to the message that started it, not to notifications delivered with it.
       let turnSpec = this.captureTurnSettings();
       await this.commitNotifications();

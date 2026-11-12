@@ -68,30 +68,44 @@ export const decisionResponse = z.object({
   }),
 });
 
-export function parseDecisionInput(model: string, value: unknown): z.infer<typeof decisionInput> {
+export type DecisionLimits = {
+  questions?: number;
+  choices?: number;
+  scoreLevels?: [min: number, max: number];
+};
+
+export function parseDecisionInput(
+  model: string,
+  value: unknown,
+  limits: DecisionLimits = {},
+): z.infer<typeof decisionInput> {
   const parsed = decisionInput.safeParse(value);
   if (!parsed.success) {
     throw new Error(
       `invalid decisions input: ${parsed.error.issues.map((issue) => `${issue.path.join(".") || "document"}: ${mediaValidationConstraint(issue)}`).join("; ")}`,
     );
   }
-  if (model === "openai/gpt-6-luna-decisions") {
-    const questions = Object.entries(parsed.data.questions);
-    if (questions.length > 200) {
-      throw new Error("Luna Decisions supports at most 200 questions");
+  const questions = Object.entries(parsed.data.questions);
+  if (limits.questions !== undefined && questions.length > limits.questions) {
+    throw new Error(`${model} supports at most ${limits.questions} questions`);
+  }
+  for (const [name, question] of questions) {
+    if (
+      question.type === "choice" &&
+      limits.choices !== undefined &&
+      Object.keys(question.criteria).length > limits.choices
+    ) {
+      throw new Error(`${model} supports at most ${limits.choices} choices for question ${name}`);
     }
-    for (const [name, question] of questions) {
-      if (question.type === "choice" && Object.keys(question.criteria).length > 255) {
-        throw new Error(`Luna Decisions supports at most 255 choices for question ${name}`);
-      }
-      if (
-        question.type === "score" &&
-        (question.criteria.length < 2 || question.criteria.length > 10)
-      ) {
-        throw new Error(
-          `Luna Decisions requires between 2 and 10 score levels for question ${name}`,
-        );
-      }
+    if (
+      question.type === "score" &&
+      limits.scoreLevels &&
+      (question.criteria.length < limits.scoreLevels[0] ||
+        question.criteria.length > limits.scoreLevels[1])
+    ) {
+      throw new Error(
+        `${model} requires between ${limits.scoreLevels[0]} and ${limits.scoreLevels[1]} score levels for question ${name}`,
+      );
     }
   }
   return parsed.data;

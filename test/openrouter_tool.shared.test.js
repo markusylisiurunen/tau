@@ -184,81 +184,94 @@ describe("OpenRouter standalone commands", () => {
     });
   });
 
-  it("preserves mixed media order and bytes, validates private snapshots, and cleans them up", async () => {
-    const cwd = await fixture();
-    const image = await sharp({ create: { width: 2, height: 2, channels: 3, background: "red" } })
-      .png()
-      .toBuffer();
-    const audio = wav();
-    const video = Buffer.from("000000186674797069736f6d0000020069736f6d69736f32", "hex");
-    await writeFile(join(cwd, "image"), image);
-    await writeFile(join(cwd, "audio"), audio);
-    await writeFile(join(cwd, "video"), video);
-    const snapshots = [];
-    const spawnImpl = vi.fn(async (command, args, limits) => {
-      expect(command).toBe("ffprobe");
-      expect(args).toContain("-protocol_whitelist");
-      expect(limits).toMatchObject({
-        timeoutMs: 15000,
-        maxCaptureBytes: 1000000,
-        killProcessGroup: true,
+  it.each(["chat", "decisions"])(
+    "preserves %s mixed media order and bytes, validates private snapshots, and cleans them up",
+    async (operation) => {
+      const cwd = await fixture();
+      const image = await sharp({ create: { width: 2, height: 2, channels: 3, background: "red" } })
+        .png()
+        .toBuffer();
+      const audio = wav();
+      const video = Buffer.from("000000186674797069736f6d0000020069736f6d69736f32", "hex");
+      await writeFile(join(cwd, "image"), image);
+      await writeFile(join(cwd, "audio"), audio);
+      await writeFile(join(cwd, "video"), video);
+      const snapshots = [];
+      const spawnImpl = vi.fn(async (command, args, limits) => {
+        expect(command).toBe("ffprobe");
+        expect(args).toContain("-protocol_whitelist");
+        expect(limits).toMatchObject({
+          timeoutMs: 15000,
+          maxCaptureBytes: 1000000,
+          killProcessGroup: true,
+        });
+        snapshots.push(args.at(-1));
+        const isVideo = args.includes("mov");
+        expect(await readFile(args.at(-1))).toEqual(isVideo ? video : audio);
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            format: { duration: "2" },
+            streams: isVideo
+              ? [{ codec_type: "video", codec_name: "h264", width: 1920, height: 1080 }]
+              : [{ codec_type: "audio", codec_name: "pcm_s16le" }],
+          }),
+        };
       });
-      snapshots.push(args.at(-1));
-      const isVideo = args.includes("mov");
-      expect(await readFile(args.at(-1))).toEqual(isVideo ? video : audio);
-      return {
-        exitCode: 0,
-        stdout: JSON.stringify({
-          format: { duration: "2" },
-          streams: isVideo
-            ? [{ codec_type: "video", codec_name: "h264", width: 1920, height: 1080 }]
-            : [{ codec_type: "audio", codec_name: "pcm_s16le" }],
-        }),
+      const options = {
+        ...harness(
+          operation === "chat"
+            ? chatReply()
+            : { ...decisionReply(), model: "google/gemini-decision-1" },
+        ),
+        cwd,
+        spawnImpl,
+        stdin: stdin(),
       };
-    });
-    const options = { ...harness(), cwd, spawnImpl };
-    await runOpenRouterCommand(
-      [
-        "chat",
-        "--model",
-        "google/gemini-3.8-flash",
-        "--prompt",
-        "Compare",
-        "--video",
-        "video",
-        "--image",
-        "image",
-        "--audio",
-        "audio",
-        "--system",
-        "Be precise",
-        "--reasoning",
-        "high",
-      ],
-      options,
-    );
-    const body = JSON.parse(options.fetchImpl.mock.calls[0][1].body);
-    expect(body.messages).toEqual([
-      { role: "system", content: "Be precise" },
-      {
-        role: "user",
-        content: [
-          { type: "text", text: "Compare" },
-          {
-            type: "video_url",
-            video_url: { url: `data:video/mp4;base64,${video.toString("base64")}` },
-          },
-          {
-            type: "image_url",
-            image_url: { url: `data:image/png;base64,${image.toString("base64")}` },
-          },
-          { type: "input_audio", input_audio: { data: audio.toString("base64"), format: "wav" } },
+      await runOpenRouterCommand(
+        [
+          operation,
+          "--model",
+          operation === "chat" ? "google/gemini-3.8-flash" : "google/gemini-decision-1",
+          ...(operation === "chat" ? ["--prompt", "Compare"] : ["--input", "-"]),
+          "--video",
+          "video",
+          "--image",
+          "image",
+          "--audio",
+          "audio",
+          ...(operation === "chat" ? ["--system", "Be precise", "--reasoning", "high"] : []),
         ],
-      },
-    ]);
-    for (const path of snapshots)
-      await expect(readdir(dirname(path))).rejects.toMatchObject({ code: "ENOENT" });
-  });
+        options,
+      );
+      const body = JSON.parse(options.fetchImpl.mock.calls[0][1].body);
+      const media = [
+        {
+          type: "video_url",
+          video_url: { url: `data:video/mp4;base64,${video.toString("base64")}` },
+        },
+        {
+          type: "image_url",
+          image_url: { url: `data:image/png;base64,${image.toString("base64")}` },
+        },
+        { type: "input_audio", input_audio: { data: audio.toString("base64"), format: "wav" } },
+      ];
+      if (operation === "decisions") {
+        expect(body.state).toEqual([JSON.stringify(decisionInput.state), ...media]);
+        expect(body.questions).toEqual(decisionInput.questions);
+        expect(JSON.parse(options.stdout.mock.calls[0][0]).answers).toEqual(
+          decisionReply().answers,
+        );
+      } else {
+        expect(body.messages).toEqual([
+          { role: "system", content: "Be precise" },
+          { role: "user", content: [{ type: "text", text: "Compare" }, ...media] },
+        ]);
+      }
+      for (const path of snapshots)
+        await expect(readdir(dirname(path))).rejects.toMatchObject({ code: "ENOENT" });
+    },
+  );
 
   it.each([["chat", "--model", "arbitrary/model", "--prompt", "x"]])(
     "rejects invalid flags before IO or billing: %j",
@@ -336,7 +349,7 @@ describe("OpenRouter standalone commands", () => {
     });
   });
 
-  it.each(["openai/gpt-6-luna-decisions"])(
+  it.each(["openai/gpt-6-luna-decisions", "google/gemini-decision-1"])(
     "keeps image-part-shaped %s state as text rather than bypassing attachment validation",
     async (model) => {
       const state = [
@@ -385,6 +398,8 @@ describe("OpenRouter standalone commands", () => {
   it.each([
     ["openai/gpt-6-luna-decisions", "--audio", "missing.wav"],
     ["openai/gpt-6-luna-decisions", "--image", "broken.png"],
+    ["google/gemini-decision-1", "--audio", "broken.wav"],
+    ["google/gemini-decision-1", "--video", "broken.mp4"],
   ])(
     "rejects unsupported or invalid decision attachments before billing: %s %s",
     async (model, flag, path) => {
@@ -413,6 +428,26 @@ describe("OpenRouter standalone commands", () => {
     ).rejects.toThrow();
     expect(options.fetchImpl).not.toHaveBeenCalled();
   });
+
+  it.each(["openai/gpt-6-luna-decisions", "google/gemini-decision-1"])(
+    "rejects excessive %s choice categories before billing",
+    async (model) => {
+      const questions = {
+        category: {
+          type: "choice",
+          instructions: "Choose",
+          criteria: Object.fromEntries(
+            Array.from({ length: 256 }, (_, index) => [String(index), null]),
+          ),
+        },
+      };
+      const options = { ...harness(), stdin: stdin({ state: "report", questions }) };
+      await expect(
+        runOpenRouterCommand(["decisions", "--model", model, "--input", "-"], options),
+      ).rejects.toThrow();
+      expect(options.fetchImpl).not.toHaveBeenCalled();
+    },
+  );
 
   it("does not publish refused Luna answers as judgments", async () => {
     const reply = { ...decisionReply(), model: "openai/gpt-6-luna-decisions" };

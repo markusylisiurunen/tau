@@ -27,14 +27,7 @@ const decisionOptions = z.strictObject({
   model: z.string().min(1),
   state: z.unknown(),
   questions: z.unknown(),
-  attachments: z
-    .array(
-      attachment.refine((item) => item.type === "image", {
-        message: "decisions only support image attachments",
-      }),
-    )
-    .max(64)
-    .default([]),
+  attachments: z.array(attachment).max(64).default([]),
 });
 
 export function createModelsCapability(
@@ -229,7 +222,7 @@ type DecisionOptions = {
   model: string;
   state: Guidance;
   questions: Record<string, Question>;
-  attachments?: Array<Attachment & { type: "image" }>;
+  attachments?: Attachment[];
 };
 type Answer =
   | { type: "noul"; noul: number }
@@ -262,15 +255,17 @@ type DecisionResult = {
 - \`choice\`: one supplied category; optional confidence and category probabilities are from 0 to 1.
 - \`score\`: position from 0 to the final rubric index, possibly fractional. Distribution and legend keys are rubric-index strings. Optional confidence and probabilities are from 0 to 1.
 
-Prefer \`openai/gpt-6-luna-decisions\` for decisions, including text, JSON, and image-based judgments. Choose \`typesafe/jev-1.14\` for high-volume text, JSON, or image decisions when cost is the priority.
+Prefer \`openai/gpt-6-luna-decisions\` for decisions, including text, JSON, and image-based judgments. Choose \`typesafe/jev-1.14\` for high-volume text, JSON, or image decisions when cost is the priority. Use \`google/gemini-decision-1\` when the judgment depends on audio or video, because it is the only decision model that accepts them.
 
-Luna supports at most 200 questions, 255 categories per choice question, and 2–10 rubric levels per score question. These limits are checked before sending the request. Jev also accepts a single-level score rubric.
+Luna supports at most 200 questions, 255 categories per choice question, and 2–10 rubric levels per score question. Gemini supports at most 255 categories per choice question. These limits are checked before sending the request. Jev accepts single-level score rubrics.
 
-Luna accepts up to 64 PNG/JPEG/WebP images. Supply them through \`attachments\`, using the same path or inline forms as chat images. Describe what to check in \`questions\`. Images follow \`state\` in attachment order and retain their original bytes. Objects and arrays in \`state\` are sent as JSON text, so image URLs inside \`state\` are treated as text.
+Supply media through \`attachments\`, using the same path or inline forms as chat. Describe what to check in \`questions\`. Attachments follow \`state\` in array order and retain their original bytes. Objects and arrays in \`state\` are sent as JSON text, so media URLs inside \`state\` are treated as text.
+
+Luna accepts up to 64 PNG/JPEG/WebP images. Gemini accepts up to 64 images, audio files, and videos in any mix, in the same formats as chat.
 
 Jev accepts up to 16 PNG/JPEG images through the same attachment forms. Each side must be 256–1,568 pixels, with at least 78,400 pixels in total (inclusive limits). A 256×256 image is too small; 280×280 meets the minimum area. WebP is unsupported. These constraints are checked before sending, without resizing or conversion. Jev does not apply EXIF orientation, so rotate photos before attaching them. Provider-side processed-image and expanded-request limits may still reject locally valid requests. Bounding-box questions are unsupported.
 
-The image limits below apply to decisions too. Neither decision model accepts audio or video. Omitting \`attachments\` sends no images.
+The media limits below apply to decisions too. Omitting \`attachments\` sends no media.
 
 Negative judgments and low confidence are normal results. Refusals and responses with mismatched names, types, categories, or ranges throw. The tool returns the model's answers without adding decision thresholds or prose explanations.
 

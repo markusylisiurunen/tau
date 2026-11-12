@@ -299,7 +299,7 @@ describe("code composition", () => {
     });
   });
 
-  it.each(["openai/gpt-6-luna-decisions"])(
+  it.each(["openai/gpt-6-luna-decisions", "google/gemini-decision-1"])(
     "composes ordered path and inline %s images through the scoped backend",
     async (model) => {
       const bytes = await sharp({
@@ -353,6 +353,73 @@ describe("code composition", () => {
       expect(fetchImpl).toHaveBeenCalledOnce();
     },
   );
+
+  it("accepts Gemini decision audio and video attachments", async () => {
+    const audio = Buffer.alloc(46);
+    audio.write("RIFF", 0);
+    audio.writeUInt32LE(38, 4);
+    audio.write("WAVEfmt ", 8);
+    const video = Buffer.from("000000186674797069736f6d0000020069736f6d69736f32", "hex");
+    const backend = {
+      readFileBinary: vi.fn(async (path) => ({ content: path === "clip.wav" ? audio : video })),
+      runNodeScript: vi.fn(async (_script, _args, options) => {
+        const { format } = JSON.parse(options.stdin.toString());
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            format: { duration: "2" },
+            streams:
+              format === "mov"
+                ? [{ codec_type: "video", codec_name: "h264", width: 1920, height: 1080 }]
+                : [{ codec_type: "audio", codec_name: "pcm_s16le" }],
+          }),
+        };
+      }),
+    };
+    const questions = {
+      valid: { type: "noul", instructions: "Valid?" },
+      category: { type: "choice", instructions: "Choose", criteria: { a: null, b: null } },
+      quality: { type: "score", instructions: "Rate", criteria: ["Low", "High"] },
+    };
+    const reply = {
+      model: "google/gemini-decision-1",
+      answers: {
+        valid: { type: "noul", noul: 0.9 },
+        category: { type: "choice", choice: "a" },
+        quality: { type: "score", score: 0.5 },
+      },
+      usage: { input_tokens: 100, output_tokens: 0 },
+    };
+    const fetchImpl = vi.fn(async () => Response.json(reply));
+    const capability = createModelsCapability(
+      backend,
+      { apiKeys: { openrouter: "secret" } },
+      fetchImpl,
+    );
+    const input = {
+      model: reply.model,
+      state: "Inspect",
+      questions,
+      attachments: [
+        { type: "video", path: "clip.mp4" },
+        { type: "audio", path: "clip.wav" },
+      ],
+    };
+    expect((await capability.api.decisions([input], context())).answers).toEqual(reply.answers);
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({
+      model: reply.model,
+      questions,
+      state: [
+        "Inspect",
+        {
+          type: "video_url",
+          video_url: { url: `data:video/mp4;base64,${video.toString("base64")}` },
+        },
+        { type: "input_audio", input_audio: { data: audio.toString("base64"), format: "wav" } },
+      ],
+    });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
 
   it("rejects unsupported, ambiguous, invalid, and excessive decision images before file access or inference", async () => {
     const backend = { readFileBinary: vi.fn() };

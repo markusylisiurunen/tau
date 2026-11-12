@@ -6,6 +6,7 @@ import sharp from "sharp";
 import { expect, it, vi } from "vitest";
 import { createModelsCapability } from "../dist/core/code_mode/models.js";
 import {
+  openRouterModels,
   requestOpenRouterChat,
   requestOpenRouterDecisions,
 } from "../dist/core/models/openrouter.js";
@@ -84,6 +85,43 @@ it("accepts large structured decision input and bounds its serialized questions 
     ),
   ).rejects.toThrow();
   expect(opts.fetchImpl).not.toHaveBeenCalled();
+});
+
+it("executes new decision catalog entries and enforces their optional limits", async () => {
+  const model = {
+    id: "test/decisions",
+    inputs: ["state", "questions"],
+    reasoning: [],
+    role: "Test decisions",
+  };
+  const opts = options();
+  opts.fetchImpl.mockImplementation(async () =>
+    Response.json({
+      model: model.id,
+      answers: { q: { type: "score", score: 0 } },
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }),
+  );
+  const input = {
+    model: model.id,
+    value: {
+      state: "report",
+      questions: { q: { type: "score", instructions: "Rate", criteria: ["low", "high"] } },
+    },
+    attachments: [],
+  };
+  openRouterModels.decisions.push(model);
+  try {
+    const result = await requestOpenRouterDecisions(input, opts);
+    expect(result.answers.q.score).toBe(0);
+    expect(opts.fetchImpl).toHaveBeenCalledOnce();
+    opts.fetchImpl.mockClear();
+    model.decisionLimits = { scoreLevels: [3, 10] };
+    await expect(requestOpenRouterDecisions(input, opts)).rejects.toThrow();
+    expect(opts.fetchImpl).not.toHaveBeenCalled();
+  } finally {
+    openRouterModels.decisions.splice(openRouterModels.decisions.indexOf(model), 1);
+  }
 });
 
 it("rejects excessive image counts before reading files, including Jev's stricter limit", async () => {

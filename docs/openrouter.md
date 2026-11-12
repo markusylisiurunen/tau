@@ -16,6 +16,7 @@ tau tool openrouter chat --list-models
 | Operation | Model | Use for |
 | --- | --- | --- |
 | `decisions` | `openai/gpt-6-luna-decisions` | First choice, supports text and images |
+| `decisions` | `google/gemini-decision-1` | Judgments about audio or video |
 | `decisions` | `typesafe/jev-1.14` | High volume when cost matters most |
 | `chat` | `google/gemini-3.8-flash` | First choice for audio, video, and images |
 | `chat` | `google/gemini-4-carbon` | Multimodal analysis |
@@ -52,7 +53,7 @@ tau tool openrouter decisions --model openai/gpt-6-luna-decisions --input - <<'J
 JSON
 ```
 
-`--input` also takes a file path. Add images with repeatable `--image` flags. Answers have this shape:
+`--input` also takes a file path. Add media with repeatable `--image` flags, and for Gemini, `--audio` and `--video`. Answers have this shape:
 
 - `noul`: a probability from 0 to 1
 - `choice`: the name of a category
@@ -67,7 +68,7 @@ JSON
 }
 ```
 
-Luna accepts at most 200 questions and up to 64 PNG, JPEG, or WebP images. Jev accepts up to 16 PNG or JPEG images, with each side between 256 and 1,568 pixels.
+Luna accepts at most 200 questions and up to 64 PNG, JPEG, or WebP images. Gemini accepts the same images, audio, and video as chat. Jev accepts up to 16 PNG or JPEG images, with each side between 256 and 1,568 pixels.
 
 ### Chat
 

@@ -52,6 +52,12 @@ export const openRouterModels: Record<Operation, OpenRouterModel[]> = {
       role: "Recommended first choice for classification, scoring, and verification with text or images.",
     },
     {
+      id: "google/gemini-decision-1",
+      inputs: ["state", "questions", "image", "audio", "video"],
+      reasoning: [],
+      role: "Classification and scoring with text, images, audio, or video.",
+    },
+    {
       id: "typesafe/jev-1.14",
       inputs: ["state", "questions", "image"],
       reasoning: [],
@@ -206,7 +212,7 @@ export async function requestOpenRouterDecisions(
 ) {
   options.signal.throwIfAborted();
   const spec = resolveOpenRouterModel("decisions", model);
-  if (attachments.some((item) => item.kind !== "image" || !spec.inputs.includes(item.kind)))
+  if (attachments.some((item) => !spec.inputs.includes(item.kind)))
     throw new Error("unsupported attachment modality for the selected decision model");
   const input = parseDecisionInput(model, value);
   const textBytes = Buffer.byteLength(JSON.stringify(input));

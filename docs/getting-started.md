@@ -1,6 +1,6 @@
 # Getting started
 
-Tau is a terminal AI client that gives an agent tools for working in a project. It runs on macOS and Linux and requires Node.js 24 or newer.
+Tau is a terminal AI client that gives an agent tools for working in a project. It runs on macOS and Linux and requires Node.js 26 or newer.
 
 ## Install
 

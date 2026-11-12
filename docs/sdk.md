@@ -6,7 +6,7 @@ The SDK is a typed client for creating and controlling Tau sessions from Node, w
 npm install @markusylisiurunen/tau
 ```
 
-Tau is an ES module package and requires Node.js 24 or newer. Everything you need is exported from `@markusylisiurunen/tau/sdk`.
+Tau is an ES module package and requires Node.js 26 or newer. Everything you need is exported from `@markusylisiurunen/tau/sdk`.
 
 ## Run a session
 

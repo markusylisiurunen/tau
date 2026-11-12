@@ -194,7 +194,9 @@ export class SessionChatController {
   private pendingIdleNotification = false;
   private programStatus: "idle" | "working" | "done" | "error" | "clear" = "clear";
   private programStatusTurnStart?: SessionProtocolSnapshot;
+  /** A turn is visibly running. Shell commands are counted apart, so neither clears the other. */
   private isStreaming = false;
+  private activeShellCommands = 0;
   private assistantInterruptRequested = false;
   private submittedTurnInProgress = false;
   private manualCompactionInProgress = false;
@@ -417,7 +419,7 @@ export class SessionChatController {
       if (parsed.type === "unknown") {
         return true;
       }
-      if (!this.isStreaming) {
+      if (!this.isWorking) {
         return false;
       }
       return this.commandRegistry.allowsDuringStreaming(parsed);
@@ -443,7 +445,7 @@ export class SessionChatController {
   ): Promise<void> {
     const trimmed = text.trim();
     if (!trimmed) {
-      if (this.isStreaming || this.submittedTurnInProgress) {
+      if (this.isWorking || this.submittedTurnInProgress) {
         return;
       }
 
@@ -478,7 +480,7 @@ export class SessionChatController {
       if (trimmed.startsWith("/") && this.isSingleLineInput(text)) {
         const parsed = this.commandRegistry.parse(trimmed);
         if (parsed.type !== "unknown") {
-          if (this.isStreaming && this.commandRegistry.allowsDuringStreaming(parsed)) {
+          if (this.isWorking && this.commandRegistry.allowsDuringStreaming(parsed)) {
             await this.commandRegistry.dispatch(parsed, this.commandHandlers);
           } else {
             this.view.showFooterNotice(
@@ -659,15 +661,16 @@ export class SessionChatController {
   ): Promise<void> {
     const toolCallId = `bash-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const workingDirectory = this.snapshot.executionEnvironment.cwd;
-    // During a turn, the turn owns the working state, and the output joins it at its next step.
+    // Alongside other work, the output is recorded in the background so this card can finish.
+    // During a turn, it joins the turn at its next step.
     const duringTurn = this.isSessionOperationActive();
     if (options.addToContext) this.hiddenHistoryEntryIds.add(toolCallId);
 
-    if (!duringTurn) {
-      this.isStreaming = true;
+    if (!this.isWorking) {
       this.startTurnTimer();
       this.view.startWorkingIcon();
     }
+    this.activeShellCommands += 1;
     this.view.updateLocalToolUi({
       toolCallId,
       status: "running",
@@ -721,8 +724,9 @@ export class SessionChatController {
       });
       if (!duringTurn) await this.syncFromSessionSnapshot();
     } finally {
-      if (!duringTurn) {
-        this.isStreaming = false;
+      this.activeShellCommands -= 1;
+      if (!this.isWorking) {
+        this.assistantInterruptRequested = false;
         this.view.stopWorkingIcon();
         this.stopTurnTimer();
       }
@@ -857,10 +861,7 @@ export class SessionChatController {
       return;
     }
 
-    if (
-      (!this.isStreaming && !this.manualCompactionInProgress) ||
-      this.assistantInterruptRequested
-    ) {
+    if ((!this.isWorking && !this.manualCompactionInProgress) || this.assistantInterruptRequested) {
       return;
     }
 
@@ -2325,7 +2326,7 @@ export class SessionChatController {
   }
 
   private sendPendingIdleNotification(): void {
-    if (!this.pendingIdleNotification || this.isStreaming || this.hasPendingUserMessages) {
+    if (!this.pendingIdleNotification || this.isWorking || this.hasPendingUserMessages) {
       return;
     }
 
@@ -2338,9 +2339,11 @@ export class SessionChatController {
       return false;
     }
     this.isStreaming = false;
-    this.assistantInterruptRequested = false;
-    this.view.stopWorkingIcon();
-    this.stopTurnTimer();
+    if (this.activeShellCommands === 0) {
+      this.assistantInterruptRequested = false;
+      this.view.stopWorkingIcon();
+      this.stopTurnTimer();
+    }
     this.refreshStatus();
     return true;
   }
@@ -2357,9 +2360,13 @@ export class SessionChatController {
     this.refreshStatus();
   }
 
+  private get isWorking(): boolean {
+    return this.isStreaming || this.activeShellCommands > 0;
+  }
+
   private isSessionOperationActive(): boolean {
     return (
-      this.isStreaming || this.submittedTurnInProgress || this.isBlockingSessionOperationActive()
+      this.isWorking || this.submittedTurnInProgress || this.isBlockingSessionOperationActive()
     );
   }
 

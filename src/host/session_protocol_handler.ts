@@ -1763,7 +1763,26 @@ export class SessionProtocolHandler {
     }
   }
 
+  /** Queued input is this client's request, so it cannot outlive the client's attachment. */
+  private cancelQueuedSubmissions(state: SessionProtocolHandlerSessionState): void {
+    const queued = state.live.pendingSubmissions.filter(
+      (submission): submission is SessionProtocolPendingIdleSubmission =>
+        submission.delivery === "when-idle" && submission.handler === this,
+    );
+    if (!this.removePendingSubmissions(state, queued)) return;
+    for (const { request } of queued) {
+      this.sendMessage(
+        createSessionProtocolErrorResponse(
+          request.id,
+          SESSION_PROTOCOL_ERROR_CODES.cancelled,
+          "pending user message was cancelled",
+        ),
+      );
+    }
+  }
+
   private unsubscribeSessionListeners(state: SessionProtocolHandlerSessionState): void {
+    this.cancelQueuedSubmissions(state);
     this.clientToolRegistration?.detachSession(state.session.sessionId);
     if (!state.released) {
       state.released = true;

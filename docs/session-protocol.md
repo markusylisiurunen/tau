@@ -98,7 +98,7 @@ Three other channels are separate from the snapshot, are not saved, and are empt
 
 ## Concurrency
 
-One main-session turn runs at a time. `session.submit` returns `busy` while a client's turn runs, but waits for a turn the agent started on its own, as `session.queue` always does. `session.retry` returns `busy` during any turn. `session.steer` joins the running turn. Session changes run one at a time across all clients, and waiting client input runs before the agent starts another turn on its own.
+One main-session turn runs at a time. `session.submit` returns `busy` while a client's turn runs, but waits for a turn the agent started on its own, as `session.queue` always does. `session.retry` returns `busy` during any turn. `session.steer` joins the running turn. Session changes run one at a time across all clients, and waiting client input runs before the agent starts another turn on its own. Waiting input is cancelled when the client that sent it stops observing the session or disconnects.
 
 `session.record` adds user text without starting a turn and never interrupts one. During a turn, the text joins it at its next step, or is added when the turn ends, and the request returns once the text is in the history. `session.exec`, `session.sample`, and ephemeral threads run alongside everything else.
 

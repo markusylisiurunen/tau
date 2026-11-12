@@ -1355,14 +1355,16 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     if (logicalTurn) {
       logicalTurn.cancellationRequested = true;
     }
-    let interrupted = this.runtime.interruptTurn() || Boolean(logicalTurn);
+    const interruptedTurn = this.runtime.interruptTurn() || Boolean(logicalTurn);
+    // Only stopping the main agent pauses automatic turns, not cancelling side work.
+    if (interruptedTurn) this.notificationWakePaused = true;
+    let interrupted = interruptedTurn;
     for (const abortController of this.activeWorkAbortControllers) {
       if (!abortController.signal.aborted) {
         abortController.abort();
         interrupted = true;
       }
     }
-    if (interrupted) this.notificationWakePaused = true;
     return interrupted;
   }
 

@@ -266,16 +266,19 @@ describe("AgentRuntime", () => {
     runtime.dispose();
   });
 
-  it("adds text recorded while the turn's last recorded text is being saved", async () => {
+  it("adds text recorded while the turn's last records are saved or just after", async () => {
     const gate = deferred();
     const started = deferred();
     let runtime;
     let late;
+    let afterDrain;
     const { runtime: created, persona } = createRuntime({
       maxModelSubturns: 1,
       eventSink: async (event) => {
         if (event.type === "user_message" && event.message.content[0]?.text === "first output") {
           late = runtime.record("second output");
+          // Runs once the final drain has found the queue empty, before the turn returns.
+          afterDrain = late.then(() => runtime.record("third output"));
         }
       },
     });
@@ -299,6 +302,7 @@ describe("AgentRuntime", () => {
     await running;
     await expect(first).resolves.toBeTruthy();
     await expect(late).resolves.toBeTruthy();
+    await expect(afterDrain).resolves.toBeTruthy();
     runtime.dispose();
   });
 

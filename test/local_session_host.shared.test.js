@@ -2004,7 +2004,7 @@ describe("LocalSessionHost", () => {
     },
   );
 
-  it("rejects an exec when the backend resolves after interruption", async () => {
+  it("rejects an exec when the backend resolves after interruption, without pausing automatic turns", async () => {
     const store = new MemorySessionStore();
     const toolBackend = createLocalToolExecutionBackend();
     const execStarted = deferred();
@@ -2042,6 +2042,17 @@ describe("LocalSessionHost", () => {
 
       expect(hostedSession.interruptActiveWork()).toBe(true);
       await expect(exec).rejects.toMatchObject({ name: "AbortError" });
+
+      const stream = vi.fn(() => ({
+        async *[Symbol.asyncIterator]() {},
+        async result() {
+          return fauxAssistantMessage("handled");
+        },
+      }));
+      hostedSession.runtime.agent.spec.model.stream = stream;
+      hostedSession.runtime.notifications.add("child finished");
+      await vi.waitFor(() => expect(stream).toHaveBeenCalledTimes(1));
+      await hostedSession.waitForActiveWork();
     } finally {
       await host.shutdown();
     }

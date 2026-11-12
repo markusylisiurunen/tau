@@ -384,6 +384,8 @@ export class AgentRuntime {
     rejectResult: (error: Error) => void;
   }> = [];
   private readonly notifications?: NotificationInbox;
+  /** Whether recorded text joins the running turn; cleared in the same step as its last drain. */
+  private recordsJoinTurn = false;
   /** Text recorded during a turn, added at its next step boundary or when it ends. */
   private pendingRecords: Array<{
     text: string;
@@ -749,14 +751,17 @@ export class AgentRuntime {
    * boundary, or is added when the turn ends.
    */
   record(text: string, options: { historyEntryId?: string } = {}): Promise<string> {
-    if (this.status === "idle") return this.commitUserText(text, options);
+    if (!this.recordsJoinTurn) return this.commitUserText(text, options);
     return new Promise((resolve, reject) => {
       this.pendingRecords.push({ text, ...options, resolve, reject });
     });
   }
 
-  /** Drains until empty, because text can arrive while an earlier record is being saved. */
-  private async commitPendingRecords(): Promise<boolean> {
+  /**
+   * Drains until empty, because text can arrive while an earlier record is being saved. The final
+   * drain of a turn stops joining records once the queue is empty, so none can be left behind.
+   */
+  private async commitPendingRecords(options: { final?: boolean } = {}): Promise<boolean> {
     let committed = false;
     for (let record = this.pendingRecords.shift(); record; record = this.pendingRecords.shift()) {
       try {
@@ -770,6 +775,7 @@ export class AgentRuntime {
         throw error;
       }
     }
+    if (options.final) this.recordsJoinTurn = false;
     return committed;
   }
 
@@ -892,6 +898,7 @@ export class AgentRuntime {
 
     const controller = new AbortController();
     this.activeAbortController = controller;
+    this.recordsJoinTurn = true;
     let initialResult: AgentSubturnResult | undefined;
     let associatedSteering: typeof this.pendingSteering = [];
 
@@ -967,7 +974,7 @@ export class AgentRuntime {
           if (this.pendingSteering.length > 0) {
             this.rejectPendingSteering(new Error("steering was not applied before the turn ended"));
           }
-          await this.commitPendingRecords();
+          await this.commitPendingRecords({ final: true });
           return { ...initialResult, terminalResult: result };
         }
 
@@ -1002,6 +1009,7 @@ export class AgentRuntime {
     } finally {
       if (this.activeAbortController === controller) {
         this.activeAbortController = undefined;
+        this.recordsJoinTurn = false;
         this.stopAtBoundaryRequested = false;
       }
     }

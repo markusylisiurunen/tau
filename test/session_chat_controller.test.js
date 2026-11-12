@@ -2546,6 +2546,27 @@ describe("SessionChatController", () => {
     expect(view.localToolModels.at(-1)).toMatchObject({ status: "succeeded" });
   });
 
+  it("keeps working while another direct shell command still runs", async () => {
+    const session = new FakeSession();
+    const first = deferred();
+    session.exec
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => new Promise(() => {}));
+    const view = new FakeView();
+    const { controller } = await createControllerHarness({ view, session });
+    controller.start();
+
+    controller.getInputHandlers().onSubmit("!true");
+    controller.getInputHandlers().onSubmit("!sleep 60");
+    await flush();
+    first.resolve(createProtocolExecResult({ output: "" }));
+    await flush();
+    controller.getInputHandlers().onEscape();
+    await flush();
+
+    expect(session.interrupt).toHaveBeenCalledTimes(1);
+  });
+
   it("runs incognito direct shell commands without adding session context", async () => {
     const session = new FakeSession();
     const outputLines = Array.from({ length: 40 }, (_, index) => `line ${index + 1}`);

@@ -186,7 +186,7 @@ function createHarness(options = {}) {
       get isTurnRunning() {
         return running;
       },
-      holdTurnAdmission: vi.fn(() => () => {}),
+      holdTurnAdmission: vi.fn(() => vi.fn()),
       waitForActiveTurn: async () => {
         await activeTurnSettlement;
       },
@@ -1858,6 +1858,25 @@ describe("SessionProtocolHandler", () => {
       ok: true,
       result: { turn: { status: "completed" } },
     });
+  });
+
+  it("cancels queued input when its client detaches, releasing automatic turns", async () => {
+    const harness = createHarness();
+    const automatic = harness.seededSession.runTurn();
+    await harness.connection.handleRequest(
+      request("queued-then-detached", "session.submit", {
+        sessionId: "session-1",
+        text: "follow my instruction",
+      }),
+    );
+    const [release] = harness.seededSession.holdTurnAdmission.mock.results.map(
+      (result) => result.value,
+    );
+    expect(release).not.toHaveBeenCalled();
+    await harness.connection.close("detach");
+    expect(release).toHaveBeenCalledTimes(1);
+    harness.releaseTurn();
+    await automatic;
   });
 
   it("waits for host-owned turns before applying an interrupting mutation", async () => {

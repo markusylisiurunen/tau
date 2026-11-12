@@ -1811,7 +1811,7 @@ describe("SessionProtocolHandler", () => {
   it("reports host-wide exec id collisions as busy", async () => {
     const harness = createHarness({
       exec: ({ execId }) => {
-        throw new SessionExecBusyError(execId);
+        throw new SessionExecBusyError(`execution '${execId}' is already active`);
       },
     });
 

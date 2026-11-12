@@ -750,7 +750,7 @@ function completeToolRun(
   };
 }
 
-/** A tool that reports no result of its own gets a card previewing the text sent to the model. */
+/** A tool that reports no activity of its own gets a card previewing the text sent to the model. */
 function createDefaultResultActivity(
   toolCall: ToolCall,
   definition: AgentTool,
@@ -807,7 +807,7 @@ async function* runPreparedToolCall(
     let outcome: Awaited<ReturnType<AgentTool["execute"]>> | undefined;
     let executionError: unknown;
     let settled = false;
-    let reportedResult = false;
+    let reportedActivity = false;
     const execution = definition
       .execute(toolCall, {
         ...executionContext,
@@ -835,9 +835,7 @@ async function* runPreparedToolCall(
       while (!settled || activities.length > 0) {
         const next = activities.shift();
         if (next) {
-          reportedResult ||=
-            next.activity.type === "tool_call_finished" ||
-            next.activity.type === "tool_call_blocked";
+          reportedActivity = true;
           let acknowledge: (error?: Error) => void = () => {};
           const acknowledged = new Promise<void>((resolve, reject) => {
             acknowledge = (error) => (error ? reject(error) : resolve());
@@ -866,7 +864,7 @@ async function* runPreparedToolCall(
 
     if (executionError) throw executionError;
     if (!outcome) throw new Error(`tool '${toolCall.name}' returned no outcome`);
-    if (!reportedResult) {
+    if (!reportedActivity) {
       let acknowledge: (error?: Error) => void = () => {};
       const acknowledged = new Promise<void>((resolve, reject) => {
         acknowledge = (error) => (error ? reject(error) : resolve());

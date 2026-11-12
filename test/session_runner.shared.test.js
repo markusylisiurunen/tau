@@ -444,7 +444,7 @@ describe("session runner", () => {
     });
   });
 
-  it("previews the result for tools that report no result of their own", async () => {
+  it("previews the result only for tools that report no activity of their own", async () => {
     const tool = (name, execute) => ({
       schema: {
         name,
@@ -457,18 +457,15 @@ describe("session runner", () => {
       execute,
     });
     const result = { content: [{ type: "text", text: "line 1\nline 2" }], outcome: "succeeded" };
-    const ownPresentation = buildToolRunPresentation({ toolName: "reported", subject: "own" });
     const runner = new SequentialToolCallRunner(
       {
         toolRegistry: new ToolRegistry([
           tool("plain", async () => result),
           tool("reported", async (call, context) => {
             await context.emitActivity({
-              type: "tool_call_finished",
+              type: "write_success",
               toolCallId: call.id,
-              toolName: call.name,
-              presentation: ownPresentation,
-              status: "success",
+              path: "/repo/file.txt",
             });
             return result;
           }),
@@ -500,7 +497,7 @@ describe("session runner", () => {
           ],
         }),
       }),
-      expect.objectContaining({ toolCallId: "reported-call", presentation: ownPresentation }),
+      { type: "write_success", toolCallId: "reported-call", path: "/repo/file.txt" },
     ]);
   });
 

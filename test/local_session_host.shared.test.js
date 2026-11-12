@@ -637,7 +637,7 @@ describe("LocalSessionHost", () => {
       if (ending === "cancel") expect(session.cancelExec("shell")).toBe(true);
       else complete();
       const result = await settled;
-      if (ending === "cancel") expect(result).toBeInstanceOf(Error);
+      expect(result).not.toBeInstanceOf(Error);
       await vi.waitFor(() => expect(stream).toHaveBeenCalledTimes(1));
       await session.waitForActiveWork();
       expect(

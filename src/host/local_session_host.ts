@@ -1026,9 +1026,15 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       !this.notificationWakePaused &&
       this.turnAdmissionHolds === 0 &&
       !this.isTurnRunning &&
-      this.pendingAcceptedTurnHistoryEntryIds.size === 0 &&
-      ![...this.turns.values()].some((turn) => turn.state === "running") &&
+      !this.hasUnsettledTurn &&
       this.runtime.notifications.hasUndelivered()
+    );
+  }
+
+  private get hasUnsettledTurn(): boolean {
+    return (
+      this.pendingAcceptedTurnHistoryEntryIds.size > 0 ||
+      [...this.turns.values()].some((turn) => turn.state === "running")
     );
   }
 
@@ -1064,11 +1070,12 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
   /** No client waits for an automatic turn, so its failure must end up in the snapshot. */
   private async recoverFailedNotificationTurn(id: string, error: unknown): Promise<void> {
+    if (this.turns.has(id)) {
+      // Its receipt could not be settled even as failed.
+      this.invalidateProjection(error);
+      return;
+    }
     try {
-      if (this.turns.has(id)) {
-        await this.settleTurn(id, await this.cleanupFailedTurn(id, error));
-        return;
-      }
       await this.enqueueMutation(async () => {
         const item = this.appendNoticeTimelineItem(
           `automatic-turn-failed-${randomUUID()}`,
@@ -1224,8 +1231,16 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     userHistoryEntryId: string,
   ): Promise<SessionProtocolTurnOutcome> {
     const outcome = await this.runTurnNow(logicalTurn, userHistoryEntryId);
-    await this.settleTurn(userHistoryEntryId, outcome);
-    return outcome;
+    try {
+      await this.settleTurn(userHistoryEntryId, outcome);
+      return outcome;
+    } catch (error) {
+      // A receipt left running would block every later automatic turn.
+      this.notificationWakePaused = true;
+      const failed = await this.cleanupFailedTurn(userHistoryEntryId, error);
+      await this.settleTurn(userHistoryEntryId, failed);
+      return failed;
+    }
   }
 
   async runTurn(): Promise<SessionProtocolTurnOutcome> {
@@ -1412,22 +1427,24 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   ): Promise<SessionProtocolBashResult> {
     this.assertActive();
     const run = async (signal: AbortSignal, recordOutput?: (text: string) => Promise<void>) => {
-      const result = await runDirectBashCommand({
+      return await runDirectBashCommand({
         command: options.command,
         backend: this.executionEnvironment.getToolExecutionBackend(),
         workingDirectory: this.executionEnvironment.snapshot().cwd,
         signal,
         recordOutput,
       });
-      // Interrupted output is still recorded, but the request reports the cancellation.
-      signal.throwIfAborted();
-      return result;
     };
     if (!options.addToContext) {
       return await this.runExec(options.execId, options.signal, (signal) => run(signal));
     }
     // Reject a taken history entry ID before the command runs.
     this.createTurnHistoryEntryId(options.historyEntryId);
+    // An accepted turn that has not started yet cannot be waited for, so its output would land
+    // inside that turn.
+    if (!this.activeLogicalTurn && this.hasUnsettledTurn) {
+      throw new SessionExecBusyError("a turn is starting");
+    }
     this.contextBashCount += 1;
     try {
       return await this.runExec(options.execId, options.signal, async (signal) => {
@@ -1743,7 +1760,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   ): Promise<T> {
     this.assertActive();
     if (this.activeExecAbortControllers.has(execId)) {
-      throw new SessionExecBusyError(execId);
+      throw new SessionExecBusyError(`execution '${execId}' is already active`);
     }
     const abortController = new AbortController();
     this.activeExecAbortControllers.set(execId, abortController);

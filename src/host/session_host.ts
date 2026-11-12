@@ -46,11 +46,7 @@ import type {
 
 export class EphemeralThreadBusyError extends Error {}
 
-export class SessionExecBusyError extends Error {
-  constructor(execId: string) {
-    super(`execution '${execId}' is already active`);
-  }
-}
+export class SessionExecBusyError extends Error {}
 
 export class SessionRetryUnavailableError extends Error {}
 

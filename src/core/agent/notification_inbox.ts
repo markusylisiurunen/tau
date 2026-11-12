@@ -45,7 +45,11 @@ export class NotificationInbox {
 
   read(id: string): Notification {
     const entry = this.entries.get(id);
-    if (!entry) throw new Error(`Unknown notification ID: ${id}`);
+    if (!entry) {
+      throw new Error(
+        `Unknown notification ID: ${id}. Notifications do not survive a Tau restart, and only the ${MAX_NOTIFICATIONS} newest are kept. Use list_notifications to see the current ones.`,
+      );
+    }
     entry.read = true;
     const { delivered: _, ...notification } = entry;
     return notification;

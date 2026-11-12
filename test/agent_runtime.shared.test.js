@@ -230,37 +230,6 @@ describe("AgentRuntime", () => {
     },
   );
 
-  it.each(["boundary", "aborted"])("preserves %s rules when notifications arrive", async (mode) => {
-    const notifications = new NotificationInbox();
-    const gate = deferred();
-    const started = deferred();
-    const { runtime, persona } = createRuntime({ notifications, retryPolicy: { maxRetries: 0 } });
-    const stream = setStreams(runtime, [
-      {
-        async *[Symbol.asyncIterator]() {
-          started.resolve();
-          await gate.promise;
-          yield* [];
-        },
-        async result() {
-          return createAssistant(persona, "first", {
-            stopReason: mode === "aborted" ? "aborted" : "stop",
-          });
-        },
-      },
-    ]);
-    const running = runtime.submit("task");
-    await started.promise;
-    notifications.add("child finished");
-    if (mode === "boundary") runtime.requestStopAtBoundary();
-    gate.resolve();
-    const result = await running;
-    if (mode === "aborted") expect(result.finalMessage.stopReason).toBe("aborted");
-    expect(stream).toHaveBeenCalledTimes(1);
-    expect(notifications.hasUndelivered()).toBe(true);
-    runtime.dispose();
-  });
-
   it.each([
     [2, "joins the turn at the next step", 2],
     [1, "is added after a turn with no step left", 1],

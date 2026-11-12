@@ -84,6 +84,9 @@ globalThis.workflow = (() => {
         prompt,
         model,
         workingDirectory,
+        ...("setCompletionNotification" in tau.agents
+          ? { notifyOnCompletion: false }
+          : {}),
       });
       agentId = agent.id;
       logStart(name, model, `agent ${agent.id}`);

@@ -69,7 +69,13 @@ Sometimes a file is a better place for the result. Ask the agent to write its fi
 
 ## Supervise running agents
 
-Track each assignment's owner, scope, dependencies, and status. Use Tau's agent tools to check status, wait for results, read traces, and send follow-ups. While agents run, do the independent work you planned. Waiting is reasonable when the delegated result is your next dependency.
+Track each assignment's owner, scope, dependencies, and status. Use Tau's agent tools to check status, wait for results, read traces, and send follow-ups. While agents run, do the independent work you planned.
+
+Whether you need to wait for results depends on whether Tau notifies you when a worker finishes. You receive notifications if `tau.docs("agents")` has a section on completion notifications. Each worker you started then notifies you when it becomes idle, and if you are idle at that moment, Tau starts a new turn for you. So you do not need to keep a turn open for a result. When nothing else is left to do, tell the user what is running and end your turn, so they can talk to you in the meantime. Wait within the turn only when the user asks you to, or when you need a short assignment's result to finish the current turn. If you do wait, turn off that worker's notification so its completion does not reach you twice.
+
+A turn started by a notification continues the task the user already gave you, with the same authorization and nothing more. The notification gives only the worker and its status, and `completed` means only that the worker's turn ended. Read the worker's answer and verify it before you act on it.
+
+Without notifications, nothing wakes you. This applies to every subagent, and to the main agent of a session with notifications turned off, as automated sessions often have. Wait for every result you need before you end your turn, because results that arrive after your final answer reach no one who will act on them.
 
 When requirements or a contract change, tell the affected agents before they continue on stale assumptions, and spell out the new context. You can also send follow-ups that add work. Choose how each message arrives by what should happen to the current work:
 
@@ -79,7 +85,7 @@ When requirements or a contract change, tell the affected agents before they con
 
 Stopping an agent does not undo its file edits or external actions, so inspect the current state before giving its scope to someone else.
 
-An agent you started may have started its own subagents. You can manage all your descendants, and they count toward the session's limit on running agents. They can keep working after their parent goes idle, and by default an interrupt stops only the agent you name, not its subagents. To stop a branch, interrupt the whole subtree. Before you treat delegated work as finished or stopped, check the state of every descendant in its branch.
+An agent you started may have started its own subagents. You can manage all your descendants, and they count toward the session's limit on running agents. Only agents you started yourself notify you. When an assignment allows further delegation, ask the agent to collect its subagents' results before it reports, because nothing wakes it when they finish. Descendants can keep working after their parent goes idle, and by default an interrupt stops only the agent you name, not its subagents. To stop a branch, interrupt the whole subtree. Before you treat delegated work as finished or stopped, check the state of every descendant in its branch.
 
 When an agent reports a case outside its agreed scope, make the decision yourself before widening the assignment. Agents share the workspace. Do not overwrite another agent's edits to make integration easier.
 

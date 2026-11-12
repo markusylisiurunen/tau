@@ -20,7 +20,7 @@ The terminal interface also reviews diffs in the browser and, on macOS, takes di
 
 ## Get started
 
-Tau runs on macOS and Linux and needs Node.js 24 or newer.
+Tau runs on macOS and Linux and needs Node.js 26 or newer.
 
 ```sh
 npm install -g @markusylisiurunen/tau@latest

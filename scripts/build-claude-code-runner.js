@@ -12,7 +12,7 @@ await build({
   banner: {
     js: 'import { createRequire as bundleRequire } from "node:module"; const require = bundleRequire(import.meta.url);',
   },
-  target: "node24",
+  target: "node26",
   minify: true,
   logLevel: "warning",
 });

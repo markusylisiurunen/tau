@@ -31,7 +31,7 @@ printText(truncate(failures.join("\n"), { maxChars: 4000 }));
 **Work in parallel.** Run several searches and print a short summary of each:
 
 ```js
-const queries = ["node 24 release notes", "node 24 breaking changes"];
+const queries = ["node 26 release notes", "node 26 breaking changes"];
 const responses = await Promise.all(
   queries.map((query) => tau.web.search(query, { numResults: 3 })),
 );

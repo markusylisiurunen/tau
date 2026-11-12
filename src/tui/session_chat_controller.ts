@@ -410,7 +410,7 @@ export class SessionChatController {
 
     const trimmed = text.trimStart();
     if (trimmed.startsWith("!")) {
-      return false;
+      return true;
     }
     if (trimmed.startsWith("/") && this.isSingleLineInput(text)) {
       const parsed = this.commandRegistry.parse(trimmed);
@@ -462,6 +462,11 @@ export class SessionChatController {
 
     this.lastEmptySubmitAt = undefined;
 
+    if (trimmed.startsWith("!") && !this.isBlockingSessionOperationActive()) {
+      await this.runShellInput(trimmed);
+      return;
+    }
+
     if (this.isSessionOperationActive()) {
       if (this.isBlockingSessionOperationActive()) {
         this.view.showFooterNotice(
@@ -484,9 +489,6 @@ export class SessionChatController {
           return;
         }
       }
-      if (trimmed.startsWith("!")) {
-        return;
-      }
       const submittedText = this.formatSubmittedText(trimmed, hiddenSystemMessages);
       if (mode === "steer") this.submitSteeringText(submittedText);
       else this.submitQueuedText(submittedText);
@@ -499,28 +501,6 @@ export class SessionChatController {
         await this.commandRegistry.dispatch(parsed, this.commandHandlers);
         return;
       }
-    }
-
-    if (trimmed.startsWith("!")) {
-      if (trimmed.startsWith("!!")) {
-        const command = trimmed.slice(2).trim();
-        if (command) {
-          await this.runSessionBashCommand(command, {
-            addToContext: false,
-            labelOverride: "incognito",
-          });
-        }
-        return;
-      }
-
-      const command = trimmed.slice(1).trim();
-      if (command) {
-        await this.runSessionBashCommand(command, {
-          addToContext: true,
-          labelOverride: "you ran",
-        });
-      }
-      return;
     }
 
     await this.runSessionTurn(() =>
@@ -663,20 +643,31 @@ export class SessionChatController {
     await this.runSessionTurn(() => this.session.retry());
   }
 
+  private async runShellInput(trimmed: string): Promise<void> {
+    const incognito = trimmed.startsWith("!!");
+    const command = trimmed.slice(incognito ? 2 : 1).trim();
+    if (!command) return;
+    await this.runSessionBashCommand(command, {
+      addToContext: !incognito,
+      labelOverride: incognito ? "incognito" : "you ran",
+    });
+  }
+
   private async runSessionBashCommand(
     command: string,
     options: { addToContext: boolean; labelOverride: string },
   ): Promise<void> {
-    if (this.isSessionOperationActive()) {
-      return;
-    }
-
     const toolCallId = `bash-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const workingDirectory = this.snapshot.executionEnvironment.cwd;
+    // During a turn, the turn owns the working state, and the output joins it at its next step.
+    const duringTurn = this.isSessionOperationActive();
+    if (options.addToContext) this.hiddenHistoryEntryIds.add(toolCallId);
 
-    this.isStreaming = true;
-    this.startTurnTimer();
-    this.view.startWorkingIcon();
+    if (!duringTurn) {
+      this.isStreaming = true;
+      this.startTurnTimer();
+      this.view.startWorkingIcon();
+    }
     this.view.updateLocalToolUi({
       toolCallId,
       status: "running",
@@ -700,22 +691,22 @@ export class SessionChatController {
         actionLabel: options.labelOverride,
         addToContext: options.addToContext,
         addUserText: async (text) => {
-          const recorded = await this.session.record(text, {
-            historyEntryId: toolCallId,
+          const recording = this.session.record(text, { historyEntryId: toolCallId });
+          if (!duringTurn) return (await recording).userHistoryEntryId;
+          void recording.catch((error) => {
+            this.view.addTranscriptNotice("failed to add command output", "error", [
+              formatSessionError(error),
+            ]);
           });
-          return recorded.userHistoryEntryId;
+          return toolCallId;
         },
       });
-      if (result.userHistoryEntryId) {
-        this.hiddenHistoryEntryIds.add(result.userHistoryEntryId);
-        this.renderedMessageIds.push(this.getViewMessageId(result.userHistoryEntryId));
-      }
       this.view.updateLocalToolUi({
         toolCallId,
         status: result.exitCode === 0 ? "succeeded" : "failed",
         presentation: result.presentation,
       });
-      await this.syncFromSessionSnapshot();
+      if (!duringTurn) await this.syncFromSessionSnapshot();
     } catch (error) {
       const reason = (error as Error).message || "bash failed";
       this.view.updateLocalToolUi({
@@ -728,11 +719,13 @@ export class SessionChatController {
           metadata: [formatCwd(workingDirectory)],
         }),
       });
-      await this.syncFromSessionSnapshot();
+      if (!duringTurn) await this.syncFromSessionSnapshot();
     } finally {
-      this.isStreaming = false;
-      this.view.stopWorkingIcon();
-      this.stopTurnTimer();
+      if (!duringTurn) {
+        this.isStreaming = false;
+        this.view.stopWorkingIcon();
+        this.stopTurnTimer();
+      }
       this.refreshStatus();
       this.view.requestRender();
     }

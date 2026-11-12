@@ -409,7 +409,7 @@ const mainNotificationsDocumentation = `
 
 As the main agent, you get a notification each time a worker you started goes from working to idle, including after follow-up input. Stopping a worker yourself does not notify you, and workers started by your workers never notify you.
 
-Wait with \`wait_for_agents\` when your next step needs a worker's result and it should arrive soon. When workers will run for a while and you have nothing else to do, tell the user what is running and end your turn instead. If you are idle when a notification arrives, Tau starts a turn for you, so you continue when the workers finish, and the user can talk to you in the meantime. If the user asks you to wait, wait. After the user interrupts you, or after a turn fails, Tau does not start turns for notifications until the user's next message.
+While workers run and you have nothing else to do, tell the user in a sentence what is running and end your turn. Needing a worker's result is not a reason to wait for it: if you are idle when a notification arrives, Tau starts a turn for you, so you continue with the result, and the user can talk to you in the meantime. Wait with \`wait_for_agents\` only when the user asks you to, or when a worker's task is short and you need its result to finish what you are doing in this turn.
 
 A notification names the worker and its status, not what it found. Read the notification as usual, then get the worker's answer with \`wait_for_agents\`, which returns at once for an idle worker, or with \`trace\` and \`readText\`.
 

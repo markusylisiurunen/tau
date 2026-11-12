@@ -1,3 +1,4 @@
+import { NotificationInbox } from "../agent/notification_inbox.js";
 import type { AgentsCapabilityOptions } from "../code_mode/agents.js";
 import type { SessionConfig, SessionRuntimeSettings } from "../config/index.js";
 import type { HistoryQuery } from "../history/types.js";
@@ -14,6 +15,7 @@ import { createCodeToolDefinition } from "./code.js";
 import type { CodeJobRegistry } from "./code_jobs.js";
 import { createEditToolDefinition } from "./edit.js";
 import { scopeToolExecutionBackend, type ToolExecutionBackend } from "./execution_backend.js";
+import { createNotificationTools } from "./notifications.js";
 import { type AgentTool, ToolRegistry } from "./registry.js";
 import { createTauDocsToolDefinition } from "./tau_docs.js";
 import { TOOL_NAME_BASH } from "./tool_names.js";
@@ -66,7 +68,12 @@ export const ToolCatalog = {
       mcp: new McpManager(options.config.mcpServers),
       subagentSystemPrompt: undefined,
       autoCompactThresholdTokens: options.persona.autoCompactThresholdTokens ?? null,
-      supervisor: new AgentSupervisor({ mainAgentId: "main", onEvent: () => {} }),
+      supervisor: new AgentSupervisor({
+        mainAgentId: "main",
+        onEvent: () => {},
+        onCompletion: () => {},
+      }),
+      notifications: new NotificationInbox(),
     });
   },
 
@@ -79,6 +86,8 @@ export const ToolCatalog = {
     autoCompactThresholdTokens: number | null;
     modelResolver: ModelResolver;
     supervisor: AgentSupervisor;
+    /** Absent when the session has notifications turned off. */
+    notifications?: NotificationInbox;
     jobs: AgentJobRegistry;
     bashJobs: BashJobRegistry;
     codeJobs: CodeJobRegistry;
@@ -100,6 +109,7 @@ export const ToolCatalog = {
           : {}),
       }),
       ...(enabledToolNames.has("agents") ? tools : []),
+      ...(options.notifications ? createNotificationTools(options.notifications) : []),
       ...(options.clientTools?.() ?? []),
     ]);
   },

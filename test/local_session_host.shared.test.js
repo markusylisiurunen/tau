@@ -36,6 +36,7 @@ import {
   SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_SUBJECT_BYTES,
   SESSION_PROTOCOL_VERSION,
 } from "../dist/protocol/session_protocol.js";
+import { createTauSdkClientFromTransport } from "../dist/sdk/session.js";
 import { FileSessionStore } from "../dist/store/file_session_store.js";
 import { MemorySessionStore } from "../dist/store/memory_session_store.js";
 import {
@@ -43,6 +44,7 @@ import {
   STORED_SESSION_DOCUMENT_FORMAT,
   STORED_SESSION_DOCUMENT_VERSION,
 } from "../dist/store/session_snapshot_migrations.js";
+import { InProcessSessionProtocolTransport } from "../dist/transport/in_process_session_transport.js";
 import {
   createProtocolImage,
   createProtocolSnapshot,
@@ -280,6 +282,7 @@ function expectedSettings(persona = personas[0]) {
     autoCompactThresholdTokens: null,
     effectiveAutoCompactThresholdTokens: persona.model.contextWindow - 16384,
     personaId: persona.id,
+    notifications: true,
     ...(persona.settings.reasoning !== undefined ? { reasoning: persona.settings.reasoning } : {}),
     ...(persona.settings.serviceTier !== undefined
       ? { serviceTier: persona.settings.serviceTier }
@@ -458,6 +461,367 @@ describe("HostedEphemeralAgentSession", () => {
 });
 
 describe("LocalSessionHost", () => {
+  it("records text during a running turn without interrupting it", async () => {
+    const host = createHost(new MemorySessionStore());
+    const session = await host.createSession(localCreateInput);
+    const client = await createTauSdkClientFromTransport(
+      new InProcessSessionProtocolTransport({ host }),
+    );
+    const observed = await client.sessions.observe(session.sessionId);
+    const started = deferred();
+    const gate = deferred();
+    let calls = 0;
+    session.runtime.agent.spec.model.stream = () => {
+      const first = ++calls === 1;
+      return {
+        async *[Symbol.asyncIterator]() {
+          if (first) {
+            started.resolve();
+            await gate.promise;
+          }
+          yield* [];
+        },
+        async result() {
+          return fauxAssistantMessage(first ? "working" : "done");
+        },
+      };
+    };
+    try {
+      const turn = observed.submit("task");
+      await started.promise;
+      const recorded = observed.record("command output", { historyEntryId: "command-output" });
+      gate.resolve();
+      expect((await turn).turn.status).toBe("completed");
+      expect((await recorded).userHistoryEntryId).toBe("command-output");
+      expect(calls).toBe(2);
+    } finally {
+      gate.resolve();
+      await client.close();
+      await host.shutdown();
+    }
+  });
+
+  it("owns automatic notification turns without clients, also after a stop while idle", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const session = await host.createSession(localCreateInput);
+    let projected = await session.snapshot();
+    session.onDelta((delta) => {
+      projected = applySessionProtocolDelta(projected, delta);
+    });
+    const stream = vi.fn(() => ({
+      async *[Symbol.asyncIterator]() {},
+      async result() {
+        return fauxAssistantMessage("notification handled");
+      },
+    }));
+    session.runtime.agent.spec.model.stream = stream;
+    try {
+      session.runtime.notifications.add("first", "body");
+      session.runtime.notifications.add("second");
+      expect(projected.timeline.items.filter((item) => item.type === "notice")).toHaveLength(0);
+      await vi.waitFor(() =>
+        expect(
+          Object.values(projected.turns).filter((turn) => turn.state === "settled"),
+        ).toHaveLength(1),
+      );
+      await session.waitForActiveWork();
+      expect(stream).toHaveBeenCalledTimes(1);
+      expect(session.runtime.notifications.list().every((entry) => !entry.read)).toBe(true);
+      const notices = projected.timeline.items.filter(
+        (item) => item.type === "notice" && item.notice.kind === "tau.notifications",
+      );
+      expect(notices).toHaveLength(1);
+      expect(JSON.stringify(notices)).not.toContain("<system>");
+      expect(
+        projected.messages
+          .filter((entry) => entry.message.role === "user")
+          .every((entry) => isTauUserMessageHidden(entry.message)),
+      ).toBe(true);
+      expect(projected).toEqual(await session.snapshot());
+      expect(session.interruptTurn()).toBe(false);
+      session.runtime.notifications.add("after an idle stop");
+      await vi.waitFor(() => expect(stream).toHaveBeenCalledTimes(2));
+      await session.waitForActiveWork();
+      expect(session.runtime.notifications.signal()).toBeUndefined();
+      expect(
+        projected.timeline.items.filter(
+          (item) => item.type === "notice" && item.notice.kind === "tau.notifications",
+        ),
+      ).toHaveLength(2);
+    } finally {
+      await host.shutdown();
+    }
+  });
+
+  it("keeps the notification message as the root of an automatic turn joined by a record", async () => {
+    const host = createHost(new MemorySessionStore());
+    const session = await host.createSession(localCreateInput);
+    session.runtime.agent.spec.model.stream = () => ({
+      async *[Symbol.asyncIterator]() {},
+      async result() {
+        return fauxAssistantMessage("handled");
+      },
+    });
+    const agent = session.runtime.agent;
+    const commit = agent.commitNotifications.bind(agent);
+    let recorded;
+    vi.spyOn(agent, "commitNotifications").mockImplementation((id) => {
+      recorded ??= session.record({ text: "command output" });
+      return commit(id);
+    });
+    try {
+      session.runtime.notifications.add("child finished");
+      await vi.waitFor(() => expect(recorded).toBeDefined());
+      await expect(recorded).resolves.toBeTruthy();
+      await session.waitForActiveWork();
+      const turns = Object.values((await session.snapshot()).turns);
+      expect(turns).toEqual([
+        expect.objectContaining({
+          state: "settled",
+          outcome: expect.objectContaining({ status: "completed" }),
+        }),
+      ]);
+      const users = session.runtime.agent.rawHistoryEntriesSnapshot.filter(
+        (entry) => entry.message.role === "user",
+      );
+      expect(users.map((entry) => entry.id)[0]).toBe(turns[0].userHistoryEntryId);
+    } finally {
+      await host.shutdown();
+    }
+  });
+
+  it("settles a receipt failed by its notification continuation and pauses automatic turns", async () => {
+    const host = createHost(new MemorySessionStore());
+    const session = await host.createSession(localCreateInput);
+    let calls = 0;
+    session.runtime.agent.spec.retryPolicy.maxRetries = 0;
+    session.runtime.agent.spec.model.stream = () => {
+      const first = ++calls === 1;
+      return {
+        async *[Symbol.asyncIterator]() {},
+        async result() {
+          if (first) session.runtime.notifications.add("child finished");
+          return fauxAssistantMessage(first ? "initial" : "continued", {
+            stopReason: first ? "stop" : "error",
+          });
+        },
+      };
+    };
+    try {
+      const accepted = await session.acceptTurn({ text: "task" });
+      const result = await session.runAcceptedTurn(accepted.userHistoryEntryId);
+      expect(calls).toBe(2);
+      expect(result.turn).toMatchObject({ status: "failed", stopReason: "error" });
+      expect((await session.snapshot()).turns[accepted.userHistoryEntryId]).toMatchObject({
+        state: "settled",
+        outcome: result.turn,
+      });
+      session.runtime.notifications.add("after the failure");
+      await new Promise((resolve) => setImmediate(resolve));
+      await session.waitForActiveWork();
+      expect(calls).toBe(2);
+    } finally {
+      await host.shutdown();
+    }
+  });
+
+  it("wakes again for a notification arriving on the last automatic subturn", async () => {
+    const host = createHost(new MemorySessionStore());
+    const session = await host.createSession(localCreateInput);
+    const updateSpec = session.runtime.agent.updateSpec.bind(session.runtime.agent);
+    vi.spyOn(session.runtime.agent, "updateSpec").mockImplementation((spec) =>
+      updateSpec({ ...spec, maxModelSubturns: 1 }),
+    );
+    let calls = 0;
+    session.runtime.agent.spec.model.stream = () => ({
+      async *[Symbol.asyncIterator]() {},
+      async result() {
+        if (++calls === 1) session.runtime.notifications.add("another child finished");
+        return fauxAssistantMessage("done");
+      },
+    });
+    try {
+      session.runtime.notifications.add("child finished");
+      await vi.waitFor(() => expect(calls).toBe(2));
+      await session.waitForActiveWork();
+      const turns = Object.values((await session.snapshot()).turns);
+      expect(turns).toHaveLength(2);
+      expect(
+        turns.every((turn) => turn.state === "settled" && turn.outcome.status === "completed"),
+      ).toBe(true);
+      expect(session.runtime.notifications.hasUndelivered()).toBe(false);
+    } finally {
+      await host.shutdown();
+    }
+  });
+
+  it("waits for automatic turn interruption and receipt settlement", async () => {
+    const host = createHost(new MemorySessionStore());
+    const session = await host.createSession(localCreateInput);
+    const started = deferred();
+    const gate = deferred();
+    session.runtime.agent.spec.model.stream = () => ({
+      async *[Symbol.asyncIterator]() {
+        started.resolve();
+        await gate.promise;
+        yield* [];
+      },
+      async result() {
+        return fauxAssistantMessage("done");
+      },
+    });
+    try {
+      session.runtime.notifications.add("child finished");
+      await started.promise;
+      session.interruptTurn();
+      let stopped = false;
+      const waiting = session.waitForActiveTurn().then(() => {
+        stopped = true;
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(stopped).toBe(false);
+      gate.resolve();
+      await waiting;
+      expect(session.isTurnRunning).toBe(false);
+      expect(Object.values((await session.snapshot()).turns)).toEqual([
+        expect.objectContaining({
+          state: "settled",
+          outcome: expect.objectContaining({ status: "aborted" }),
+        }),
+      ]);
+      session.runtime.notifications.add("after the interruption");
+      await new Promise((resolve) => setImmediate(resolve));
+      await session.waitForActiveWork();
+      expect(Object.values((await session.snapshot()).turns)).toHaveLength(1);
+    } finally {
+      gate.resolve();
+      await host.shutdown();
+    }
+  });
+
+  it("settles an automatic receipt as failed after a settlement write fails", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const session = await host.createSession(localCreateInput);
+    session.runtime.agent.spec.model.stream = () => ({
+      async *[Symbol.asyncIterator]() {},
+      async result() {
+        return fauxAssistantMessage("done");
+      },
+    });
+    const commit = store.commitSessionSnapshot.bind(store);
+    let failures = 0;
+    vi.spyOn(store, "commitSessionSnapshot").mockImplementation(async (snapshot, options) => {
+      if (
+        Object.values(snapshot.turns).some((turn) => turn.state === "settled") &&
+        failures === 0
+      ) {
+        failures += 1;
+        throw new Error("settlement write failed");
+      }
+      return await commit(snapshot, options);
+    });
+    try {
+      session.runtime.notifications.add("child finished");
+      await vi.waitFor(() => expect(failures).toBeGreaterThan(0));
+      await session.waitForActiveWork();
+      const snapshot = await session.snapshot();
+      expect(Object.values(snapshot.turns)).toEqual([
+        expect.objectContaining({
+          state: "settled",
+          outcome: expect.objectContaining({ status: "failed" }),
+        }),
+      ]);
+      expect(await store.loadSession(session.sessionId)).toEqual(snapshot);
+      const accepted = await session.acceptTurn({ text: "continue" });
+      await session.runAcceptedTurn(accepted.userHistoryEntryId);
+      session.runtime.notifications.add("another child finished");
+      await vi.waitFor(async () =>
+        expect(Object.values((await session.snapshot()).turns)).toHaveLength(3),
+      );
+      await session.waitForActiveWork();
+      expect(
+        Object.values((await session.snapshot()).turns).every((turn) => turn.state === "settled"),
+      ).toBe(true);
+    } finally {
+      await host.shutdown();
+    }
+  });
+
+  it("surfaces automatic admission failures and leaves the notification undelivered", async () => {
+    const host = createHost(new MemorySessionStore());
+    const session = await host.createSession(localCreateInput);
+    const commit = vi
+      .spyOn(session.runtime.agent, "commitNotifications")
+      .mockRejectedValueOnce(new Error("write failed"));
+    try {
+      session.runtime.notifications.add("child finished");
+      await vi.waitFor(() => expect(commit).toHaveBeenCalledTimes(1));
+      await session.waitForActiveWork();
+      expect(session.runtime.notifications.hasUndelivered()).toBe(true);
+      expect((await session.snapshot()).timeline.items).toContainEqual(
+        expect.objectContaining({
+          type: "notice",
+          notice: expect.objectContaining({ kind: "tau.turn.failed", severity: "error" }),
+        }),
+      );
+      session.runtime.notifications.add("another child finished");
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(commit).toHaveBeenCalledTimes(1);
+    } finally {
+      await host.shutdown();
+    }
+  });
+
+  it("keeps notifications off for a session created without them, also after recovery", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const created = await host.createSession({ ...localCreateInput, notifications: false });
+    await host.shutdown();
+    const recoveredHost = createHost(store);
+    const session = await recoveredHost.observeSession(created.sessionId);
+    try {
+      expect((await session.snapshot()).settings.notifications).toBe(false);
+      expect(session.runtime.notifications).toBeUndefined();
+      expect(session.runtime.agent.spec.tools.get("list_notifications")).toBeUndefined();
+    } finally {
+      await recoveredHost.shutdown();
+    }
+  });
+
+  it("keeps an automatic wake alive across release and gives pending user input priority", async () => {
+    const host = createHost(new MemorySessionStore());
+    const session = await host.createSession(localCreateInput);
+    const gate = deferred();
+    const started = deferred();
+    session.runtime.agent.spec.model.stream = () => ({
+      async *[Symbol.asyncIterator]() {
+        started.resolve();
+        await gate.promise;
+        yield* [];
+      },
+      async result() {
+        return fauxAssistantMessage("done");
+      },
+    });
+    try {
+      const release = session.holdTurnAdmission();
+      session.runtime.notifications.add("pending");
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(Object.keys((await session.snapshot()).turns)).toHaveLength(0);
+      release();
+      host.releaseSession(session);
+      await started.promise;
+      expect(session.isDisposed).toBe(false);
+      gate.resolve();
+      await vi.waitFor(() => expect(session.isDisposed).toBe(true));
+    } finally {
+      gate.resolve();
+      await host.shutdown();
+    }
+  });
+
   it("records execution attributes in snapshots and history without changing them on recovery", async () => {
     const store = new MemorySessionStore();
     const historyStore = new LocalHistoryStore(":memory:");
@@ -1612,7 +1976,7 @@ describe("LocalSessionHost", () => {
     },
   );
 
-  it("rejects an exec when the backend resolves after interruption", async () => {
+  it("rejects an exec when the backend resolves after interruption, without pausing automatic turns", async () => {
     const store = new MemorySessionStore();
     const toolBackend = createLocalToolExecutionBackend();
     const execStarted = deferred();
@@ -1650,6 +2014,17 @@ describe("LocalSessionHost", () => {
 
       expect(hostedSession.interruptActiveWork()).toBe(true);
       await expect(exec).rejects.toMatchObject({ name: "AbortError" });
+
+      const stream = vi.fn(() => ({
+        async *[Symbol.asyncIterator]() {},
+        async result() {
+          return fauxAssistantMessage("handled");
+        },
+      }));
+      hostedSession.runtime.agent.spec.model.stream = stream;
+      hostedSession.runtime.notifications.add("child finished");
+      await vi.waitFor(() => expect(stream).toHaveBeenCalledTimes(1));
+      await hostedSession.waitForActiveWork();
     } finally {
       await host.shutdown();
     }
@@ -4169,6 +4544,7 @@ describe("LocalSessionHost", () => {
       const supervisor = session.runtime.supervisor;
       const child = supervisor.spawn({
         parentId: supervisor.mainAgentId,
+        notifyOnCompletion: false,
         launchEpoch: supervisor.prepareSpawn(supervisor.mainAgentId),
         runtimeConfig: {
           kind: "native",

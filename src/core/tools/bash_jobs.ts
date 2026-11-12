@@ -154,7 +154,12 @@ export class BashJobRegistry {
           if (includeOutput) {
             const output = job.log.format(Math.floor(maxOutputTokens / Math.max(1, ids.length)));
             truncated ||= output.truncated;
-            lines.push(...output.metadata, "", "--- output ---", output.projection.content);
+            lines.push(
+              ...output.metadata,
+              "",
+              "--- output ---",
+              output.projection.content || "(none)",
+            );
           }
           return lines.join("\n");
         })

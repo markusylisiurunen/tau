@@ -59,6 +59,7 @@ export type TauHostedSession = {
   readonly isDisposed?: boolean;
   readonly isTurnRunning: boolean;
   readonly canAcceptSteering: boolean;
+  onTurnIdle(handler: () => void): () => void;
   onDelta(handler: (delta: SessionProtocolDeltaMessage) => void): () => void;
   onEphemeral(handler: (message: SessionProtocolEphemeralMessage) => void): () => void;
   subagentActivities(): SessionProtocolSubagentActivitiesState;
@@ -74,6 +75,8 @@ export type TauHostedSession = {
   runAcceptedTurn(userHistoryEntryId: string): Promise<SessionProtocolUserMessageTurnResult>;
   runTurn(): Promise<SessionProtocolTurnOutcome>;
   retryTurn(): Promise<SessionProtocolTurnOutcome>;
+  holdTurnAdmission(): () => void;
+  waitForActiveTurn(): Promise<void>;
   interruptTurn(): boolean;
   interruptActiveWork(): boolean;
   waitForActiveWork(): Promise<void>;

@@ -43,9 +43,12 @@ params: {
   personaId?: string;
   reasoning?: Reasoning;
   autoCompactThresholdTokens?: number | null;
+  notifications?: boolean; // default true
 }
 result: { sessionId: string }
 ```
+
+With `notifications`, the main agent is told when a subagent it started finishes, and starts a turn on its own for that. Set it to `false` when the end of a turn means the work is done, as in automations. The agent then gets no notifications and waits for its subagents within the turn.
 
 `session.create` does not observe a session. `session.observe` starts updates on this connection and returns three starting states: `snapshot`, `pendingUserMessages`, and `subagentActivities`. Install all three before processing later messages. Several connections can observe one session, and each can change it.
 
@@ -95,7 +98,9 @@ Three other channels are separate from the snapshot, are not saved, and are empt
 
 ## Concurrency
 
-One main-session turn runs at a time, and `session.submit` and `session.retry` return `busy` on conflict. `session.queue` waits for idle, and `session.steer` joins the running turn. Session changes run one at a time across all clients. `session.exec`, `session.sample`, and ephemeral threads run alongside everything else.
+One main-session turn runs at a time. `session.submit` returns `busy` while a client's turn runs, but waits for a turn the agent started on its own, as `session.queue` always does. `session.retry` returns `busy` during any turn. `session.steer` joins the running turn. Session changes run one at a time across all clients, and waiting client input runs before the agent starts another turn on its own. Waiting input is cancelled when the client that sent it stops observing the session or disconnects.
+
+`session.record` adds user text without starting a turn and never interrupts one. During a turn, the text joins it at its next step, or is added when the turn ends, and the request returns once the text is in the history. `session.exec`, `session.sample`, and ephemeral threads run alongside everything else.
 
 ## Client tools
 

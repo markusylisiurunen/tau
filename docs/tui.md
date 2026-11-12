@@ -21,7 +21,7 @@ Escape interrupts the session, and Ctrl+C does not. Pressing Enter twice on an e
 !!git diff --stat
 ```
 
-`!` runs a command in the execution environment and adds the output to the model's context. `!!` does the same without adding anything to the context. Both need an idle session.
+`!` runs a command in the execution environment and adds the output to the model's context without starting a turn. During a turn, the output joins it at the agent's next step. `!!` runs a command without adding anything to the context.
 
 ## Commands
 

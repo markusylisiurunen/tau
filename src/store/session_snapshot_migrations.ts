@@ -11,7 +11,7 @@ import {
 } from "../protocol/session_protocol.js";
 
 export const STORED_SESSION_DOCUMENT_FORMAT = "tau-session" as const;
-export const STORED_SESSION_DOCUMENT_VERSION = 16 as const;
+export const STORED_SESSION_DOCUMENT_VERSION = 17 as const;
 export const LEGACY_SESSION_MODEL_CONTEXT_KEY = "legacy-v3";
 
 export type StoredSessionDocument = {
@@ -39,6 +39,7 @@ const storedSessionMigrations = new Map<number, StoredSessionMigration>([
   [13, migrateStoredSessionV13ToV14],
   [14, migrateStoredSessionV14ToV15],
   [15, migrateStoredSessionV15ToV16],
+  [16, migrateStoredSessionV16ToV17],
 ]);
 
 export class UnsupportedStoredSessionVersionError extends Error {
@@ -105,6 +106,13 @@ function decodeStoredSessionDocument(value: unknown): {
     version: value.version as number,
     snapshot: value.snapshot,
   };
+}
+
+function migrateStoredSessionV16ToV17(value: unknown): unknown {
+  if (!isRecord(value) || !isRecord(value.settings)) {
+    throw new Error("invalid stored session settings");
+  }
+  return { ...value, settings: { ...value.settings, notifications: true } };
 }
 
 function migrateStoredSessionV15ToV16(value: unknown): unknown {

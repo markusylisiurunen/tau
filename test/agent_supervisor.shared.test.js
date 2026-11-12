@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { AgentRuntime } from "../dist/core/agent/agent_runtime.js";
+import { NotificationInbox } from "../dist/core/agent/notification_inbox.js";
 import { personas } from "../dist/core/personas.js";
 import { renderSubagentPrefixPrompt } from "../dist/core/static/index.js";
 import { AgentSupervisor } from "../dist/core/subagents/agent_supervisor.js";
@@ -47,6 +48,7 @@ function createStream(message, gate) {
 function createSpawnOptions(overrides = {}) {
   return {
     parentId: "main",
+    notifyOnCompletion: false,
     launchEpoch: 0,
     runtimeConfig: {
       kind: "native",
@@ -76,9 +78,63 @@ function getRecord(supervisor, id) {
 }
 
 describe("AgentSupervisor", () => {
+  it("notifies every subscribed direct-child idle transition independently of waits", async () => {
+    const completions = [];
+    const supervisor = new AgentSupervisor({
+      mainAgentId: "main",
+      onEvent: () => {},
+      onCompletion: (state) => completions.push(state),
+    });
+    const child = supervisor.spawn(createSpawnOptions({ notifyOnCompletion: true }));
+    const record = getRecord(supervisor, child.id);
+    record.runtime.agent.spec.model.stream = () => createStream(createAssistant("done"));
+    await supervisor.waitForAgents([child.id]);
+    expect(completions.map((state) => state.run.revision)).toEqual([1]);
+    supervisor.setCompletionNotification("main", child.id, false);
+    supervisor.sendInput({ id: child.id, prompt: "again", mode: "queue" });
+    await supervisor.waitForAgents([child.id]);
+    expect(completions).toHaveLength(1);
+    supervisor.setCompletionNotification("main", child.id, true);
+    supervisor.sendInput({ id: child.id, prompt: "again", mode: "queue" });
+    await supervisor.waitForAgents([child.id]);
+    expect(completions.map((state) => state.run.revision)).toEqual([1, 3]);
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    record.runtime.agent.spec.model.stream = () => createStream(createAssistant("slow"), gate);
+    supervisor.sendInput({ id: child.id, prompt: "slow", mode: "queue" });
+    await vi.waitFor(() => expect(supervisor.getSnapshot(child.id).availability).toBe("running"));
+    const interrupted = supervisor.scope("main").interrupt(child.id);
+    release();
+    await interrupted;
+    expect(completions).toHaveLength(2);
+    record.runtime.agent.spec.model.stream = () => createStream(createAssistant("done"));
+    supervisor.sendInput({ id: child.id, prompt: "again", mode: "queue" });
+    await supervisor.waitForAgents([child.id]);
+    expect(completions).toHaveLength(3);
+    record.canDelegate = true;
+    const nested = supervisor.spawn(
+      createSpawnOptions({ parentId: child.id, launchEpoch: supervisor.prepareSpawn(child.id) }),
+    );
+    getRecord(supervisor, nested.id).runtime.agent.spec.model.stream = () =>
+      createStream(createAssistant("nested"));
+    await supervisor.waitForAgents([nested.id]);
+    expect(completions).toHaveLength(3);
+    expect(() => supervisor.setCompletionNotification("main", nested.id, true)).toThrow();
+    expect(() =>
+      supervisor.spawn(createSpawnOptions({ parentId: child.id, notifyOnCompletion: true })),
+    ).toThrow();
+    supervisor.dispose();
+  });
+
   it("opens native history only after runtime construction succeeds", () => {
     const openHistory = vi.fn();
-    const supervisor = new AgentSupervisor({ mainAgentId: "main", onEvent: () => {}, openHistory });
+    const supervisor = new AgentSupervisor({
+      mainAgentId: "main",
+      onEvent: () => {},
+      openHistory,
+    });
     const registry = vi.spyOn(ToolCatalog, "createSubagentRegistry").mockImplementationOnce(() => {
       throw new Error("registry unavailable");
     });
@@ -93,7 +149,10 @@ describe("AgentSupervisor", () => {
   });
 
   it("rejects delegation tools without their management dependencies before creating jobs", () => {
-    const supervisor = new AgentSupervisor({ mainAgentId: "main", onEvent: vi.fn() });
+    const supervisor = new AgentSupervisor({
+      mainAgentId: "main",
+      onEvent: vi.fn(),
+    });
     const options = createSpawnOptions();
     options.runtimeConfig.tools = ["agents"];
     const createJobs = vi.spyOn(options.jobs, "create");
@@ -104,7 +163,10 @@ describe("AgentSupervisor", () => {
   });
 
   it("binds the parent's MCP manager without resolving servers from the child workspace", async () => {
-    const supervisor = new AgentSupervisor({ mainAgentId: "main", onEvent: () => {} });
+    const supervisor = new AgentSupervisor({
+      mainAgentId: "main",
+      onEvent: () => {},
+    });
     const mcp = { available: true, listServers: vi.fn(() => [{ name: "host" }]) };
     try {
       const spawned = supervisor.spawn(
@@ -166,6 +228,7 @@ describe("AgentSupervisor", () => {
     });
     registration.attachSession("parent-session");
     const supervisor = new AgentSupervisor({
+      onCompletion: () => {},
       mainAgentId: "main",
       onEvent: () => {},
       recordUsage: () => {},
@@ -181,6 +244,7 @@ describe("AgentSupervisor", () => {
     });
     try {
       const main = ToolCatalog.createSessionRegistry({
+        notifications: new NotificationInbox(),
         backend: createLocalToolExecutionBackend(),
         jobs: new AgentJobRegistry(),
         cwd: "/repo",
@@ -397,7 +461,10 @@ describe("AgentSupervisor", () => {
 
 it("isolates main and sibling jobs while retaining child jobs across follow-ups", async () => {
   const jobs = new AgentJobRegistry();
-  const supervisor = new AgentSupervisor({ mainAgentId: "main", onEvent: () => {} });
+  const supervisor = new AgentSupervisor({
+    mainAgentId: "main",
+    onEvent: () => {},
+  });
   const submit = vi.spyOn(AgentRuntime.prototype, "submit").mockResolvedValue({
     finalMessage: createAssistant("done"),
     aborted: false,
@@ -640,6 +707,7 @@ it("keeps background orchestration attribution and cancels only its wait", async
     release = resolve;
   });
   const supervisor = new AgentSupervisor({
+    onCompletion: () => {},
     mainAgentId: "main",
     onEvent: () => {},
     recordUsage: () => {},
@@ -652,6 +720,7 @@ it("keeps background orchestration attribution and cancels only its wait", async
   });
   try {
     const registry = ToolCatalog.createSessionRegistry({
+      notifications: new NotificationInbox(),
       backend: createLocalToolExecutionBackend(),
       jobs,
       codeJobs,
@@ -725,6 +794,7 @@ describe("nested supervision", () => {
       const state = supervisor.spawn({
         ...options,
         parentId,
+        notifyOnCompletion: false,
         launchEpoch: supervisor.prepareSpawn(parentId),
       });
       getRecord(supervisor, state.id).runtime.agent.spec.model.stream = () =>

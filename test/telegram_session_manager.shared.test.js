@@ -1457,6 +1457,81 @@ describe("telegram session manager", () => {
     }
   });
 
+  it("delivers replies from host-owned notification turns without a Telegram submission", async () => {
+    const harness = createClientHarness();
+    const manager = createDemoSessionManager(harness);
+    const events = [];
+    manager.onEvent((event) => events.push(event));
+    const created = await manager.createSession({ projectId: "demo" });
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+    try {
+      harness.emitDelta(
+        createPatchDelta(
+          [{ type: "turn.set", turn: { userHistoryEntryId: "automatic", state: "running" } }],
+          1,
+          "user-message",
+        ),
+      );
+      expect(manager.getSession(created.id).state).toBe("running");
+      expect((await manager.interruptSession(created.id)).interrupted).toBe(true);
+      expect(harness.session.interrupt).toHaveBeenCalledTimes(1);
+      await manager.sendMessage(created.id, "correction", { mode: "auto" });
+      await waitFor(() => harness.session.steer.mock.calls.length === 1);
+      harness.emitDelta(
+        createPatchDelta(
+          [
+            {
+              type: "message.append",
+              message: createAssistantProtocolMessage("automatic-answer", [
+                { type: "text", text: "worker result" },
+              ]),
+            },
+          ],
+          2,
+          "assistant-message",
+        ),
+      );
+      expect(assistantProgressTexts(events)).toEqual(["worker result"]);
+      expect(events.filter((event) => event.type === "session-response-completed")).toHaveLength(0);
+      harness.emitDelta(
+        createPatchDelta(
+          [
+            {
+              type: "turn.set",
+              turn: {
+                userHistoryEntryId: "automatic",
+                state: "settled",
+                outcome: { status: "completed", stopReason: "stop" },
+              },
+            },
+          ],
+          3,
+          "assistant-message",
+        ),
+      );
+      harness.submitDeferred.resolve({
+        userHistoryEntryId: "steering",
+        turn: { status: "completed", stopReason: "stop" },
+      });
+      await waitFor(() => manager.getSession(created.id).state === "waiting-input");
+      await waitFor(() => events.some((event) => event.type === "session-response-completed"));
+      expect(events.filter((event) => event.type === "session-response-completed")).toEqual([
+        expect.objectContaining({
+          sessionId: created.id,
+          messageId: "automatic-answer",
+          text: "worker result",
+        }),
+      ]);
+      expect(harness.session.submit).not.toHaveBeenCalled();
+    } finally {
+      harness.submitDeferred.resolve({
+        userHistoryEntryId: "steering",
+        turn: { status: "completed", stopReason: "stop" },
+      });
+      await manager.close();
+    }
+  });
+
   it("emits committed tool-use assistant preambles without streaming draft text", async () => {
     const clientHarness = createClientHarness();
     const manager = createDemoSessionManager(clientHarness);

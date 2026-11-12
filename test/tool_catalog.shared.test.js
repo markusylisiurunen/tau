@@ -68,6 +68,8 @@ describe("ToolCatalog", () => {
       "wait_for_agents",
       "send_input_to_agent",
       "interrupt_agent",
+      "list_notifications",
+      "read_notification",
     ];
     expect(child.schemas.map((tool) => tool.name)).toEqual(
       main.schemas.filter((tool) => !management.includes(tool.name)).map((tool) => tool.name),
@@ -94,9 +96,12 @@ describe("ToolCatalog", () => {
       new BashJobRegistry(),
       new CodeJobRegistry(),
     );
-    const intrinsicTools = ["tau_docs"];
-    expect(main.schemas.map((tool) => tool.name)).toEqual(intrinsicTools);
-    expect(child.schemas.map((tool) => tool.name)).toEqual(intrinsicTools);
+    expect(main.schemas.map((tool) => tool.name)).toEqual([
+      "tau_docs",
+      "list_notifications",
+      "read_notification",
+    ]);
+    expect(child.schemas.map((tool) => tool.name)).toEqual(["tau_docs"]);
   });
 
   it("isolates Bash jobs across child registries without losing their working directory", async () => {

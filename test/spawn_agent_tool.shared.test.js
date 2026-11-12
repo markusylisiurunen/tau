@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { NotificationInbox } from "../dist/core/agent/notification_inbox.js";
 import { createAgentsCapability } from "../dist/core/code_mode/agents.js";
 import { loadModelResolver } from "../dist/core/models/catalog.js";
 import { personas } from "../dist/core/personas.js";
@@ -9,6 +10,8 @@ import { createWaitForAgentsToolDefinition } from "../dist/core/tools/wait_for_a
 const context = () => ({ signal: new AbortController().signal });
 function fixture(overrides = {}) {
   const supervisor = {
+    mainAgentId: "main",
+    setCompletionNotification: vi.fn(),
     scope() {
       return this;
     },
@@ -22,6 +25,7 @@ function fixture(overrides = {}) {
     ...overrides.supervisor,
   };
   const options = {
+    notifications: new NotificationInbox(),
     callerId: "main",
     backend: {},
     jobs: {},
@@ -39,6 +43,27 @@ function fixture(overrides = {}) {
 }
 
 describe("agents capability", () => {
+  it("exposes subscriptions only to main and rejects worker options before spawning", async () => {
+    const main = fixture();
+    await main.api.spawn(
+      [{ title: "child", prompt: "task", notifyOnCompletion: false }],
+      context(),
+    );
+    expect(main.supervisor.spawn.mock.lastCall[0].notifyOnCompletion).toBe(false);
+    await main.api.setCompletionNotification([{ id: "worker", enabled: true }], context());
+    expect(main.supervisor.setCompletionNotification).toHaveBeenCalledWith("worker", true);
+    const worker = fixture({ callerId: "worker" });
+    expect(worker.api.setCompletionNotification).toBeUndefined();
+    expect(createAgentsCapability(worker.options, "origin").documentation).not.toContain(
+      "notifyOnCompletion",
+    );
+    await expect(
+      worker.api.spawn([{ title: "child", prompt: "task", notifyOnCompletion: true }], context()),
+    ).rejects.toMatchObject({ code: "invalid_arguments" });
+    expect(worker.supervisor.prepareSpawn).not.toHaveBeenCalled();
+    expect(worker.supervisor.spawn).not.toHaveBeenCalled();
+  });
+
   it.each([undefined, "high"])(
     "reports inherited launch settings with reasoning %s and no overrides without spawning",
     async (reasoning) => {

@@ -128,6 +128,7 @@ function createHarness(options = {}) {
 
   const createHostedSession = (recoveredSessionId) => {
     const deltaHandlers = new Set();
+    const turnIdleHandlers = new Set();
     const subagentActivitiesHandlers = new Set();
     const subagentActivitiesByAgent = {};
     let subagentActivitiesRevision = 1;
@@ -184,6 +185,14 @@ function createHarness(options = {}) {
     const hostedSession = {
       get isTurnRunning() {
         return running;
+      },
+      holdTurnAdmission: vi.fn(() => vi.fn()),
+      waitForActiveTurn: async () => {
+        await activeTurnSettlement;
+      },
+      onTurnIdle(handler) {
+        turnIdleHandlers.add(handler);
+        return () => turnIdleHandlers.delete(handler);
       },
       get canAcceptSteering() {
         return running;
@@ -325,6 +334,7 @@ function createHarness(options = {}) {
           pendingTurn = null;
           pendingTurnResult = { status: "completed", stopReason: "stop" };
           settleTurn();
+          for (const handler of turnIdleHandlers) handler();
         }
       },
       async retryTurn() {
@@ -1826,6 +1836,77 @@ describe("SessionProtocolHandler", () => {
     expect(harness.lines.find((line) => line.id === "exec-second")).toEqual(
       expect.objectContaining({ ok: true }),
     );
+  });
+
+  it("queues a submit racing with a host-owned turn and drains it when idle", async () => {
+    const harness = createHarness();
+    const automatic = harness.seededSession.runTurn();
+    await harness.connection.handleRequest(
+      request("user-during-automatic", "session.submit", {
+        sessionId: "session-1",
+        text: "follow my instruction",
+      }),
+    );
+    expect(harness.lines.some((line) => line.id === "user-during-automatic")).toBe(false);
+    expect(harness.seededSession.holdTurnAdmission).toHaveBeenCalled();
+    harness.releaseTurn();
+    await automatic;
+    await waitFor(() => harness.seededSession.isTurnRunning);
+    harness.releaseTurn();
+    await waitFor(() => harness.lines.some((line) => line.id === "user-during-automatic"));
+    expect(harness.lines.find((line) => line.id === "user-during-automatic")).toMatchObject({
+      ok: true,
+      result: { turn: { status: "completed" } },
+    });
+  });
+
+  it("cancels queued input when its client detaches, releasing automatic turns", async () => {
+    const harness = createHarness();
+    const automatic = harness.seededSession.runTurn();
+    await harness.connection.handleRequest(
+      request("queued-then-detached", "session.submit", {
+        sessionId: "session-1",
+        text: "follow my instruction",
+      }),
+    );
+    const [release] = harness.seededSession.holdTurnAdmission.mock.results.map(
+      (result) => result.value,
+    );
+    expect(release).not.toHaveBeenCalled();
+    await harness.connection.close("detach");
+    expect(release).toHaveBeenCalledTimes(1);
+    harness.releaseTurn();
+    await automatic;
+  });
+
+  it("waits for host-owned turns before applying an interrupting mutation", async () => {
+    let release;
+    let unwinding = false;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const harness = createHarness({
+      afterTurnRelease: async () => {
+        unwinding = true;
+        await gate;
+      },
+    });
+    const compact = vi.spyOn(harness.seededSession, "compact");
+    const automatic = harness.seededSession.runTurn();
+    const mutation = harness.connection.handleRequest(
+      request("compact-automatic", "session.compact", {
+        sessionId: "session-1",
+        mode: "summary-only",
+      }),
+    );
+    await waitFor(() => unwinding);
+    expect(compact).not.toHaveBeenCalled();
+    release();
+    await Promise.all([automatic, mutation]);
+    expect(compact).toHaveBeenCalledTimes(1);
+    expect(harness.lines.find((line) => line.id === "compact-automatic")).toMatchObject({
+      ok: true,
+    });
   });
 
   it("interrupts manual compaction while it holds the mutation queue", async () => {

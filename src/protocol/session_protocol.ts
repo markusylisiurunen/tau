@@ -17,7 +17,7 @@ import {
 import { environmentVariablesSchema } from "./environment_variables.js";
 import { type IntermediateSystemMessage, isIntermediateSystemMessage } from "./system_message.js";
 
-export const SESSION_PROTOCOL_VERSION = 19 as const;
+export const SESSION_PROTOCOL_VERSION = 20 as const;
 export const MIN_AUTO_COMPACT_THRESHOLD_TOKENS = 50_000;
 export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_IMAGES = 16;
 export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_CONTENT_BLOCKS = 1024;
@@ -159,6 +159,11 @@ export type SessionProtocolCreateParams = {
   personaId?: string;
   autoCompactThresholdTokens?: number | null;
   reasoning?: SessionProtocolReasoningEffort;
+  /**
+   * Whether the main agent gets notifications, such as finished subagents, and starts a turn on
+   * its own for them. Defaults to true.
+   */
+  notifications?: boolean;
 };
 export type SessionProtocolSetRetentionParams = {
   sessionId: string;
@@ -912,6 +917,7 @@ export type SessionProtocolSettingsSnapshot = {
   personaId: string;
   reasoning?: SessionProtocolReasoningEffort;
   serviceTier?: SessionProtocolServiceTier;
+  notifications: boolean;
 };
 
 export type SessionProtocolLocalExecutionEnvironmentSnapshot = {
@@ -2088,6 +2094,7 @@ const sessionProtocolCreateParamsSchema = z
     personaId: nonEmptyStringSchema.optional(),
     autoCompactThresholdTokens: autoCompactThresholdTokensSchema.optional(),
     reasoning: sessionProtocolReasoningEffortSchema.optional(),
+    notifications: z.boolean().optional(),
   })
   .strip();
 
@@ -2208,6 +2215,7 @@ const sessionProtocolSettingsSnapshotSchema = z
     personaId: nonEmptyStringSchema,
     reasoning: sessionProtocolReasoningEffortSchema.optional(),
     serviceTier: sessionProtocolServiceTierSchema.optional(),
+    notifications: z.boolean(),
   })
   .strip();
 

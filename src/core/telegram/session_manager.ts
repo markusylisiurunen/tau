@@ -1634,6 +1634,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
         return false;
       }
       entry.activeTurnIds.add(historyEntryId);
+      this.setState(entry, "running");
       return true;
     }
 

@@ -750,6 +750,31 @@ function completeToolRun(
   };
 }
 
+/** A tool that reports no activity of its own gets a card previewing the text sent to the model. */
+function createDefaultResultActivity(
+  toolCall: ToolCall,
+  definition: AgentTool,
+  outcome: ToolExecutionOutcome,
+): ToolActivity {
+  const text = outcome.content
+    .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join("\n");
+  const presentation = buildToolRunPresentation({
+    toolName: toolCall.name,
+    subject: definition.describe(toolCall).presentation.subject,
+    details: text ? [{ text }] : [],
+  });
+  const base = { toolCallId: toolCall.id, toolName: toolCall.name, presentation };
+  return outcome.outcome === "blocked"
+    ? { ...base, type: "tool_call_blocked", reason: text }
+    : {
+        ...base,
+        type: "tool_call_finished",
+        status: outcome.outcome === "succeeded" ? "success" : "error",
+      };
+}
+
 async function* runPreparedToolCall(
   prepared: PreparedToolCall,
   signal: AbortSignal,
@@ -782,6 +807,7 @@ async function* runPreparedToolCall(
     let outcome: Awaited<ReturnType<AgentTool["execute"]>> | undefined;
     let executionError: unknown;
     let settled = false;
+    let reportedActivity = false;
     const execution = definition
       .execute(toolCall, {
         ...executionContext,
@@ -809,6 +835,7 @@ async function* runPreparedToolCall(
       while (!settled || activities.length > 0) {
         const next = activities.shift();
         if (next) {
+          reportedActivity = true;
           let acknowledge: (error?: Error) => void = () => {};
           const acknowledged = new Promise<void>((resolve, reject) => {
             acknowledge = (error) => (error ? reject(error) : resolve());
@@ -837,6 +864,18 @@ async function* runPreparedToolCall(
 
     if (executionError) throw executionError;
     if (!outcome) throw new Error(`tool '${toolCall.name}' returned no outcome`);
+    if (!reportedActivity) {
+      let acknowledge: (error?: Error) => void = () => {};
+      const acknowledged = new Promise<void>((resolve, reject) => {
+        acknowledge = (error) => (error ? reject(error) : resolve());
+      });
+      yield {
+        type: "tool_activity",
+        activity: createDefaultResultActivity(toolCall, definition, outcome),
+        acknowledge,
+      };
+      await acknowledged;
+    }
     return completeToolRun(toolCall, outcome, now());
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);

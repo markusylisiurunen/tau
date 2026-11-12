@@ -13,6 +13,7 @@ import {
   type SteeringSubmission,
 } from "../agent/agent_runtime.js";
 import type { AgentEventSink } from "../agent/events.js";
+import { NotificationInbox } from "../agent/notification_inbox.js";
 import type { SessionRuntimeSettings } from "../config/index.js";
 import type { OpenSubagentHistory } from "../history/agent_history_recorder.js";
 import type { HistoryQuery } from "../history/types.js";
@@ -51,6 +52,8 @@ export type CreateChatRuntimeOptions = {
   createdAt: number;
   persona: Persona;
   autoCompactDefaults?: AutoCompactDefaults;
+  /** Whether the main agent gets notifications and starts turns on its own for them. */
+  notifications: boolean;
   backend: ToolExecutionBackend;
   clientTools?: () => ReturnType<ToolRegistry["getEnabledTools"]>;
   modelResolver: ModelResolver;
@@ -72,6 +75,9 @@ export class ChatRuntime {
   readonly jobs = new AgentJobRegistry();
   readonly backgroundJobs = this.jobs.create();
   readonly supervisor: AgentSupervisor;
+  /** Absent when the session has notifications turned off. */
+  readonly notifications: NotificationInbox | undefined;
+  private readonly userInterruptedSubagents = new Set<string>();
   private currentPersona: Persona;
   private readonly autoCompactDefaults: AutoCompactDefaults | undefined;
   private autoCompactOverride: number | null = null;
@@ -109,6 +115,7 @@ export class ChatRuntime {
 
   private constructor(options: CreateChatRuntimeOptions, composition: SessionPromptComposition) {
     this.currentPersona = structuredClone(options.persona);
+    this.notifications = options.notifications ? new NotificationInbox() : undefined;
     this.autoCompactDefaults = structuredClone(options.autoCompactDefaults);
     this.currentConfig = options.config;
     this.hostApiKeys = structuredClone(options.config.apiKeys);
@@ -130,6 +137,14 @@ export class ChatRuntime {
     this.supervisor = new AgentSupervisor({
       mainAgentId: options.sessionId,
       onEvent: options.subagentEventSink,
+      onCompletion: (state) => {
+        const byUser = this.userInterruptedSubagents.delete(state.id);
+        const status =
+          byUser && state.run.status === "interrupted"
+            ? "interrupted by the user"
+            : state.run.status;
+        this.notifications?.add(`subagent ${state.id} is idle (${status})`);
+      },
       openHistory: options.openSubagentHistory,
       ...(options.recordUsage ? { recordUsage: options.recordUsage } : {}),
       deps: this.deps,
@@ -137,6 +152,7 @@ export class ChatRuntime {
     const tools = this.buildToolRegistry(composition);
     this.agent = this.supervisor.createMainRuntime({
       agentId: options.sessionId,
+      notifications: this.notifications,
       spec: createAgentSpec({
         ...this.resolvedModel,
         autoCompactThresholdTokens: this.resolvedAutoCompactThresholdTokens,
@@ -200,6 +216,10 @@ export class ChatRuntime {
     return await this.agent.commitSystemMessage(content, metadata);
   }
 
+  record(text: string, options?: { historyEntryId?: string }): Promise<string> {
+    return this.agent.record(text, options);
+  }
+
   async commitUserText(text: string, options?: { historyEntryId?: string }): Promise<string> {
     return await this.agent.commitUserText(text, options);
   }
@@ -211,9 +231,9 @@ export class ChatRuntime {
     await this.agent.commitInterruptedAssistant(message, historyEntryId);
   }
 
-  runTurn(): Promise<AgentTurnResult> {
+  runTurn(options: { notificationHistoryEntryId?: string } = {}): Promise<AgentTurnResult> {
     this.refreshSpec();
-    return this.agent.runTurn();
+    return this.agent.runTurn(options);
   }
 
   steer(text: string): SteeringSubmission {
@@ -248,8 +268,11 @@ export class ChatRuntime {
     return this.supervisor.getSnapshot(id) !== undefined;
   }
 
+  /** Interrupts a subagent for the user, so its completion notification can say so. */
   async interruptSubagent(id: string): Promise<boolean> {
-    if (!this.hasSubagent(id)) return false;
+    const state = this.supervisor.getSnapshot(id);
+    if (!state) return false;
+    if (state.availability === "running") this.userInterruptedSubagents.add(id);
     await this.supervisor.interrupt(id);
     return true;
   }
@@ -366,6 +389,7 @@ export class ChatRuntime {
       subagentSystemPrompt: composition.subagentSystemPrompt,
       modelResolver: this.currentModelResolver,
       supervisor: this.supervisor,
+      ...(this.notifications ? { notifications: this.notifications } : {}),
       jobs: this.jobs,
       ...this.backgroundJobs,
       history: this.historyQuery,

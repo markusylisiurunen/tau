@@ -162,7 +162,7 @@ export function createWaitForAgentsToolDefinition(supervisor: ScopedAgentSupervi
                     `response_partial: ${agent.reason !== "completed"}`,
                     "",
                     "--- response ---",
-                    output.content,
+                    output.content || "(none)",
                   );
                 }
                 return lines.join("\n");

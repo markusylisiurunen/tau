@@ -48,7 +48,7 @@ type SessionProtocolPendingIdleSubmission = {
   id: string;
   delivery: "when-idle";
   handler: SessionProtocolHandler;
-  request: Extract<SessionProtocolRequestMessage, { method: "session.queue" | "session.steer" }>;
+  request: SessionProtocolUserSubmissionRequest;
 };
 
 type SessionProtocolPendingBoundarySubmission = {
@@ -76,6 +76,7 @@ type SessionProtocolUserSubmissionAction =
 type SessionProtocolLiveSessionState = {
   activeSubmit?: SessionProtocolActiveSubmit;
   interrupting: boolean;
+  releasePendingAdmission?: () => void;
   revision: number;
   pendingSubmissions: SessionProtocolPendingUserSubmission[];
   listeners: Set<(message: SessionProtocolPendingUserMessagesMessage) => void>;
@@ -89,6 +90,7 @@ type SessionProtocolHandlerSessionState = {
   session: TauHostedSession;
   live: SessionProtocolLiveSessionState;
   unsubscribeDelta?: () => void;
+  unsubscribeTurnIdle?: () => void;
   unsubscribeEphemeral?: () => void;
   unsubscribePendingUserMessages?: () => void;
   unsubscribeSubagentActivities?: () => void;
@@ -135,7 +137,7 @@ function toPendingUserMessage(
 ): SessionProtocolPendingUserMessage {
   return {
     id: pending.id,
-    mode: pending.request.method === "session.queue" ? "queue" : "steer",
+    mode: pending.request.method === "session.steer" ? "steer" : "queue",
     text: pending.request.params.text,
   };
 }
@@ -153,6 +155,12 @@ function publishPendingUserMessages(
   session: TauHostedSession,
   state: SessionProtocolLiveSessionState,
 ): void {
+  if (state.pendingSubmissions.length > 0) {
+    state.releasePendingAdmission ??= session.holdTurnAdmission();
+  } else {
+    state.releasePendingAdmission?.();
+    state.releasePendingAdmission = undefined;
+  }
   state.revision += 1;
   const message = createSessionProtocolPendingUserMessagesMessage({
     sessionId: session.sessionId,
@@ -544,7 +552,7 @@ export class SessionProtocolHandler {
     }
 
     if (state.live.activeSubmit || state.session.isTurnRunning) {
-      if (request.method === "session.submit") {
+      if (request.method === "session.submit" && state.live.activeSubmit) {
         return { type: "busy" as const };
       }
       const pending: SessionProtocolPendingIdleSubmission = {
@@ -894,14 +902,34 @@ export class SessionProtocolHandler {
       return;
     }
 
-    await this.withSessionMutation(request, "user message added", async (mutationState) => {
-      const result = await mutationState.session.record({
+    await this.withNonInterruptingSessionMutation(request, async (mutationState) => {
+      const joinsTurn = mutationState.session.canAcceptSteering;
+      const recording = mutationState.session.record({
         text: request.params.text,
         ...(request.params.historyEntryId !== undefined
           ? { historyEntryId: request.params.historyEntryId }
           : {}),
       });
-      this.sendMessage(createSessionProtocolSuccessResponse(request.id, "session.record", result));
+      const respond = (result: Awaited<typeof recording>) =>
+        this.sendMessage(
+          createSessionProtocolSuccessResponse(request.id, "session.record", result),
+        );
+      if (!joinsTurn) {
+        respond(await recording);
+        return;
+      }
+      // Text that joins a running turn is added at its next step boundary, so other session
+      // changes need not wait for that.
+      void recording.then(respond, (error: unknown) => {
+        this.sendMessage(
+          createSessionProtocolErrorResponse(
+            request.id,
+            SESSION_PROTOCOL_ERROR_CODES.internalError,
+            "failed to record user text",
+            { cause: error instanceof Error ? error.message : String(error) },
+          ),
+        );
+      });
     });
   }
 
@@ -958,6 +986,7 @@ export class SessionProtocolHandler {
         return { type: "idle" as const };
       }
 
+      const release = state.session.holdTurnAdmission();
       const [pending] = state.live.pendingSubmissions.splice(pendingIndex, 1) as [
         SessionProtocolPendingIdleSubmission,
       ];
@@ -970,6 +999,8 @@ export class SessionProtocolHandler {
       } catch (error) {
         this.sendUserMessageDrainFailure([pending], error);
         return { type: "failed" as const, error };
+      } finally {
+        release();
       }
     });
 
@@ -1096,21 +1127,7 @@ export class SessionProtocolHandler {
     signal: AbortSignal,
   ): Promise<void> {
     try {
-      const result = await state.session.exec({
-        execId: request.params.execId,
-        command: request.params.command,
-        ...(request.params.args !== undefined ? { args: request.params.args } : {}),
-        ...(request.params.env !== undefined ? { env: request.params.env } : {}),
-        ...(request.params.stdinBase64 !== undefined
-          ? { stdinBase64: request.params.stdinBase64 }
-          : {}),
-        ...(request.params.cwd !== undefined ? { cwd: request.params.cwd } : {}),
-        ...(request.params.timeoutMs !== undefined ? { timeoutMs: request.params.timeoutMs } : {}),
-        ...(request.params.maxCaptureBytes !== undefined
-          ? { maxCaptureBytes: request.params.maxCaptureBytes }
-          : {}),
-        signal,
-      });
+      const result = await state.session.exec({ ...request.params, signal });
       this.sendMessage(createSessionProtocolSuccessResponse(request.id, "session.exec", result));
     } catch (error) {
       const cancelled = signal.aborted || isAbortError(error);
@@ -1538,6 +1555,9 @@ export class SessionProtocolHandler {
       released: false,
     };
 
+    state.unsubscribeTurnIdle = session.onTurnIdle(() =>
+      this.schedulePendingSubmissionDrain(state),
+    );
     state.unsubscribeDelta = session.onDelta((delta) => {
       if (this.closed || !this.sessionStates.has(session.sessionId)) {
         return;
@@ -1711,10 +1731,12 @@ export class SessionProtocolHandler {
   ): Promise<T> {
     const queue = getSessionMutationQueueState(state.session);
     queue.pending += 1;
+    const release = state.session.holdTurnAdmission();
     try {
       return await this.enqueueMutation(state, handler);
     } finally {
       queue.pending -= 1;
+      release();
     }
   }
 
@@ -1731,9 +1753,8 @@ export class SessionProtocolHandler {
     }
 
     state.session.interruptTurn();
-    if (!activeSubmit) {
-      return;
-    }
+    await state.session.waitForActiveTurn();
+    if (!activeSubmit) return;
 
     try {
       await activeSubmit.promise;
@@ -1742,13 +1763,34 @@ export class SessionProtocolHandler {
     }
   }
 
+  /** Queued input is this client's request, so it cannot outlive the client's attachment. */
+  private cancelQueuedSubmissions(state: SessionProtocolHandlerSessionState): void {
+    const queued = state.live.pendingSubmissions.filter(
+      (submission): submission is SessionProtocolPendingIdleSubmission =>
+        submission.delivery === "when-idle" && submission.handler === this,
+    );
+    if (!this.removePendingSubmissions(state, queued)) return;
+    for (const { request } of queued) {
+      this.sendMessage(
+        createSessionProtocolErrorResponse(
+          request.id,
+          SESSION_PROTOCOL_ERROR_CODES.cancelled,
+          "pending user message was cancelled",
+        ),
+      );
+    }
+  }
+
   private unsubscribeSessionListeners(state: SessionProtocolHandlerSessionState): void {
+    this.cancelQueuedSubmissions(state);
     this.clientToolRegistration?.detachSession(state.session.sessionId);
     if (!state.released) {
       state.released = true;
       this.host.releaseSession(state.session);
     }
 
+    state.unsubscribeTurnIdle?.();
+    state.unsubscribeTurnIdle = undefined;
     state.unsubscribeDelta?.();
     state.unsubscribeDelta = undefined;
     state.unsubscribeEphemeral?.();

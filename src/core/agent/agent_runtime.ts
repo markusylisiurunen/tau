@@ -66,6 +66,11 @@ import type {
   AgentEvent,
   AgentEventSink,
 } from "./events.js";
+import {
+  createNotificationDelivery,
+  formatNotificationDelivery,
+  type NotificationInbox,
+} from "./notification_inbox.js";
 
 const DEFAULT_RETRY_POLICY = { maxRetries: 1, delayMs: 3_000 } as const;
 const COMPACTION_MAX_ATTEMPTS = 2;
@@ -119,6 +124,7 @@ export type AgentSpec = {
 };
 
 type AgentRuntimeOptions = {
+  notifications?: NotificationInbox;
   agentId?: string;
   spec: AgentSpec;
   eventSink: AgentEventSink;
@@ -377,10 +383,21 @@ export class AgentRuntime {
     rejectApplied: (error: Error) => void;
     rejectResult: (error: Error) => void;
   }> = [];
+  private readonly notifications?: NotificationInbox;
+  /** Whether recorded text joins the running turn; cleared in the same step as its last drain. */
+  private recordsJoinTurn = false;
+  /** Text recorded during a turn, added at its next step boundary or when it ends. */
+  private pendingRecords: Array<{
+    text: string;
+    historyEntryId?: string;
+    resolve: (historyEntryId: string) => void;
+    reject: (error: Error) => void;
+  }> = [];
   private disposed = false;
   private agentId: string;
 
   constructor(options: AgentRuntimeOptions) {
+    this.notifications = options.notifications;
     this.currentSpec = options.spec;
     this.eventSink = options.eventSink;
     this.clock = options.clock;
@@ -463,6 +480,7 @@ export class AgentRuntime {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.rejectPendingRecords(new Error("agent was disposed"));
     this.interrupt();
     this.closeProviderSessions();
   }
@@ -728,6 +746,75 @@ export class AgentRuntime {
     }
   }
 
+  /**
+   * Adds user text without starting a turn. During a turn, the text joins it at the next step
+   * boundary, or is added when the turn ends.
+   */
+  record(text: string, options: { historyEntryId?: string } = {}): Promise<string> {
+    if (!this.recordsJoinTurn) return this.commitUserText(text, options);
+    return new Promise((resolve, reject) => {
+      this.pendingRecords.push({ text, ...options, resolve, reject });
+    });
+  }
+
+  /**
+   * Drains until empty, because text can arrive while an earlier record is being saved. The final
+   * drain of a turn stops joining records once the queue is empty, so none can be left behind.
+   */
+  private async commitPendingRecords(options: { final?: boolean } = {}): Promise<boolean> {
+    let committed = false;
+    for (let record = this.pendingRecords.shift(); record; record = this.pendingRecords.shift()) {
+      try {
+        const options = record.historyEntryId ? { historyEntryId: record.historyEntryId } : {};
+        record.resolve(await this.commitUserText(record.text, options));
+        committed = true;
+      } catch (error) {
+        const failure = error instanceof Error ? error : new Error(String(error));
+        record.reject(failure);
+        this.rejectPendingRecords(failure);
+        throw error;
+      }
+    }
+    if (options.final) this.recordsJoinTurn = false;
+    return committed;
+  }
+
+  private rejectPendingRecords(error: Error): void {
+    for (const record of this.pendingRecords.splice(0)) record.reject(error);
+  }
+
+  /** Delivers recorded text and notifications at a step boundary. */
+  private async commitPendingInput(): Promise<boolean> {
+    const recorded = await this.commitPendingRecords();
+    const notified = await this.commitNotifications();
+    return recorded || notified;
+  }
+
+  async commitNotifications(historyEntryId?: string): Promise<boolean> {
+    this.assertHistoryMutable();
+    const inbox = this.notifications;
+    if (!inbox) return false;
+    const notifications = inbox.signal();
+    if (!notifications) return false;
+    const delivery = createNotificationDelivery(notifications);
+    const message: UserMessage = {
+      role: "user",
+      content: [{ type: "text", text: formatNotificationDelivery(delivery) }],
+      timestamp: this.clock.now(),
+    };
+    await this.commitHistoryMessage(message, historyEntryId, (id, revision) => ({
+      type: "user_message",
+      historyEntryId: id,
+      message,
+      origin: "notification",
+      notificationTitles: delivery.listed.map((entry) => entry.title),
+      omittedNotifications: delivery.omitted,
+      revision,
+    }));
+    inbox.delivered(notifications);
+    return true;
+  }
+
   steer(text: string, options: { metadata?: readonly TauUserMetadata[] } = {}): SteeringSubmission {
     if (this.status !== "running") {
       throw new Error("cannot steer an idle agent");
@@ -795,20 +882,36 @@ export class AgentRuntime {
     return true;
   }
 
-  async runTurn(): Promise<AgentTurnResult> {
+  /**
+   * Runs a turn from the latest user message, or, with `notificationHistoryEntryId`, a turn that
+   * starts by delivering pending notifications under that ID. Text recorded while either one
+   * starts joins the turn.
+   */
+  async runTurn(options: { notificationHistoryEntryId?: string } = {}): Promise<AgentTurnResult> {
     this.assertHistoryMutable();
     if (this.activeAbortController) {
       throw new Error("agent is already running");
     }
-    this.getCurrentTurnUserHistoryEntryId();
+    if (options.notificationHistoryEntryId === undefined) {
+      this.getCurrentTurnUserHistoryEntryId();
+    }
 
     const controller = new AbortController();
     this.activeAbortController = controller;
+    this.recordsJoinTurn = true;
     let initialResult: AgentSubturnResult | undefined;
     let associatedSteering: typeof this.pendingSteering = [];
-    let turnSpec = this.captureTurnSettings();
 
     try {
+      if (
+        options.notificationHistoryEntryId !== undefined &&
+        !(await this.commitNotifications(options.notificationHistoryEntryId))
+      ) {
+        throw new Error("no notifications to deliver");
+      }
+      // The turn belongs to the message that started it, not to notifications delivered with it.
+      let turnSpec = this.captureTurnSettings();
+      await this.commitNotifications();
       while (true) {
         await this.deliver({
           type: "turn_started",
@@ -871,11 +974,13 @@ export class AgentRuntime {
           if (this.pendingSteering.length > 0) {
             this.rejectPendingSteering(new Error("steering was not applied before the turn ended"));
           }
+          await this.commitPendingRecords({ final: true });
           return { ...initialResult, terminalResult: result };
         }
 
         associatedSteering = this.pendingSteering.splice(0);
         this.stopAtBoundaryRequested = false;
+        await this.commitPendingInput();
         await this.commitUserTextWithModelNotice(
           formatSteeringUserMessage(
             associatedSteering.map((item) => item.text),
@@ -899,10 +1004,12 @@ export class AgentRuntime {
         submission.rejectResult(steeringError);
       }
       this.rejectPendingSteering(steeringError);
+      this.rejectPendingRecords(steeringError);
       throw error;
     } finally {
       if (this.activeAbortController === controller) {
         this.activeAbortController = undefined;
+        this.recordsJoinTurn = false;
         this.stopAtBoundaryRequested = false;
       }
     }
@@ -1223,21 +1330,21 @@ export class AgentRuntime {
       );
       if (finalMessage) lastFinalMessage = finalMessage;
 
-      if (signal.aborted) break;
-      if (continueAfterToolRecovery) {
-        if (this.stopAtBoundaryRequested) break;
-        needsAnotherSubturn = true;
-        continue;
-      }
-      if (finalMessage?.stopReason !== "toolUse") break;
-      const toolCalls = finalMessage.content.filter(
-        (content): content is ToolCall => content.type === "toolCall",
-      );
-      if (toolCalls.length === 0) break;
-      if (this.stopAtBoundaryRequested) break;
-
+      if (signal.aborted || this.stopAtBoundaryRequested || finalMessage?.stopReason === "aborted")
+        break;
+      const hasToolCalls =
+        finalMessage?.stopReason === "toolUse" &&
+        finalMessage.content.some((content) => content.type === "toolCall");
+      // New input continues the turn only when another subturn can still answer it.
+      const delivered =
+        subturns < turnSettings.maxModelSubturns &&
+        finalMessage?.stopReason !== "error" &&
+        (await this.commitPendingInput());
+      if (!continueAfterToolRecovery && !hasToolCalls && !delivered) break;
       needsAnotherSubturn = true;
-      retryBudget = { remaining: turnSettings.retryPolicy.maxRetries };
+      if (!continueAfterToolRecovery) {
+        retryBudget = { remaining: turnSettings.retryPolicy.maxRetries };
+      }
     }
 
     const limitReached =

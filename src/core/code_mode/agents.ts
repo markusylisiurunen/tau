@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import { z } from "zod";
 import type { TauCodeModeHandler } from "../../code_mode/runtime.js";
+import type { NotificationInbox } from "../agent/notification_inbox.js";
 import type { SessionRuntimeSettings } from "../config/index.js";
 import type { HistoryQuery } from "../history/types.js";
 import type { McpManager } from "../mcp/manager.js";
@@ -37,6 +38,8 @@ export type AgentsCapabilityOptions = {
   mcp?: McpManager;
   cwd: string;
   resolveSubagentPrompt?: ResolveSubagentPrompt;
+  /** The main agent's inbox, absent when the session has notifications turned off. */
+  notifications?: NotificationInbox;
 };
 const id = z.string().min(1).max(256);
 const idOptions = z.strictObject({ id });
@@ -401,11 +404,38 @@ for (const entry of page.entries) {
 `,
 } satisfies Omit<CodeModeCapability, "api">;
 
+const mainNotificationsDocumentation = `
+## Completion notifications
+
+As the main agent, you get a notification each time a worker you started goes from working to idle, including after follow-up input. Stopping a worker yourself does not notify you, and workers started by your workers never notify you.
+
+While workers run and you have nothing else to do, tell the user in a sentence what is running and end your turn. Needing a worker's result is not a reason to wait for it: if you are idle when a notification arrives, Tau starts a turn for you, so you continue with the result, and the user can talk to you in the meantime. Wait with \`wait_for_agents\` only when the user asks you to, or when a worker's task is short and you need its result to finish what you are doing in this turn.
+
+A notification names the worker and its status, not what it found. Read the notification as usual, then get the worker's answer with \`wait_for_agents\`, which returns at once for an idle worker, or with \`trace\` and \`readText\`.
+
+Notifications are on by default, and waiting for a worker does not turn them off. If you will wait for a worker's result anyway, turn its notifications off so the same completion does not reach you twice:
+
+\`\`\`ts
+type MainSpawnOptions = SpawnOptions & { notifyOnCompletion?: boolean }; // default true
+
+type MainAgentsApi = AgentsApi & {
+  setCompletionNotification(options: { id: string; enabled: boolean }): Promise<AgentState>;
+};
+\`\`\`
+
+\`setCompletionNotification\` works only for workers you started yourself and applies to their later completions.
+`;
+
 export function createAgentsCapability(
   options: AgentsCapabilityOptions,
   originHistoryEntryId: string,
 ): CodeModeCapability {
   const supervisor = options.supervisor.scope(options.callerId);
+  const notifiesCaller =
+    options.callerId === options.supervisor.mainAgentId && options.notifications !== undefined;
+  const callerSpawnOptions = notifiesCaller
+    ? spawnOptions.extend({ notifyOnCompletion: z.boolean().default(true) })
+    : spawnOptions.transform((input) => ({ ...input, notifyOnCompletion: false }));
   const parseAllowedLaunchModel = (model: string) => {
     const parsed = parseSubagentLaunchModel(model, { resolveModel: options.modelResolver });
     if (
@@ -429,7 +459,7 @@ export function createAgentsCapability(
       };
     },
     spawn: async (args, context) => {
-      const [input] = z.tuple([spawnOptions]).parse(args);
+      const [input] = z.tuple([callerSpawnOptions]).parse(args);
       context.signal.throwIfAborted();
       const launchEpoch = supervisor.prepareSpawn();
       let launchModel: SubagentLaunchModel | undefined;
@@ -470,6 +500,7 @@ export function createAgentsCapability(
       return supervisor.spawn({
         ...options,
         runtimeConfig,
+        notifyOnCompletion: input.notifyOnCompletion,
         launchEpoch,
         agents: options,
         prompt: input.prompt,
@@ -552,6 +583,13 @@ export function createAgentsCapability(
       return supervisor.getTrace(input.id).readText(input.seq, input.maxChars);
     },
   };
+  if (notifiesCaller) {
+    api.setCompletionNotification = (args) => {
+      const [input] = z.tuple([z.strictObject({ id, enabled: z.boolean() })]).parse(args);
+      supervisor.setCompletionNotification(input.id, input.enabled);
+      return supervisor.read(input.id);
+    };
+  }
   for (const [name, handler] of Object.entries(api)) {
     api[name] = async (args, context) => {
       try {
@@ -570,5 +608,11 @@ export function createAgentsCapability(
       }
     };
   }
-  return { ...agentsCapabilityMetadata, api };
+  return {
+    ...agentsCapabilityMetadata,
+    documentation:
+      agentsCapabilityMetadata.documentation +
+      (notifiesCaller ? mainNotificationsDocumentation : ""),
+    api,
+  };
 }

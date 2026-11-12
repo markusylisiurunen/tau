@@ -591,7 +591,7 @@ describe("LocalSessionHost", () => {
     }
   });
 
-  it("settles the accepted receipt from its failed notification continuation", async () => {
+  it("settles a receipt failed by its notification continuation and pauses automatic turns", async () => {
     const host = createHost(new MemorySessionStore());
     const session = await host.createSession(localCreateInput);
     let calls = 0;
@@ -617,6 +617,10 @@ describe("LocalSessionHost", () => {
         state: "settled",
         outcome: result.turn,
       });
+      session.runtime.notifications.add("after the failure");
+      await new Promise((resolve) => setImmediate(resolve));
+      await session.waitForActiveWork();
+      expect(calls).toBe(2);
     } finally {
       await host.shutdown();
     }
@@ -783,38 +787,6 @@ describe("LocalSessionHost", () => {
       expect(session.runtime.agent.spec.tools.get("list_notifications")).toBeUndefined();
     } finally {
       await recoveredHost.shutdown();
-    }
-  });
-
-  it("pauses notifications after a failed turn until another user turn", async () => {
-    const host = createHost(new MemorySessionStore());
-    const session = await host.createSession(localCreateInput);
-    const failed = {
-      aborted: false,
-      finalMessage: fauxAssistantMessage("", { stopReason: "error" }),
-    };
-    session.runtime.agent.spec.model.stream = () => ({
-      async *[Symbol.asyncIterator]() {},
-      async result() {
-        return fauxAssistantMessage("done");
-      },
-    });
-    const run = vi
-      .spyOn(session.runtime, "runTurn")
-      .mockResolvedValueOnce({ ...failed, terminalResult: failed });
-    try {
-      session.runtime.notifications.add("first");
-      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
-      await session.waitForActiveWork();
-      session.runtime.notifications.add("pending");
-      await new Promise((resolve) => setImmediate(resolve));
-      expect(run).toHaveBeenCalledTimes(1);
-      const accepted = await session.acceptTurn({ text: "resume" });
-      await session.runAcceptedTurn(accepted.userHistoryEntryId);
-      expect(run).toHaveBeenCalledTimes(2);
-      expect(session.runtime.notifications.signal()).toBeUndefined();
-    } finally {
-      await host.shutdown();
     }
   });
 

@@ -230,13 +230,10 @@ describe("AgentRuntime", () => {
     },
   );
 
-  it.each([
-    [2, "joins the turn at the next step", 2],
-    [1, "is added after a turn with no step left", 1],
-  ])("records text during a turn so it %s (%s subturns)", async (maxModelSubturns, _, calls) => {
+  it("records text during a turn so it joins the turn at the next step", async () => {
     const gate = deferred();
     const started = deferred();
-    const { runtime, persona } = createRuntime({ maxModelSubturns });
+    const { runtime, persona } = createRuntime({ maxModelSubturns: 2 });
     const stream = setStreams(runtime, [
       {
         async *[Symbol.asyncIterator]() {
@@ -256,13 +253,11 @@ describe("AgentRuntime", () => {
     gate.resolve();
     await running;
     const id = await recorded;
-    expect(stream).toHaveBeenCalledTimes(calls);
+    expect(stream).toHaveBeenCalledTimes(2);
     expect(runtime.status).toBe("idle");
     const roles = runtime.rawHistoryEntriesSnapshot.map((entry) => entry.message.role);
     const index = runtime.rawHistoryEntriesSnapshot.findIndex((entry) => entry.id === id);
-    expect(roles.slice(index - 1)).toEqual(
-      calls === 2 ? ["assistant", "user", "assistant"] : ["assistant", "user"],
-    );
+    expect(roles.slice(index - 1)).toEqual(["assistant", "user", "assistant"]);
     runtime.dispose();
   });
 

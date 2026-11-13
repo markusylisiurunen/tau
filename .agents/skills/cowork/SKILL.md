@@ -42,7 +42,7 @@ The PR that `/implement` opens uses its title and description as the lasting rec
 
 Send `/restart` alone, then send the actual request in a separate comment. The request can follow immediately and queues behind the replacement. Eyes marks the pending restart; `+1` replaces it when the fresh session is ready. Success posts no comment. Trailing restart guidance is rejected. If restart fails or is interrupted before installation, the previous mapping is preserved but follow-ups fail explicitly instead of using it. Send `/restart` alone again, then resend blocked requests after it succeeds.
 
-Submitting hosted diff feedback hands the requested work to the persistent PR conversation. That work uses the conversation's settings instead of the hosted discussion's settings. Posting a command or submitting feedback can start autonomous work, so do not treat these examples as permission to trigger it.
+Submitting hosted diff feedback hands the requested work to the persistent PR conversation. That work uses the conversation's workspace, settings, and hooks. The hosted discussion itself runs no hooks. Posting a command or submitting feedback can start autonomous work, so do not treat these examples as permission to trigger it.
 
 When the service enables them, eligible non-draft PRs can also receive automatic reviews, hosted diffs, and explanations. These switches belong to the service, and repository configuration cannot change them.
 

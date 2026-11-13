@@ -44,6 +44,8 @@ Planning, PR conversation, and explanation sessions keep their workflow instruct
 
 Built-in reviews can use parallel subreviews when trusted append guidance specifies an exact launch model. The review mentions its subagents only when one fails, to say which coverage is missing. Anything else the summary should report, such as review depth or cost, belongs in the append guidance. If that prompt is centrally managed, change its source instead of editing the generated prompt by hand. A replacement review prompt must define its own subagent behavior.
 
+Cowork treats the end of an agent turn as the end of the run. It therefore creates new sessions with Tau notifications turned off, so a subagent that finishes does not wake the main agent or start a new turn. When a workflow prompt, PR command, or schedule delegates work, it must have the agent wait for its subagents and finish within the same turn. Work still running when the turn ends is not reported by that run. Existing persistent sessions keep the notification setting they were created with, and `/restart` replaces a planning session or PR conversation with a new session.
+
 ## PR commands
 
 Each `.cowork/commands/<name>.md` defines a command that users start with a top-level PR comment such as `@markustherobot /rewrite`, optionally followed by guidance on later lines. The name must start with a lowercase letter and contain only lowercase letters, digits, or hyphens, up to 64 characters. The built-in names `implement`, `review`, `deslop`, `explain`, `diff`, and `restart` are reserved. Commands on issues or in inline review threads are rejected.
@@ -60,13 +62,15 @@ Each invocation gets a fresh session and workspace with the repository's normal 
 
 ## Workspace hooks
 
-Optional executable files under `.cowork/scripts/` control workspace setup:
+Optional executable files under `.cowork/scripts/` control workspace setup for agent workflows:
 
 | File       | When it runs                                           | Typical purpose                  |
 | ---------- | ------------------------------------------------------ | -------------------------------- |
 | `init`     | Once per fresh workspace, before session creation      | Durable workspace setup          |
-| `activate` | Before every new turn, including the first             | Recreate disposable dependencies |
+| `activate` | Before every turn Cowork submits, including the first  | Recreate disposable dependencies |
 | `idle`     | After a persistent workspace's configured quiet period | Remove disposable state          |
+
+`/restart` creates a fresh workspace and runs `init`, but it starts no turn, so `activate` first runs with the next request. Hosted diffs run none of these hooks when they are created or restored. Files that hooks already installed in an existing diff workspace stay until normal workspace cleanup. Submitted diff feedback runs in the PR conversation's workspace, which uses the normal hooks.
 
 Each file needs a valid shebang and executable permission committed to Git. Scripts run directly from the workspace root with closed stdin and a five-minute timeout. The environment excludes Cowork's own `COWORK_*` settings and package-manager production settings such as `NODE_ENV`. Never print credentials.
 

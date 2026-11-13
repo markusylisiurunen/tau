@@ -144,7 +144,10 @@ describe("background history recording", () => {
       const manager = new HistoryManager(store, { requireCompleteRecording: true });
       try {
         manager.openSession(session).append([entry("unrecorded")]);
-        await expect(manager.flush()).rejects.toThrow();
+        await Promise.all([
+          expect(manager.flush()).rejects.toThrow(),
+          expect(manager.settleSession(session.sessionId)).rejects.toThrow(),
+        ]);
       } finally {
         release();
         manager.close();

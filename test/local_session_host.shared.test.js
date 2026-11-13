@@ -1055,7 +1055,7 @@ describe("LocalSessionHost", () => {
       const snapshot = await session.snapshot();
       expect(snapshot.messages.some((item) => item.message.role === "user")).toBe(true);
     } finally {
-      await host.shutdown();
+      await expect(host.shutdown()).rejects.toThrow();
       rmSync(root, { recursive: true, force: true });
     }
   });
@@ -4723,6 +4723,57 @@ describe("LocalSessionHost", () => {
     }
   });
 
+  it.each(["shutdown", "eviction"])(
+    "settles local history before releasing the lease on %s",
+    async (mode) => {
+      const store = new MemorySessionStore();
+      const releaseLease = vi.fn(async () => {});
+      vi.spyOn(store, "acquireSession").mockResolvedValue(releaseLease);
+      const local = new LocalHistoryStore(":memory:");
+      const history = new HistoryManager(local);
+      const host = createHost(store, { history });
+      const session = await host.createSession(localCreateInput);
+      await history.flush();
+      const gate = deferred();
+      const append = local.append.bind(local);
+      vi.spyOn(local, "append").mockImplementation(async (...args) => {
+        await gate.promise;
+        return append(...args);
+      });
+      await session.record({ text: "before continuation" });
+      const settle = vi.spyOn(history, "settleSession");
+      if (mode === "eviction") host.releaseSession(session);
+      const closing =
+        mode === "shutdown" ? host.shutdown() : host.collectSession(session.sessionId);
+      await vi.waitFor(() => expect(settle).toHaveBeenCalledWith(session.sessionId));
+      expect(releaseLease).not.toHaveBeenCalled();
+      gate.resolve();
+      await closing;
+      expect(releaseLease).toHaveBeenCalledTimes(1);
+      await host.shutdown();
+    },
+  );
+
+  it("keeps the lease and rejects reopening when local history settlement fails", async () => {
+    const store = new MemorySessionStore();
+    const releaseLease = vi.fn(async () => {});
+    vi.spyOn(store, "acquireSession").mockResolvedValue(releaseLease);
+    const local = new LocalHistoryStore(":memory:");
+    const history = new HistoryManager(local);
+    const host = createHost(store, { history });
+    const session = await host.createSession(localCreateInput);
+    await history.flush();
+    vi.spyOn(local, "append").mockImplementation(() => {
+      throw new Error("disk failure");
+    });
+    await session.record({ text: "unrecorded" });
+    await expect(session.dispose()).rejects.toThrow();
+    expect(releaseLease).not.toHaveBeenCalled();
+    await expect(host.observeSession(session.sessionId)).rejects.toThrow();
+    await expect(host.shutdown()).rejects.toThrow();
+    expect(releaseLease).not.toHaveBeenCalled();
+  });
+
   it("keeps recording history when a session reopens during eviction disposal", async () => {
     const history = new HistoryManager(new LocalHistoryStore(":memory:"));
     const disposalStarted = deferred();
@@ -5147,7 +5198,7 @@ describe("LocalSessionHost", () => {
         }),
       ]),
     );
-    await host.shutdown();
+    await expect(host.shutdown()).rejects.toThrow();
   });
 
   it("preserves model-visible messages that are hidden from the default timeline", async () => {

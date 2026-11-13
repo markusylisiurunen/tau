@@ -176,7 +176,7 @@ export class LocalSessionHost implements TauSessionHost {
   private readonly store: SessionStore;
   private readonly sessionLeases = new Map<
     string,
-    { release: () => Promise<void>; references: number }
+    { release: () => Promise<void>; references: number; settlement?: Promise<void> }
   >();
   private readonly history: HistoryManager;
   private readonly historyRemote?: HistoryRemoteTarget;
@@ -503,6 +503,10 @@ export class LocalSessionHost implements TauSessionHost {
 
   private async acquireSessionLease(sessionId: string): Promise<SessionLease> {
     let lease = this.sessionLeases.get(sessionId);
+    if (lease?.settlement) {
+      await lease.settlement;
+      lease = undefined;
+    }
     if (lease) {
       lease.references += 1;
     } else {
@@ -516,8 +520,12 @@ export class LocalSessionHost implements TauSessionHost {
         if (released) return;
         released = true;
         if (--owned.references > 0) return;
-        this.sessionLeases.delete(sessionId);
-        await owned.release();
+        owned.settlement = (async () => {
+          await this.history.settleSession(sessionId);
+          await owned.release();
+          this.sessionLeases.delete(sessionId);
+        })();
+        await owned.settlement;
       },
     };
   }

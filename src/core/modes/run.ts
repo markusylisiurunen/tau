@@ -1,6 +1,6 @@
 import type { Readable } from "node:stream";
 import { ReadStream } from "node:tty";
-import { parseArgs } from "node:util";
+import { inspect, parseArgs } from "node:util";
 import { createTauSdkClient } from "../../sdk/client.js";
 import type { TauSdkClient, TauSdkSession, TauSdkSessionTurnOutcome } from "../../sdk/types.js";
 import { parsePersonaOption } from "../cli.js";
@@ -79,6 +79,7 @@ export async function runHeadlessCommand(
         .catch((error: unknown) => stderr(`failed to interrupt: ${String(error)}\n`));
   };
   options.signal?.addEventListener("abort", onAbort, { once: true });
+  let shutdownFailed = false;
   let result: { sessionId: string; turn: TauSdkSessionTurnOutcome; response: string };
   try {
     let input = "";
@@ -111,7 +112,12 @@ export async function runHeadlessCommand(
     result = { sessionId: session.id, turn, response };
   } finally {
     options.signal?.removeEventListener("abort", onAbort);
-    await client?.close();
+    try {
+      await client?.close();
+    } catch (error) {
+      shutdownFailed = true;
+      stderr(`failed to shut down: ${inspect(error, { depth: null, colors: false })}\n`);
+    }
   }
   const { turn, response } = result;
   stderr(`turn: ${turn.status}\n`);
@@ -119,5 +125,5 @@ export async function runHeadlessCommand(
   if (turn.status === "blocked") stderr(`${turn.message}\n`);
   if (values.json) stdout(`${JSON.stringify(result)}\n`);
   else stdout(response);
-  return turn.status === "completed" && !options.signal?.aborted ? 0 : 1;
+  return turn.status === "completed" && !options.signal?.aborted && !shutdownFailed ? 0 : 1;
 }

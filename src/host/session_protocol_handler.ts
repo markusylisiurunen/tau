@@ -65,6 +65,7 @@ type SessionProtocolPendingUserSubmission =
 
 type SessionProtocolUserSubmissionAction =
   | { type: "busy" }
+  | { type: "cancelled" }
   | { type: "pending" }
   | { type: "started"; activeSubmit: SessionProtocolActiveSubmit }
   | {
@@ -76,6 +77,7 @@ type SessionProtocolUserSubmissionAction =
 type SessionProtocolLiveSessionState = {
   activeSubmit?: SessionProtocolActiveSubmit;
   interrupting: boolean;
+  admissions: Set<{ cancelled: boolean }>;
   releasePendingAdmission?: () => void;
   revision: number;
   pendingSubmissions: SessionProtocolPendingUserSubmission[];
@@ -114,6 +116,7 @@ function getSessionLiveState(session: TauHostedSession): SessionProtocolLiveSess
   if (!state) {
     state = {
       interrupting: false,
+      admissions: new Set(),
       revision: 1,
       pendingSubmissions: [],
       listeners: new Set(),
@@ -385,6 +388,7 @@ export class SessionProtocolHandler {
     for (const state of states) {
       this.unsubscribeSessionListeners(state);
       if (interruptActiveTurns) {
+        for (const admission of state.live.admissions) admission.cancelled = true;
         state.session.interruptActiveWork();
       }
     }
@@ -511,9 +515,29 @@ export class SessionProtocolHandler {
       return;
     }
 
-    const action = await this.enqueueMutation(state, () =>
-      this.dispatchUserSubmission(state, request),
-    );
+    const admission = { cancelled: false };
+    state.live.admissions.add(admission);
+    let action: SessionProtocolUserSubmissionAction;
+    try {
+      action = await this.enqueueMutation(state, () => {
+        state.live.admissions.delete(admission);
+        return admission.cancelled
+          ? { type: "cancelled" as const }
+          : this.dispatchUserSubmission(state, request);
+      });
+    } finally {
+      state.live.admissions.delete(admission);
+    }
+    if (action.type === "cancelled") {
+      this.sendMessage(
+        createSessionProtocolErrorResponse(
+          request.id,
+          SESSION_PROTOCOL_ERROR_CODES.cancelled,
+          "user submission was interrupted before admission",
+        ),
+      );
+      return;
+    }
     if (action.type === "busy") {
       this.sendSubmitBusy(state, request.id);
       return;
@@ -1184,7 +1208,8 @@ export class SessionProtocolHandler {
     }
 
     // Cancellation must reach maintenance work while it holds the mutation queue.
-    const interrupted = state.session.interruptActiveWork();
+    for (const admission of state.live.admissions) admission.cancelled = true;
+    const interrupted = state.session.interruptActiveWork() || state.live.admissions.size > 0;
     const result = await this.enqueueMutation(state, async () => {
       if (interrupted) {
         state.live.interrupting = true;

@@ -6,7 +6,7 @@ Tau keeps a searchable record of past sessions, separate from saved sessions. Hi
 
 Each host records its sessions in `~/.config/tau/history.sqlite`, in the host user's home. It stores user messages, assistant text, and finished tool calls with their results, so treat it as private. Thinking and the persona's base prompt are not stored.
 
-Recording is best effort, so history can have gaps. A recording failure does not affect the session, and later entries are still recorded.
+A recording failure leaves a gap in history, but the session keeps running and later entries are still recorded. When the session closes, Tau reports the failure and keeps the session locked, so no Tau process can reopen it until the process that had it open exits. `tau run` exits nonzero if its session's history is incomplete.
 
 Compaction keeps history as it is, so earlier work stays searchable. Rewind deletes entries from the rewind point on.
 

@@ -111,13 +111,27 @@ describe("headless run", () => {
     expect(client.close).toHaveBeenCalledTimes(1);
   });
 
-  it("does not emit a successful result when history settlement fails", async () => {
-    const { client, options } = harness();
-    client.close.mockRejectedValue(new Error("local history recording is incomplete"));
-    await expect(runHeadlessCommand(["--json"], options)).rejects.toThrow();
-    expect(options.stdout).not.toHaveBeenCalled();
-    expect(client.close).toHaveBeenCalledTimes(1);
-  });
+  it.each([{ args: [] }, { args: ["--json"] }])(
+    "preserves the completed response on shutdown failure ($args)",
+    async ({ args }) => {
+      const { client, options } = harness();
+      const cause = new Error("disk failure");
+      client.close.mockRejectedValue(new AggregateError([cause], "shutdown failed"));
+      expect(await runHeadlessCommand(args, options)).toBe(1);
+      const output = options.stdout.mock.calls[0][0];
+      if (args.includes("--json")) {
+        expect(JSON.parse(output)).toEqual({
+          sessionId: "saved-session",
+          turn: { status: "completed", stopReason: "stop" },
+          response: "final\nanswer",
+        });
+      } else {
+        expect(output).toBe("final\nanswer");
+      }
+      expect(options.stderr.mock.calls.flat().join("")).toContain(cause.message);
+      expect(client.close).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("does not invent a turn result when interrupted before submission", async () => {
     const { session, client, options } = harness();

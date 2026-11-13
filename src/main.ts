@@ -624,20 +624,61 @@ if (argv[0] === "models") {
   }
 }
 
+if (argv[0] === "run") {
+  const { runHeadlessCommand } = await import("./core/modes/run.js");
+  const controller = new AbortController();
+  let signalExitCode: number | undefined;
+  const onSigInt = () => {
+    signalExitCode = 130;
+    controller.abort();
+  };
+  const onSigTerm = () => {
+    signalExitCode = 143;
+    controller.abort();
+  };
+  process.once("SIGINT", onSigInt);
+  process.once("SIGTERM", onSigTerm);
+  try {
+    process.exitCode = await runHeadlessCommand(argv.slice(1), { cwd, signal: controller.signal });
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  } finally {
+    process.off("SIGINT", onSigInt);
+    process.off("SIGTERM", onSigTerm);
+  }
+  await flushCommandOutput();
+  process.exit(signalExitCode ?? process.exitCode ?? 0);
+}
+
+async function flushCommandOutput(): Promise<void> {
+  await Promise.all(
+    [process.stdout, process.stderr].map(
+      (stream) =>
+        new Promise<void>((resolve, reject) =>
+          stream.write("", (error) => (error ? reject(error) : resolve())),
+        ),
+    ),
+  );
+}
+
 if (argv[0] === "history") {
   const { HistoryCliError, printHistoryHelp, runHistoryCommand } = await import(
     "./core/history/cli.js"
   );
   try {
     await runHistoryCommand(argv.slice(1), { env: process.env });
+    await flushCommandOutput();
     process.exit(0);
   } catch (err) {
     if (err instanceof HistoryCliError) {
       // eslint-disable-next-line no-console
       console.error(err.message);
-      // eslint-disable-next-line no-console
-      console.error("");
-      printHistoryHelp();
+      if (argv[1] !== "read") {
+        console.error("");
+        printHistoryHelp();
+      }
+      await flushCommandOutput();
       process.exit(1);
     }
     throw err;

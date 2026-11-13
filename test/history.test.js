@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createHistoryCapability } from "../dist/core/code_mode/history.js";
 import { runHistoryCommand } from "../dist/core/history/cli.js";
 import { resolveHistoryRemoteTarget } from "../dist/core/history/config.js";
+import { readHistoryExport } from "../dist/core/history/export.js";
 import { HistoryManager } from "../dist/core/history/history_manager.js";
 import { LocalHistoryStore } from "../dist/core/history/local_history_store.js";
 import { backfillHistorySearch } from "../dist/core/history/migrations.js";
@@ -222,6 +223,72 @@ async function callHistoryViewer(path, harness, options = {}) {
     { waitUntil: vi.fn() },
   );
 }
+
+describe("history export child pagination", () => {
+  it.each(["local", "remote"])(
+    "retains %s children updated between export pages",
+    async (source) => {
+      const store = source === "local" ? new LocalHistoryStore(":memory:") : undefined;
+      const harness = source === "remote" ? createSqliteD1Harness() : undefined;
+      if (harness) initializeHistoryD1(harness);
+      const history =
+        store ??
+        new RemoteHistoryClient(
+          { endpoint: "https://history.example.com", apiKey: "secret" },
+          async (url, init) =>
+            callHistoryWorker(new URL(url).pathname, JSON.parse(init.body), harness),
+        );
+      const add = async (session) => {
+        if (store) store.createSession(session);
+        else
+          await history.applyOperations([
+            {
+              id: `create-${session.sessionId}`,
+              sessionId: session.sessionId,
+              type: "create",
+              session,
+            },
+          ]);
+      };
+      try {
+        await add({ sessionId: "parent", attributes: {}, createdAt: 1 });
+        const children = Array.from(
+          { length: 76 },
+          (_, index) => `child-${String(index).padStart(3, "0")}`,
+        );
+        for (const sessionId of children)
+          await add({ sessionId, parentSessionId: "parent", attributes: {}, createdAt: 1 });
+        let updated = false;
+        const data = await readHistoryExport(
+          {
+            read: (input) => history.read(input),
+            search: async (input) => {
+              const page = await history.search(input);
+              if (!updated) {
+                updated = true;
+                const entries = [
+                  createTextEntry("update", "user", "active child", Date.now() + 1000),
+                ];
+                if (store) store.append(children.at(-1), entries);
+                else
+                  await history.applyOperations([
+                    { id: "update-child", sessionId: children.at(-1), type: "append", entries },
+                  ]);
+              }
+              return page;
+            },
+          },
+          "parent",
+        );
+        expect(data.session.childSessionIds).toEqual(children);
+        expect(data.session.childCount).toBe(children.length);
+      } finally {
+        store?.close();
+        harness?.sqlite.close();
+      }
+    },
+  );
+});
 
 describe("history search time ranges", () => {
   it.each(["local", "remote"])(

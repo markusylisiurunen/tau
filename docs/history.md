@@ -22,6 +22,10 @@ Search history for the session where we chose the retry policy, and summarize th
 
 Search covers main sessions by default. It can filter on creation attributes such as `repository`, `source`, `machine`, and `cwd`, and it can include child sessions with the `parent` option.
 
+## Export a transcript
+
+`tau history read <id>` prints a session's whole recorded transcript from this host's history database as JSON. `--format markdown-compact` gives readable text with tool payloads shortened, and `markdown-full` keeps them in full. The JSON lists child sessions in `session.childSessionIds`. `--schema` prints the JSON Schema, and `--source remote` reads from the shared service described below.
+
 ## Shared remote service
 
 Tau can deploy a Cloudflare service, owned by one person or team, that collects history from several hosts. It adds search across hosts, generated titles and summaries, and a web viewer. It needs the Cloudflare Workers Paid plan, Wrangler on `PATH`, and a zone for the hostname.
@@ -52,7 +56,7 @@ To browse, open the service's address and sign in with username `tau` and the vi
 
 ## How replication behaves
 
-Each host writes to local SQLite first and sends changes to the service in the background. An outage does not affect sessions, and pending changes are sent later. With a remote target, searches and reads use the service only, and do not fall back to local results. `tau.history.read` can ask for local data with `source: "local"`.
+Each host writes to local SQLite first and sends changes to the service in the background. An outage does not affect sessions, and pending changes are sent later. With a remote target, `tau.history` searches and reads use the service only, and do not fall back to local results. `tau.history.read` can ask for local data with `source: "local"`.
 
 Entries over 1 MiB are shortened in the remote copy, and summaries can lag behind transcripts.
 

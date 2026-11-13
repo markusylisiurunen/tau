@@ -86,6 +86,7 @@ export type TauHostedSession = {
     id: string;
     applied: Promise<{ userHistoryEntryId: string }>;
     result: Promise<{
+      response: string;
       userHistoryEntryId: string;
       turn: SessionProtocolTurnOutcome;
     }>;

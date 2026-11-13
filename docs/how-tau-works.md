@@ -13,6 +13,7 @@ Each session has one execution environment, fixed when the session is created. P
 | Mode | Client | Host | Execution environment |
 | --- | --- | --- | --- |
 | `tau` | Local TUI | Same process | Current directory |
+| `tau run` | Calling script or agent | Same process | Current directory, or the saved session's directory |
 | `tau attach` | Attaching machine | Machine running `tau serve` | Directory on the host, or a Fly Sprite |
 | Node SDK, default client | Your program | Same process | Usually a local directory |
 | Node SDK over WebSocket | Your program | Machine running `tau serve` | Directory on the host, or a Fly Sprite |

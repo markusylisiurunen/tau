@@ -39,7 +39,7 @@ export function parsePersonaString(
   };
 }
 
-function parsePersonaOption(raw: string): {
+export function parsePersonaOption(raw: string): {
   personaId: string;
   reasoningOverride: ReasoningEffort | undefined;
 } {
@@ -159,6 +159,7 @@ export function printHelp(personas: Persona[]): void {
       "",
       "usage:",
       "  tau [options]",
+      "  tau run [--persona <id>[:<level>] | --session <id>] [--json] < task.txt",
       "  tau serve [--host <host>] [--port <port>] [options]",
       "  tau attach [--session <id> | --new --cwd <path> [execution options]] [--auth-token <token>] ws://host:port",
       "  tau auth <subcommand>",
@@ -180,13 +181,14 @@ export function printHelp(personas: Persona[]): void {
       "  --no-client-tools             disable built-in and configured TUI client tools.",
       "",
       "subcommands:",
+      "  run                           run one task without the TUI, or continue a saved session.",
       "  serve                         host Tau sessions over WebSocket.",
       "  attach                        run the TUI against a session-protocol transport.",
       "  auth                          authenticate and manage Codex OAuth accounts.",
       "  mcp                           log in to or out of HTTP MCP servers.",
       "  usage                         summarize usage logs.",
       "  models                        refresh the cached remote model catalog.",
-      "  history                       manage the shared history service and replication.",
+      "  history                       read transcripts and manage history replication.",
       "  tool                          run built-in utility tools.",
       "  telegram                      run the Telegram bot adapter.",
       "  diff-tool                     built-in browser diff review tool.",

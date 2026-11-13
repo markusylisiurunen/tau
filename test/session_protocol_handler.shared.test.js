@@ -288,7 +288,7 @@ function createHarness(options = {}) {
       async runAcceptedTurn(userHistoryEntryId) {
         const turn = await hostedSession.runTurn();
         await hostedSession.snapshot();
-        return { userHistoryEntryId, turn };
+        return { userHistoryEntryId, turn, response: "" };
       },
       async runTurn() {
         running = true;
@@ -323,6 +323,7 @@ function createHarness(options = {}) {
             await pendingTurn;
             const result = {
               userHistoryEntryId: historyEntryId,
+              response: "",
               turn: { status: "completed", stopReason: "stop" },
             };
             for (const item of steering) item.resolveResult(result);
@@ -976,6 +977,7 @@ describe("SessionProtocolHandler", () => {
         ok: true,
         result: {
           userHistoryEntryId: "history-1",
+          response: "",
           turn: { status: "completed", stopReason: "stop" },
         },
       }),
@@ -1997,6 +1999,7 @@ describe("SessionProtocolHandler", () => {
         ok: true,
         result: {
           userHistoryEntryId: queuedEntry.id,
+          response: "",
           turn: { status: "completed", stopReason: "stop" },
         },
       }),

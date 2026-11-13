@@ -129,6 +129,29 @@ describe("background history recording", () => {
     }
   });
 
+  it.each(["write failure", "flush timeout"])(
+    "rejects strict settlement after %s",
+    async (failure) => {
+      const store = new LocalHistoryStore(":memory:");
+      let release;
+      const gate = new Promise((resolve) => {
+        release = resolve;
+      });
+      vi.spyOn(store, "createSession").mockImplementation(async () => {
+        if (failure === "write failure") throw new Error("disk failure");
+        await gate;
+      });
+      const manager = new HistoryManager(store, { requireCompleteRecording: true });
+      try {
+        manager.openSession(session).append([entry("unrecorded")]);
+        await expect(manager.flush()).rejects.toThrow();
+      } finally {
+        release();
+        manager.close();
+      }
+    },
+  );
+
   it("bounds queued bytes without preventing later recording after an overflow", async () => {
     const store = new LocalHistoryStore(":memory:");
     let release;

@@ -93,6 +93,7 @@ async function createInProcessSdkHost(
     history: HistoryManager.open(getDefaultHistoryDatabasePath(home), {
       reportReplicationFailure: options.onDiagnostic,
       reportRecording: options.onDiagnostic,
+      requireCompleteRecording: options.requireCompleteHistory,
     }),
     historyRemote: resolveHistoryRemoteTarget(config),
     ...(onShutdown ? { onShutdown } : {}),

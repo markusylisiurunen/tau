@@ -49,6 +49,7 @@ export type HistoryManagerOptions = {
   reportReplicationFailure?: (diagnostic: HistoryReplicationFailureDiagnostic) => void;
   reportRecording?: (diagnostic: HistoryRecordingDiagnostic) => void;
   maxPendingBytes?: number;
+  requireCompleteRecording?: boolean;
 };
 
 type RecordingChange =
@@ -77,6 +78,7 @@ export class HistoryManager {
   private closed = false;
   private delayed = false;
   private lastDropDiagnostic = 0;
+  private recordingDropped = false;
   private readonly stop = new AbortController();
   private readonly reportReplicationFailure: NonNullable<
     HistoryManagerOptions["reportReplicationFailure"]
@@ -130,6 +132,12 @@ export class HistoryManager {
       await this.recording;
       await Promise.allSettled([...this.replicationRuns.values()]);
     });
+    if (
+      this.options.requireCompleteRecording &&
+      (this.recordingDropped || this.pending.length > 0)
+    ) {
+      throw new Error("local history recording is incomplete");
+    }
   }
 
   async retryReplication(target: HistoryRemoteTarget, sessionId: string): Promise<void> {
@@ -257,6 +265,7 @@ export class HistoryManager {
     message: string,
   ): void {
     if (status === "dropped") {
+      this.recordingDropped = true;
       const now = Date.now();
       if (now - this.lastDropDiagnostic < 1_000) return;
       this.lastDropDiagnostic = now;

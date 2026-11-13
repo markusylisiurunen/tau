@@ -1,33 +1,18 @@
+import type { z } from "zod";
+import type {
+  historyEntrySchema,
+  historySessionDescriptorSchema,
+  userContentSchema,
+} from "./schema.js";
+
 export type SessionAttributes = Record<string, string>;
 export type HistoryAttributeFilter = string | { contains: string };
 export type HistoryAttributeFilters = Record<string, HistoryAttributeFilter>;
 
-type HistoryEntryBase = {
-  id: string;
-  sourceIds: string[];
-  timestamp: number;
-};
-
-export type HistoryUserContent =
-  | string
-  | Array<
-      | { type: "text"; text: string; textSignature?: string }
-      | { type: "image"; data: string; mimeType: string }
-    >;
-
-export type HistoryTextEntry =
-  | (HistoryEntryBase & { type: "user"; content: HistoryUserContent })
-  | (HistoryEntryBase & { type: "assistant" | "system"; content: string });
-
-export type HistoryToolEntry = HistoryEntryBase & {
-  type: "tool";
-  name: string;
-  arguments: unknown;
-  result: unknown;
-  outcome: "succeeded" | "failed" | "blocked" | "cancelled";
-};
-
-export type HistoryEntry = HistoryTextEntry | HistoryToolEntry;
+export type HistoryUserContent = z.infer<typeof userContentSchema>;
+export type HistoryEntry = z.infer<typeof historyEntrySchema>;
+export type HistoryTextEntry = Exclude<HistoryEntry, { type: "tool" }>;
+export type HistoryToolEntry = Extract<HistoryEntry, { type: "tool" }>;
 
 export type HistoryDigest = {
   title: string;
@@ -35,17 +20,7 @@ export type HistoryDigest = {
   updatedThroughEntryId: string;
 };
 
-export type HistorySessionDescriptor = {
-  sessionId: string;
-  attributes: SessionAttributes;
-  createdAt: number;
-  updatedAt: number;
-  parentSessionId?: string;
-  childCount: number;
-  webUrl?: string;
-  digest?: HistoryDigest;
-  snippets: string[];
-};
+export type HistorySessionDescriptor = z.infer<typeof historySessionDescriptorSchema>;
 
 // Absent means "none": only sessions without a parent.
 export type HistorySearchParent = "none" | "any" | { sessionId: string };
@@ -57,6 +32,7 @@ export type HistoryTimeRange = {
 };
 
 export type HistorySearchInput = {
+  order?: "sessionId";
   query?: string;
   attributes?: HistoryAttributeFilters;
   parent?: HistorySearchParent;

@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import type { Stats } from "node:fs";
 import {
@@ -13,6 +14,7 @@ import {
 } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
+import { promisify } from "node:util";
 import type { SessionProtocolSnapshot } from "../protocol/session_protocol.js";
 import {
   createStoredSessionDocument,
@@ -32,6 +34,7 @@ export type FileSessionStoreOptions = {
 
 type SnapshotLockOwner = {
   pid: number;
+  processIdentity?: string;
   token: string;
   createdAt: number;
 };
@@ -56,6 +59,17 @@ export class FileSessionStore implements SessionStore {
 
   constructor(options: FileSessionStoreOptions) {
     this.directory = options.directory;
+  }
+
+  async acquireSession(sessionId: string): Promise<() => Promise<void>> {
+    await this.ensureDirectoryPermissions();
+    const lockPath = this.sessionLeasePath(sessionId);
+    const processIdentity = await readProcessIdentity(process.pid);
+    const owner = await this.withSnapshotLockRaw(sessionId, () =>
+      acquireSnapshotLock(lockPath, sessionId, { wait: false, processIdentity }),
+    );
+    return async () =>
+      await this.withSnapshotLockRaw(sessionId, () => releaseSnapshotLock(lockPath, owner));
   }
 
   async commitSessionSnapshot(
@@ -160,6 +174,10 @@ export class FileSessionStore implements SessionStore {
     return join(this.directory, snapshotFilename(sessionId));
   }
 
+  private sessionLeasePath(sessionId: string): string {
+    return `${this.snapshotPath(sessionId)}.lease`;
+  }
+
   private snapshotLockPath(sessionId: string): string {
     return `${this.snapshotPath(sessionId)}.lock`;
   }
@@ -207,9 +225,11 @@ export class FileSessionStore implements SessionStore {
 async function acquireSnapshotLock(
   lockPath: string,
   sessionId: string,
+  options: { wait: boolean; processIdentity?: string } = { wait: true },
 ): Promise<SnapshotLockOwner> {
   const owner: SnapshotLockOwner = {
     pid: process.pid,
+    ...(options.processIdentity ? { processIdentity: options.processIdentity } : {}),
     token: randomUUID(),
     createdAt: Date.now(),
   };
@@ -238,6 +258,7 @@ async function acquireSnapshotLock(
         if (await recoverStaleSnapshotLock(lockPath)) {
           continue;
         }
+        if (!options.wait) throw new Error(`session is already in use: ${sessionId}`);
         if (Date.now() - startedAt >= SNAPSHOT_LOCK_TIMEOUT_MS) {
           throw new Error(`timed out waiting for stored session snapshot lock: ${sessionId}`);
         }
@@ -252,7 +273,11 @@ async function acquireSnapshotLock(
 async function recoverStaleSnapshotLock(lockPath: string): Promise<boolean> {
   const owner = await readSnapshotLockOwner(lockPath);
   if (owner) {
-    if (isProcessAlive(owner.pid)) {
+    if (
+      isProcessAlive(owner.pid) &&
+      (owner.processIdentity === undefined ||
+        (await readProcessIdentity(owner.pid)) === owner.processIdentity)
+    ) {
       return false;
     }
     return await quarantineStaleSnapshotLock(lockPath);
@@ -314,6 +339,8 @@ async function readSnapshotLockOwner(lockPath: string): Promise<SnapshotLockOwne
     if (
       !Number.isInteger(value.pid) ||
       (value.pid ?? 0) <= 0 ||
+      (value.processIdentity !== undefined &&
+        (typeof value.processIdentity !== "string" || value.processIdentity.length === 0)) ||
       typeof value.token !== "string" ||
       value.token.length === 0 ||
       typeof value.createdAt !== "number" ||
@@ -380,6 +407,29 @@ function sessionIdFromSnapshotTempFilename(filename: string): string | undefined
 
 function isOwnedByCurrentUser(uid: number): boolean {
   return typeof process.getuid !== "function" || uid === process.getuid();
+}
+
+async function readProcessIdentity(pid: number): Promise<string> {
+  try {
+    if (process.platform === "linux") {
+      const [bootId, status] = await Promise.all([
+        readFile("/proc/sys/kernel/random/boot_id", "utf8"),
+        readFile(`/proc/${pid}/stat`, "utf8"),
+      ]);
+      const startTicks = status.slice(status.lastIndexOf(")") + 2).split(" ")[19];
+      if (!startTicks || !/^\d+$/.test(startTicks)) throw new Error("invalid process start time");
+      return `${bootId.trim()}:${startTicks}`;
+    }
+    const { stdout } = await promisify(execFile)("ps", ["-p", String(pid), "-o", "lstart="], {
+      env: { ...process.env, LC_ALL: "C" },
+      timeout: 5_000,
+    });
+    if (!stdout.trim()) throw new Error("missing process start time");
+    return stdout.trim();
+  } catch (error) {
+    if (!isProcessAlive(pid)) return "exited";
+    throw error;
+  }
 }
 
 function isProcessAlive(pid: number): boolean {

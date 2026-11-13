@@ -1458,6 +1458,81 @@ describe("LocalSessionHost", () => {
     },
   );
 
+  it.each(["persisting", "accepted"])(
+    "cancels a turn interrupted while %s before model work",
+    async (stage) => {
+      const store = new MemorySessionStore();
+      const host = createHost(store);
+      const session = await host.createSession(localCreateInput);
+      const saving = deferred();
+      const resume = deferred();
+      const commit = store.commitSessionSnapshot.bind(store);
+      store.commitSessionSnapshot = async (snapshot, options) => {
+        if (snapshot.turns["accepting-turn"]) {
+          saving.resolve();
+          await resume.promise;
+        }
+        return commit(snapshot, options);
+      };
+      const run = vi.spyOn(session.runtime, "runTurn");
+      try {
+        const accepting = session.acceptTurn({
+          text: "do not run",
+          historyEntryId: "accepting-turn",
+        });
+        await saving.promise;
+        if (stage === "persisting") session.interruptActiveWork();
+        resume.resolve();
+        const accepted = await accepting;
+        if (stage === "accepted") session.interruptActiveWork();
+        const result = await session.runAcceptedTurn(accepted.userHistoryEntryId);
+        expect(result).toMatchObject({ turn: { status: "aborted" }, response: "" });
+        expect(run).not.toHaveBeenCalled();
+        expect((await session.snapshot()).turns[accepted.userHistoryEntryId]).toMatchObject({
+          state: "settled",
+          outcome: { status: "aborted" },
+        });
+      } finally {
+        resume.resolve();
+        await host.shutdown();
+      }
+    },
+  );
+
+  it("returns a completed turn response after its user entry is compacted away", async () => {
+    const host = createHost(new MemorySessionStore());
+    const session = await host.createSession(localCreateInput);
+    const accepted = await session.acceptTurn({ text: "long task" });
+    const answer = fauxAssistantMessage("final answer");
+    session.runtime.runTurn = async () => {
+      const state = session.runtime.agent.snapshot();
+      session.runtime.agent.restoreState({
+        ...state,
+        revision: state.revision + 1,
+        historyEntries: [],
+      });
+      await session.enqueueRuntimeEvent({
+        type: "assistant_final",
+        historyEntryId: "answer",
+        message: answer,
+        personaId: "test",
+        revision: state.revision + 2,
+      });
+      return { finalMessage: answer, terminalResult: { finalMessage: answer } };
+    };
+    try {
+      const result = await session.runAcceptedTurn(accepted.userHistoryEntryId);
+      expect(result).toMatchObject({ turn: { status: "completed" }, response: "final answer" });
+      expect(
+        (await session.snapshot()).messages.some(
+          (message) => message.id === accepted.userHistoryEntryId,
+        ),
+      ).toBe(false);
+    } finally {
+      await host.shutdown();
+    }
+  });
+
   it("persists and recovers checkpoint-only automatic compaction with its root receipt", async () => {
     const store = new MemorySessionStore();
     const host = createHost(store);
@@ -3970,6 +4045,7 @@ describe("LocalSessionHost", () => {
     await originalSession.session.commitUserText("persisted prompt");
     const storedSnapshot = await originalSession.snapshot();
 
+    await originalHost.shutdown();
     const recoveredHost = createHost(store, {
       now: Date.parse("2027-01-01T00:00:00.000Z"),
     });
@@ -4072,44 +4148,26 @@ describe("LocalSessionHost", () => {
     await recoveredHost.shutdown();
   });
 
-  it("rejects commits from a stale recovered session after another host commits a newer revision", async () => {
+  it("rejects another host before recovery and releases ownership on shutdown", async () => {
     const store = new MemorySessionStore();
-    const originalHost = createHost(store);
-    const originalSession = await originalHost.createSession(localCreateInput);
-    await originalSession.session.commitUserText("base");
-    const storedSnapshot = await originalSession.snapshot();
-
     const firstHost = createHost(store);
     const secondHost = createHost(store);
-    const firstSession = await firstHost.observeSession(storedSnapshot.sessionId);
-    const secondSession = await secondHost.observeSession(storedSnapshot.sessionId);
-    if (!firstSession || !secondSession) {
-      throw new Error("expected both sessions to recover");
+    try {
+      const first = await firstHost.createSession(localCreateInput);
+      await first.record({ text: "base" });
+      const snapshot = await first.snapshot();
+      await expect(secondHost.observeSession(first.sessionId)).rejects.toThrow("already in use");
+      expect(await store.loadSession(first.sessionId)).toEqual(snapshot);
+      await firstHost.shutdown();
+      const recovered = await secondHost.observeSession(first.sessionId);
+      await recovered.record({ text: "continued" });
+      expect((await recovered.snapshot()).messages.at(-1).message.content).toEqual([
+        { type: "text", text: "continued" },
+      ]);
+    } finally {
+      await firstHost.shutdown();
+      await secondHost.shutdown();
     }
-
-    await expect(firstSession.record({ text: "first update" })).resolves.toEqual(
-      expect.objectContaining({
-        snapshot: expect.objectContaining({
-          revision: storedSnapshot.revision + 1,
-        }),
-      }),
-    );
-    await expect(secondSession.record({ text: "stale update" })).rejects.toThrow(
-      "stored session snapshot revision conflict",
-    );
-    await expect(store.loadSession(storedSnapshot.sessionId)).resolves.toEqual(
-      expect.objectContaining({
-        revision: storedSnapshot.revision + 1,
-        messages: expect.arrayContaining([
-          expect.objectContaining({
-            message: expect.objectContaining({
-              role: "user",
-              content: [{ type: "text", text: "first update" }],
-            }),
-          }),
-        ]),
-      }),
-    );
   });
 
   it("coalesces concurrent recovery of the same stored session into one live handle", async () => {
@@ -4494,43 +4552,35 @@ describe("LocalSessionHost", () => {
     await expect(host.shutdown()).rejects.toThrow();
   });
 
-  it("waits for disposal generations that start while collection is pending", async () => {
-    const started = [deferred(), deferred()];
-    const finish = [deferred(), deferred()];
-    const environments = started.map((gate, index) => {
-      const environment = createTestExecutionEnvironment();
-      environment.dispose = async () => {
-        gate.resolve();
-        await finish[index].promise;
-      };
-      return environment;
-    });
+  it("waits for eviction disposal before restoring a session", async () => {
+    const started = deferred();
+    const finish = deferred();
+    const environment = createTestExecutionEnvironment();
+    environment.dispose = async () => {
+      started.resolve();
+      await finish.promise;
+    };
+    const restore = vi.fn(async () => createTestExecutionEnvironment());
     const host = createHost(new MemorySessionStore(), {
       executionEnvironmentResolver: {
-        resolve: async () => environments[0],
+        resolve: async () => environment,
         canRestore: () => true,
-        restore: async () => environments[1],
+        restore,
       },
     });
     try {
       const session = await host.createSession(localCreateInput);
       host.releaseSession(session);
-      await started[0].promise;
-      let collected = false;
-      const collecting = host.collectSession(session.sessionId).then((result) => {
-        collected = true;
-        return result;
-      });
-      const reopened = await host.observeSession(session.sessionId);
-      host.releaseSession(reopened);
-      await started[1].promise;
-      finish[0].resolve();
+      await started.promise;
+      const reopening = host.observeSession(session.sessionId);
       await new Promise((resolve) => setImmediate(resolve));
-      expect(collected).toBe(false);
-      finish[1].resolve();
-      expect(await collecting).toEqual({ disposed: true });
+      expect(restore).not.toHaveBeenCalled();
+      finish.resolve();
+      const reopened = await reopening;
+      expect(reopened).toBeDefined();
+      expect(restore).toHaveBeenCalledTimes(1);
     } finally {
-      for (const gate of finish) gate.resolve();
+      finish.resolve();
       await host.shutdown();
     }
   });
@@ -4696,10 +4746,11 @@ describe("LocalSessionHost", () => {
       host.releaseSession(session);
       await disposalStarted.promise;
 
-      const reopened = await host.observeSession(session.sessionId);
+      const reopening = host.observeSession(session.sessionId);
+      finishDisposal.resolve();
+      const reopened = await reopening;
       expect(reopened).toBeDefined();
       expect(reopened).not.toBe(session);
-      finishDisposal.resolve();
       await session.dispose();
 
       const removed = await reopened.record({ text: "after disposal" });

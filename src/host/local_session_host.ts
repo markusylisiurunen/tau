@@ -174,6 +174,10 @@ export class LocalSessionHost implements TauSessionHost {
     Promise<LocalHostedSessionHandle | undefined>
   >();
   private readonly store: SessionStore;
+  private readonly sessionLeases = new Map<
+    string,
+    { release: () => Promise<void>; references: number }
+  >();
   private readonly history: HistoryManager;
   private readonly historyRemote?: HistoryRemoteTarget;
   private readonly onShutdown?: () => Promise<void>;
@@ -223,7 +227,10 @@ export class LocalSessionHost implements TauSessionHost {
     }
 
     let hostedSession: LocalHostedSessionHandle;
+    const sessionId = randomUUID();
+    let lease: SessionLease | undefined;
     try {
+      lease = await this.acquireSessionLease(sessionId);
       const result = await executionEnvironment
         .getToolExecutionBackend()
         .runNodeScript('process.stdout.write(require("node:os").hostname())', [], {
@@ -256,11 +263,18 @@ export class LocalSessionHost implements TauSessionHost {
         machine: result.stdout.trim(),
         cwd: executionEnvironment.snapshot().cwd,
       });
-      hostedSession = await this.createLocalSessionHandle(executionEnvironment, undefined, {
-        ...input,
-        attributes,
-      });
+      hostedSession = await this.createLocalSessionHandle(
+        sessionId,
+        lease,
+        executionEnvironment,
+        undefined,
+        {
+          ...input,
+          attributes,
+        },
+      );
     } catch (error) {
+      await lease?.release();
       if (!this.sessionsHasExecutionEnvironment(executionEnvironment)) {
         await executionEnvironment.dispose();
       }
@@ -279,11 +293,14 @@ export class LocalSessionHost implements TauSessionHost {
   private async createRecoveredSession(
     snapshot: SessionProtocolSnapshot,
     executionEnvironment: ExecutionEnvironment,
+    lease: SessionLease,
   ): Promise<LocalHostedSessionHandle> {
     let hostedSession: LocalHostedSessionHandle | undefined;
     try {
       const recovered = normalizeRecoveredSnapshot(snapshot);
       hostedSession = await this.createLocalSessionHandle(
+        snapshot.sessionId,
+        lease,
         executionEnvironment,
         recovered.snapshot,
         undefined,
@@ -327,6 +344,8 @@ export class LocalSessionHost implements TauSessionHost {
   }
 
   private async createLocalSessionHandle(
+    sessionId: string,
+    lease: SessionLease,
     executionEnvironment: ExecutionEnvironment,
     committedSnapshot?: SessionProtocolSnapshot,
     createParams?: SessionProtocolCreateParams,
@@ -363,6 +382,8 @@ export class LocalSessionHost implements TauSessionHost {
         : { status: "unavailable", reason: "remote-execution" };
     const catalog = createContentCatalogSnapshot(bootstrap, mcpState);
     return this.createLocalSessionHandleFromRuntimeContext(
+      sessionId,
+      lease,
       executionEnvironment,
       runtimeContext,
       bootstrap,
@@ -376,6 +397,8 @@ export class LocalSessionHost implements TauSessionHost {
   }
 
   private async createLocalSessionHandleFromRuntimeContext(
+    sessionId: string,
+    lease: SessionLease,
     executionEnvironment: ExecutionEnvironment,
     runtimeContext: Awaited<ReturnType<ExecutionEnvironment["resolveRuntimeContext"]>>,
     bootstrap: LocalSessionResolvedBootstrap,
@@ -387,7 +410,6 @@ export class LocalSessionHost implements TauSessionHost {
     forceNextSnapshotRevision = false,
   ): Promise<LocalHostedSessionHandle> {
     let hostedSession: LocalHostedSessionHandle;
-    const sessionId = committedSnapshot?.sessionId ?? randomUUID();
     const createdAt = committedSnapshot?.createdAt ?? this.sessionOptions.environment.now();
     const attributes = committedSnapshot?.attributes ?? createParams?.attributes;
     if (!attributes) {
@@ -468,6 +490,7 @@ export class LocalSessionHost implements TauSessionHost {
       committedSnapshot,
       forceNextSnapshotRevision,
       this.sessionOptions.recordUsage ?? appendUsageLogEntry,
+      lease,
       (session, error) => {
         if (error) this.disposalFailures.set(session.sessionId, error);
         this.sessions.delete(session);
@@ -476,6 +499,27 @@ export class LocalSessionHost implements TauSessionHost {
     );
     this.sessions.add(hostedSession);
     return hostedSession;
+  }
+
+  private async acquireSessionLease(sessionId: string): Promise<SessionLease> {
+    let lease = this.sessionLeases.get(sessionId);
+    if (lease) {
+      lease.references += 1;
+    } else {
+      lease = { release: await this.store.acquireSession(sessionId), references: 1 };
+      this.sessionLeases.set(sessionId, lease);
+    }
+    const owned = lease;
+    let released = false;
+    return {
+      release: async () => {
+        if (released) return;
+        released = true;
+        if (--owned.references > 0) return;
+        this.sessionLeases.delete(sessionId);
+        await owned.release();
+      },
+    };
   }
 
   private async resolveSessionBootstrap(
@@ -564,6 +608,11 @@ export class LocalSessionHost implements TauSessionHost {
   }
 
   private async recoverSession(sessionId: string): Promise<LocalHostedSessionHandle | undefined> {
+    await Promise.all(
+      [...this.sessionEvictions]
+        .filter(([session]) => session.sessionId === sessionId)
+        .map(([, eviction]) => eviction),
+    );
     await this.refreshStore();
     if (this.shuttingDown) {
       return undefined;
@@ -574,27 +623,36 @@ export class LocalSessionHost implements TauSessionHost {
       return liveSession;
     }
 
-    const snapshot = await this.store.loadSession(sessionId);
-    if (!snapshot || !this.canRestoreSnapshot(snapshot)) {
-      return undefined;
+    const lease = await this.acquireSessionLease(sessionId);
+    try {
+      const snapshot = await this.store.loadSession(sessionId);
+      if (!snapshot || !this.canRestoreSnapshot(snapshot)) {
+        await lease.release();
+        return undefined;
+      }
+
+      const executionEnvironment = await this.sessionOptions.executionEnvironmentResolver.restore(
+        snapshot.executionEnvironment,
+      );
+
+      if (this.shuttingDown) {
+        await this.disposeRecoveredEnvironment(sessionId, executionEnvironment);
+        await lease.release();
+        return undefined;
+      }
+
+      const restoredLiveSession = this.findLiveSession(sessionId);
+      if (restoredLiveSession) {
+        await this.disposeRecoveredEnvironment(sessionId, executionEnvironment);
+        await lease.release();
+        return restoredLiveSession;
+      }
+
+      return await this.createRecoveredSession(snapshot, executionEnvironment, lease);
+    } catch (error) {
+      await lease.release();
+      throw error;
     }
-
-    const executionEnvironment = await this.sessionOptions.executionEnvironmentResolver.restore(
-      snapshot.executionEnvironment,
-    );
-
-    if (this.shuttingDown) {
-      await this.disposeRecoveredEnvironment(sessionId, executionEnvironment);
-      return undefined;
-    }
-
-    const restoredLiveSession = this.findLiveSession(sessionId);
-    if (restoredLiveSession) {
-      await this.disposeRecoveredEnvironment(sessionId, executionEnvironment);
-      return restoredLiveSession;
-    }
-
-    return await this.createRecoveredSession(snapshot, executionEnvironment);
   }
 
   private canRestoreSnapshot(snapshot: SessionProtocolSnapshot): boolean {
@@ -847,9 +905,13 @@ export class LocalSessionHost implements TauSessionHost {
 type HostedSteeringAssociation = { userHistoryEntryId: string };
 type HostedSteeringResult = HostedSteeringAssociation & {
   turn: SessionProtocolTurnOutcome;
+  response: string;
 };
 
+type SessionLease = { release(): Promise<void> };
+
 type ActiveLogicalTurn = {
+  response: string;
   cancellationRequested: boolean;
 };
 
@@ -910,6 +972,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   private notificationWakeScheduled = false;
   private activeTurnPromise?: Promise<unknown>;
   private activeLogicalTurn?: ActiveLogicalTurn;
+  private readonly cancelledAcceptedTurns = new Set<string>();
   private disposePromise?: Promise<void>;
   private disposing = false;
   private costTotal = 0;
@@ -935,6 +998,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     committedSnapshot: SessionProtocolSnapshot | undefined,
     forceNextSnapshotRevision: boolean,
     private readonly recordUsage: UsageRecorder,
+    private readonly lease: SessionLease,
     private readonly removeFromHost: (
       session: LocalHostedSessionHandle,
       error?: AggregateError,
@@ -1169,8 +1233,10 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     try {
       await this.session.commitUserText(options.text, { historyEntryId: userHistoryEntryId });
       return { snapshot: await this.snapshot(), userHistoryEntryId };
-    } finally {
+    } catch (error) {
       this.pendingAcceptedTurnHistoryEntryIds.delete(userHistoryEntryId);
+      this.cancelledAcceptedTurns.delete(userHistoryEntryId);
+      throw error;
     }
   }
 
@@ -1205,10 +1271,15 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     if (acceptedTurn.state === "settled") {
       throw new Error(`turn '${userHistoryEntryId}' was already settled`);
     }
-    const turn = await this.runLogicalTurn((logicalTurn) =>
-      this.runAndSettleTurn(logicalTurn, userHistoryEntryId, { notificationTurn: false }),
-    );
-    return { userHistoryEntryId, turn };
+    this.pendingAcceptedTurnHistoryEntryIds.delete(userHistoryEntryId);
+    const cancelled = this.cancelledAcceptedTurns.delete(userHistoryEntryId);
+    return await this.runLogicalTurn(async (logicalTurn) => {
+      logicalTurn.cancellationRequested = cancelled;
+      const turn = await this.runAndSettleTurn(logicalTurn, userHistoryEntryId, {
+        notificationTurn: false,
+      });
+      return { userHistoryEntryId, turn, response: logicalTurn.response };
+    });
   }
 
   private async runAndSettleTurn(
@@ -1277,6 +1348,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     }
     const logicalTurn: ActiveLogicalTurn = {
       cancellationRequested: false,
+      response: "",
     };
     this.activeLogicalTurn = logicalTurn;
     const run = execute(logicalTurn);
@@ -1341,21 +1413,29 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
   interruptTurn(): boolean {
     this.assertActive();
+    for (const id of this.pendingAcceptedTurnHistoryEntryIds) this.cancelledAcceptedTurns.add(id);
     const logicalTurn = this.activeLogicalTurn;
     if (logicalTurn) {
       logicalTurn.cancellationRequested = true;
     }
-    const interrupted = this.runtime.interruptTurn() || Boolean(logicalTurn);
+    const interrupted =
+      this.runtime.interruptTurn() ||
+      Boolean(logicalTurn) ||
+      this.pendingAcceptedTurnHistoryEntryIds.size > 0;
     if (interrupted) this.notificationWakePaused = true;
     return interrupted;
   }
 
   interruptActiveWork(): boolean {
+    for (const id of this.pendingAcceptedTurnHistoryEntryIds) this.cancelledAcceptedTurns.add(id);
     const logicalTurn = this.activeLogicalTurn;
     if (logicalTurn) {
       logicalTurn.cancellationRequested = true;
     }
-    const interruptedTurn = this.runtime.interruptTurn() || Boolean(logicalTurn);
+    const interruptedTurn =
+      this.runtime.interruptTurn() ||
+      Boolean(logicalTurn) ||
+      this.pendingAcceptedTurnHistoryEntryIds.size > 0;
     // Only stopping the main agent pauses automatic turns, not cancelling side work.
     if (interruptedTurn) this.notificationWakePaused = true;
     let interrupted = interruptedTurn;
@@ -1403,7 +1483,15 @@ class LocalHostedSessionHandle implements LocalHostedSession {
           async (association) => {
             const turn = turnOutcomeFromResult(association.result, association.result.finalMessage);
             await this.settleTurn(association.historyEntryId, turn);
-            return { userHistoryEntryId: association.historyEntryId, turn };
+            return {
+              userHistoryEntryId: association.historyEntryId,
+              turn,
+              response:
+                association.result.finalMessage?.content
+                  .filter((block) => block.type === "text")
+                  .map((block) => block.text)
+                  .join("") ?? "",
+            };
           },
           async (error) => {
             const association = await submission.applied;
@@ -1951,6 +2039,11 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       errors.push(error);
     }
 
+    try {
+      await this.lease.release();
+    } catch (error) {
+      errors.push(error);
+    }
     const error =
       errors.length > 0
         ? new AggregateError(errors, "failed to dispose hosted session")
@@ -2687,9 +2780,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
           ],
           { persist: true },
         );
-        if (turn) {
-          this.pendingAcceptedTurnHistoryEntryIds.delete(event.historyEntryId);
-        }
         return;
       }
       case "history_rewound": {
@@ -2709,6 +2799,12 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         return;
       }
       case "assistant_final": {
+        if (this.activeLogicalTurn) {
+          this.activeLogicalTurn.response = event.message.content
+            .filter((block) => block.type === "text")
+            .map((block) => block.text)
+            .join("");
+        }
         this.draftAssistantMessage = undefined;
         const messageState = event.message.stopReason === "aborted" ? "interrupted" : "committed";
         if (messageState === "committed") {

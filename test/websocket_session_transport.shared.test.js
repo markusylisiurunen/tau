@@ -122,7 +122,7 @@ function createHostedSession(sessionId, sessions, options = {}) {
       return await hostedSession.record(options);
     },
     async runAcceptedTurn(userHistoryEntryId) {
-      return { userHistoryEntryId, turn: await hostedSession.runTurn() };
+      return { userHistoryEntryId, turn: await hostedSession.runTurn(), response: "" };
     },
     async runTurn() {
       running = true;
@@ -346,6 +346,7 @@ describe("WebSocketSessionProtocolTransport", () => {
 
       await expect(session.submit("hello")).resolves.toEqual({
         userHistoryEntryId: "history-1",
+        response: "",
         turn: { status: "completed", stopReason: "stop" },
       });
       await expect(session.exec("pwd")).resolves.toEqual(

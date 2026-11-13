@@ -67,6 +67,18 @@ tau attach --session 0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3 ws://127.0.0.1:8787
 
 Without `--session`, `tau attach` opens a selector.
 
+## Run one task from a script
+
+`tau run` runs one turn without the TUI, so a script or another agent, such as Claude Code, can hand a task to Tau. It reads the task from stdin, starts a session in the current directory, and prints the final assistant response. The session ID goes to stderr, and `--json` prints the ID, turn outcome, and response together:
+
+```sh
+tau run --persona gpt-6.1-terra-chatgpt:medium --json <<'TASK'
+Find why the retry test is flaky and fix it. Summarize what you changed.
+TASK
+```
+
+To continue, pass the ID with `--session`. Each call is one turn, and background jobs stop when the command exits. A session open in another Tau process, such as a TUI, cannot be continued until that process closes it. Read the full transcript with [`tau history read`](history.md#export-a-transcript).
+
 ## Session attributes
 
 Each session has creation attributes that never change and are used to filter [history](history.md). Tau sets `machine` and `cwd`. Clients set the others, such as `source` and `repository`.

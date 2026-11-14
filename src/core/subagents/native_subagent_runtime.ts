@@ -1,6 +1,8 @@
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import { AgentRuntime, type AgentSubturnResult, createAgentSpec } from "../agent/agent_runtime.js";
-import type { AgentEvent, AgentEventSink } from "../agent/events.js";
+import type { AgentEvent } from "../agent/events.js";
+import { NativeHistoryAdapter } from "../history/agent_history_recorder.js";
+import type { HistoryRecordSink } from "../history/recorder.js";
 import { resolveAgentModel } from "../runtime/agent_model.js";
 import { createAutoCompactionArchiver } from "../session/auto_compaction_archive.js";
 import type { AgentJobs } from "../tools/agent_jobs.js";
@@ -32,7 +34,8 @@ function nativeContent(content: (TextContent | ImageContent)[]): ContentBlock[] 
 export class NativeSubagentRuntime implements SubagentRuntime {
   private readonly agent: AgentRuntime;
   private readonly jobs: AgentJobs;
-  private readonly historySink?: AgentEventSink;
+  private readonly historySink?: HistoryRecordSink;
+  private readonly historyAdapter = new NativeHistoryAdapter();
   private readonly toolPresentations = new Map<string, ToolRunPresentation>();
   private readonly toolOutcomes = new Map<
     string,
@@ -101,7 +104,9 @@ export class NativeSubagentRuntime implements SubagentRuntime {
       }),
       eventSink: async (event) => {
         await this.recordEvent(event);
-        await this.historySink?.(event);
+        if (this.historySink) {
+          for (const input of this.historyAdapter.translate(event)) await this.historySink(input);
+        }
       },
       clock: options.deps.clock,
       getCompactionContinuationSystemMessages: () => {

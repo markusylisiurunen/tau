@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
+import { HistoryRecorder } from "../dist/core/history/recorder.js";
 import { AgentSupervisor } from "../dist/core/subagents/agent_supervisor.js";
 import { ClaudeCodeRuntime } from "../dist/core/subagents/claude_code_runtime.js";
 import { spawnWithCapture } from "../dist/core/utils/spawn_capture.js";
@@ -26,7 +27,13 @@ const fs = require("node:fs");
 let initialization;
 let firstUuid;
 process.on("SIGTERM", () => { fs.writeFileSync(${JSON.stringify(join(directory, "terminated"))}, "yes"); process.exit(0); });
-const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+const send = (message) => {
+  if (${JSON.stringify(hang)} === "missing-ack") {
+    delete message.user_message_uuid;
+    delete message.user_message_uuids;
+  }
+  process.stdout.write(JSON.stringify(message) + "\\n");
+};
 readline.createInterface({ input: process.stdin }).on("line", line => {
   const message = JSON.parse(line);
   if (message.type === "control_request") {
@@ -43,28 +50,41 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
     fs.writeFileSync(${JSON.stringify(marker)}, JSON.stringify({ message, initialization, cwd: process.cwd(), args: process.argv.slice(2) }));
     const session_id = "ce4518fa-4b3f-44ef-a1a3-2f7edc024b8d";
     send({ type: "system", subtype: "init", session_id });
+    if (${JSON.stringify(outcome)} === "startup-error") {
+      send({ type: "result", subtype: "error_during_execution", is_error: true, session_id, errors: ["startup failed"], total_cost_usd: 0, modelUsage: {} });
+      return;
+    }
     if (${JSON.stringify(hang)} === "steering" && (firstUuid || message.message.content === "initial instruction")) {
       if (!firstUuid) {
         firstUuid = message.uuid;
-        send({ type: "assistant", parent_tool_use_id: null, session_id, message: { id: "first", model: "claude-sonnet-5-5", role: "assistant", content: [{ type: "text", text: "working" }], usage: { input_tokens: 1, output_tokens: 1 } } });
+        send({ uuid: "first", user_message_uuid: message.uuid, type: "assistant", parent_tool_use_id: null, session_id, message: { id: "first", model: "claude-sonnet-5-5", role: "assistant", content: [{ type: "text", text: "working" }], usage: { input_tokens: 1, output_tokens: 1 } } });
         return;
       }
       const finish = (uuid, text) => send({ type: "result", subtype: "success", is_error: false, session_id, result: text, total_cost_usd: 0, modelUsage: {}, user_message_uuid: uuid, user_message_uuids: [uuid] });
+      send({ ...message, session_id, isReplay: true });
+      if (${JSON.stringify(outcome)} === "queued") {
+        send({ uuid: "still-working", type: "assistant", parent_tool_use_id: null, session_id, message: { id: "still-working", role: "assistant", content: [{ type: "text", text: "still working on initial instruction" }], usage: { input_tokens: 1, output_tokens: 1 } } });
+        return;
+      }
+      if (${JSON.stringify(outcome)} === "folded") {
+        send({ uuid: "folded-reply", user_message_uuids: [firstUuid, message.uuid], type: "assistant", parent_tool_use_id: null, session_id, message: { id: "folded-reply", role: "assistant", content: [{ type: "text", text: "acted on steering" }], usage: { input_tokens: 1, output_tokens: 1 } } });
+        return;
+      }
       if (${JSON.stringify(outcome)} !== "success") {
         send({ type: "result", subtype: "error_during_execution", is_error: true, session_id, errors: ["stopped"], total_cost_usd: 0, modelUsage: {}, user_message_uuids: [firstUuid] });
         return;
       }
       finish(firstUuid, "old result");
       setTimeout(() => {
-        send({ type: "assistant", parent_tool_use_id: null, session_id, message: { id: "second", model: "claude-sonnet-5-5", role: "assistant", content: [{ type: "text", text: message.message.content }], usage: { input_tokens: 1, output_tokens: 1 } } });
+        send({ uuid: "second", user_message_uuid: message.uuid, type: "assistant", parent_tool_use_id: null, session_id, message: { id: "second", model: "claude-sonnet-5-5", role: "assistant", content: [{ type: "text", text: message.message.content }], usage: { input_tokens: 1, output_tokens: 1 } } });
         finish(message.uuid, message.message.content);
       }, 20);
       return;
     }
     if (${JSON.stringify(hang)} === true) { setInterval(() => {}, 1000); return; }
-    const stream = (event) => send({ type: "stream_event", parent_tool_use_id: null, session_id, event });
+    const stream = (event) => send({ user_message_uuid: message.uuid, type: "stream_event", parent_tool_use_id: null, session_id, event });
     stream({ type: "message_start", message: { id: "message-1", usage: { input_tokens: 5, output_tokens: 0, cache_read_input_tokens: 7, cache_creation_input_tokens: 2 } } });
-    const assistant = (content, parent_tool_use_id = null) => send({ type: "assistant", parent_tool_use_id, session_id,
+    const assistant = (content, parent_tool_use_id = null) => send({ uuid: "assistant-" + JSON.stringify(content), type: "assistant", parent_tool_use_id, session_id,
       message: { id: "message-1", model: "claude-sonnet-5-5", role: "assistant", content, stop_reason: null,
         usage: { input_tokens: 5, output_tokens: 0, cache_read_input_tokens: 7, cache_creation_input_tokens: 2 } } });
     assistant([{ type: "text", text: "finished" }]);
@@ -77,7 +97,7 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
     send({ type: "user", parent_tool_use_id: "nested-call", session_id, message: { role: "user", content: [
       { type: "tool_result", tool_use_id: "tool-1", content: "nested result", is_error: true }
     ] } });
-    send({ type: "user", parent_tool_use_id: null, session_id, message: { role: "user", content: [
+    send({ uuid: "tool-results", type: "user", parent_tool_use_id: null, session_id, message: { role: "user", content: [
       { type: "tool_result", tool_use_id: "tool-1", content: "large-output".repeat(100000), is_error: false },
       { type: "tool_result", tool_use_id: "tool-2", content: "bad input", is_error: true },
       { type: "tool_result", tool_use_id: "unknown", content: "unknown result" }
@@ -87,7 +107,7 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
     if (${JSON.stringify(hang)} === "after-usage") { setInterval(() => {}, 1000); return; }
     const outcome = ${JSON.stringify(hang)} === "steering" ? "success" : ${JSON.stringify(outcome)};
     send({ type: "result", subtype: outcome === "api_error" ? "success" : outcome,
-      is_error: outcome !== "success", session_id, result: "finished", errors: ["stopped"],
+      is_error: outcome !== "success", user_message_uuid: message.uuid, session_id, result: "finished", errors: ["stopped"],
       total_cost_usd: 0.01, modelUsage: outcome === "error_during_execution" ? {} : {
         "claude-sonnet-5-5": { inputTokens: 5, outputTokens: 3, cacheReadInputTokens: 7, cacheCreationInputTokens: 2, contextWindow: 1000000 },
         "helper": { inputTokens: 2, outputTokens: 1, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, contextWindow: 200000 }
@@ -143,9 +163,11 @@ describe("bundled Claude Agent SDK runner", () => {
     async (outcome) => {
       const directory = mkdtempSync(join(tmpdir(), "tau-claude-steer-"));
       const options = createRuntimeOptions(directory, []);
+      const history = [];
       let sent = false;
       const supervisor = new AgentSupervisor({
         mainAgentId: "main",
+        openHistory: () => async (event) => history.push(event),
         recordUsage: vi.fn(),
         onEvent: (event) => {
           if (event.type === "subagent_activity" && event.activity.type === "assistant" && !sent) {
@@ -180,6 +202,11 @@ describe("bundled Claude Agent SDK runner", () => {
         );
         expect(supervisor.read(state.id).pending).toEqual({ queue: 0, steer: 0 });
         expect(
+          history
+            .filter((event) => event.type === "message" && event.entry.type === "user")
+            .map((event) => event.entry.content),
+        ).toEqual(["initial instruction", "updated instruction"]);
+        expect(
           supervisor
             .getTrace(state.id)
             .trace({ kinds: ["assistant"] })
@@ -193,10 +220,89 @@ describe("bundled Claude Agent SDK runner", () => {
     20_000,
   );
 
+  it.each(["success", "error_during_execution", "startup-error"])(
+    "reports missing input evidence only after execution on %s",
+    async (outcome) => {
+      const directory = mkdtempSync(join(tmpdir(), "tau-claude-evidence-"));
+      const history = [];
+      const runtime = new ClaudeCodeRuntime({
+        ...createRuntimeOptions(directory, []),
+        history: async (event) => history.push(event),
+      });
+      try {
+        fakeClaude(directory, true, "missing-ack", outcome);
+        await runtime.submit("task");
+        expect(history.some((event) => event.type === "diagnostic")).toBe(
+          outcome !== "startup-error",
+        );
+        expect(
+          history.some((event) => event.type === "message" && event.entry.type === "user"),
+        ).toBe(false);
+      } finally {
+        runtime.dispose();
+        rmSync(directory, { recursive: true, force: true });
+      }
+    },
+    20_000,
+  );
+
+  it.each(["folded", "queued"])(
+    "records only consumed %s steering on interruption",
+    async (outcome) => {
+      const directory = mkdtempSync(join(tmpdir(), "tau-claude-fold-"));
+      const history = [];
+      const runtime = new ClaudeCodeRuntime({
+        ...createRuntimeOptions(directory, []),
+        history: async (event) => history.push(event),
+      });
+      let pending;
+      try {
+        fakeClaude(directory, true, "steering", outcome);
+        pending = runtime.submit("initial instruction");
+        await vi.waitFor(() =>
+          expect(history.some((event) => event.entry?.content === "working")).toBe(true),
+        );
+        runtime.steer("updated instruction");
+        const reply =
+          outcome === "folded" ? "acted on steering" : "still working on initial instruction";
+        await vi.waitFor(() =>
+          expect(history.some((event) => event.entry?.content === reply)).toBe(true),
+        );
+        runtime.interrupt();
+        await pending;
+        expect(
+          history.filter((event) => event.type === "message").map((event) => event.entry.content),
+        ).toEqual([
+          "initial instruction",
+          "working",
+          ...(outcome === "folded" ? ["updated instruction"] : []),
+          reply,
+        ]);
+      } finally {
+        runtime.dispose();
+        await pending;
+        rmSync(directory, { recursive: true, force: true });
+      }
+    },
+    20_000,
+  );
+
   it("initializes the real SDK and sends the prompt only after subscription authentication", async () => {
     const directory = mkdtempSync(join(tmpdir(), "tau-claude-runner-"));
     const events = [];
-    const runtime = new ClaudeCodeRuntime(createRuntimeOptions(directory, events));
+    const entries = [];
+    const recorder = new HistoryRecorder({
+      append: (batch) => {
+        entries.push(...batch);
+      },
+      truncateFromSources: () => {},
+    });
+    const runtime = new ClaudeCodeRuntime({
+      ...createRuntimeOptions(directory, events),
+      history: async (event) => {
+        expect(recorder.record(event)).toBeUndefined();
+      },
+    });
     try {
       const marker = fakeClaude(directory, true);
       const result = await runtime.submit("perform the task");
@@ -204,6 +310,16 @@ describe("bundled Claude Agent SDK runner", () => {
         outcome: { status: "succeeded", response: "finished" },
         unconsumed: [],
       });
+      expect(entries.map((entry) => entry.type)).toEqual(["user", "assistant", "tool", "tool"]);
+      expect(entries[0].content).toBe("perform the task");
+      expect(
+        entries
+          .filter((entry) => entry.type === "tool")
+          .map(({ name, arguments: args, outcome }) => ({ name, args, outcome })),
+      ).toEqual([
+        { name: "Bash", args: { command: "npm test" }, outcome: "succeeded" },
+        { name: "Read", args: null, outcome: "failed" },
+      ]);
       const sent = JSON.parse(readFileSync(marker, "utf8"));
       expect(sent.message.message.content).toBe("perform the task");
       expect(JSON.stringify(sent.args)).toContain("claude-sonnet-5-5");
@@ -242,6 +358,18 @@ describe("bundled Claude Agent SDK runner", () => {
       expect(usage.reduce((total, event) => total + event.entry.usage.input, 0)).toBe(7);
       expect(usage.reduce((total, event) => total + event.entry.usage.output, 0)).toBe(4);
       expect(usage.at(-1)).toMatchObject({ contextTokens: 17, contextWindow: 1000000 });
+      await runtime.submit("follow up");
+      expect(entries.map((entry) => entry.type)).toEqual([
+        "user",
+        "assistant",
+        "tool",
+        "tool",
+        "user",
+        "assistant",
+        "tool",
+        "tool",
+      ]);
+      expect(entries.at(-4).content).toBe("follow up");
     } finally {
       runtime.dispose();
       rmSync(directory, { recursive: true, force: true });
@@ -351,7 +479,19 @@ describe("bundled Claude Agent SDK runner", () => {
   it("rejects API authentication before giving the CLI a task", async () => {
     const directory = mkdtempSync(join(tmpdir(), "tau-claude-auth-"));
     const events = [];
-    const runtime = new ClaudeCodeRuntime(createRuntimeOptions(directory, events));
+    const entries = [];
+    const recorder = new HistoryRecorder({
+      append: (batch) => {
+        entries.push(...batch);
+      },
+      truncateFromSources: () => {},
+    });
+    const runtime = new ClaudeCodeRuntime({
+      ...createRuntimeOptions(directory, events),
+      history: async (event) => {
+        expect(recorder.record(event)).toBeUndefined();
+      },
+    });
     try {
       const marker = fakeClaude(directory, false);
       await expect(runtime.submit("must not run")).resolves.toMatchObject({

@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AgentHistoryRecorder } from "../dist/core/history/agent_history_recorder.js";
 import { HistoryManager } from "../dist/core/history/history_manager.js";
 import { LocalHistoryStore } from "../dist/core/history/local_history_store.js";
+import { HistoryRecorder } from "../dist/core/history/recorder.js";
 
 const session = { sessionId: "session", attributes: { source: "test" }, createdAt: 1 };
 const entry = (id) => ({ id, type: "user", content: id, sourceIds: [id], timestamp: 2 });
@@ -286,6 +287,55 @@ describe("native agent history projection", () => {
       expect((await store.read({ sessionId: session.sessionId, limit: 100 })).entries).toEqual([
         before.entries[0],
       ]);
+    } finally {
+      manager.close();
+    }
+  });
+});
+
+describe("shared history recording", () => {
+  it("pairs parallel calls, drops unfinished calls at turn boundaries, and retains parent-linked history", async () => {
+    const store = new LocalHistoryStore(":memory:");
+    const manager = new HistoryManager(store);
+    const recorder = new HistoryRecorder(
+      manager.openSession({ ...session, parentSessionId: "parent" }),
+    );
+    const call = (callId) => ({
+      type: "toolCall",
+      callId,
+      sourceId: "assistant",
+      name: "bash",
+      arguments: { command: callId },
+    });
+    const result = (callId) => ({
+      type: "toolResult",
+      callId,
+      sourceId: `${callId}:result`,
+      timestamp: 3,
+      result: [{ type: "text", text: callId }],
+      outcome: "succeeded",
+    });
+    try {
+      recorder.record(call("a"));
+      recorder.record(call("b"));
+      recorder.record(call("unfinished"));
+      recorder.record(result("b"));
+      recorder.record(result("a"));
+      recorder.record({ type: "endTurn" });
+      expect(recorder.record(result("unfinished"))).toEqual(expect.any(String));
+      recorder.record({ type: "message", entry: entry("follow-up") });
+      await manager.flush();
+      const saved = await store.read({ sessionId: session.sessionId, limit: 100 });
+      expect(saved.session.parentSessionId).toBe("parent");
+      expect(saved.entries.map((entry) => entry.id)).toEqual(["b", "a", "follow-up"]);
+      expect(saved.entries[0]).toMatchObject({
+        arguments: { command: "b" },
+        result: [{ type: "text", text: "b" }],
+        sourceIds: ["assistant", "b:result"],
+      });
+      recorder.record({ type: "rewind", sourceIds: ["assistant"] });
+      await manager.flush();
+      expect((await store.read({ sessionId: session.sessionId, limit: 100 })).entries).toEqual([]);
     } finally {
       manager.close();
     }

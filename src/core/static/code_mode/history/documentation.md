@@ -61,7 +61,7 @@ Without filters, search returns the most recently updated sessions without a par
 
 Timestamps are Unix milliseconds. A digest can be absent or stale; `updatedThroughEntryId` identifies the latest entry it covers. Snippets are bounded excerpts. A digest or snippet may already answer the question; read the transcript only when needed. When `webUrl` is present, return it directly if the user asks for a conversation link. Local-only sessions have no browser URL.
 
-A session with `parentSessionId` is the conversation of a background worker started by that parent session. Its `sessionId` is the worker's ID from `tau.agents`, and it records the worker's whole lifetime. Its attributes are the parent's, except that `cwd` is the worker's working directory. `childCount` is the number of direct children. It can lag in a shared remote collection, so a child may still be on its way. Claude Code workers are not recorded, so their IDs are not in history. Read a worker's session here when `tau.agents` no longer has that worker, such as a worker from an earlier session or from before a Tau restart.
+A session with `parentSessionId` is the conversation of a background worker started by that parent session. Its `sessionId` is the worker's ID from `tau.agents`, and it records the worker's whole lifetime. Its attributes are the parent's, except that `cwd` is the worker's working directory. `childCount` is the number of direct children. It can lag in a shared remote collection, so a child may still be on its way. Read a worker's session here when `tau.agents` no longer has that worker, such as a worker from an earlier session or from before a Tau restart.
 
 ```js
 const page = await tau.history.search({

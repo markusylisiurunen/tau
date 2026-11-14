@@ -131,9 +131,9 @@ Remote sessions shape the architecture: client, host, and execution environment 
 - Workers are general-purpose, without named types or definitions. Only the launch-model allowlist is configurable.
 - Agents manage descendants through `tau.agents` and wait with `wait_for_agents`. Both bind the caller's identity, so the model never supplies a parent or caller ID.
 - Native children inherit the immediate parent's prompt, model, settings, working directory, and eligible tools. A worker in another directory rebuilds only target-dependent context, and persona and tool policy stay with the parent.
-- Native and Claude Code runtimes implement one contract, `src/core/subagents/runtime.ts`, so a new runtime adds an adapter and uses the shared trace recorder. The supervisor owns queued input, and a runtime only delivers steering into its active turn.
+- Native and Claude Code runtimes implement one contract, `src/core/subagents/runtime.ts`, so a new runtime adds an adapter that feeds the shared trace recorder and the history recorder in `src/core/history/recorder.ts`. An adapter records input only after the worker consumes it, and never invents a result for a tool call that did not finish, because history must show only what the worker did. The supervisor owns queued input, and a runtime only delivers steering into its active turn.
 - Only input from an ancestor wakes an idle worker. Its jobs, notifications, and finishing children do not.
-- Claude Code workers resolve their own model, instructions, skills, credentials, and MCP servers on the execution environment. They cannot start subagents and are not recorded in history. Never copy Claude credentials to the host, forward Tau's MCP connections to Claude Code, or use Claude transcripts for recovery.
+- Claude Code workers resolve their own model, instructions, skills, credentials, and MCP servers on the execution environment. They cannot start subagents. Never copy Claude credentials to the host, forward Tau's MCP connections to Claude Code, or use Claude transcripts for recovery.
 
 ## Sessions and protocol
 

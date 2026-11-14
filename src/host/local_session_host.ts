@@ -7,6 +7,7 @@ import type { AgentEvent, AgentTurnFailure } from "../core/agent/events.js";
 import { resolvePromptTemplateWithBackend, type SessionConfig } from "../core/config/index.js";
 import { AgentHistoryRecorder } from "../core/history/agent_history_recorder.js";
 import type { HistoryManager } from "../core/history/history_manager.js";
+import { HistoryRecorder } from "../core/history/recorder.js";
 import type { HistoryRemoteTarget } from "../core/history/types.js";
 import { McpManager } from "../core/mcp/manager.js";
 import type { RemoteModelCatalogSnapshot } from "../core/models/remote_catalog.js";
@@ -436,7 +437,7 @@ export class LocalSessionHost implements TauSessionHost {
       subagentEventSink: async (event) => await hostedSession.recordSubagentEvent(event),
       history: this.history.query(this.historyRemote),
       openSubagentHistory: (child) => {
-        const recorder = new AgentHistoryRecorder(
+        const recorder = new HistoryRecorder(
           this.history.openSession(
             {
               sessionId: child.sessionId,

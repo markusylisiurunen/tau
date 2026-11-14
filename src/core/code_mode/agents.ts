@@ -316,7 +316,7 @@ Content is inline when it is at most 4,096 bytes as JSON and has no images. Othe
 
 Each worker keeps its newest 4,096 entries, up to 64 MiB in total. Older entries and their references are then removed, and \`historyEvicted\` is \`true\`.
 
-A trace ends with its worker. If \`tau.history\` is available and your request calls for past transcripts, you can read a native Tau worker's saved conversation with \`tau.history.read\`, using the worker's ID as \`sessionId\`. Claude Code workers have no saved conversation there.
+A trace ends with its worker. If \`tau.history\` is available and your request calls for past transcripts, you can read a worker's saved conversation with \`tau.history.read\`, using the worker's ID as \`sessionId\`.
 
 ## \`tau.agents.readText(options)\`
 

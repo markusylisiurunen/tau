@@ -1,9 +1,14 @@
+import { parseArgs } from "node:util";
+import { z } from "zod";
 import { createDefaultConfigDeps } from "../config/deps.js";
 import { loadHostConfig } from "../config/ownership.js";
 import { resolveHistoryRemoteTarget } from "./config.js";
+import { historyExportSchema, readHistoryExport, renderHistoryMarkdown } from "./export.js";
 import { HistoryManager } from "./history_manager.js";
 import { getDefaultHistoryDatabasePath, LocalHistoryStore } from "./local_history_store.js";
+import { RemoteHistoryClient } from "./remote_history_client.js";
 import { destroyHistoryService, setupHistoryService } from "./setup.js";
+import type { HistoryQuery } from "./types.js";
 
 export class HistoryCliError extends Error {
   constructor(message: string) {
@@ -18,6 +23,8 @@ export function printHistoryHelp(log: (line: string) => void = console.log): voi
       "usage:",
       "  tau history setup --domain <domain> --zone-name <zone> [--api-key <key>] [--viewer-password <password>]  # Workers Paid",
       "  tau history destroy --yes",
+      "  tau history read <id> [--source local|remote] [--format json|markdown-compact|markdown-full]",
+      "  tau history read --schema",
       "  tau history status",
       "  tau history retry --session <session-id>",
     ].join("\n"),
@@ -36,6 +43,10 @@ export async function runHistoryCommand(
   }
 
   try {
+    if (subcommand === "read") {
+      await runHistoryReadCommand(args, { ...options, stdout });
+      return;
+    }
     if (subcommand === "status" || subcommand === "retry") {
       let sessionId: string | undefined;
       if (subcommand === "retry" && args.length === 2 && args[0] === "--session") {
@@ -148,4 +159,87 @@ function parseValue(
   const value = argv[index + 1];
   if (!value || value.startsWith("-")) throw new Error(`missing value for ${argument}`);
   return { value, nextIndex: index + 1 };
+}
+
+export const historyReadHelp = `usage:
+  tau history read <id> [--source local|remote] [--format json|markdown-compact|markdown-full]
+  tau history read --schema
+
+print the entire recorded transcript of a session.
+
+formats:
+  json              default. { session, entries } with recorded payloads, including
+                    image data. session.childSessionIds lists direct child sessions,
+                    which you can read the same way.
+  markdown-compact  conversation text in full, with tool arguments shortened to 256
+                    estimated tokens and results to 512, cut from the middle.
+  markdown-full     conversation text and tool payloads in full.
+
+both Markdown formats put session metadata in YAML frontmatter and show images
+as placeholders.
+
+sources:
+  local   default. this host's history database.
+  remote  the configured shared history service, without falling back to local.
+
+--schema prints the JSON Schema of the json format, without opening history.
+history does not record reasoning, and text that a tool or the remote service
+already truncated cannot be restored.
+
+example:
+  tau history read <id> | jq '.entries[] | select(.type == "assistant") | .content'`;
+
+export async function runHistoryReadCommand(
+  argv: string[],
+  options: { env?: NodeJS.ProcessEnv; stdout: (text: string) => void },
+): Promise<void> {
+  const { values, positionals } = parseArgs({
+    args: argv,
+    allowPositionals: true,
+    options: {
+      help: { type: "boolean", short: "h" },
+      schema: { type: "boolean" },
+      source: { type: "string" },
+      format: { type: "string" },
+    },
+  });
+  if (values.help) {
+    options.stdout(historyReadHelp);
+    return;
+  }
+  if (values.schema) {
+    if (positionals.length || values.source || values.format)
+      throw new Error("--schema cannot be combined with a session, source, or format");
+    options.stdout(JSON.stringify(z.toJSONSchema(historyExportSchema), null, 2));
+    return;
+  }
+  if (positionals.length !== 1 || !positionals[0]?.trim())
+    throw new Error("tau history read requires one session ID");
+  const format = values.format ?? "json";
+  const source = values.source ?? "local";
+  if (!["json", "markdown-compact", "markdown-full"].includes(format))
+    throw new Error("history format must be json, markdown-compact, or markdown-full");
+  if (source !== "local" && source !== "remote")
+    throw new Error("history source must be local or remote");
+  const deps = createDefaultConfigDeps();
+  let manager: HistoryManager | undefined;
+  let query: HistoryQuery;
+  if (source === "remote") {
+    const target = resolveHistoryRemoteTarget(loadHostConfig(process.cwd(), deps), options.env);
+    if (!target) throw new Error("remote history is not configured on this host");
+    query = new RemoteHistoryClient(target);
+  } else {
+    manager = HistoryManager.open(getDefaultHistoryDatabasePath(deps.env.home()));
+    query = manager.query();
+  }
+  try {
+    const data = await readHistoryExport(query, positionals[0]);
+    options.stdout(
+      format === "json"
+        ? JSON.stringify(data, null, 2)
+        : renderHistoryMarkdown(data, format === "markdown-compact").trimEnd(),
+    );
+  } finally {
+    manager?.close();
+  }
 }

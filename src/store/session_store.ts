@@ -6,6 +6,7 @@ export type SessionStoreCommitOptions = {
 };
 
 export interface SessionStore {
+  acquireSession(sessionId: string): Promise<() => Promise<void>>;
   commitSessionSnapshot(
     snapshot: SessionProtocolSnapshot,
     options?: SessionStoreCommitOptions,

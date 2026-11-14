@@ -12,7 +12,7 @@ A session has three parts: the client you interact with, the host that runs the 
 
 - **Work in a project.** The agent runs shell commands, edits files, searches the web, and can combine these in small programs that do many steps in one call. You can connect [MCP servers](docs/mcp.md) and add your own tools.
 - **Follow your setup.** [Personas](docs/personas.md) choose the model, instructions, reasoning level, and tools. Projects add `AGENTS.md` instructions, prompt templates, and [skills](docs/instructions-and-skills.md).
-- **Delegate.** The agent can start [subagents](docs/subagents.md) for parallel work, including Claude Code.
+- **Delegate.** The agent can start [subagents](docs/subagents.md) for parallel work, including Claude Code. Other agents can hand Tau a task with [`tau run`](docs/sessions.md#run-one-task-from-a-script).
 - **Run elsewhere.** `tau serve` and `tau attach` run [remote sessions](docs/remote-sessions.md). The [Telegram runner](docs/telegram.md) gives each chat a session in a project workspace. The [Node SDK](docs/sdk.md) and the [session protocol](docs/session-protocol.md) let you build your own clients.
 - **Remember.** Past sessions are [searchable](docs/history.md), locally or through a shared service across machines.
 

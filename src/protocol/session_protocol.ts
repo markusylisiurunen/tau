@@ -17,7 +17,7 @@ import {
 import { environmentVariablesSchema } from "./environment_variables.js";
 import { type IntermediateSystemMessage, isIntermediateSystemMessage } from "./system_message.js";
 
-export const SESSION_PROTOCOL_VERSION = 20 as const;
+export const SESSION_PROTOCOL_VERSION = 21 as const;
 export const MIN_AUTO_COMPACT_THRESHOLD_TOKENS = 50_000;
 export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_IMAGES = 16;
 export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_CONTENT_BLOCKS = 1024;
@@ -373,6 +373,7 @@ export type SessionProtocolTurnResult = {
 };
 
 export type SessionProtocolUserMessageTurnResult = SessionProtocolTurnResult & {
+  response: string;
   userHistoryEntryId: string;
 };
 export type SessionProtocolSubmitResult = SessionProtocolUserMessageTurnResult;
@@ -3447,6 +3448,7 @@ const sessionProtocolRetryResultSchema = sessionProtocolTurnResultSchema;
 
 const sessionProtocolSubmitWithUserResultSchema = sessionProtocolTurnResultSchema
   .extend({
+    response: z.string(),
     userHistoryEntryId: nonEmptyStringSchema,
   })
   .strip();

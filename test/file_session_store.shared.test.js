@@ -1,3 +1,5 @@
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { access, chmod, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -57,6 +59,48 @@ async function withTempStore(test) {
 }
 
 describe("FileSessionStore", () => {
+  it("excludes another process and recovers ownership after its exit", async () => {
+    await withTempStore(async (store, directory) => {
+      const child = spawn(
+        process.execPath,
+        [
+          "--input-type=module",
+          "-e",
+          `
+        import { FileSessionStore } from ${JSON.stringify(new URL("../dist/store/file_session_store.js", import.meta.url).href)};
+        const store = new FileSessionStore({ directory: process.argv[1] });
+        await store.acquireSession("leased");
+        process.stdout.write("ready");
+        setInterval(() => {}, 1000);
+      `,
+          directory,
+        ],
+        { stdio: ["ignore", "pipe", "pipe"] },
+      );
+      try {
+        await once(child.stdout, "data");
+        await expect(store.acquireSession("leased")).rejects.toThrow();
+        const exited = once(child, "exit");
+        child.kill("SIGKILL");
+        await exited;
+        const releases = await Promise.allSettled([
+          store.acquireSession("leased"),
+          new FileSessionStore({ directory }).acquireSession("leased"),
+        ]);
+        expect(releases.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+        for (const result of releases) if (result.status === "fulfilled") await result.value();
+        const release = await store.acquireSession("leased");
+        await release();
+      } finally {
+        if (child.exitCode === null && child.signalCode === null) {
+          const exited = once(child, "exit");
+          child.kill("SIGKILL");
+          await exited;
+        }
+      }
+    });
+  });
+
   it.each([true, false])(
     "preserves compacted goal history and unrelated metadata from version 10 (marker: %s)",
     async (withMarker) => {
@@ -553,7 +597,12 @@ describe("FileSessionStore", () => {
       await mkdir(lockPath, { recursive: true });
       await writeFile(
         join(lockPath, "owner.json"),
-        JSON.stringify({ pid: 2_147_483_647, token: "stale-owner", createdAt: 1 }),
+        JSON.stringify({
+          pid: 2_147_483_647,
+          processIdentity: "exited-owner",
+          token: "stale-owner",
+          createdAt: 1,
+        }),
         "utf8",
       );
 
@@ -564,6 +613,26 @@ describe("FileSessionStore", () => {
       await expect(store.loadSession("session-1")).resolves.toEqual(
         createSnapshot("session-1", "recovered"),
       );
+    });
+  });
+
+  it("recovers a session lease whose PID belongs to a different process", async () => {
+    await withTempStore(async (store, directory) => {
+      const leasePath = join(directory, "c2Vzc2lvbi0x.json.lease");
+      await mkdir(leasePath, { recursive: true });
+      await writeFile(
+        join(leasePath, "owner.json"),
+        JSON.stringify({
+          pid: process.pid,
+          processIdentity: "previous-process",
+          token: "stale-owner",
+          createdAt: 1,
+        }),
+      );
+      const release = await store.acquireSession("session-1");
+      await expect(store.acquireSession("session-1")).rejects.toThrow();
+      await release();
+      await expect(access(leasePath)).rejects.toMatchObject({ code: "ENOENT" });
     });
   });
 

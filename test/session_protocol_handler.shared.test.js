@@ -288,7 +288,7 @@ function createHarness(options = {}) {
       async runAcceptedTurn(userHistoryEntryId) {
         const turn = await hostedSession.runTurn();
         await hostedSession.snapshot();
-        return { userHistoryEntryId, turn };
+        return { userHistoryEntryId, turn, response: "" };
       },
       async runTurn() {
         running = true;
@@ -323,6 +323,7 @@ function createHarness(options = {}) {
             await pendingTurn;
             const result = {
               userHistoryEntryId: historyEntryId,
+              response: "",
               turn: { status: "completed", stopReason: "stop" },
             };
             for (const item of steering) item.resolveResult(result);
@@ -976,6 +977,7 @@ describe("SessionProtocolHandler", () => {
         ok: true,
         result: {
           userHistoryEntryId: "history-1",
+          response: "",
           turn: { status: "completed", stopReason: "stop" },
         },
       }),
@@ -1281,6 +1283,37 @@ describe("SessionProtocolHandler", () => {
         }),
       }),
     );
+  });
+
+  it("cancels a submission interrupted before queued admission without running it", async () => {
+    const runTurn = vi.fn();
+    const harness = createHarness({ runTurn });
+    await harness.connection.handleRequest(
+      request("observe", "session.observe", { sessionId: "session-1" }),
+    );
+    const accept = vi.spyOn(harness.seededSession, "acceptTurn");
+    const submit = harness.connection.handleRequest(
+      request("submit", "session.submit", { sessionId: "session-1", text: "do not run" }),
+    );
+    const interrupt = harness.connection.handleRequest(
+      request("interrupt", "session.interrupt", { sessionId: "session-1" }),
+    );
+    await Promise.all([submit, interrupt]);
+    expect(accept).not.toHaveBeenCalled();
+    expect(runTurn).not.toHaveBeenCalled();
+    expect(harness.lines.find((line) => line.id === "submit")).toMatchObject({
+      ok: false,
+      error: { code: SESSION_PROTOCOL_ERROR_CODES.cancelled },
+    });
+    expect(harness.lines.find((line) => line.id === "interrupt")).toMatchObject({
+      ok: true,
+      result: { interrupted: true },
+    });
+    await harness.connection.handleRequest(
+      request("later", "session.submit", { sessionId: "session-1", text: "run later" }),
+    );
+    expect(accept).toHaveBeenCalledTimes(1);
+    expect(runTurn).toHaveBeenCalledTimes(1);
   });
 
   it("waits for interrupted active submits before host shutdown on close", async () => {
@@ -1997,6 +2030,7 @@ describe("SessionProtocolHandler", () => {
         ok: true,
         result: {
           userHistoryEntryId: queuedEntry.id,
+          response: "",
           turn: { status: "completed", stopReason: "stop" },
         },
       }),

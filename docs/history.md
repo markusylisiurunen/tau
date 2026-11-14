@@ -6,7 +6,7 @@ Tau keeps a searchable record of past sessions, separate from saved sessions. Hi
 
 Each host records its sessions in `~/.config/tau/history.sqlite`, in the host user's home. It stores user messages, assistant text, and finished tool calls with their results, so treat it as private. Thinking and the persona's base prompt are not stored.
 
-Recording is best effort, so history can have gaps. A recording failure does not affect the session, and later entries are still recorded.
+A recording failure leaves a gap in history, but the session keeps running and later entries are still recorded. When the session closes, Tau reports the failure and keeps the session locked until that Tau process exits. `tau run` exits nonzero if its session's history is incomplete.
 
 Compaction keeps history as it is, so earlier work stays searchable. Rewind deletes entries from the rewind point on.
 
@@ -21,6 +21,10 @@ Search history for the session where we chose the retry policy, and summarize th
 ```
 
 Search covers main sessions by default. It can filter on creation attributes such as `repository`, `source`, `machine`, and `cwd`, and it can include child sessions with the `parent` option.
+
+## Export a transcript
+
+`tau history read <id>` prints a session's whole recorded transcript from this host's history database as JSON. `--format markdown-compact` gives readable text with tool payloads shortened, and `markdown-full` keeps them in full. The JSON lists child sessions in `session.childSessionIds`. `--schema` prints the JSON Schema, and `--source remote` reads from the shared service described below.
 
 ## Shared remote service
 
@@ -52,7 +56,7 @@ To browse, open the service's address and sign in with username `tau` and the vi
 
 ## How replication behaves
 
-Each host writes to local SQLite first and sends changes to the service in the background. An outage does not affect sessions, and pending changes are sent later. With a remote target, searches and reads use the service only, and do not fall back to local results. `tau.history.read` can ask for local data with `source: "local"`.
+Each host writes to local SQLite first and sends changes to the service in the background. An outage does not affect sessions, and pending changes are sent later. With a remote target, `tau.history` searches and reads use the service only, and do not fall back to local results. `tau.history.read` can ask for local data with `source: "local"`.
 
 Entries over 1 MiB are shortened in the remote copy, and summaries can lag behind transcripts.
 

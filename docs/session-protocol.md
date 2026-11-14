@@ -7,14 +7,14 @@ This is the protocol that clients use to control sessions hosted by `tau serve`.
 Each WebSocket text message is one JSON object. Authentication and deployment are in [remote sessions](remote-sessions.md). The server speaks first, and the versions must match exactly:
 
 ```json
-{ "version": 19, "type": "ready", "methods": ["initialize", "session.create"] }
+{ "version": 21, "type": "ready", "methods": ["initialize", "session.create"] }
 ```
 
 Use the `version` the server sends. Then send `initialize`, optionally advertising client tools:
 
 ```json
 {
-  "version": 19,
+  "version": 21,
   "type": "request",
   "id": "init-1",
   "method": "initialize",
@@ -25,8 +25,8 @@ Use the `version` the server sends. Then send `initialize`, optionally advertisi
 Responses echo the request ID. A request can stay open while other messages arrive, so route responses by `id` and streamed messages by `sessionId`.
 
 ```json
-{ "version": 19, "type": "response", "id": "req-42", "ok": true, "result": {} }
-{ "version": 19, "type": "response", "id": "req-42", "ok": false, "error": { "code": "busy", "message": "..." } }
+{ "version": 21, "type": "response", "id": "req-42", "ok": true, "result": {} }
+{ "version": 21, "type": "response", "id": "req-42", "ok": false, "error": { "code": "busy", "message": "..." } }
 ```
 
 Error codes are `parse_error`, `invalid_request`, `method_not_found`, `invalid_params`, `not_found`, `busy`, `cancelled`, and `internal_error`. Branch on the code, never on the message.
@@ -68,7 +68,7 @@ Render from `timeline.items`, because some model-visible messages have no timeli
 
 ```json
 {
-  "version": 19,
+  "version": 21,
   "type": "session.delta",
   "sessionId": "...",
   "fromRevision": 8,

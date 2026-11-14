@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { formatZodError } from "../utils/zod.js";
+import { historyEntrySchema, historySessionDescriptorSchema } from "./schema.js";
 import type {
   HistoryQuery,
   HistoryReadInput,
@@ -26,76 +27,17 @@ export class RemoteHistoryError extends Error {
   }
 }
 
-const digestSchema = z
-  .object({
-    title: z.string(),
-    summary: z.string(),
-    updatedThroughEntryId: z.string(),
-  })
-  .strict();
-const descriptorSchema = z
-  .object({
-    sessionId: z.string(),
-    attributes: z.record(z.string(), z.string()),
-    createdAt: z.number(),
-    updatedAt: z.number(),
-    parentSessionId: z.string().optional(),
-    childCount: z.number().int().nonnegative(),
-    webUrl: z.url(),
-    digest: digestSchema.optional(),
-    snippets: z.array(z.string()),
-  })
-  .strict();
-const jsonValueSchema = z.union([
-  z.null(),
-  z.boolean(),
-  z.number(),
-  z.string(),
-  z.array(z.unknown()),
-  z.record(z.string(), z.unknown()),
-]);
-const entryBaseSchema = z.object({
-  id: z.string(),
-  sourceIds: z.array(z.string()),
-  timestamp: z.number(),
-});
-const userContentSchema = z.union([
-  z.string(),
-  z.array(
-    z.discriminatedUnion("type", [
-      z
-        .object({ type: z.literal("text"), text: z.string(), textSignature: z.string().optional() })
-        .strict(),
-      z
-        .object({ type: z.literal("image"), data: z.string(), mimeType: z.string().min(1) })
-        .strict(),
-    ]),
-  ),
-]);
-const entrySchema = z.discriminatedUnion("type", [
-  entryBaseSchema.extend({ type: z.literal("user"), content: userContentSchema }).strict(),
-  entryBaseSchema.extend({ type: z.literal("assistant"), content: z.string() }).strict(),
-  entryBaseSchema.extend({ type: z.literal("system"), content: z.string() }).strict(),
-  entryBaseSchema
-    .extend({
-      type: z.literal("tool"),
-      name: z.string(),
-      arguments: jsonValueSchema,
-      result: jsonValueSchema,
-      outcome: z.enum(["succeeded", "failed", "blocked", "cancelled"]),
-    })
-    .strict(),
-]);
+const remoteDescriptorSchema = historySessionDescriptorSchema.extend({ webUrl: z.url() });
 const searchResultSchema = z
   .object({
-    sessions: z.array(descriptorSchema),
+    sessions: z.array(remoteDescriptorSchema),
     nextCursor: z.string().optional(),
   })
   .strict();
 const readResultSchema = z
   .object({
-    session: descriptorSchema,
-    entries: z.array(entrySchema),
+    session: remoteDescriptorSchema,
+    entries: z.array(historyEntrySchema),
     nextCursor: z.string().optional(),
   })
   .strict();

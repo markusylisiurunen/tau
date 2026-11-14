@@ -245,6 +245,8 @@ export class LocalHistoryStore {
 
   async search(input: HistorySearchInput): Promise<HistorySearchResult> {
     const offset = decodeOffsetCursor(input.cursor);
+    const order =
+      input.order === "sessionId" ? "s.session_id ASC" : "s.updated_at DESC, s.session_id ASC";
     const values: SqlValue[] = [];
     const parentFilter = searchParentFilter(input.parent);
     values.push(...parentFilter.values);
@@ -287,14 +289,14 @@ export class LocalHistoryStore {
         FROM history_sessions s
         JOIN matches m ON m.session_id = s.session_id
         ${where}
-        ORDER BY s.updated_at DESC, s.session_id ASC
+        ORDER BY ${order}
         LIMIT ? OFFSET ?`;
     } else {
       sql = `
         SELECT s.*, NULL AS snippets, ${CHILD_COUNT_COLUMN}
         FROM history_sessions s
         ${where}
-        ORDER BY s.updated_at DESC, s.session_id ASC
+        ORDER BY ${order}
         LIMIT ? OFFSET ?`;
     }
     values.push(input.limit + 1, offset);

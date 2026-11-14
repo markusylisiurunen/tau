@@ -618,6 +618,10 @@ async function search(
   origin: string,
 ): Promise<RemoteHistorySearchResult> {
   const input = asRecord(raw, "search input");
+  if (input.order !== undefined && input.order !== "sessionId")
+    throw invalidRequest("invalid search order");
+  const order =
+    input.order === "sessionId" ? "s.session_id ASC" : "s.updated_at DESC, s.session_id ASC";
   const query = optionalString(input.query, "query", 1_000)?.trim();
   const attributes = parseAttributeFilters(input.attributes);
   const parent = parseSearchParent(input.parent);
@@ -662,7 +666,7 @@ async function search(
       .prepare(
         `SELECT s.*, ${CHILD_COUNT_COLUMN} FROM sessions s
          WHERE 1 = 1 ${parentClause} ${attributeClause} ${timeClause}
-         ORDER BY s.updated_at DESC, s.session_id ASC LIMIT ? OFFSET ?`,
+         ORDER BY ${order} LIMIT ? OFFSET ?`,
       )
       .bind(...parentValues, ...attributeValues, ...timeValues, limit + 1, offset)
       .all<Record<string, unknown>>();
@@ -694,7 +698,7 @@ async function search(
        FROM ranked_sessions r
        JOIN sessions s ON s.session_id = r.session_id
        WHERE 1 = 1 ${parentClause} ${attributeClause} ${timeClause}
-       ORDER BY r.source_rank, s.updated_at DESC, s.session_id ASC
+       ORDER BY ${input.order === "sessionId" ? order : `r.source_rank, ${order}`}
        LIMIT ? OFFSET ?`,
     )
     .bind(ftsQuery, ftsQuery, ...parentValues, ...attributeValues, ...timeValues, limit + 1, offset)

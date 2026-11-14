@@ -174,6 +174,7 @@ export type TauSdkClientOptions = TauSdkTransportClientOptions & {
   reasoning?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
   noAgentContextFiles?: boolean;
   refreshModelCatalog?: boolean;
+  requireCompleteHistory?: boolean;
   onDiagnostic?: (diagnostic: TauSdkHostDiagnostic) => void;
 };
 

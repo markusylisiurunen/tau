@@ -174,6 +174,7 @@ formats:
   markdown-compact  conversation text in full, with tool arguments shortened to 256
                     estimated tokens and results to 512, cut from the middle.
   markdown-full     conversation text and tool payloads in full.
+
 both Markdown formats put session metadata in YAML frontmatter and show images
 as placeholders.
 
@@ -217,7 +218,7 @@ export async function runHistoryReadCommand(
   const format = values.format ?? "json";
   const source = values.source ?? "local";
   if (!["json", "markdown-compact", "markdown-full"].includes(format))
-    throw new Error("invalid history format");
+    throw new Error("history format must be json, markdown-compact, or markdown-full");
   if (source !== "local" && source !== "remote")
     throw new Error("history source must be local or remote");
   const deps = createDefaultConfigDeps();

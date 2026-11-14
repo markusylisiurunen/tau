@@ -17,10 +17,12 @@ be open in another Tau process, such as a TUI.
 stdout gets the final assistant response. with --json, it gets one JSON object:
   {"sessionId":"...","turn":{"status":"completed","stopReason":"stop"},"response":"..."}
 stderr gets the session ID as soon as it is known, then progress and diagnostics.
-the exit code is nonzero if the turn fails, is blocked, or is interrupted.
+the exit code is nonzero if the turn fails, is blocked, or is interrupted, or if
+Tau does not shut down cleanly, for example because history is incomplete.
 
-the agent uses Tau's tools and permissions, independently of the caller. background
-jobs stop when the command exits. use tau history read <id> to see the transcript.
+the agent uses Tau's own tools and permissions, and the caller's permission
+settings do not apply. background jobs stop when the command exits. use
+tau history read <id> to see the transcript.
 
 options:
   --persona, -p <id>[:<level>]  persona and reasoning level for a new session.

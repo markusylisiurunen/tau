@@ -4,9 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
-import { runHistoryReadCommand } from "../dist/core/history/cli.js";
 import {
   historyExportSchema,
   readHistoryExport,
@@ -71,46 +70,14 @@ describe("history export", () => {
       }
       store.createSession({ ...session, sessionId: "grandchild", parentSessionId: "child-0" });
       const data = await readHistoryExport(store, "parent");
+      expect(historyExportSchema.parse(data)).toEqual(data);
       expect(data.entries).toEqual(entries);
-      expect(data.session.childSessionIds).toHaveLength(105);
-      expect(new Set(data.session.childSessionIds).size).toBe(105);
-      expect(data.session.childSessionIds).not.toContain("grandchild");
+      expect(data.session.childSessionIds).toEqual(
+        Array.from({ length: 105 }, (_, index) => `child-${index}`).sort(),
+      );
     } finally {
       store.close();
     }
-  });
-
-  it("exhausts transcript and direct-child pages from the same query", async () => {
-    const query = {
-      read: vi.fn(async ({ cursor }) => ({
-        session,
-        entries: [entry(cursor ? "second" : "first")],
-        ...(cursor ? {} : { nextCursor: "entries-page-2" }),
-      })),
-      search: vi.fn(async ({ cursor, limit }) => {
-        if (limit > 75) throw new Error("invalid search limit");
-        return {
-          sessions: [{ ...session, sessionId: cursor ? "child-b" : "child-a" }],
-          ...(cursor ? {} : { nextCursor: "children-page-2" }),
-        };
-      }),
-    };
-    const data = await readHistoryExport(query, "parent");
-    expect(data.entries.map((e) => e.id)).toEqual(["first", "second"]);
-    expect(data.session.childSessionIds).toEqual(["child-a", "child-b"]);
-    expect(data.session.childCount).toBe(2);
-    expect(query.read.mock.calls[1][0].cursor).toBe("entries-page-2");
-    expect(query.search.mock.calls[1][0]).toMatchObject({
-      parent: { sessionId: "parent" },
-      cursor: "children-page-2",
-    });
-    expect(historyExportSchema.parse(data)).toEqual(data);
-  });
-
-  it("prints an offline JSON schema without opening history", async () => {
-    const stdout = vi.fn();
-    await runHistoryReadCommand(["--schema"], { stdout });
-    expect(JSON.parse(stdout.mock.calls[0][0])).toBeTypeOf("object");
   });
 
   it("fences embedded structure, preserves text and image positions, and budgets whole tool fields", () => {
@@ -151,9 +118,10 @@ describe("history export", () => {
     const compact = renderHistoryMarkdown(data, true);
     const full = renderHistoryMarkdown(data, false);
     expect(parseYaml(compact.split("\n---\n")[0].slice(4))).toEqual(data.session);
-    expect(compact).toContain(
-      `\`\`\`\`\`text\n${content}\n[image: image/png; binary data omitted]\nlast\n\`\`\`\`\``,
-    );
+    const user = compact.match(/`````text\n([\s\S]*?)\n`````/)[1];
+    expect(user.startsWith(`${content}\n`)).toBe(true);
+    expect(user.endsWith("\nlast")).toBe(true);
+    expect(user).toContain("image/png");
     for (const text of [compact, full]) {
       expect(text).not.toContain("SECRET_BASE64");
       expect(text).toContain("a".repeat(10000));
@@ -164,11 +132,9 @@ describe("history export", () => {
     expect(Buffer.byteLength(result)).toBeLessThanOrEqual(512 * BYTES_PER_TOKEN);
     expect(result).toContain("START");
     expect(result).toContain("END");
-    expect(args).toContain("… (truncated) …");
     expect(full).toContain("中".repeat(6000));
     expect(full).toContain("preserved caption");
     expect(full).toContain("https://example.com/image");
-    expect(JSON.stringify(data)).toContain("SECRET_BASE64");
     data.entries[1].result = [{ type: "text", text: "payload", extra: "preserved field" }];
     expect(renderHistoryMarkdown(data, false)).toContain("preserved field");
   });

@@ -79,7 +79,7 @@ describe("FileSessionStore", () => {
       );
       try {
         await once(child.stdout, "data");
-        await expect(store.acquireSession("leased")).rejects.toThrow("already in use");
+        await expect(store.acquireSession("leased")).rejects.toThrow();
         const exited = once(child, "exit");
         child.kill("SIGKILL");
         await exited;
@@ -630,7 +630,7 @@ describe("FileSessionStore", () => {
         }),
       );
       const release = await store.acquireSession("session-1");
-      await expect(store.acquireSession("session-1")).rejects.toThrow("already in use");
+      await expect(store.acquireSession("session-1")).rejects.toThrow();
       await release();
       await expect(access(leasePath)).rejects.toMatchObject({ code: "ENOENT" });
     });

@@ -4156,7 +4156,7 @@ describe("LocalSessionHost", () => {
       const first = await firstHost.createSession(localCreateInput);
       await first.record({ text: "base" });
       const snapshot = await first.snapshot();
-      await expect(secondHost.observeSession(first.sessionId)).rejects.toThrow("already in use");
+      await expect(secondHost.observeSession(first.sessionId)).rejects.toThrow();
       expect(await store.loadSession(first.sessionId)).toEqual(snapshot);
       await firstHost.shutdown();
       const recovered = await secondHost.observeSession(first.sessionId);

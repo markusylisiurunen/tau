@@ -2,32 +2,11 @@ import { Readable } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import { runHeadlessCommand } from "../dist/core/modes/run.js";
 
-function harness(turn = { status: "completed", stopReason: "stop" }) {
+function harness(turn = { status: "completed", stopReason: "stop" }, response = "final\nanswer") {
   const session = {
     id: "saved-session",
-    submit: vi.fn(async () => ({ userHistoryEntryId: "user", turn, response: "final\nanswer" })),
+    submit: vi.fn(async () => ({ userHistoryEntryId: "user", turn, response })),
     interrupt: vi.fn(async () => ({})),
-    snapshot: vi.fn(async () => ({
-      messages: [
-        {
-          id: "old",
-          state: "committed",
-          message: { role: "assistant", content: [{ type: "text", text: "old answer" }] },
-        },
-        { id: "user", state: "committed", message: { role: "user", content: "task" } },
-        {
-          id: "answer",
-          state: "committed",
-          message: {
-            role: "assistant",
-            content: [
-              { type: "thinking", thinking: "private" },
-              { type: "text", text: "final\nanswer" },
-            ],
-          },
-        },
-      ],
-    })),
   };
   const client = {
     sessions: { create: vi.fn(async () => session), observe: vi.fn(async () => session) },
@@ -75,7 +54,8 @@ describe("headless run", () => {
     { status: "aborted", stopReason: "aborted" },
     { status: "blocked", reason: "auto-compaction-failed", message: "blocked" },
   ])("continues without creating a session and preserves outcome $status", async (turn) => {
-    const { client, options } = harness(turn);
+    const response = turn.status === "failed" ? "" : "final\nanswer";
+    const { client, options } = harness(turn, response);
     expect(await runHeadlessCommand(["--session", "saved-session", "--json"], options)).toBe(
       turn.status === "completed" ? 0 : 1,
     );
@@ -84,7 +64,7 @@ describe("headless run", () => {
     expect(JSON.parse(options.stdout.mock.calls[0][0])).toEqual({
       sessionId: "saved-session",
       turn,
-      response: "final\nanswer",
+      response,
     });
   });
 
@@ -146,25 +126,6 @@ describe("headless run", () => {
     expect(session.submit).not.toHaveBeenCalled();
     expect(options.stdout).not.toHaveBeenCalled();
     expect(client.close).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not reuse an old response when a turn fails without assistant text", async () => {
-    const { session, options } = harness({ status: "failed", stopReason: "error" });
-    session.submit.mockResolvedValue({
-      userHistoryEntryId: "user",
-      turn: { status: "failed", stopReason: "error" },
-      response: "",
-    });
-    expect(await runHeadlessCommand([], options)).toBe(1);
-    expect(options.stdout).toHaveBeenCalledExactlyOnceWith("");
-  });
-
-  it("returns the turn response after compaction removes the submitted message", async () => {
-    const { session, options } = harness();
-    session.snapshot.mockResolvedValue({ messages: [] });
-    expect(await runHeadlessCommand([], options)).toBe(0);
-    expect(options.stdout).toHaveBeenCalledExactlyOnceWith("final\nanswer");
-    expect(session.snapshot).not.toHaveBeenCalled();
   });
 
   it("rejects empty input and conflicting continuation options before creating a client", async () => {

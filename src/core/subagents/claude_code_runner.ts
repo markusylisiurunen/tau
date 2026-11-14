@@ -68,6 +68,7 @@ export function claudeCodeOptions(input: ClaudeCodeInput, executable: string): O
     effort: input.effort,
     maxTurns: 1024,
     includePartialMessages: true,
+    extraArgs: { "replay-user-messages": null },
     pathToClaudeCodeExecutable: executable,
     env,
     tools,
@@ -136,7 +137,7 @@ export async function runClaudeCode(
   });
   const pending: { message: string; uuid: ReturnType<typeof randomUUID> }[] = [];
   const outstanding = new Map<string, string>();
-  const delivered = new Map<string, { text: string; timestamp: number }>();
+  const delivered = new Map<string, string>();
   let wake: (() => void) | undefined;
   let closing = false;
   const socketPath = join(directory, "input.sock");
@@ -175,7 +176,7 @@ export async function runClaudeCode(
     await ready;
     if (!authorized) return;
     const initialId = randomUUID();
-    delivered.set(initialId, { text: input.prompt, timestamp: Date.now() });
+    delivered.set(initialId, input.prompt);
     yield {
       type: "user",
       uuid: initialId,
@@ -194,7 +195,7 @@ export async function runClaudeCode(
       wake = undefined;
       const next = pending.shift();
       if (next) {
-        delivered.set(next.uuid, { text: next.message, timestamp: Date.now() });
+        delivered.set(next.uuid, next.message);
         yield {
           type: "user",
           uuid: next.uuid,
@@ -215,18 +216,13 @@ export async function runClaudeCode(
       return (
         message.user_message_uuids ?? (message.user_message_uuid ? [message.user_message_uuid] : [])
       );
-    if (
-      message.type === "user" &&
-      !("isReplay" in message && message.isReplay) &&
-      message.parent_tool_use_id === null &&
-      message.uuid
-    )
+    if (message.type === "user" && message.parent_tool_use_id === null && message.uuid)
       return [message.uuid];
     return [];
   }
   function recordConsumedInput(uuid: string): void {
     const input = delivered.get(uuid);
-    if (!input) return;
+    if (input === undefined) return;
     delivered.delete(uuid);
     emit({
       type: "history",
@@ -236,8 +232,7 @@ export async function runClaudeCode(
           id: uuid,
           sourceIds: [uuid],
           type: "user",
-          timestamp: input.timestamp,
-          content: input.text,
+          content: input,
         },
       },
     });
@@ -316,7 +311,6 @@ export async function runClaudeCode(
                   id: `${sourceId}:text:${index}`,
                   sourceIds: [sourceId],
                   type: "assistant",
-                  timestamp: Date.now(),
                   content: boundedHistoryText(block.text),
                 },
               },
@@ -374,7 +368,6 @@ export async function runClaudeCode(
               type: "toolResult",
               callId: block.tool_use_id,
               sourceId: message.uuid ?? `${block.tool_use_id}:result`,
-              timestamp: Date.now(),
               result: boundedTraceBlocks(claudeContent(block.content)),
               outcome: block.is_error ? "failed" : "succeeded",
             },

@@ -309,7 +309,17 @@ export class ClaudeCodeRuntime implements SubagentRuntime {
   }
   private async recordEvent(event: ClaudeCodeEvent): Promise<void> {
     if (event.type === "error") throw new Error(event.message);
-    if (event.type === "history") await this.options.history?.(event.event);
+    if (event.type === "history") {
+      const history = event.event;
+      if (history.type === "message")
+        await this.options.history?.({
+          ...history,
+          entry: { ...history.entry, timestamp: this.options.now() },
+        });
+      else if (history.type === "toolResult")
+        await this.options.history?.({ ...history, timestamp: this.options.now() });
+      else await this.options.history?.(history);
+    }
     if (event.type === "trace") await this.options.onEvent(event);
     if (event.type === "control") this.deliverSteering();
     if (event.type === "unconsumed_input" && !this.interrupted)

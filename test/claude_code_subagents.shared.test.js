@@ -281,7 +281,33 @@ describe("Claude Code supervised lifecycle", () => {
     expect(f.supervisor.list()).toEqual([]);
   });
 
-  it.each(["runner", "malformed"])("records accepted history before a %s error", async (kind) => {
+  it.each([
+    "runner",
+    "malformed",
+    { type: "rewind", sourceIds: ["answer"] },
+    { type: "endTurn" },
+    { type: "toolCall", callId: "call", sourceId: "answer", name: "Bash" },
+    { type: "toolResult", callId: "call", sourceId: "result", outcome: "succeeded" },
+    {
+      type: "message",
+      entry: {
+        id: "future",
+        sourceIds: ["future"],
+        type: "assistant",
+        content: "future",
+        timestamp: 1e15,
+      },
+    },
+    {
+      type: "toolResult",
+      callId: "call",
+      sourceId: "result",
+      result: null,
+      outcome: "succeeded",
+      timestamp: 1e15,
+    },
+  ])("records accepted history before rejecting %j", async (kind) => {
+    const startedAt = Date.now();
     const history = [];
     const f = fixture(async (_input, options) => {
       const event = {
@@ -291,14 +317,17 @@ describe("Claude Code supervised lifecycle", () => {
           entry: {
             id: "answer",
             sourceIds: ["answer"],
-            timestamp: 1,
             type: "assistant",
             content: "completed work",
           },
         },
       };
       const error =
-        kind === "runner" ? JSON.stringify({ type: "error", message: "runner failed" }) : "{bad}";
+        kind === "runner"
+          ? JSON.stringify({ type: "error", message: "runner failed" })
+          : kind === "malformed"
+            ? "{bad}"
+            : JSON.stringify({ type: "history", event: kind });
       options.onOutput(Buffer.from(`${prefix}${JSON.stringify(event)}\n${prefix}${error}\n`));
       return ok;
     });
@@ -306,11 +335,15 @@ describe("Claude Code supervised lifecycle", () => {
     const id = f.spawn().id;
     const [state] = await f.supervisor.waitForAgents([id]);
     expect(state.reason).toBe("failed");
+    expect(history.map((event) => event.type)).toEqual(["message", "endTurn"]);
     expect(history[0]).toMatchObject({ type: "message", entry: { id: "answer" } });
+    expect(history[0].entry.timestamp).toBeGreaterThanOrEqual(startedAt);
+    expect(history[0].entry.timestamp).toBeLessThanOrEqual(Date.now());
     f.supervisor.reset();
   });
 
   it("pairs a replayed unfinished call after interruption", async () => {
+    const startedAt = Date.now();
     const entries = [];
     const recorder = new HistoryRecorder({
       append: (batch) => {
@@ -336,7 +369,6 @@ describe("Claude Code supervised lifecycle", () => {
           type: "toolResult",
           callId: "call",
           sourceId: "result",
-          timestamp: 2,
           result: "done",
           outcome: "succeeded",
         },
@@ -355,6 +387,8 @@ describe("Claude Code supervised lifecycle", () => {
     expect(entries).toEqual([
       expect.objectContaining({ id: "call", arguments: { command: "task" }, result: "done" }),
     ]);
+    expect(entries[0].timestamp).toBeGreaterThanOrEqual(startedAt);
+    expect(entries[0].timestamp).toBeLessThanOrEqual(Date.now());
     f.supervisor.reset();
   });
 

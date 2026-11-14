@@ -58,7 +58,10 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
       }
       const finish = (uuid, text) => send({ type: "result", subtype: "success", is_error: false, session_id, result: text, total_cost_usd: 0, modelUsage: {}, user_message_uuid: uuid, user_message_uuids: [uuid] });
       if (${JSON.stringify(outcome)} === "folded") {
-        send({ ...message, session_id });
+        if (!process.argv.includes("--replay-user-messages")) throw new Error("missing replay flag");
+        send({ ...message, session_id, isReplay: true });
+        send({ ...message, uuid: "historical-input", session_id, isReplay: true });
+        send({ ...message, session_id, isReplay: true });
         send({ uuid: "folded-reply", type: "assistant", parent_tool_use_id: null, session_id, message: { id: "folded-reply", role: "assistant", content: [{ type: "text", text: "acted on steering" }], usage: { input_tokens: 1, output_tokens: 1 } } });
         return;
       }

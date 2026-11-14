@@ -185,7 +185,7 @@ export function boundedHistoryText(text: string): string {
     : "[Content exceeds the 6 MiB retention limit.]";
 }
 
-export function boundedHistoryValue(value: unknown): unknown {
+export function boundedHistoryValue<T>(value: T): T | { unavailable: string } {
   return Buffer.byteLength(JSON.stringify(value)) <= 6 * 1024 * 1024
     ? value
     : { unavailable: "Content exceeds the 6 MiB retention limit." };

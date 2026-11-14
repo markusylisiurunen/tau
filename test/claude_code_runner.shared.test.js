@@ -50,6 +50,10 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
     fs.writeFileSync(${JSON.stringify(marker)}, JSON.stringify({ message, initialization, cwd: process.cwd(), args: process.argv.slice(2) }));
     const session_id = "ce4518fa-4b3f-44ef-a1a3-2f7edc024b8d";
     send({ type: "system", subtype: "init", session_id });
+    if (${JSON.stringify(outcome)} === "startup-error") {
+      send({ type: "result", subtype: "error_during_execution", is_error: true, session_id, errors: ["startup failed"], total_cost_usd: 0, modelUsage: {} });
+      return;
+    }
     if (${JSON.stringify(hang)} === "steering" && (firstUuid || message.message.content === "initial instruction")) {
       if (!firstUuid) {
         firstUuid = message.uuid;
@@ -57,12 +61,13 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
         return;
       }
       const finish = (uuid, text) => send({ type: "result", subtype: "success", is_error: false, session_id, result: text, total_cost_usd: 0, modelUsage: {}, user_message_uuid: uuid, user_message_uuids: [uuid] });
+      send({ ...message, session_id, isReplay: true });
+      if (${JSON.stringify(outcome)} === "queued") {
+        send({ uuid: "still-working", type: "assistant", parent_tool_use_id: null, session_id, message: { id: "still-working", role: "assistant", content: [{ type: "text", text: "still working on initial instruction" }], usage: { input_tokens: 1, output_tokens: 1 } } });
+        return;
+      }
       if (${JSON.stringify(outcome)} === "folded") {
-        if (!process.argv.includes("--replay-user-messages")) throw new Error("missing replay flag");
-        send({ ...message, session_id, isReplay: true });
-        send({ ...message, uuid: "historical-input", session_id, isReplay: true });
-        send({ ...message, session_id, isReplay: true });
-        send({ uuid: "folded-reply", type: "assistant", parent_tool_use_id: null, session_id, message: { id: "folded-reply", role: "assistant", content: [{ type: "text", text: "acted on steering" }], usage: { input_tokens: 1, output_tokens: 1 } } });
+        send({ uuid: "folded-reply", user_message_uuids: [firstUuid, message.uuid], type: "assistant", parent_tool_use_id: null, session_id, message: { id: "folded-reply", role: "assistant", content: [{ type: "text", text: "acted on steering" }], usage: { input_tokens: 1, output_tokens: 1 } } });
         return;
       }
       if (${JSON.stringify(outcome)} !== "success") {
@@ -215,8 +220,8 @@ describe("bundled Claude Agent SDK runner", () => {
     20_000,
   );
 
-  it.each(["success", "error_during_execution"])(
-    "reports missing input evidence on %s",
+  it.each(["success", "error_during_execution", "startup-error"])(
+    "reports missing input evidence only after execution on %s",
     async (outcome) => {
       const directory = mkdtempSync(join(tmpdir(), "tau-claude-evidence-"));
       const history = [];
@@ -227,7 +232,9 @@ describe("bundled Claude Agent SDK runner", () => {
       try {
         fakeClaude(directory, true, "missing-ack", outcome);
         await runtime.submit("task");
-        expect(history.some((event) => event.type === "diagnostic")).toBe(true);
+        expect(history.some((event) => event.type === "diagnostic")).toBe(
+          outcome !== "startup-error",
+        );
         expect(
           history.some((event) => event.type === "message" && event.entry.type === "user"),
         ).toBe(false);
@@ -239,35 +246,46 @@ describe("bundled Claude Agent SDK runner", () => {
     20_000,
   );
 
-  it("records folded steering before its reply when interrupted before a result", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "tau-claude-fold-"));
-    const history = [];
-    const runtime = new ClaudeCodeRuntime({
-      ...createRuntimeOptions(directory, []),
-      history: async (event) => history.push(event),
-    });
-    let pending;
-    try {
-      fakeClaude(directory, true, "steering", "folded");
-      pending = runtime.submit("initial instruction");
-      await vi.waitFor(() =>
-        expect(history.some((event) => event.entry?.content === "working")).toBe(true),
-      );
-      runtime.steer("updated instruction");
-      await vi.waitFor(() =>
-        expect(history.some((event) => event.entry?.content === "acted on steering")).toBe(true),
-      );
-      runtime.interrupt();
-      await pending;
-      expect(
-        history.filter((event) => event.type === "message").map((event) => event.entry.content),
-      ).toEqual(["initial instruction", "working", "updated instruction", "acted on steering"]);
-    } finally {
-      runtime.dispose();
-      await pending;
-      rmSync(directory, { recursive: true, force: true });
-    }
-  }, 20_000);
+  it.each(["folded", "queued"])(
+    "records only consumed %s steering on interruption",
+    async (outcome) => {
+      const directory = mkdtempSync(join(tmpdir(), "tau-claude-fold-"));
+      const history = [];
+      const runtime = new ClaudeCodeRuntime({
+        ...createRuntimeOptions(directory, []),
+        history: async (event) => history.push(event),
+      });
+      let pending;
+      try {
+        fakeClaude(directory, true, "steering", outcome);
+        pending = runtime.submit("initial instruction");
+        await vi.waitFor(() =>
+          expect(history.some((event) => event.entry?.content === "working")).toBe(true),
+        );
+        runtime.steer("updated instruction");
+        const reply =
+          outcome === "folded" ? "acted on steering" : "still working on initial instruction";
+        await vi.waitFor(() =>
+          expect(history.some((event) => event.entry?.content === reply)).toBe(true),
+        );
+        runtime.interrupt();
+        await pending;
+        expect(
+          history.filter((event) => event.type === "message").map((event) => event.entry.content),
+        ).toEqual([
+          "initial instruction",
+          "working",
+          ...(outcome === "folded" ? ["updated instruction"] : []),
+          reply,
+        ]);
+      } finally {
+        runtime.dispose();
+        await pending;
+        rmSync(directory, { recursive: true, force: true });
+      }
+    },
+    20_000,
+  );
 
   it("initializes the real SDK and sends the prompt only after subscription authentication", async () => {
     const directory = mkdtempSync(join(tmpdir(), "tau-claude-runner-"));

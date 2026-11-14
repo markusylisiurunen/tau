@@ -68,7 +68,6 @@ export function claudeCodeOptions(input: ClaudeCodeInput, executable: string): O
     effort: input.effort,
     maxTurns: 1024,
     includePartialMessages: true,
-    extraArgs: { "replay-user-messages": null },
     pathToClaudeCodeExecutable: executable,
     env,
     tools,
@@ -216,8 +215,6 @@ export async function runClaudeCode(
       return (
         message.user_message_uuids ?? (message.user_message_uuid ? [message.user_message_uuid] : [])
       );
-    if (message.type === "user" && message.parent_tool_use_id === null && message.uuid)
-      return [message.uuid];
     return [];
   }
   function recordConsumedInput(uuid: string): void {
@@ -237,6 +234,7 @@ export async function runClaudeCode(
       },
     });
   }
+  let observedResponse = false;
   let conversation: ReturnType<typeof query> | undefined;
   const calls = new Map<string, { name: string; subject: string }>();
   let streamedMessage: Pick<SDKAssistantMessage["message"], "id" | "usage"> | undefined;
@@ -277,6 +275,7 @@ export async function runClaudeCode(
           event: { kind: "notice", code: "compaction.compacted", content: [] },
         });
       } else if (message.type === "stream_event" && message.parent_tool_use_id === null) {
+        observedResponse = true;
         const event = message.event;
         if (event.type === "message_start") {
           streamedMessage = { id: event.message.id, usage: event.message.usage };
@@ -296,6 +295,7 @@ export async function runClaudeCode(
           streamedMessage = undefined;
         }
       } else if (message.type === "assistant" && message.parent_tool_use_id === null) {
+        observedResponse = true;
         emitUsage(message.message);
         const content = message.message.content.filter((block) => block.type === "text");
         if (content.length)
@@ -390,18 +390,21 @@ export async function runClaudeCode(
           throw new Error(
             "Claude Code did not report streamed input consumption; update the Claude CLI before steering workers.",
           );
-        if ([...delivered.keys()].some((uuid) => !outstanding.has(uuid)))
+        const failed = message.is_error || message.subtype !== "success";
+        if (
+          (observedResponse || !failed) &&
+          [...delivered.keys()].some((uuid) => !outstanding.has(uuid))
+        )
           emit({
             type: "history",
             event: {
               type: "diagnostic",
               message:
-                "Claude Code did not confirm initial input consumption; history is incomplete. update the Claude CLI.",
+                "Claude Code produced output without confirming initial input consumption; history is incomplete.",
             },
           });
-        closing = message.is_error || message.subtype !== "success" || outstanding.size === 0;
+        closing = failed || outstanding.size === 0;
         const totals = Object.values(message.modelUsage);
-        const failed = message.is_error || message.subtype !== "success";
         const context = failed
           ? undefined
           : await conversation.getContextUsage({ detail: "summary" });

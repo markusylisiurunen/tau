@@ -15,7 +15,7 @@ import {
 import type { AgentEventSink } from "../agent/events.js";
 import { NotificationInbox } from "../agent/notification_inbox.js";
 import type { SessionRuntimeSettings } from "../config/index.js";
-import type { OpenSubagentHistory } from "../history/agent_history_recorder.js";
+import type { OpenSubagentHistory } from "../history/recorder.js";
 import type { HistoryQuery } from "../history/types.js";
 import type { McpManager } from "../mcp/manager.js";
 import type { ModelResolver } from "../models/catalog.js";

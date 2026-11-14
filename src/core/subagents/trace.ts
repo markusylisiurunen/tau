@@ -178,3 +178,15 @@ export function boundedTraceBlocks(blocks: ContentBlock[]): ContentBlock[] {
     ? blocks
     : [{ type: "unavailable", reason: "Content exceeds the 6 MiB retention limit." }];
 }
+
+export function boundedHistoryText(text: string): string {
+  return Buffer.byteLength(JSON.stringify(text)) <= 6 * 1024 * 1024
+    ? text
+    : "[Content exceeds the 6 MiB retention limit.]";
+}
+
+export function boundedHistoryValue(value: unknown): unknown {
+  return Buffer.byteLength(JSON.stringify(value)) <= 6 * 1024 * 1024
+    ? value
+    : { unavailable: "Content exceeds the 6 MiB retention limit." };
+}

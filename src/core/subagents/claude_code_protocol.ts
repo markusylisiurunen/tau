@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { historyRecordEventSchema } from "../history/recorder.js";
 import { CLAUDE_CODE_MODEL_IDS } from "./claude_code_models.js";
 import { observableEventSchema } from "./events.js";
 
@@ -24,6 +25,7 @@ export const claudeCodeInputSchema = z.object({
 export type ClaudeCodeInput = z.infer<typeof claudeCodeInputSchema>;
 
 export const claudeCodeEventSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("history"), event: historyRecordEventSchema }),
   z.object({ type: z.literal("control"), path: z.string().min(1) }),
   z.object({ type: z.literal("unconsumed_input"), message: z.string() }),
   z.object({ type: z.literal("trace"), event: observableEventSchema }),

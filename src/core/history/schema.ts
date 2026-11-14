@@ -46,10 +46,13 @@ export const userContentSchema = z.union([
     ]),
   ),
 ]);
-export const historyEntrySchema = z.discriminatedUnion("type", [
+export const historyTextEntrySchema = z.discriminatedUnion("type", [
   entryBaseSchema.extend({ type: z.literal("user"), content: userContentSchema }).strict(),
   entryBaseSchema.extend({ type: z.literal("assistant"), content: z.string() }).strict(),
   entryBaseSchema.extend({ type: z.literal("system"), content: z.string() }).strict(),
+]);
+export const historyEntrySchema = z.discriminatedUnion("type", [
+  ...historyTextEntrySchema.options,
   entryBaseSchema
     .extend({
       type: z.literal("tool"),

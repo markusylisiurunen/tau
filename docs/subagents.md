@@ -78,7 +78,7 @@ In the TUI, Alt+Down selects a running subagent and Ctrl+G interrupts it. Interr
 
 Subagents belong to the running session on the host. They keep running when clients detach. They end when the host unloads the session, and none survive a host restart, so important results should reach the main agent or a file before that. Rewind removes subagents started by the removed messages, and it is refused while a subagent is running.
 
-Running subagents keep their setup after `/reload`. Native subagents are recorded in [history](history.md) as child sessions.
+Running subagents keep their setup after `/reload`. Subagents are recorded in [history](history.md) as child sessions.
 
 ## Claude Code subagents
 
@@ -108,4 +108,4 @@ These workers differ from native subagents:
 - Tau tools map to Claude Code tools: `bash` gives Bash, Read, Glob, and Grep, and `view_image` gives Read, Glob, and Grep. `write`, `edit`, and `web` map to Write, Edit, and WebSearch with WebFetch.
 - They run with permission checks bypassed and the Claude Code sandbox disabled, so review the local Claude settings first.
 - They cannot start subagents or use Tau's `code` capabilities, `tau_docs`, or MCP connections. Hooks and automatic memory are off.
-- They are not recorded in history. A follow-up resumes the same Claude session while the parent session is alive.
+- A follow-up resumes the same Claude session while the parent session is alive.

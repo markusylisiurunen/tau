@@ -1,17 +1,12 @@
-import type {
-  AssistantMessage,
-  ToolCall,
-  ToolResultMessage,
-  UserMessage,
-} from "@earendil-works/pi-ai";
+import type { AssistantMessage, UserMessage } from "@earendil-works/pi-ai";
 import type { IntermediateSystemMessage } from "../../protocol/system_message.js";
 import { stripTauUserMetadataFromMessage } from "../utils/user_metadata.js";
-import type { HistoryEntry, HistoryToolEntry } from "./types.js";
+import type { HistoryTextEntry } from "./types.js";
 
 export function systemHistoryEntry(
   historyEntryId: string,
   message: IntermediateSystemMessage,
-): HistoryEntry {
+): HistoryTextEntry {
   return {
     id: historyEntryId,
     sourceIds: [historyEntryId],
@@ -21,7 +16,7 @@ export function systemHistoryEntry(
   };
 }
 
-export function userHistoryEntry(historyEntryId: string, message: UserMessage): HistoryEntry {
+export function userHistoryEntry(historyEntryId: string, message: UserMessage): HistoryTextEntry {
   const stripped = stripTauUserMetadataFromMessage(message) as UserMessage;
   return {
     id: historyEntryId,
@@ -35,8 +30,8 @@ export function userHistoryEntry(historyEntryId: string, message: UserMessage): 
 export function assistantHistoryEntries(
   historyEntryId: string,
   message: AssistantMessage,
-): HistoryEntry[] {
-  return message.content.flatMap((content, contentIndex): HistoryEntry[] => {
+): HistoryTextEntry[] {
+  return message.content.flatMap((content, contentIndex): HistoryTextEntry[] => {
     if (content.type !== "text" || content.text.length === 0) return [];
     return [
       {
@@ -48,23 +43,4 @@ export function assistantHistoryEntries(
       },
     ];
   });
-}
-
-export function toolHistoryEntry(options: {
-  callHistoryEntryId: string;
-  resultHistoryEntryId: string;
-  call: ToolCall;
-  result: ToolResultMessage;
-  outcome: HistoryToolEntry["outcome"];
-}): HistoryToolEntry {
-  return {
-    id: options.call.id,
-    sourceIds: [options.callHistoryEntryId, options.resultHistoryEntryId],
-    type: "tool",
-    timestamp: options.result.timestamp,
-    name: options.call.name,
-    arguments: structuredClone(options.call.arguments),
-    result: structuredClone(options.result.content),
-    outcome: options.outcome,
-  };
 }

@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
+import { HistoryRecorder } from "../dist/core/history/recorder.js";
 import { resolveModel } from "../dist/core/models/catalog.js";
 import { AgentSupervisor } from "../dist/core/subagents/agent_supervisor.js";
 import { claudeCodeOptions, claudeCodeTools } from "../dist/core/subagents/claude_code_runner.js";
 import { ClaudeCodeRuntime } from "../dist/core/subagents/claude_code_runtime.js";
 import { parseSubagentLaunchModel } from "../dist/core/subagents/launch_model.js";
+import { boundedHistoryText, boundedHistoryValue } from "../dist/core/subagents/trace.js";
 
 const sessionId = "ce4518fa-4b3f-44ef-a1a3-2f7edc024b8d";
 const prefix = "tau-claude-code:";
@@ -80,6 +82,17 @@ function fixture(run) {
 }
 
 describe("Claude Code launch models", () => {
+  it("bounds serialized history values without changing normal argument shapes", () => {
+    const limit = 6 * 1024 * 1024;
+    const text = "x".repeat(limit - 2);
+    expect(boundedHistoryText(text)).toBe(text);
+    expect(boundedHistoryText(`${text}x`).length).toBeLessThan(100);
+    expect(boundedHistoryText("\\".repeat(limit / 2)).length).toBeLessThan(100);
+    expect(boundedHistoryValue(null)).toBeNull();
+    expect(boundedHistoryValue({ command: "pwd" })).toEqual({ command: "pwd" });
+    expect(boundedHistoryValue({ command: text })).toEqual({ unavailable: expect.any(String) });
+  });
+
   it("maps inherited built-in tools and leaves MCP discovery to Claude Code", () => {
     expect(claudeCodeTools([])).toEqual([]);
     expect(claudeCodeTools(["view_image", "edit"])).toEqual(["Read", "Glob", "Grep", "Edit"]);
@@ -161,7 +174,12 @@ describe("Claude Code supervised lifecycle", () => {
     expect(second.usage.cost).toBe(0.2);
     expect(f.recordUsage.mock.calls.map(([entry]) => entry.usage.input)).toEqual([10, 10]);
     expect(f.recordUsage.mock.calls.map(([entry]) => entry.cost.total)).toEqual([0.1, 0.1]);
-    expect(f.openHistory).not.toHaveBeenCalled();
+    expect(f.openHistory).toHaveBeenCalledExactlyOnceWith({
+      sessionId: id,
+      parentSessionId: "main",
+      workingDirectory: "/remote/workspace",
+      createdAt: expect.any(Number),
+    });
     f.supervisor.reset();
   });
 
@@ -261,6 +279,83 @@ describe("Claude Code supervised lifecycle", () => {
     f.supervisor.retainOrigins(new Set());
     expect(f.calls[0].options.signal.aborted).toBe(true);
     expect(f.supervisor.list()).toEqual([]);
+  });
+
+  it.each(["runner", "malformed"])("records accepted history before a %s error", async (kind) => {
+    const history = [];
+    const f = fixture(async (_input, options) => {
+      const event = {
+        type: "history",
+        event: {
+          type: "message",
+          entry: {
+            id: "answer",
+            sourceIds: ["answer"],
+            timestamp: 1,
+            type: "assistant",
+            content: "completed work",
+          },
+        },
+      };
+      const error =
+        kind === "runner" ? JSON.stringify({ type: "error", message: "runner failed" }) : "{bad}";
+      options.onOutput(Buffer.from(`${prefix}${JSON.stringify(event)}\n${prefix}${error}\n`));
+      return ok;
+    });
+    f.openHistory.mockReturnValue(async (event) => history.push(event));
+    const id = f.spawn().id;
+    const [state] = await f.supervisor.waitForAgents([id]);
+    expect(state.reason).toBe("failed");
+    expect(history[0]).toMatchObject({ type: "message", entry: { id: "answer" } });
+    f.supervisor.reset();
+  });
+
+  it("pairs a replayed unfinished call after interruption", async () => {
+    const entries = [];
+    const recorder = new HistoryRecorder({
+      append: (batch) => {
+        entries.push(...batch);
+      },
+      truncateFromSources: () => {},
+    });
+    const f = fixture(async (_input, options, turn) => {
+      emit(options, {
+        type: "history",
+        event: {
+          type: "toolCall",
+          callId: "call",
+          sourceId: "assistant",
+          name: "Bash",
+          arguments: { command: "task" },
+        },
+      });
+      if (turn === 1) return { ...ok, aborted: true };
+      emit(options, {
+        type: "history",
+        event: {
+          type: "toolResult",
+          callId: "call",
+          sourceId: "result",
+          timestamp: 2,
+          result: "done",
+          outcome: "succeeded",
+        },
+      });
+      emit(options, result());
+      return ok;
+    });
+    f.openHistory.mockReturnValue(async (event) => {
+      expect(recorder.record(event)).toBeUndefined();
+    });
+    const id = f.spawn().id;
+    await f.supervisor.waitForAgents([id]);
+    expect(entries).toEqual([]);
+    f.supervisor.sendInput({ id, prompt: "resume", mode: "queue" });
+    await f.supervisor.waitForAgents([id]);
+    expect(entries).toEqual([
+      expect.objectContaining({ id: "call", arguments: { command: "task" }, result: "done" }),
+    ]);
+    f.supervisor.reset();
   });
 
   it.each(["malformed", "exit"])("fails closed on %s results", async (kind) => {

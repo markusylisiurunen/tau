@@ -10,7 +10,7 @@ A recording failure leaves a gap in history, but the session keeps running and l
 
 Compaction keeps history as it is, so earlier work stays searchable. Rewind deletes entries from the rewind point on.
 
-Each native [subagent](subagents.md) gets its own child session, which stays after a rewind. Claude Code workers are not recorded.
+Each [subagent](subagents.md) gets its own child session, which stays after a rewind.
 
 ## Agent access
 

@@ -89,10 +89,6 @@
       "type": "file",
       "hash": "1d529c48b4eef4b73722013cf6513da7fe4c7e9b8eff11f79af712fa47b5fa49"
     },
-    ".claude/commands/workflows/code-review-branch.md": {
-      "type": "file",
-      "hash": "954627af8d3085322d858b46c20e357b5f5508cd483387a0326c824070fb89c5"
-    },
     ".claude/commands/workflows/code-review-changes.md": {
       "type": "file",
       "hash": "3be1fe36f88a642bea253d66d006415e250f534848aedccd8de91041712d0d0b"
@@ -104,10 +100,6 @@
     ".claude/commands/workflows/decision-review-changes.md": {
       "type": "file",
       "hash": "88cf18d2aeff36b11002980f4d54ba4bfca4eca830adf081cd8257e412523d38"
-    },
-    ".claude/commands/workflows/deslop-branch.md": {
-      "type": "file",
-      "hash": "add95d53616047b0e147020469f415c663873ab5ef858e2931624298af8ecaa9"
     },
     ".claude/commands/workflows/finalize-ui.md": {
       "type": "file",
@@ -121,6 +113,10 @@
       "type": "file",
       "hash": "900cc3eefe15eca7d500bca3d39619c201ebaa7f94f13da79fe8bf4e8712abe7"
     },
+    ".claude/commands/workflows/improve-branch.md": {
+      "type": "file",
+      "hash": "6465608b56c78101c14c722e59674923ced50a160733e097ee228022db2243db"
+    },
     ".claude/commands/workflows/iterate-ui.md": {
       "type": "file",
       "hash": "ec6cd3f20a19fffd91d9e5d2430994d8331a84e07090cd1b43f5e42e01924e75"
@@ -132,6 +128,14 @@
     ".claude/commands/workflows/plan.md": {
       "type": "file",
       "hash": "e2f056690eea39338747a4e013a1fa47184540b635f3ef4581b27b44c7a96256"
+    },
+    ".claude/commands/workflows/review-and-improve-branch.md": {
+      "type": "file",
+      "hash": "3f0bacf0bc230a59224aeee647e7123e42a904c71c7c48a43b179c5fd5fe1f86"
+    },
+    ".claude/commands/workflows/review-branch.md": {
+      "type": "file",
+      "hash": "bebe31c12297c1f0ebf5b32b9a9167bd2de53920d1e9ad56766afadbb2cb7d82"
     },
     ".claude/skills/address-review-comments": {
       "type": "symlink",
@@ -229,10 +233,6 @@
       "type": "file",
       "hash": "a8c15ba6af57c2b824c0c2b4c3feecffef954a9136170f2615c2bcabb2d0eff8"
     },
-    ".tau/prompts/code-review-branch.md": {
-      "type": "file",
-      "hash": "5b0718c8788468d6dba9826a5d01c3079ba14f40bea60ad1ea9c907ccf845725"
-    },
     ".tau/prompts/code-review-changes.md": {
       "type": "file",
       "hash": "fb665a3aea5e3ad3379ae34858c443b6ae67c3eeae0e1959805e2a26c728640e"
@@ -257,10 +257,6 @@
       "type": "file",
       "hash": "2a2a995bffd46699e2eda43747a732ab68a0de9e79b3a0e90110590b58e086cd"
     },
-    ".tau/prompts/deslop-branch.md": {
-      "type": "file",
-      "hash": "4b5049ddb57710a6258868d0722d26401425d7d8cfaeca6594ef434a910a8d8d"
-    },
     ".tau/prompts/finalize-ui.md": {
       "type": "file",
       "hash": "c9f8c5b36ea4fe277c78d501ef1925aa6e45f31043f5a296a4dbd7133513a6c6"
@@ -273,6 +269,10 @@
       "type": "file",
       "hash": "6ca8382872e0e2c0ce0578ed082ba044c223e658edc2b40dd345597943d99f5f"
     },
+    ".tau/prompts/improve-branch.md": {
+      "type": "file",
+      "hash": "eb77966831417a82cc66fc68d2e028455ba52c33af8f36171a0e63a702d1156d"
+    },
     ".tau/prompts/iterate-ui.md": {
       "type": "file",
       "hash": "3a64df2b50af99626608249e754ae749f75d63b21513313da26febfd3c9f0ff9"
@@ -284,6 +284,14 @@
     ".tau/prompts/plan.md": {
       "type": "file",
       "hash": "ff73f625e8b3492eab92629dda63aa1b64c9ce71fbfeb04410ee9c797250c9d3"
+    },
+    ".tau/prompts/review-and-improve-branch.md": {
+      "type": "file",
+      "hash": "e140d4c1da0a412f33c6d591d2a3c85eab5edcacacbe01d23a307dc5c9f2988a"
+    },
+    ".tau/prompts/review-branch.md": {
+      "type": "file",
+      "hash": "c1284fd718b58ef547142dcfd0f5e2a0ed9ba6927b70483922cfa674cc15167e"
     },
     ".tau/skills/delegate-prose/SKILL.md": {
       "type": "file",

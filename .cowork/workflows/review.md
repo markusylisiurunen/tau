@@ -1,4 +1,13 @@
-Run the review with the `review` workflow from skill `tau-workflows`. This guidance authorizes its delegation. The workflow plans the review, runs the reviewers, and chooses the findings worth raising with a final agent. Do not launch reviewers of your own, and do not perform a separate full review.
+---
+target: pull-request
+triggers: [command, pull_request.ready]
+persona: gpt-6.1-terra-chatgpt-coder
+reasoning: medium
+---
+
+Review the pull request as it stands now, and publish the result on GitHub. Use `gh` to read the pull request and its discussion. Then check out its head commit and note its SHA.
+
+Run the review with the `review` workflow from skill `tau-workflows`. This workflow authorizes its delegation. The workflow plans the review, runs the reviewers, and chooses the findings worth raising with a final agent. Do not launch reviewers of your own, and do not perform a separate full review.
 
 Pass these inputs:
 
@@ -8,7 +17,16 @@ Pass these inputs:
 
 Set `depth` only when the user asks for one.
 
-The workflow's output is a log followed by the final result, which lists any warnings, the qualifying findings, and the dropped candidates. Publish the qualifying findings as the review, following the built-in review instructions and the format below. The workflow has already assessed them, so do not check them again, drop them, or add findings of your own, and do not publish dropped candidates. The output is normally enough. Read the files in the workflow's run folder only when it is not.
+Review the whole pull request every time. If the request asks you to focus on something, pass it on as a requirement, but the review still covers everything else. The pull request may have been reviewed before, even by your own account and on the same commit. Do not read earlier reviews or their comments, and do not pass them to the workflow, so that they cannot anchor its judgment.
+
+The workflow's output is a log followed by the final result, which lists any warnings, the qualifying findings, and the dropped candidates. Publish the qualifying findings as the review, following the outcomes and the format below. The workflow has already assessed them, so do not check them again, drop them, or add findings of your own, and do not publish dropped candidates. The output is normally enough. Read the files in the workflow's run folder only when it is not.
+
+Finish with exactly one of these outcomes:
+
+- If there are findings, submit one comment-only review with `gh` against the commit you reviewed. Post each finding as its own inline comment on the changed line it concerns, and give the review a top-level body as described below. People see this body in the pull request discussion.
+- If there are no findings, do not submit an empty review. Post one short pull request comment with `gh` that gives the overview described below.
+
+Do not approve, request changes, use suggested changes, leave a pending review, or change the branch. Your role is to inform the people who decide on the pull request, not to decide for them.
 
 Start the top-level review body with a short overview in natural sentences: how many issues the review found, its depth, the number of focused reviews when there were any, the total cost from the log, and anything that failed. Leave the issues themselves to the inline comments. So that the wording varies between reviews, run `shuf -i 1-8 -n 2` and let the two examples whose numbers it prints influence your style the most. Treat them as a starting point, not a template, and word your overview in your own way:
 
@@ -21,7 +39,7 @@ Start the top-level review body with a short overview in natural sentences: how 
 7. A deep review with 2 focused reviews found 1 issue, at a cost of $1.91.
 8. Found 2 issues in a standard review. The second general reviewer failed, so the review is incomplete. It cost $0.66.
 
-If the result lists warnings, mention them, including which reviewer failed and that its coverage is missing. If the workflow fails or cannot run, say in the top-level response that the review did not complete and why, and what it cost so far, which is the last total in the log. Do not describe the pull request as reviewed or free of findings in that case.
+If the result lists warnings, mention them, including which reviewer failed and that its coverage is missing. If the workflow fails or cannot run, say in a top-level pull request comment that the review did not complete and why, and what it cost so far, which is the last total in the log. Do not describe the pull request as reviewed or free of findings in that case.
 
 Use skill `clear-writing` for the review comments, the top-level review body, and all other communication with the user. Reviewers should understand each finding on the first read, so explain what goes wrong in plain words and show it with an example where that helps.
 
@@ -40,3 +58,34 @@ Each inline comment must stand on its own, so a reader can understand it without
 Do not include aggregate finding numbers, `Location` lines, headings, or other result-level wrappers in inline comments. GitHub already supplies the location and thread identity.
 
 Show the problem and the fix with a small concrete example whenever that is easier to understand than an abstract description. Choose whatever form makes the problem clearest to the reader. That might be a few lines of code or pseudocode, the before and after of a data shape, a case or two with real input values that trigger the problem, or a short concrete scenario described in words. Keep examples short, include only the parts that matter, and mark omitted parts clearly. Use prose for the reasons and trade-offs that an example cannot show.
+
+For a comment-only review, put the review text in real multiline shell variables and let `jq` serialize the nested payload. Submit the review with this canonical pattern:
+
+```sh
+review_body=$(cat <<'EOF'
+Concise review summary.
+EOF
+)
+
+finding=$(cat <<'EOF'
+Inline comment text.
+EOF
+)
+
+jq -n \
+  --arg commit_id "$sha" \
+  --arg body "$review_body" \
+  --arg finding "$finding" \
+  '{
+    commit_id: $commit_id,
+    event: "COMMENT",
+    body: $body,
+    comments: [{
+      path: "path/to/file",
+      line: 42,
+      side: "RIGHT",
+      body: $finding
+    }]
+  }' |
+  gh api --method POST repos/OWNER/REPO/pulls/NUMBER/reviews --input -
+```

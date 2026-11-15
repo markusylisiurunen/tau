@@ -1,0 +1,26 @@
+---
+target: pull-request
+triggers: [command]
+persona: gpt-6-astra-chatgpt-coder
+reasoning: medium
+---
+
+Review the pull request and improve it based on the reviews without changing what it is meant to do, and push the result to its branch. Use `gh` to read the pull request and its discussion. Then check out its head branch. The comment that started this run may add guidance, such as what to focus on. Follow it, because it is the user's latest word.
+
+Run the review and improvement with the `review-and-improve` workflow from skill `tau-workflows`. This workflow authorizes its delegation and its edits. The workflow plans and runs the code and design reviews, fixes the findings worth fixing, and implements the design recommendations, so do not launch reviewers of your own or make a separate pass over the code.
+
+Pass these inputs:
+
+- `base`: the merge base of the pull request's target branch and its head, as a full commit ID.
+- `head`: the pull request's head commit, as a full commit ID. It must match the checked-out `HEAD`.
+- `context`: where the intent behind the change is recorded, usually the linked issue, such as `Read issue #120 for context.` Use the actual numbers, and add any guidance from the triggering comment.
+
+Set `depth` only when the user asks for one.
+
+The workflow leaves its changes uncommitted, and its result lists the changes, the suggestions it rejected and why, and what it left unresolved. Keep its changes by default. Inspect them for clear problems or conflicts with the pull request's intent, and change or discard an edit only when you find one.
+
+When there are changes to keep, run the verification the repository requires, commit, and push to the existing branch. Never push an empty commit, and never force-push. If someone pushed to the branch while the workflow ran, build on their commits instead of overwriting them. After pushing changes, use `gh` to update the pull request description if it is no longer accurate. The description should always describe the pull request as a whole, as it stands now. Do not turn it into a log of what changed in each push. Keep content that is still valid and any required metadata, and change only what needs to change.
+
+Finish with exactly one short pull request comment, posted with `gh`. If you pushed changes, say what changed and why it is better, which findings it fixes, which suggestions were rejected and why, and what is still unresolved. Mention verification only when it matters. If nothing needed changing, say that the workflow looked and found nothing worth changing. If the result lists warnings, such as a reviewer that failed, mention them. If the workflow fails or cannot run, inspect its output and the working tree, push nothing that you cannot verify, and say in the comment that the review and improvement did not complete and why.
+
+Use skill `clear-writing` for all communication with the user.

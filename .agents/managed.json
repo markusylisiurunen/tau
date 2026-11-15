@@ -113,6 +113,10 @@
       "type": "file",
       "hash": "900cc3eefe15eca7d500bca3d39619c201ebaa7f94f13da79fe8bf4e8712abe7"
     },
+    ".claude/commands/workflows/implement.md": {
+      "type": "file",
+      "hash": "d509d6264bf002f05b350015b672ea13a1fa2d488244b05b248c5c129a541206"
+    },
     ".claude/commands/workflows/improve-branch.md": {
       "type": "file",
       "hash": "6465608b56c78101c14c722e59674923ced50a160733e097ee228022db2243db"
@@ -131,11 +135,11 @@
     },
     ".claude/commands/workflows/review-and-improve-branch.md": {
       "type": "file",
-      "hash": "3f0bacf0bc230a59224aeee647e7123e42a904c71c7c48a43b179c5fd5fe1f86"
+      "hash": "3f2e94975fdcce3199f20b972ef5aaec8bbeba8cea20b66cc09183df1d3096bf"
     },
     ".claude/commands/workflows/review-branch.md": {
       "type": "file",
-      "hash": "bebe31c12297c1f0ebf5b32b9a9167bd2de53920d1e9ad56766afadbb2cb7d82"
+      "hash": "9e0573e02c6ed9001e0a52a68b7609e7ab9519c027c7d671db515b5ca02357a3"
     },
     ".claude/skills/address-review-comments": {
       "type": "symlink",
@@ -268,6 +272,10 @@
     ".tau/prompts/guided-review-changes.md": {
       "type": "file",
       "hash": "6ca8382872e0e2c0ce0578ed082ba044c223e658edc2b40dd345597943d99f5f"
+    },
+    ".tau/prompts/implement.md": {
+      "type": "file",
+      "hash": "4d9cfdd8425b798716a18e6d8ee9ec9e7b3e525dd1700a47c78755ff6288c951"
     },
     ".tau/prompts/improve-branch.md": {
       "type": "file",

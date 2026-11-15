@@ -1,4 +1,11 @@
-Use skill `delegate-prose` to have a writing peer rewrite the prose of this pull request. This command authorizes that delegation. Your part is to brief the peer and publish its result. Use skill `github-workflow` for the commit and your comment.
+---
+target: pull-request
+triggers: [command]
+persona: gpt-6-astra-chatgpt-coder
+reasoning: medium
+---
+
+Use skill `delegate-prose` to have a writing peer rewrite the prose of this pull request. This workflow authorizes that delegation. Your part is to brief the peer and publish its result. Use skill `github-workflow` for the commit and your comment.
 
 Read the pull request description, any linked issue, and the discussion to understand what the pull request is for. Then brief the peer. Tell it which pull request this is and what it is for, and give it the base and head commits. Use the merge base with the base branch as the base, so that the diff contains only this pull request's changes. Ask the peer to look at what changed and think the prose through from a clean slate: the prose this pull request changes, and prose anywhere in the repository that it should have changed but did not. The peer edits the files where a change is warranted, and it may conclude that nothing should change. It must not change the behavior of any code. It may read the pull request and its discussion on GitHub, but it must not commit, push, or post or change anything there. If the comment that started this run contains instructions, pass them on to the peer.
 

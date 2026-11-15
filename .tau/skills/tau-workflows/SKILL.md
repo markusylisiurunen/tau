@@ -26,14 +26,14 @@ Each workflow reads the selected transcripts, has Jev screen session summaries a
 
 Pass `since`, `sessionIds`, or both. Subagent sessions are included only by ID. Pass `"preview": true` to count the candidates by source without reading transcripts or calling models. Preview a broad selection first: the workflows refuse more than 512 candidates.
 
-| Sessions                                      | Filter                                                                 |
-| --------------------------------------------- | ---------------------------------------------------------------------- |
-| Telegram conversations                        | `{ "source": "telegram" }`                                             |
-| One assistant, such as Ada                    | `{ "source": "telegram", "project": "ada" }`                           |
-| Terminal sessions                             | `{ "source": "tui" }`                                                  |
-| Cowork sessions                               | `{ "source": "cowork" }`                                               |
-| One Cowork workflow, such as PR conversations | `{ "source": "cowork", "cowork_workflow": "pull-request-fix" }`        |
-| Sessions run in a repository                  | `{ "repository": { "contains": "github.com/markusylisiurunen/tau" } }` |
+| Sessions                                      | Filter                                                                   |
+| --------------------------------------------- | ------------------------------------------------------------------------ |
+| Telegram conversations                        | `{ "source": "telegram" }`                                               |
+| One assistant, such as Ada                    | `{ "source": "telegram", "project": "ada" }`                             |
+| Terminal sessions                             | `{ "source": "tui" }`                                                    |
+| Cowork sessions                               | `{ "source": "cowork" }`                                                 |
+| One Cowork workflow, such as PR conversations | `{ "source": "cowork", "cowork_workflow": "pull-request-conversation" }` |
+| Sessions run in a repository                  | `{ "repository": { "contains": "github.com/markusylisiurunen/tau" } }`   |
 
 Older sessions often lack attributes such as `cowork_workflow`, `telegram_bot`, `machine`, and `cwd`, so a missing attribute does not put a session outside a scope. Repository attributes say where a session ran, not what it discussed. When completeness matters, use a broader scope and let the workflow filter by content. Use the history tool to inspect session metadata for other attributes.
 

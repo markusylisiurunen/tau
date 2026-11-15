@@ -305,6 +305,10 @@
       "type": "file",
       "hash": "368d5aaae2cacc51e73bbee0abb69ac8e81ff5772e70e17fd450c9110889b3ba"
     },
+    ".tau/skills/tau-workflows/scripts/improve.js": {
+      "type": "file",
+      "hash": "c56675f4bf5b619f5fa186407816a8288934a05aadd2f79c595525aba59bb3d9"
+    },
     ".tau/skills/tau-workflows/scripts/lib/history.js": {
       "type": "file",
       "hash": "718f0fd900b95eb080231470fda6456a699ecd490c72c82213bb4bc3110566c6"
@@ -327,7 +331,7 @@
     },
     ".tau/skills/tau-workflows/SKILL.md": {
       "type": "file",
-      "hash": "27f4b8b1a4e0156d076057aaa7faabb806701170d603c5959151750db2ffe7cf"
+      "hash": "86f970974ff9af35fd2339c2cded551e45534c2e7a3afe8abd82426b87927233"
     },
     "AGENTS.md": {
       "type": "section",

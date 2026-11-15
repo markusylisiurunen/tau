@@ -1,5 +1,5 @@
 ---
-enabled: true
+target: repository
 schedule: "15 5 * * *"
 timezone: Europe/Helsinki
 persona: gpt-6.1-sol-chatgpt-coder

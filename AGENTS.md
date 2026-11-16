@@ -190,7 +190,18 @@ The convention is unusual, so keep to it in new text. User content, saved prompt
 - Tool cards use one generic renderer and a bounded `ToolRunPresentation`, without tool-specific renderers or an expanded mode. When a tool reports no activity of its own, the tool runner shows the shared middle-truncated preview of the text returned to the model, under the subject from `describe`. So a new tool usually needs only a `describe` subject that tells its calls apart, such as the path or ID it acts on. A tool that reports any activity owns its card completely, as Bash and Edit do.
 - TUI colors use semantic palette tokens, and a new state gets its own token.
 
+<!-- agents:writing:start -->
+
 ## Writing
+
+Use skill `clear-writing` for all text, including its part on writing for AI models when the reader is a model. Write for the person or model who reads the text, in the concepts that reader has.
+
+- Say each thing once, where its reader needs it. Keep inventories of implementation details in their authoritative sources.
+- This repository's own guidance may name its writing surfaces and their readers, such as user-facing documentation or product copy. Follow it where it applies.
+
+<!-- agents:writing:end -->
+
+## Writing in this repository
 
 Each surface has its own reader, and a true implementation detail is not automatically relevant to it.
 
@@ -252,14 +263,3 @@ For Claude subagents, prefer the Claude Code models, which use subscription limi
 
 Sonnet, Claude Code Sonnet, Claude Code Opus, Claude Code Haiku, and Opus may be selected as model overrides only when explicitly requested by the user or active instructions. Do not select them on your own. This does not prevent inheriting the parent model when no override is requested.
 <!-- agents:subagents:end -->
-
-<!-- agents:writing:start -->
-
-## Writing
-
-Use skill `clear-writing` for all text, including its part on writing for AI models when the reader is a model. Write for the person or model who reads the text, in the concepts that reader has.
-
-- Say each thing once, where its reader needs it. Keep inventories of implementation details in their authoritative sources.
-- This repository's own guidance may name its writing surfaces and their readers, such as user-facing documentation or product copy. Follow it where it applies.
-
-<!-- agents:writing:end -->

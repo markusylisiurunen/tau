@@ -78,7 +78,7 @@ npm run test:only  # all tests against the existing build
 
 Leave formatting and import order to `check`.
 
-**Tests have a high bar**, for the same reason as the docs. Agents tend to add tests with every change. Many check the obvious, restate the implementation, or break on harmless refactors, and each one costs time in every later run and change.
+**Tests have a high bar**, for the same reason as the docs.
 
 - Before adding a test, ask what regression it would catch that existing tests and types would not. If unclear, extend an existing test or add none.
 - Tests belong where breakage is costly: critical paths, contracts between owners, recovery, and concurrency. A contract change tests its owner and at least one important consumer. A protocol change also tests delta application and what observers see.
@@ -97,6 +97,23 @@ if node -p "require('./package.json').version.includes('-alpha.')"; then npm ver
 git push --follow-tags
 gh release create v$(node -p "require('./package.json').version") --generate-notes --prerelease
 ```
+
+<!-- agents:testing:start -->
+
+## Testing
+
+Tests are a trade-off. A test is worth keeping when what it protects outweighs what it costs to maintain. The factors below help weigh that, and each has exceptions, so use judgment where a case doesn't fit.
+
+- **It protects more** when a break would go unnoticed, such as wrong output for some inputs or quietly lost data, when the consequence is serious, and when reading the code doesn't settle the behavior, because many rules interact or a past bug was subtle. A mistake that fails loudly and at once, such as an app that won't start or a type error, needs no test.
+- **It costs more** when it needs mocks or elaborate setup, depends on wording, call order, or internal structure, or is slow or flaky. A table of inputs and expected outputs against a stable interface is cheap, so code with many interacting cases, such as a parser, can have many of them. Several cases that check the same behavior add cost and nothing else.
+
+Treat the tests as one suite that describes the code as it is now. When a change alters behavior, update, replace, or remove the tests that covered the old behavior, so the suite reads as if it had been written for the new code. A test about the change itself, such as one asserting that something no longer happens, usually describes history, which the commit message already records. Some changes do work of their own that is worth checking, though, such as a migration that moves existing data to a new shape.
+
+Agents tend to add tests by default, so the suite grows even when a change replaces behavior instead of adding it. Start from no new test, and add one only when you can say what it protects that the suite doesn't already. Checking a change while you make it is part of the work and does not need to leave a test behind.
+
+This repository's own guidance may set a different bar for some areas. Follow it where it does.
+
+<!-- agents:testing:end -->
 
 ## Ownership
 
@@ -175,7 +192,7 @@ The convention is unusual, so keep to it in new text. User content, saved prompt
 
 ## Writing
 
-Use skill `clear-writing` for all prose. Each surface has its own reader, so use only the concepts that reader has. A true implementation detail is not automatically relevant.
+Each surface has its own reader, and a true implementation detail is not automatically relevant to it.
 
 - **Agent prompts and tool descriptions.** The agent sees Tau from the inside and knows only its prompt and tools. To it, Bash is a tool that runs commands, and hosts, clients, or execution environments mean nothing. It needs none of them while instructions and behavior agree. Write "send a local file to the current Telegram chat", and not "send a file from the execution environment".
 - **CLI help and diagnostics.** Usage, prerequisites, actionable errors, and public doc links. The person running a command may not be inside Tau, so do not depend on `tau_docs`.
@@ -235,23 +252,6 @@ For Claude subagents, prefer the Claude Code models, which use subscription limi
 
 Sonnet, Claude Code Sonnet, Claude Code Opus, Claude Code Haiku, and Opus may be selected as model overrides only when explicitly requested by the user or active instructions. Do not select them on your own. This does not prevent inheriting the parent model when no override is requested.
 <!-- agents:subagents:end -->
-
-<!-- agents:testing:start -->
-
-## Testing
-
-Tests are a trade-off. A test is worth keeping when what it protects outweighs what it costs to maintain. The factors below help weigh that, and each has exceptions, so use judgment where a case doesn't fit.
-
-- **It protects more** when a break would go unnoticed, such as wrong output for some inputs or quietly lost data, when the consequence is serious, and when reading the code doesn't settle the behavior, because many rules interact or a past bug was subtle. A mistake that fails loudly and at once, such as an app that won't start or a type error, needs no test.
-- **It costs more** when it needs mocks or elaborate setup, depends on wording, call order, or internal structure, or is slow or flaky. A table of inputs and expected outputs against a stable interface is cheap, so code with many interacting cases, such as a parser, can have many of them. Several cases that check the same behavior add cost and nothing else.
-
-Treat the tests as one suite that describes the code as it is now. When a change alters behavior, update, replace, or remove the tests that covered the old behavior, so the suite reads as if it had been written for the new code. A test about the change itself, such as one asserting that something no longer happens, usually describes history, which the commit message already records. Some changes do work of their own that is worth checking, though, such as a migration that moves existing data to a new shape.
-
-Agents tend to add tests by default, so the suite grows even when a change replaces behavior instead of adding it. Start from no new test, and add one only when you can say what it protects that the suite doesn't already. Checking a change while you make it is part of the work and does not need to leave a test behind.
-
-This repository's own guidance may set a different bar for some areas. Follow it where it does.
-
-<!-- agents:testing:end -->
 
 <!-- agents:writing:start -->
 

@@ -1,10 +1,12 @@
 // @preload ./workflow.js
 //
-// Shared helpers for the review workflows, exposed as globalThis.review.
+// Shared helpers for the workflows that work on a repository's changes:
+// review, improve, review-and-improve, prune, and rewrite. Exposed as
+// globalThis.review.
 
 globalThis.review = (() => {
-  // Models by role, shared by every review workflow. Paired reviewers use
-  // different models for independent views.
+  // Models by role, shared by these workflows. Paired reviewers use different
+  // models for independent views.
   const MODELS = {
     classifier: "openai-codex/gpt-6.1-terra:medium",
     codeReview: "openai-codex/gpt-6-astra:medium",
@@ -14,6 +16,10 @@ globalThis.review = (() => {
     designReviewPeer: "openai-codex/gpt-6-astra:medium",
     chooseFindings: "openai-codex/gpt-6.1-sol:medium",
     implement: "openai-codex/gpt-6-astra:medium",
+    find: "openai-codex/gpt-6.1-terra:medium",
+    prune: "claude-code/claude-opus-5-5:medium",
+    write: "claude-code/claude-opus-5-5:medium",
+    readText: "claude-code/claude-opus-5-5:low",
   };
 
   const { object, bash, tokens, ensure } = workflow;
@@ -57,21 +63,36 @@ globalThis.review = (() => {
     format: (result) => formatFindings(result.findings),
   };
 
-  function readInputs(input) {
-    const {
-      base,
-      head,
-      context,
-      depth = "auto",
-      workingDirectory,
-    } = input ?? {};
+  // Reads the shared inputs and rejects any input the workflow does not take.
+  // A workflow without code-review depth passes `depth: false`, and one that
+  // can work without a committed change passes `commits: "optional"`. Its own
+  // inputs are listed in `extra` and returned as given.
+  function readInputs(
+    input,
+    { depth: takesDepth = true, commits = "required", extra = [] } = {},
+  ) {
+    const values = input ?? {};
+    const known = [
+      "base",
+      "head",
+      "context",
+      "workingDirectory",
+      ...(takesDepth ? ["depth"] : []),
+      ...extra,
+    ];
+    const unknown = Object.keys(values).filter((key) => !known.includes(key));
+    ensure(!unknown.length, `Unknown inputs: ${unknown.join(", ")}`);
+    const { base, head, context, depth = "auto", workingDirectory } = values;
     ensure(
       tau.agents && tau.bash && tau.models,
       "This workflow requires Tau's agents, bash, and models capabilities",
     );
     ensure(
-      COMMIT_ID.test(base) && COMMIT_ID.test(head),
-      "base and head must be full lowercase commit IDs",
+      (commits === "optional" && base === undefined && head === undefined) ||
+        (COMMIT_ID.test(base) && COMMIT_ID.test(head)),
+      commits === "optional"
+        ? "base and head must be given together, as full lowercase commit IDs"
+        : "base and head must be full lowercase commit IDs",
     );
     ensure(
       context === undefined || tokens(context) <= MAX_CONTEXT_TOKENS,
@@ -81,7 +102,8 @@ globalThis.review = (() => {
       ["auto", "light", "standard", "deep"].includes(depth),
       "depth must be auto, light, standard, or deep",
     );
-    return { base, head, context, depth, workingDirectory };
+    const extras = Object.fromEntries(extra.map((key) => [key, values[key]]));
+    return { base, head, context, depth, workingDirectory, ...extras };
   }
 
   async function repositoryRoot(workingDirectory) {

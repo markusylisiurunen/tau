@@ -30,7 +30,7 @@ Keep the final section to a short paragraph that states what the reviewer is rea
 
 When you update an existing explanation, keep what is still accurate and change only what the new head makes wrong or incomplete. Do not add a changelog, a section about what changed since last time, or notes about the revision.
 
-Use skill `clear-writing` for all communication with the user. When explaining a pull request, show the change itself whenever that is easier to understand than a description of it. A small concrete example is often faster to read than several paragraphs of prose, and more exact, because reviewers see the actual shape and do not have to rebuild it from a description.
+Use skill `github-workflow` for all communication with the user. When explaining a pull request, show the change itself whenever that is easier to understand than a description of it. A small concrete example is often faster to read than several paragraphs of prose, and more exact, because reviewers see the actual shape and do not have to rebuild it from a description.
 
 Choose the example that fits the change. Some options:
 

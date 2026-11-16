@@ -76,6 +76,10 @@ Punctuation that already makes the relationship clear can stay. A colon can intr
 
 **Typographic tics.** Em dashes as the default connector, bold on every other phrase, and headings that announce what the paragraph will say anyway. When a dash joins two clauses and their relationship is unclear, handle it like an unclear semicolon: name the connection or start a new sentence. Use parentheses for a true aside, and use bold for terms a reader might scan for.
 
+**Needless negatives.** Statements of what something does not do, when no reader would have expected it to: "does not send email", "no database is involved". Each one costs attention and suggests the possibility mattered. State a limit only where a reader would otherwise assume the opposite.
+
+**Closed lists for open categories.** A colon followed by a list, or "X means A, B, and C", reads as the complete set. When the category is open, the reader takes the list as its boundary and misses everything else that belongs. State what the category is, then mark the items as examples with "such as" or "for example", so the reader can recognize cases the list leaves out. Use a closed list only when the set is complete, such as the steps a script runs.
+
 ## Longer examples
 
 These show several habits at once and how a rewrite handles them.
@@ -114,6 +118,19 @@ After:
 
 The rewrite replaces words that only sound formal ("exhibits", "ameliorate", "obviating", "leverages", "necessitates") with everyday ones, and turns abstractions ("latency characteristics", "isolation of resource utilization") into what actually happens. It keeps "pool of database connections" because that is the precise technical term, and the reader needs it. The rule is to cut unnecessary difficulty, not to remove real terminology.
 
+## Writing for AI models
+
+This section applies whenever an AI model reads the text instead of a person, such as a prompt, a skill, or a tool description in code. The reader is most often an agent, but the same applies to a single model call, such as one that classifies or summarizes text.
+
+Brief a capable model the way you would brief a capable colleague. Say what you want to achieve and why, give it the context it needs to make good judgment calls, and let it work out the steps. Current models infer intent well, follow instructions closely, and adapt when something unexpected comes up. The common mistake is overprompting, which spells out work the model would do well on its own, such as long procedures, lists of precautions, or rigid rules. Those habits come from earlier models that needed them. Today they bury what matters and take away the room the model needs to handle a problem you did not foresee.
+
+- **Describe the outcome.** Say what the result should be and what it is for. Leave the steps to the model, unless the order itself matters, such as getting approval before publishing.
+- **Give it the context it cannot find itself,** such as the purpose, the environment it works in, who reads its output, and decisions already made. Context is what lets it make the judgment calls the prompt does not cover.
+- **Spend words on what should differ from its usual behavior.** A capable model already does the basics well, such as checking its own work or reading a file before editing it. Say what this task needs that it would not do anyway.
+- **Keep the boundaries that protect something,** such as authorization, irreversible actions, data, and contracts that other code depends on. Say why when the reason is not obvious, and make the wording only as strong as the rule needs to be.
+- **Fit the length to the task.** A prompt can be long when the context needs it, but nothing should be there only for completeness.
+- **Use examples to illustrate.** A model tends to copy an example closely, so say what each one shows.
+
 ## Rewriting existing text
 
 A rewrite changes how the text reads and keeps what it says. Readers of the original and the rewrite should come away with the same points, weighted the same way. How much of the form may change depends on the request: fixing errors changes almost nothing, while restructuring a document may change nearly all of it. What the text says stays the same in every case.
@@ -134,4 +151,4 @@ When asked to review, point to specific passages, name the habit or problem, and
 
 ## Final check
 
-Read the result once as its intended reader. Each sentence should say something, and the whole should be understandable on the first read. Before finishing, scan specifically for contrast framing and slogans, because they are the habits most likely to survive a rewrite. Then look at how the sentences connect. Repeated semicolons or dashes between clauses often mean a connecting word is missing, and a run of short, disconnected sentences may need one added back.
+Read the result once as its intended reader. Each sentence should say something, and the whole should be understandable on the first read. Before finishing, scan specifically for contrast framing, slogans, needless negatives, and closed lists, because they are the habits most likely to survive a rewrite. Then look at how the sentences connect. Repeated semicolons or dashes between clauses often mean a connecting word is missing, and a run of short, disconnected sentences may need one added back.

@@ -235,3 +235,31 @@ For Claude subagents, prefer the Claude Code models, which use subscription limi
 
 Sonnet, Claude Code Sonnet, Claude Code Opus, Claude Code Haiku, and Opus may be selected as model overrides only when explicitly requested by the user or active instructions. Do not select them on your own. This does not prevent inheriting the parent model when no override is requested.
 <!-- agents:subagents:end -->
+
+<!-- agents:testing:start -->
+
+## Testing
+
+Tests are a trade-off. A test is worth keeping when what it protects outweighs what it costs to maintain. The factors below help weigh that, and each has exceptions, so use judgment where a case doesn't fit.
+
+- **It protects more** when a break would go unnoticed, such as wrong output for some inputs or quietly lost data, when the consequence is serious, and when reading the code doesn't settle the behavior, because many rules interact or a past bug was subtle. A mistake that fails loudly and at once, such as an app that won't start or a type error, needs no test.
+- **It costs more** when it needs mocks or elaborate setup, depends on wording, call order, or internal structure, or is slow or flaky. A table of inputs and expected outputs against a stable interface is cheap, so code with many interacting cases, such as a parser, can have many of them. Several cases that check the same behavior add cost and nothing else.
+
+Treat the tests as one suite that describes the code as it is now. When a change alters behavior, update, replace, or remove the tests that covered the old behavior, so the suite reads as if it had been written for the new code. A test about the change itself, such as one asserting that something no longer happens, usually describes history, which the commit message already records. Some changes do work of their own that is worth checking, though, such as a migration that moves existing data to a new shape.
+
+Agents tend to add tests by default, so the suite grows even when a change replaces behavior instead of adding it. Start from no new test, and add one only when you can say what it protects that the suite doesn't already. Checking a change while you make it is part of the work and does not need to leave a test behind.
+
+This repository's own guidance may set a different bar for some areas. Follow it where it does.
+
+<!-- agents:testing:end -->
+
+<!-- agents:writing:start -->
+
+## Writing
+
+Use skill `clear-writing` for all text, including its part on writing for AI models when the reader is a model. Write for the person or model who reads the text, in the concepts that reader has.
+
+- Say each thing once, where its reader needs it. Keep inventories of implementation details in their authoritative sources.
+- This repository's own guidance may name its writing surfaces and their readers, such as user-facing documentation or product copy. Follow it where it applies.
+
+<!-- agents:writing:end -->

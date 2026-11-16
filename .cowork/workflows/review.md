@@ -13,7 +13,7 @@ Pass these inputs:
 
 - `base`: the merge base of the pull request's target branch and its head, as a full commit ID.
 - `head`: the pull request's head commit, as a full commit ID. It must match the checked-out `HEAD`.
-- `context`: where the intent behind the change is recorded, usually the linked issue, such as `Read issue #120 for context.` Use the actual numbers, and add any requirements from the triggering comment.
+- `context`: written as the skill describes, usually just `Read issue #120 for context.` with the actual issue number. Add any requirements from the triggering comment.
 
 Set `depth` only when the user asks for one.
 
@@ -41,7 +41,7 @@ Start the top-level review body with a short overview in natural sentences: how 
 
 If the result lists warnings, mention them, including which reviewer failed and that its coverage is missing. If the workflow fails or cannot run, say in a top-level pull request comment that the review did not complete and why, and what it cost so far, which is the last total in the log. Do not describe the pull request as reviewed or free of findings in that case.
 
-Use skill `clear-writing` for the review comments, the top-level review body, and all other communication with the user. Reviewers should understand each finding on the first read, so explain what goes wrong in plain words and show it with an example where that helps.
+Use skill `github-workflow` for the review comments, the top-level review body, and all other communication with the user. Reviewers should understand each finding on the first read, so explain what goes wrong in plain words and show it with an example where that helps.
 
 Translate each qualifying finding into a separate inline GitHub review comment using this format:
 

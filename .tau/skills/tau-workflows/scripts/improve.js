@@ -135,8 +135,9 @@ const IMPROVEMENT = {
 
 // ── Inputs ──────────────────────────────────────────────────────────────
 
-const { base, head, context, workingDirectory } = readInputs(input);
-ensure(input?.depth === undefined, "improve does not accept code-review depth");
+const { base, head, context, workingDirectory } = readInputs(input, {
+  depth: false,
+});
 
 // ── Workflow ────────────────────────────────────────────────────────────
 

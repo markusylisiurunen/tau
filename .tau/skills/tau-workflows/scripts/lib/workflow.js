@@ -32,7 +32,14 @@ globalThis.workflow = (() => {
       started: Date.now(),
       cost: 0,
       warnings: [],
-      step: (options) => runStep(run, workingDirectory, options),
+      // Each agent's usage is cumulative, so a follow-up turn costs the
+      // difference from what the agent had cost before it.
+      agentCosts: new Map(),
+      step: async (options) =>
+        (await runStep(run, workingDirectory, options)).result,
+      // Like step, but also returns the agent ID, so a later turn can continue
+      // the same agent by passing it as `agentId`.
+      turn: (options) => runStep(run, workingDirectory, options),
       stepsInParallel: (steps) =>
         runStepsInParallel(run, workingDirectory, steps),
       save: (file, text) => save(folder, file, text),
@@ -63,15 +70,18 @@ globalThis.workflow = (() => {
     return run;
   }
 
-  // Run one agent, parse the JSON in its response, and save the prompt and the
-  // result, as JSON and as formatted Markdown.
+  // Run one agent turn, parse the JSON in its response, and save the prompt and
+  // the result, as JSON and as formatted Markdown. Without `agentId` the turn
+  // starts a new agent, and with it the turn continues that agent. A turn
+  // without `output` returns no result, such as one that only prepares the
+  // agent for a later turn.
   async function runStep(
     run,
     workingDirectory,
-    { name, model, prompt, output },
+    { name, model, prompt, output, agentId: existing },
   ) {
     const started = Date.now();
-    let agentId = "not started";
+    let agentId = existing ?? "not started";
     let cost = 0;
     try {
       await run.save(`${name}.prompt.md`, prompt);
@@ -79,32 +89,46 @@ globalThis.workflow = (() => {
         tokens(prompt) <= MAX_PROMPT_TOKENS,
         `prompt of ${tokens(prompt)} tokens exceeds the limit of ${MAX_PROMPT_TOKENS}`,
       );
-      const agent = await tau.agents.spawn({
-        title: name,
-        prompt,
-        model,
-        workingDirectory,
-        ...("setCompletionNotification" in tau.agents
-          ? { notifyOnCompletion: false }
-          : {}),
-      });
-      agentId = agent.id;
-      logStart(name, model, `agent ${agent.id}`);
+      if (existing) {
+        const agent = await tau.agents.sendInput({
+          id: existing,
+          message: prompt,
+          mode: "queue",
+        });
+        logStart(name, agent.model, `agent ${existing}`);
+      } else {
+        const agent = await tau.agents.spawn({
+          title: name,
+          prompt,
+          model,
+          workingDirectory,
+          ...("setCompletionNotification" in tau.agents
+            ? { notifyOnCompletion: false }
+            : {}),
+        });
+        agentId = agent.id;
+        logStart(name, model, `agent ${agent.id}`);
+      }
 
-      const state = await tau.agents.waitUntilIdle({ id: agent.id });
-      cost += state.usage.cost;
+      const state = await tau.agents.waitUntilIdle({ id: agentId });
+      cost += state.usage.cost - (run.agentCosts.get(agentId) ?? 0);
+      run.agentCosts.set(agentId, state.usage.cost);
       ensure(
         state.reason === "completed",
         state.error?.message ?? `turn ${state.reason ?? state.status}`,
       );
-      const response = await lastResponse(agent.id);
+      if (!output) {
+        run.done(name, started, cost, "");
+        return { agentId, result: undefined };
+      }
+      const response = await lastResponse(agentId);
       const parsed = await parse(response, output.schema);
       cost += parsed.cost;
 
       await run.save(`${name}.json`, JSON.stringify(parsed.result, null, 2));
       await run.save(`${name}.md`, output.format(parsed.result));
       run.done(name, started, cost, output.summary(parsed.result));
-      return parsed.result;
+      return { agentId, result: parsed.result };
     } catch (error) {
       run.failed(name, started, cost, `${error.message} (agent ${agentId})`);
       throw error;
@@ -116,7 +140,7 @@ globalThis.workflow = (() => {
     const outcomes = await Promise.all(
       steps.map((step) =>
         runStep(run, workingDirectory, step).then(
-          (result) => ({ name: step.name, result }),
+          ({ result }) => ({ name: step.name, result }),
           () => ({ name: step.name, failed: true }),
         ),
       ),

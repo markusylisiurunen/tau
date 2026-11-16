@@ -20,6 +20,7 @@ const {
   ensure,
 } = workflow;
 const {
+  MODELS,
   readInputs,
   repositoryRoot,
   ensureHead,
@@ -27,14 +28,6 @@ const {
   diffOverview,
   formatBlocks,
 } = review;
-
-const MODELS = {
-  classifier: "openai-codex/gpt-6.1-terra:medium",
-  // Paired reviewers use different models for independent views.
-  design: "claude-code/claude-opus-5-5:medium",
-  peer: "openai-codex/gpt-6-astra:medium",
-  final: "openai-codex/gpt-6-astra:medium",
-};
 
 const PLAN = {
   schema: object({
@@ -142,16 +135,17 @@ const IMPROVEMENT = {
 
 // ── Inputs ──────────────────────────────────────────────────────────────
 
-const { base, head, context, workingDirectory } = readInputs(input);
-ensure(input?.depth === undefined, "improve does not accept code-review depth");
+const { base, head, context, workingDirectory } = readInputs(input, {
+  depth: false,
+});
 
 // ── Workflow ────────────────────────────────────────────────────────────
 
 await preflightModels([
   MODELS.classifier,
-  MODELS.design,
-  MODELS.peer,
-  MODELS.final,
+  MODELS.designReview,
+  MODELS.designReviewPeer,
+  MODELS.implement,
 ]);
 
 const repo = await repositoryRoot(workingDirectory);
@@ -172,10 +166,10 @@ const plan = await run.step({
   output: PLAN,
 });
 const reviewers = [
-  { name: "design-review-1", model: MODELS.design },
+  { name: "design-review-1", model: MODELS.designReview },
   plan.designReviews === 2 && {
     name: "design-review-2",
-    model: MODELS.peer,
+    model: MODELS.designReviewPeer,
   },
 ].filter(Boolean);
 log(
@@ -202,7 +196,7 @@ await ensureHead(repo, head);
 await ensureCleanTree(repo);
 const improvement = await run.step({
   name: "improve",
-  model: MODELS.final,
+  model: MODELS.implement,
   prompt: implementerPrompt(plan, completed),
   output: IMPROVEMENT,
 });

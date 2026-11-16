@@ -13,7 +13,7 @@ Pass these inputs:
 
 - `base`: the merge base of the pull request's target branch and its head, as a full commit ID.
 - `head`: the pull request's head commit, as a full commit ID. It must match the checked-out `HEAD`.
-- `context`: where the intent behind the change is recorded, usually the linked issue, such as `Read issue #120 for context.` Use the actual numbers, and add any guidance from the triggering comment.
+- `context`: written as the skill describes, usually just `Read issue #120 for context.` with the actual issue number. Add any guidance from the triggering comment.
 
 Set `depth` only when the user asks for one.
 
@@ -21,6 +21,6 @@ The workflow leaves its changes uncommitted, and its result lists the changes, t
 
 When there are changes to keep, run the verification the repository requires, commit, and push to the existing branch. Never push an empty commit, and never force-push. If someone pushed to the branch while the workflow ran, build on their commits instead of overwriting them. After pushing changes, use `gh` to update the pull request description if it is no longer accurate. The description should always describe the pull request as a whole, as it stands now. Do not turn it into a log of what changed in each push. Keep content that is still valid and any required metadata, and change only what needs to change.
 
-Finish with exactly one short pull request comment, posted with `gh`. If you pushed changes, say what changed and why it is better, which findings it fixes, which suggestions were rejected and why, and what is still unresolved. Mention verification only when it matters. If nothing needed changing, say that the workflow looked and found nothing worth changing. If the result lists warnings, such as a reviewer that failed, mention them. If the workflow fails or cannot run, inspect its output and the working tree, push nothing that you cannot verify, and say in the comment that the review and improvement did not complete and why.
+Finish with exactly one short pull request comment, posted with `gh`. If you pushed changes, say what changed and why it is better, which findings it fixes, which suggestions were rejected and why, and what is still unresolved. If nothing needed changing, say that the workflow looked and found nothing worth changing. If the result lists warnings, such as a reviewer that failed, mention them. If the workflow fails or cannot run, inspect its output and the working tree, push nothing that you cannot verify, and say in the comment that the review and improvement did not complete and why.
 
-Use skill `clear-writing` for all communication with the user.
+Use skill `github-workflow` for all communication with the user.

@@ -20,7 +20,30 @@ The request determines which actions to take. This skill does not by itself gran
 
 ## Writing style
 
-By default, write like a developer talking to a colleague: plainly and briefly. Give enough context to understand the point without recounting the whole conversation. Use more detail when requested or needed to explain the change.
+Write the way a developer on the team would write to a coworker: plainly, briefly, and in your own voice. Lead with what the reader needs, such as the answer, the result, or the decision you need from them. Give enough context to understand the point without recounting the conversation, and use more detail when the reader needs it to understand or decide.
+
+Leave out the routine parts of the work, such as the checks you ran, the files you read, and a restatement of the request, because a coworker assumes them. Mention a check only when it failed, or when something could not be checked and that matters to the reader. Use headings and lists only when the content has that shape. For example, this reply to a review comment:
+
+```markdown
+## Summary
+
+I have addressed the review comment.
+
+## Changes
+
+- Updated `parse.ts` to handle empty input
+
+## Verification
+
+- `npm test` passed
+- `npm run lint` passed
+```
+
+reads better as:
+
+```markdown
+Empty input now returns an empty list instead of throwing. I kept the error for malformed input, since the importer relies on it.
+```
 
 Use sentence case for issue and PR titles, headings, and prose: capitalize the first word and proper nouns, and write identifiers as they are spelled. Do not use title case or force prose into lowercase. Commit subjects follow the lowercase convention below.
 
@@ -50,7 +73,7 @@ The resulting behavior and important decisions.
 
 Add `## Details` only when useful for limitations of the change, compatibility, rollout, or other consequential context. Include focused screenshots only when they make review noticeably easier.
 
-Leave out how the work was done, such as file inventories, implementation steps, the models or agents involved, and the checks you ran. Report verification outcomes and open questions to whoever asked for the work. Post a pull request comment only when reviewers would otherwise miss a problem that should block or change the merge, such as a check that fails because of the change or an important path you could not test. Routine verification results and minor open points do not need a comment.
+Leave out how the work was done, such as file inventories, implementation steps, the models or agents involved, and the checks you ran. Tell whoever asked for the work about failed checks, gaps in verification, and open questions. Post a pull request comment only when reviewers would otherwise miss a problem that should block or change the merge, such as a check that fails because of the change or an important path you could not test. Routine verification results and minor open points do not need a comment.
 
 End with a closing-keyword line when the PR resolves an associated issue. Do not close an issue for partial work; state what remains instead.
 

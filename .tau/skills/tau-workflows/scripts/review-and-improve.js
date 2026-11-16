@@ -21,6 +21,7 @@ const {
   ensure,
 } = workflow;
 const {
+  MODELS,
   FINDINGS,
   readInputs,
   repositoryRoot,
@@ -30,15 +31,6 @@ const {
   formatBlocks,
   formatNumbered,
 } = review;
-
-const MODELS = {
-  classifier: "openai-codex/gpt-6.1-terra:medium",
-  // Paired reviewers use different models for independent views.
-  general: "openai-codex/gpt-6-astra:medium",
-  peer: "claude-code/claude-opus-5-5:medium",
-  focused: "openai-codex/gpt-6.1-terra:medium",
-  final: "openai-codex/gpt-6-astra:medium",
-};
 
 const PLAN = {
   schema: object({
@@ -168,10 +160,12 @@ const { base, head, context, depth, workingDirectory } = readInputs(input);
 
 await preflightModels([
   MODELS.classifier,
-  MODELS.general,
-  MODELS.peer,
-  MODELS.final,
-  ...(["auto", "deep"].includes(depth) ? [MODELS.focused] : []),
+  MODELS.codeReview,
+  MODELS.codeReviewPeer,
+  MODELS.designReview,
+  MODELS.designReviewPeer,
+  MODELS.implement,
+  ...(["auto", "deep"].includes(depth) ? [MODELS.focusedReview] : []),
 ]);
 
 const repo = await repositoryRoot(workingDirectory);
@@ -197,31 +191,31 @@ const scopes = reviewDepth === "deep" ? plan.scopes.slice(0, 3) : [];
 const reviewers = [
   {
     name: "code-review-1",
-    model: MODELS.general,
+    model: MODELS.codeReview,
     task: fullReview(),
     output: FINDINGS,
   },
   reviewDepth !== "light" && {
     name: "code-review-2",
-    model: MODELS.peer,
+    model: MODELS.codeReviewPeer,
     task: fullReview(),
     output: FINDINGS,
   },
   ...scopes.map((scope, index) => ({
     name: `focused-review-${index + 1}`,
-    model: MODELS.focused,
+    model: MODELS.focusedReview,
     task: focusedReview(scope),
     output: FINDINGS,
   })),
   plan.designReviews >= 1 && {
     name: "design-review-1",
-    model: MODELS.peer,
+    model: MODELS.designReview,
     task: designReview(),
     output: RECOMMENDATIONS,
   },
   plan.designReviews === 2 && {
     name: "design-review-2",
-    model: MODELS.general,
+    model: MODELS.designReviewPeer,
     task: designReview(),
     output: RECOMMENDATIONS,
   },
@@ -250,7 +244,7 @@ await ensureHead(repo, head);
 await ensureCleanTree(repo);
 const improvement = await run.step({
   name: "improve",
-  model: MODELS.final,
+  model: MODELS.implement,
   prompt: implementerPrompt(plan, completed),
   output: IMPROVEMENT,
 });

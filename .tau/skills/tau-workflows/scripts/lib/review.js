@@ -3,6 +3,19 @@
 // Shared helpers for the review workflows, exposed as globalThis.review.
 
 globalThis.review = (() => {
+  // Models by role, shared by every review workflow. Paired reviewers use
+  // different models for independent views.
+  const MODELS = {
+    classifier: "openai-codex/gpt-6.1-terra:medium",
+    codeReview: "openai-codex/gpt-6-astra:medium",
+    codeReviewPeer: "claude-code/claude-opus-5-5:medium",
+    focusedReview: "openai-codex/gpt-6.1-terra:medium",
+    designReview: "claude-code/claude-opus-5-5:medium",
+    designReviewPeer: "openai-codex/gpt-6-astra:medium",
+    chooseFindings: "openai-codex/gpt-6.1-sol:medium",
+    implement: "openai-codex/gpt-6-astra:medium",
+  };
+
   const { object, bash, tokens, ensure } = workflow;
 
   const COMMIT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
@@ -144,6 +157,7 @@ globalThis.review = (() => {
   }
 
   return {
+    MODELS,
     FINDINGS,
     readInputs,
     repositoryRoot,

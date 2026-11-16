@@ -19,6 +19,7 @@ const {
   ensure,
 } = workflow;
 const {
+  MODELS,
   FINDINGS,
   readInputs,
   repositoryRoot,
@@ -28,15 +29,6 @@ const {
   formatFindings,
   formatNumbered,
 } = review;
-
-const MODELS = {
-  classifier: "openai-codex/gpt-6.1-terra:medium",
-  // The two general reviewers use different models for independent views.
-  general: "openai-codex/gpt-6-astra:medium",
-  peer: "claude-code/claude-opus-5-5:medium",
-  focused: "openai-codex/gpt-6.1-terra:medium",
-  final: "openai-codex/gpt-6.1-sol:medium",
-};
 
 const PLAN = {
   schema: object({
@@ -116,10 +108,10 @@ const { base, head, context, depth, workingDirectory } = readInputs(input);
 
 await preflightModels([
   MODELS.classifier,
-  MODELS.general,
-  MODELS.final,
-  ...(depth !== "light" ? [MODELS.peer] : []),
-  ...(["auto", "deep"].includes(depth) ? [MODELS.focused] : []),
+  MODELS.codeReview,
+  MODELS.chooseFindings,
+  ...(depth !== "light" ? [MODELS.codeReviewPeer] : []),
+  ...(["auto", "deep"].includes(depth) ? [MODELS.focusedReview] : []),
 ]);
 
 const repo = await repositoryRoot(workingDirectory);
@@ -140,15 +132,15 @@ const reviewDepth = depth === "auto" ? plan.depth : depth;
 const scopes = reviewDepth === "deep" ? plan.scopes.slice(0, 3) : [];
 
 const reviewers = [
-  { name: "code-review-1", model: MODELS.general, task: fullReview() },
+  { name: "code-review-1", model: MODELS.codeReview, task: fullReview() },
   reviewDepth !== "light" && {
     name: "code-review-2",
-    model: MODELS.peer,
+    model: MODELS.codeReviewPeer,
     task: fullReview(),
   },
   ...scopes.map((scope, index) => ({
     name: `focused-review-${index + 1}`,
-    model: MODELS.focused,
+    model: MODELS.focusedReview,
     task: focusedReview(scope),
   })),
 ].filter(Boolean);
@@ -174,7 +166,7 @@ for (const name of failed) {
 // 3. Merge the findings and choose which to raise.
 const assessment = await run.step({
   name: "assess",
-  model: MODELS.final,
+  model: MODELS.chooseFindings,
   prompt: assessorPrompt(plan, completed),
   output: ASSESSMENT,
 });

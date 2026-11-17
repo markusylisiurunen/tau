@@ -6,7 +6,8 @@
 // agent instructions, prompts in code, or interface copy.
 //
 // 1. The writer works out what the text is for and who reads it, rewrites it
-//    in place, and writes a short, high-level brief for the readers.
+//    in place, deciding what each text needs as well as how to word it, and
+//    writes a short, high-level brief for the readers.
 // 2. Two readers look at the draft in parallel: one reads it as its intended
 //    reader, and one compares what it says with the original.
 // 3. The writer, continuing the same session, weighs their feedback and
@@ -207,6 +208,8 @@ function writerPrompt() {
 
 Text here means anything written for a reader, wherever it lives, such as documentation, agent instructions, prompts and tool descriptions in code, or interface copy. Start from what each text is for and who reads it, then from its source material, such as the code it describes. Read the repository's writing guidance in AGENTS.md, and use skill \`clear-writing\`, including its part on writing for AI models when the reader is a model.
 
+Weigh whether each point belongs, as well as how it is worded. Text tends to grow as writers add to it, and a rewrite that only rewords keeps all of that. Keep what this reader needs to understand, decide, or act correctly, and remove what costs attention without helping them do that, such as a point made twice, an explanation of something the reader already knows, or a caveat that changes nothing. When a passage is unclear, try rewording it before adding an explanation. Keep the distinctions and reasons the reader needs, even when they take more words. The rewriting section of \`clear-writing\` keeps every point, but here removing what the reader does not need is part of the task, so name the points you removed in the changes you report.
+
 You may change what the text asks its reader to do when that serves its purpose better. Keep the facts and the rules that protect something, such as authorization, safety, data, or a contract that other parts depend on. This is a pass over the text, and you may change code where the text needs it.
 
 Edit the files in place, and leave a file alone when it is already good. Throughout this session, do not commit, push, or change anything on GitHub, do not launch other agents, and do not search or read Tau session history.
@@ -219,7 +222,7 @@ ${responseFormat(BRIEF)}`;
 }
 
 function readerPrompt(brief, files) {
-  return `Read a rewritten text as its intended reader would, and report what does not work for that reader, such as what is unclear, missing, or longer than it needs to be. The rewrite is the uncommitted change in the working tree. \`git diff\` shows changes to existing files, and \`git status\` also lists new ones.
+  return `Read a rewritten text as its intended reader would, and report what does not work for that reader. That includes what is unclear or missing, and also what the reader could do without, such as a point made twice, an explanation of something they already know, a caveat that changes nothing they do, or wording longer than it needs to be. The rewrite is the uncommitted change in the working tree. \`git diff\` shows changes to existing files, and \`git status\` also lists new ones.
 
 Judge the text as it reads now. Another reader compares it with the old version.
 
@@ -236,7 +239,7 @@ ${responseFormat(FEEDBACK)}`;
 function meaningPrompt(brief, files) {
   return `Compare a rewritten text with the original, and report changes in what it says or asks of its reader that look wrong or worth rechecking, such as a fact, rule, limit, or permission that changed or disappeared. The rewrite is the uncommitted change in the working tree. \`git diff\` shows the original and the result for existing files, and \`git status\` also lists new ones.
 
-The writer may change what the text says on purpose, so report what looks like a loss or a mistake, and leave out changes that clearly serve the text.
+The writer may change what the text says on purpose, including removing what its reader does not need. Report what looks like a loss or a mistake, such as a cut that took a distinction, a protective rule, or a reason the reader needs, and leave out changes that clearly serve the text.
 
 Work read-only. Do not change files, Git, or GitHub, do not launch other agents, and do not search or read Tau session history. Use skill \`clear-writing\` for the text in your response. Reporting no issues is a valid result.
 
@@ -258,7 +261,7 @@ function revisePrompt(feedback) {
     : "Neither reader completed, so there is no feedback. Check the draft yourself once more.";
   return `The readers have looked at your draft. ${received}
 
-Edit the files in place, and use skill \`clear-writing\`. In your response, account for every issue, so each one you did not act on is in declined.${
+Edit the files in place, and use skill \`clear-writing\`. When a fix overlaps a point the text already makes, change that point instead of adding another sentence. Then reread each changed text as a whole for anything it now says twice. In your response, account for every issue, so each one you did not act on is in declined.${
     issues.length
       ? `
 

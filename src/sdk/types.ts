@@ -18,6 +18,7 @@ import type {
   SessionProtocolMethod,
   SessionProtocolPendingUserMessagesMessage,
   SessionProtocolPendingUserMessagesState,
+  SessionProtocolPersonaOverrides,
   SessionProtocolQueueResult,
   SessionProtocolReadyMessage,
   SessionProtocolReasoningEffort,
@@ -160,6 +161,11 @@ export type TauSdkHostDiagnostic =
       pendingOperations: number;
       pendingBytes: number;
       message: string;
+    }
+  | {
+      event: "session_config_warnings";
+      cwd: string;
+      warnings: string[];
     };
 
 export type TauSdkClientOptions = TauSdkTransportClientOptions & {
@@ -168,6 +174,7 @@ export type TauSdkClientOptions = TauSdkTransportClientOptions & {
   reasoning?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
   noAgentContextFiles?: boolean;
   refreshModelCatalog?: boolean;
+  requireCompleteHistory?: boolean;
   onDiagnostic?: (diagnostic: TauSdkHostDiagnostic) => void;
 };
 
@@ -211,7 +218,10 @@ export type TauSdkSession = {
     thresholdTokens: number | null,
   ): Promise<TauSdkSessionSetAutoCompactThresholdResult>;
   setReasoning(reasoning: TauSdkReasoningEffort): Promise<TauSdkSessionSetReasoningResult>;
-  setPersona(personaId: string): Promise<TauSdkSessionSetPersonaResult>;
+  setPersona(
+    personaId: string | null,
+    overrides?: SessionProtocolPersonaOverrides,
+  ): Promise<TauSdkSessionSetPersonaResult>;
   resolvePrompt(promptId: string): Promise<TauSdkResolvePromptResult>;
   autocompletePaths(options: {
     query: string;
@@ -244,6 +254,11 @@ export type TauSdkSession = {
 export type TauSdkSessionClient = {
   create(input: TauSdkCreateSessionInput): Promise<TauSdkSession>;
   list(): Promise<TauSdkSessionSummary[]>;
+  setRetention(
+    sessionId: string,
+    durationMs: number | null,
+  ): Promise<{ retainedUntil: number | null }>;
+  collect(sessionId: string): Promise<{ disposed: boolean }>;
   observe(sessionId: string): Promise<TauSdkSession>;
 };
 

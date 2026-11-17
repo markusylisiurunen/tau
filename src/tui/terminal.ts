@@ -1,6 +1,7 @@
 import { closeSync, openSync } from "node:fs";
 import { ReadStream } from "node:tty";
 import {
+  formatProgramStatus,
   ProcessTerminal,
   type ProgramStatus,
   StdinBuffer,
@@ -20,6 +21,7 @@ type OutputStream = NodeJS.WriteStream & {
 
 export class TauTerminal implements Terminal {
   private wasRaw = false;
+  private programStatus?: ProgramStatus;
   private inputHandler?: (data: string) => void;
   private resizeHandler?: () => void;
   private _kittyProtocolActive = false;
@@ -52,6 +54,7 @@ export class TauTerminal implements Terminal {
     }
 
     this.queryAndEnableKittyProtocol();
+    if (this.programStatus) this.setProgramStatus(this.programStatus);
   }
 
   private setupStdinBuffer(): void {
@@ -127,6 +130,9 @@ export class TauTerminal implements Terminal {
   }
 
   stop(): void {
+    if (this.programStatus && this.output.isTTY && process.env.PI_PROGRAM_STATUS !== "0") {
+      this.output.write(formatProgramStatus({ state: "clear" }));
+    }
     this.output.write("\x1b[?2004l");
 
     if (this._kittyProtocolActive) {
@@ -216,7 +222,12 @@ export class TauTerminal implements Terminal {
     this.output.write(`\x1b]0;${safeTitle}\x07`);
   }
 
-  setProgramStatus(_status: ProgramStatus): void {}
+  setProgramStatus(status: ProgramStatus): void {
+    this.programStatus = status.state === "clear" ? undefined : status;
+    if (this.output.isTTY && process.env.PI_PROGRAM_STATUS !== "0") {
+      this.output.write(formatProgramStatus(status));
+    }
+  }
 
   setProgress(active: boolean): void {
     if (active) {

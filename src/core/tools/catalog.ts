@@ -1,5 +1,6 @@
+import { NotificationInbox } from "../agent/notification_inbox.js";
 import type { AgentsCapabilityOptions } from "../code_mode/agents.js";
-import type { Config } from "../config/index.js";
+import type { SessionConfig, SessionRuntimeSettings } from "../config/index.js";
 import type { HistoryQuery } from "../history/types.js";
 import { McpManager } from "../mcp/manager.js";
 import type { ModelResolver } from "../models/catalog.js";
@@ -14,6 +15,7 @@ import { createCodeToolDefinition } from "./code.js";
 import type { CodeJobRegistry } from "./code_jobs.js";
 import { createEditToolDefinition } from "./edit.js";
 import { scopeToolExecutionBackend, type ToolExecutionBackend } from "./execution_backend.js";
+import { createNotificationTools } from "./notifications.js";
 import { type AgentTool, ToolRegistry } from "./registry.js";
 import { createTauDocsToolDefinition } from "./tau_docs.js";
 import { TOOL_NAME_BASH } from "./tool_names.js";
@@ -25,7 +27,7 @@ function createCommonTools(options: {
   backend: ToolExecutionBackend;
   cwd: string;
   allowedTools: readonly string[];
-  config: Config;
+  config: SessionRuntimeSettings;
   bashJobs: BashJobRegistry;
   codeJobs: CodeJobRegistry;
   history?: HistoryQuery;
@@ -53,7 +55,7 @@ export const ToolCatalog = {
   createDebugRegistry(options: {
     backend: ToolExecutionBackend;
     cwd: string;
-    config: Config;
+    config: SessionConfig;
     persona: Persona;
     modelResolver: ModelResolver;
     history: HistoryQuery;
@@ -66,19 +68,26 @@ export const ToolCatalog = {
       mcp: new McpManager(options.config.mcpServers),
       subagentSystemPrompt: undefined,
       autoCompactThresholdTokens: options.persona.autoCompactThresholdTokens ?? null,
-      supervisor: new AgentSupervisor({ onEvent: () => {} }),
+      supervisor: new AgentSupervisor({
+        mainAgentId: "main",
+        onEvent: () => {},
+        onCompletion: () => {},
+      }),
+      notifications: new NotificationInbox(),
     });
   },
 
   createSessionRegistry(options: {
     backend: ToolExecutionBackend;
     cwd: string;
-    config: Config;
+    config: SessionRuntimeSettings;
     persona: Persona;
     subagentSystemPrompt: string | undefined;
     autoCompactThresholdTokens: number | null;
     modelResolver: ModelResolver;
     supervisor: AgentSupervisor;
+    /** Absent when the session has notifications turned off. */
+    notifications?: NotificationInbox;
     jobs: AgentJobRegistry;
     bashJobs: BashJobRegistry;
     codeJobs: CodeJobRegistry;
@@ -87,15 +96,20 @@ export const ToolCatalog = {
     resolveSubagentPrompt?: ResolveSubagentPrompt;
     clientTools?: () => AgentTool[];
   }): ToolRegistry {
-    const tools = [createWaitForAgentsToolDefinition(options.supervisor)];
+    const tools = [
+      createWaitForAgentsToolDefinition(options.supervisor.scope(options.supervisor.mainAgentId)),
+    ];
     const enabledToolNames = new Set<string>(options.persona.tools);
     return new ToolRegistry([
       ...createCommonTools({
         ...options,
         allowedTools: options.persona.tools,
-        ...(enabledToolNames.has("agents") ? { agents: options } : {}),
+        ...(enabledToolNames.has("agents")
+          ? { agents: { ...options, callerId: options.supervisor.mainAgentId } }
+          : {}),
       }),
       ...(enabledToolNames.has("agents") ? tools : []),
+      ...(options.notifications ? createNotificationTools(options.notifications) : []),
       ...(options.clientTools?.() ?? []),
     ]);
   },
@@ -104,14 +118,15 @@ export const ToolCatalog = {
     allowedTools: SubagentToolName[],
     backend: ToolExecutionBackend,
     cwd: string,
-    config: Config,
+    config: SessionRuntimeSettings,
     bashJobs: BashJobRegistry,
     codeJobs: CodeJobRegistry,
     history?: HistoryQuery,
     mcp?: McpManager,
+    agents?: AgentsCapabilityOptions,
   ): ToolRegistry {
-    return new ToolRegistry(
-      createCommonTools({
+    return new ToolRegistry([
+      ...createCommonTools({
         backend,
         cwd,
         config,
@@ -120,7 +135,11 @@ export const ToolCatalog = {
         history,
         mcp,
         allowedTools,
+        agents,
       }),
-    );
+      ...(agents
+        ? [createWaitForAgentsToolDefinition(agents.supervisor.scope(agents.callerId))]
+        : []),
+    ]);
   },
 };

@@ -1,9 +1,10 @@
-import type { AutocompleteProvider, Component } from "@earendil-works/pi-tui";
+import type { AutocompleteProvider, Component, ProgramStatus } from "@earendil-works/pi-tui";
 import { Spacer, TuiMainScreen } from "@earendil-works/pi-tui";
 import { resolveThemeTokensForAppearance, type ThemeDefinition } from "../core/config/index.js";
 import type { RecordingShortcut } from "../core/config/schema.js";
 import type { SubagentEvent } from "../core/subagents/types.js";
 import type { ReasoningEffort } from "../core/types.js";
+import type { SpeechCleanupStyle } from "../core/utils/speech_cleanup.js";
 import type {
   SessionProtocolFeedbackTone,
   SessionProtocolPendingUserMessage,
@@ -35,14 +36,18 @@ import type { ToolUiModel } from "./ui/tool_ui_model.js";
 
 export type ChatInputMode = "normal" | "bash" | "bash_incognito" | "recording";
 
+export type ChatViewEditorStatus = {
+  personaName: string;
+  reasoningLabel: string;
+  reasoning?: ReasoningEffort;
+} & (
+  | { mode: Exclude<ChatInputMode, "recording"> }
+  | { mode: "recording"; recordingStyle: SpeechCleanupStyle }
+);
+
 export type ChatViewStatus = {
   footer: FooterStatus;
-  editor: {
-    mode: ChatInputMode;
-    personaName: string;
-    reasoningLabel: string;
-    reasoning?: ReasoningEffort;
-  };
+  editor: ChatViewEditorStatus;
 };
 
 export type ChatViewInputHandlers = {
@@ -52,6 +57,7 @@ export type ChatViewInputHandlers = {
   onCtrlP?: () => void;
   onCtrlS?: () => void;
   onToggleRecording?: () => void;
+  onCycleRecordingStyle?: () => void;
   recordingShortcut?: RecordingShortcut;
   onEscape?: () => void;
   onAltUp?: () => void;
@@ -93,6 +99,7 @@ export interface ChatView {
   resetToolUiSessionPreservingSubagents(): void;
   cycleSubagentSelection(direction: 1 | -1): string | undefined;
   getSelectedSubagentId(): string | undefined;
+  setProgramStatus(state: ProgramStatus["state"]): void;
   sendTerminalNotification(title: string): void;
   setPendingUserMessages(messages: SessionProtocolPendingUserMessage[]): void;
   getEditorText(): string;
@@ -307,6 +314,11 @@ export class TuiChatView implements ChatView {
       .join("");
   }
 
+  setProgramStatus(state: ProgramStatus["state"]): void {
+    if (!process.stdout.isTTY) return;
+    this.ui.terminal.setProgramStatus({ state, app: "tau" });
+  }
+
   sendTerminalNotification(title: string): void {
     if (!process.stdout.isTTY) return;
     const safeTitle = this.sanitizeOscText(title);
@@ -396,6 +408,7 @@ export class TuiChatView implements ChatView {
     this.editor.onSubmit = handlers.onSubmit;
     this.editor.onQueueSubmit = handlers.onQueueSubmit;
     this.editor.onDisabledSubmit = handlers.onDisabledSubmit;
+    this.editor.onDisabledTab = handlers.onCycleRecordingStyle;
   }
 
   setAutocompleteProvider(provider: AutocompleteProvider): void {
@@ -455,17 +468,14 @@ export class TuiChatView implements ChatView {
 
     if (state.mode === "bash" || state.mode === "bash_incognito") {
       const label = state.mode === "bash_incognito" ? "$ bash incognito" : "$ bash";
-      this.editor.setHeader(label, "", { leftStyle: this.editor.borderColor });
+      this.editor.setHeader(label, "");
       return;
     }
 
     if (state.mode === "recording") {
       this.editor.setHeader(
         `${this.getRecordingIndicator()} recording (${this.getRecordingDurationLabel()})`,
-        "",
-        {
-          leftStyle: this.editor.borderColor,
-        },
+        state.recordingStyle,
       );
       return;
     }

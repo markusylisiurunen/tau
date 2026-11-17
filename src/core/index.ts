@@ -31,10 +31,13 @@ export {
 export type { CliOptions } from "./cli.js";
 export { CliError, parseCliArgs, parsePersonaString, printDiffToolHelp, printHelp } from "./cli.js";
 export type {
+  ClientConfig,
   Config,
   ConfigDeps,
   FlySpritesConfig,
+  HostConfig,
   RuntimeBootstrap,
+  SessionConfig,
   TelegramBotConfig,
   TelegramBotConfigMap,
   TelegramProjectConfig,
@@ -47,9 +50,11 @@ export {
   buildVirtualBundle,
   createDefaultConfigDeps,
   loadAllContent,
-  loadConfig,
+  loadClientConfig,
+  loadHostConfig,
   loadRuntimeBootstrap,
   loadRuntimeConfig,
+  loadSessionConfig,
   resolveConfigLevels,
   resolveThemeTokensById,
   resolveThemeTokensForAppearance,

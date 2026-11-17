@@ -6,6 +6,7 @@ import {
   type Options,
   query,
   type SDKAssistantMessage,
+  type SDKMessage,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import {
@@ -14,7 +15,7 @@ import {
   claudeCodeInputSchema,
 } from "./claude_code_protocol.js";
 import type { ContentBlock } from "./events.js";
-import { boundedTraceBlocks } from "./trace.js";
+import { boundedHistoryText, boundedHistoryValue, boundedTraceBlocks } from "./trace.js";
 
 type ClaudeMessageContent = SDKUserMessage["message"]["content"];
 type ClaudeToolResult = Extract<
@@ -135,6 +136,7 @@ export async function runClaudeCode(
   });
   const pending: { message: string; uuid: ReturnType<typeof randomUUID> }[] = [];
   const outstanding = new Map<string, string>();
+  const delivered = new Map<string, string>();
   let wake: (() => void) | undefined;
   let closing = false;
   const socketPath = join(directory, "input.sock");
@@ -172,9 +174,11 @@ export async function runClaudeCode(
   async function* prompts(): AsyncGenerator<SDKUserMessage> {
     await ready;
     if (!authorized) return;
+    const initialId = randomUUID();
+    delivered.set(initialId, input.prompt);
     yield {
       type: "user",
-      uuid: randomUUID(),
+      uuid: initialId,
       session_id: input.sessionId ?? "",
       parent_tool_use_id: null,
       message: { role: "user", content: input.prompt },
@@ -189,7 +193,8 @@ export async function runClaudeCode(
         ]);
       wake = undefined;
       const next = pending.shift();
-      if (next)
+      if (next) {
+        delivered.set(next.uuid, next.message);
         yield {
           type: "user",
           uuid: next.uuid,
@@ -197,8 +202,39 @@ export async function runClaudeCode(
           parent_tool_use_id: null,
           message: { role: "user", content: next.message },
         };
+      }
     }
   }
+  function consumedInputs(message: SDKMessage): string[] {
+    if (
+      (message.type === "stream_event" ||
+        message.type === "assistant" ||
+        message.type === "result") &&
+      (message.type === "result" || message.parent_tool_use_id === null)
+    )
+      return (
+        message.user_message_uuids ?? (message.user_message_uuid ? [message.user_message_uuid] : [])
+      );
+    return [];
+  }
+  function recordConsumedInput(uuid: string): void {
+    const input = delivered.get(uuid);
+    if (input === undefined) return;
+    delivered.delete(uuid);
+    emit({
+      type: "history",
+      event: {
+        type: "message",
+        entry: {
+          id: uuid,
+          sourceIds: [uuid],
+          type: "user",
+          content: input,
+        },
+      },
+    });
+  }
+  let observedResponse = false;
   let conversation: ReturnType<typeof query> | undefined;
   const calls = new Map<string, { name: string; subject: string }>();
   let streamedMessage: Pick<SDKAssistantMessage["message"], "id" | "usage"> | undefined;
@@ -230,6 +266,7 @@ export async function runClaudeCode(
     authorized = true;
     allowPrompt();
     for await (const message of conversation) {
+      for (const uuid of consumedInputs(message)) recordConsumedInput(uuid);
       if (message.type === "system" && message.subtype === "init") {
         emit({ type: "session", id: message.session_id });
       } else if (message.type === "system" && message.subtype === "compact_boundary") {
@@ -238,6 +275,7 @@ export async function runClaudeCode(
           event: { kind: "notice", code: "compaction.compacted", content: [] },
         });
       } else if (message.type === "stream_event" && message.parent_tool_use_id === null) {
+        observedResponse = true;
         const event = message.event;
         if (event.type === "message_start") {
           streamedMessage = { id: event.message.id, usage: event.message.usage };
@@ -257,12 +295,26 @@ export async function runClaudeCode(
           streamedMessage = undefined;
         }
       } else if (message.type === "assistant" && message.parent_tool_use_id === null) {
+        observedResponse = true;
         emitUsage(message.message);
         const content = message.message.content.filter((block) => block.type === "text");
         if (content.length)
           emit({ type: "trace", event: { kind: "assistant", content: claudeContent(content) } });
-        for (const block of message.message.content) {
+        const sourceId = message.uuid;
+        for (const [index, block] of message.message.content.entries()) {
           if (block.type === "text" && block.text) {
+            emit({
+              type: "history",
+              event: {
+                type: "message",
+                entry: {
+                  id: `${sourceId}:text:${index}`,
+                  sourceIds: [sourceId],
+                  type: "assistant",
+                  content: boundedHistoryText(block.text),
+                },
+              },
+            });
             emit({ type: "assistant", text: block.text.slice(0, 8192) });
           } else if (block.type === "tool_use") {
             const args =
@@ -273,13 +325,24 @@ export async function runClaudeCode(
               [args.file_path, args.command, args.pattern, args.url].find(
                 (value): value is string => typeof value === "string",
               ) ?? block.name;
+            const argumentsValue = JSON.parse(JSON.stringify(block.input));
             emit({
               type: "trace",
               event: {
                 kind: "tool_call",
                 callId: block.id,
                 toolName: block.name,
-                arguments: [{ type: "json", value: JSON.parse(JSON.stringify(block.input)) }],
+                arguments: [{ type: "json", value: argumentsValue }],
+              },
+            });
+            emit({
+              type: "history",
+              event: {
+                type: "toolCall",
+                callId: block.id,
+                sourceId,
+                name: block.name,
+                arguments: boundedHistoryValue(argumentsValue),
               },
             });
             calls.set(block.id, {
@@ -299,6 +362,16 @@ export async function runClaudeCode(
           const call = calls.get(block.tool_use_id);
           if (!call) continue;
           calls.delete(block.tool_use_id);
+          emit({
+            type: "history",
+            event: {
+              type: "toolResult",
+              callId: block.tool_use_id,
+              sourceId: message.uuid ?? `${block.tool_use_id}:result`,
+              result: boundedTraceBlocks(claudeContent(block.content)),
+              outcome: block.is_error ? "failed" : "succeeded",
+            },
+          });
           emit({ type: "tool", ...call, failed: block.is_error === true });
           emit({
             type: "trace",
@@ -312,16 +385,26 @@ export async function runClaudeCode(
           });
         }
       } else if (message.type === "result") {
-        for (const uuid of message.user_message_uuids ??
-          (message.user_message_uuid ? [message.user_message_uuid] : []))
-          outstanding.delete(uuid);
+        for (const uuid of consumedInputs(message)) outstanding.delete(uuid);
         if (outstanding.size && !message.user_message_uuid && !message.user_message_uuids)
           throw new Error(
             "Claude Code did not report streamed input consumption; update the Claude CLI before steering workers.",
           );
-        closing = message.is_error || message.subtype !== "success" || outstanding.size === 0;
-        const totals = Object.values(message.modelUsage);
         const failed = message.is_error || message.subtype !== "success";
+        if (
+          (observedResponse || !failed) &&
+          [...delivered.keys()].some((uuid) => !outstanding.has(uuid))
+        )
+          emit({
+            type: "history",
+            event: {
+              type: "diagnostic",
+              message:
+                "Claude Code produced output without confirming initial input consumption; history is incomplete.",
+            },
+          });
+        closing = failed || outstanding.size === 0;
+        const totals = Object.values(message.modelUsage);
         const context = failed
           ? undefined
           : await conversation.getContextUsage({ detail: "summary" });

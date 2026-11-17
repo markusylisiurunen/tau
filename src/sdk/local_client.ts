@@ -1,6 +1,5 @@
 import { homedir } from "node:os";
-import { parsePersonaString } from "../core/cli.js";
-import type { Config } from "../core/config/schema.js";
+import type { HostConfig } from "../core/config/ownership.js";
 import { resolveHistoryRemoteTarget } from "../core/history/config.js";
 import { HistoryManager } from "../core/history/history_manager.js";
 import { getDefaultHistoryDatabasePath } from "../core/history/local_history_store.js";
@@ -11,22 +10,23 @@ import {
 import { createDefaultCoreDeps } from "../core/runtime/deps.js";
 import type { AutoCompactDefaults } from "../core/session/auto_compaction_threshold.js";
 import { createLocalToolExecutionBackend } from "../core/tools/execution_backend.js";
-import type { Persona } from "../core/types.js";
 import { CompositeExecutionEnvironmentResolver } from "../execution/execution_environment.js";
 import { LocalExecutionEnvironmentResolver } from "../execution/local_execution_environment.js";
 import { LocalSessionHost } from "../host/local_session_host.js";
+import { resolveSessionBootstrap } from "../host/session_bootstrap.js";
+import type { SessionProtocolPersonaOverrides } from "../protocol/session_protocol.js";
 import { FileSessionStore, getDefaultSessionStoreDirectory } from "../store/file_session_store.js";
 import { InProcessSessionProtocolTransport } from "../transport/in_process_session_transport.js";
-import { TauTransportError } from "../transport/index.js";
 import { createTauSdkClientFromTransport, resolveTauSdkInitializeParams } from "./session.js";
 import type { TauSdkClient, TauSdkClientOptions } from "./types.js";
 
 export async function createTauSdkClientWithHostConfig(
   options: TauSdkClientOptions,
-  config: Config,
+  config: HostConfig,
   runtimeOptions: {
     remoteModelCatalog?: RemoteModelCatalog;
     autoCompactDefaults?: AutoCompactDefaults;
+    initialPersonaSelection?: { personaId: string | null } & SessionProtocolPersonaOverrides;
   } = {},
 ): Promise<TauSdkClient> {
   resolveTauSdkInitializeParams(options.initialize, options.clientTools);
@@ -40,10 +40,11 @@ export async function createTauSdkClientWithHostConfig(
 
 async function createInProcessSdkHost(
   options: TauSdkClientOptions,
-  config: Config,
+  config: HostConfig,
   runtimeOptions: {
     remoteModelCatalog?: RemoteModelCatalog;
     autoCompactDefaults?: AutoCompactDefaults;
+    initialPersonaSelection?: { personaId: string | null } & SessionProtocolPersonaOverrides;
   },
 ): Promise<LocalSessionHost> {
   const deps = createDefaultCoreDeps();
@@ -92,9 +93,9 @@ async function createInProcessSdkHost(
     history: HistoryManager.open(getDefaultHistoryDatabasePath(home), {
       reportReplicationFailure: options.onDiagnostic,
       reportRecording: options.onDiagnostic,
+      requireCompleteRecording: options.requireCompleteHistory,
     }),
     historyRemote: resolveHistoryRemoteTarget(config),
-    mcpServers: config.mcpServers,
     ...(onShutdown ? { onShutdown } : {}),
     executionEnvironmentResolver,
     includeAgentContext: !options.noAgentContextFiles,
@@ -103,72 +104,17 @@ async function createInProcessSdkHost(
       now: () => deps.clock.now(),
     },
     deps,
-    resolveSessionBootstrap: async ({ executionEnvironment, remoteCatalog }) => {
-      const snapshot = executionEnvironment.snapshot();
-      const envRuntime = await executionEnvironment.resolveRuntimeConfig(snapshot.cwd, {
+    resolveSessionBootstrap: async ({ executionEnvironment, remoteCatalog, recovering }) =>
+      await resolveSessionBootstrap({
+        executionEnvironment,
         remoteCatalog,
-      });
-      if (envRuntime.personas.length === 0) {
-        throw new Error(
-          `no personas available for execution environment cwd '${snapshot.cwd}'. add a custom persona or enable built-ins.`,
-        );
-      }
-
-      const envSelected = selectSdkPersona(envRuntime.personas, {
-        requestedPersona: options.persona,
-        defaultPersona: envRuntime.config.defaultPersona,
-      });
-      const envPersona = clonePersonaForSession(envSelected.persona);
-      const envReasoning = options.reasoning ?? envSelected.reasoning;
-      if (envReasoning !== undefined) {
-        envPersona.settings.reasoning = envReasoning;
-      }
-
-      return {
-        persona: envPersona,
-        discoveredSkills: envRuntime.skills,
-        personas: envRuntime.personas.map(clonePersonaForSession),
-        prompts: envRuntime.prompts,
-        modelResolver: envRuntime.bootstrap.modelResolver.resolveModel,
-        config: { ...envRuntime.config, apiKeys: config.apiKeys },
-      };
-    },
+        recovering,
+        hostApiKeys: config.apiKeys,
+        personaRequest: runtimeOptions.initialPersonaSelection
+          ? { selection: runtimeOptions.initialPersonaSelection }
+          : { persona: options.persona, reasoning: options.reasoning },
+        onDiagnostic: options.onDiagnostic,
+      }),
   });
   return host;
-}
-
-function selectSdkPersona(
-  personas: Persona[],
-  options: { requestedPersona?: string; defaultPersona?: string },
-): { persona: Persona; reasoning?: ReturnType<typeof parsePersonaString>["reasoning"] } {
-  let personaId = options.requestedPersona;
-  let reasoning = undefined as ReturnType<typeof parsePersonaString>["reasoning"] | undefined;
-  if (personaId) {
-    const parsed = parsePersonaString(personaId, personas);
-    personaId = parsed.personaId;
-    reasoning = parsed.reasoning;
-  }
-  if (!personaId && options.defaultPersona) {
-    const parsed = parsePersonaString(options.defaultPersona, personas);
-    personaId = parsed.personaId;
-    reasoning = parsed.reasoning;
-  }
-
-  const persona = personaId
-    ? personas.find((candidate) => candidate.id === personaId)
-    : personas[0];
-  if (!persona) {
-    throw new TauTransportError(`persona '${personaId}' is not available`);
-  }
-  return { persona, reasoning };
-}
-
-function clonePersonaForSession(persona: Persona): Persona {
-  return {
-    ...persona,
-    settings: { ...persona.settings },
-    allowedReasoningLevels: persona.allowedReasoningLevels
-      ? [...persona.allowedReasoningLevels]
-      : undefined,
-  };
 }

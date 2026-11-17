@@ -1,0 +1,439 @@
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { describe, expect, it } from "vitest";
+import { loadClientConfig, loadSessionConfig } from "../dist/core/config/ownership.js";
+import { resolveConfigLevels } from "../dist/core/config/paths.js";
+import { loadConfig, loadConfigWithDiagnostics } from "../dist/core/config/schema.js";
+import { loadModelResolver } from "../dist/core/models/catalog.js";
+
+function createConfigDeps({ cwd, home, env }) {
+  return {
+    fs: {
+      readFile: (path) => readFileSync(path, "utf-8"),
+      exists: (path) => existsSync(path),
+      listDir: (path) => readdirSync(path),
+      stat: (path) => statSync(path),
+    },
+    env: {
+      getEnv: () => env,
+      cwd: () => cwd,
+      home: () => home,
+    },
+  };
+}
+
+function setupFixture() {
+  const home = mkdtempSync(join(tmpdir(), "tau-config-home-"));
+  const repo = mkdtempSync(join(tmpdir(), "tau-config-repo-"));
+
+  return {
+    home: resolve(home),
+    repo: resolve(repo),
+    cleanup: () => {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(repo, { recursive: true, force: true });
+    },
+  };
+}
+
+describe("config paths", () => {
+  it("merges levels with most-specific wins", () => {
+    const fx = setupFixture();
+
+    try {
+      const repo = join(fx.home, "repo");
+      const nested = join(repo, "packages", "pkg1");
+      mkdirSync(nested, { recursive: true });
+      mkdirSync(join(fx.home, ".config", "tau"), { recursive: true });
+      mkdirSync(join(repo, ".tau"), { recursive: true });
+      mkdirSync(join(nested, ".tau"), { recursive: true });
+
+      writeFileSync(
+        join(fx.home, ".config", "tau", "config.json"),
+        JSON.stringify({
+          apiKeys: { openai: "global", anthropic: "anthropic-key", mistral: "mistral-key" },
+          speech: {
+            voiceId: "global-voice",
+            recordingShortcut: { key: "§", gesture: "double-tap" },
+          },
+          subagents: {
+            launchModels: ["anthropic/claude-haiku-4-5:low"],
+          },
+          history: {
+            endpoint: "https://history.example.com/",
+            apiKeyEnv: "HISTORY_KEY",
+          },
+          flySprites: {
+            baseURL: "https://api.sprites.dev",
+            tokenEnv: "GLOBAL_SPRITES_TOKEN",
+          },
+          modelSystemNotices: {
+            "openai/gpt-5.4": "global codex notice",
+            "anthropic/claude-sonnet-4-5": "global anthropic notice",
+          },
+        }),
+      );
+
+      writeFileSync(
+        join(repo, ".tau", "config.json"),
+        JSON.stringify({
+          apiKeys: { openai: "repo", google: "google-key" },
+          speech: { voiceId: " project-voice " },
+          subagents: {
+            launchModels: ["openai/gpt-5.4:high"],
+          },
+          flySprites: {
+            baseURL: "https://repo.sprites.example",
+            tokenEnv: "REPO_SPRITES_TOKEN",
+            home: "/home/sprite",
+          },
+          modelSystemNotices: {
+            "openai/gpt-5.4": "repo codex notice",
+          },
+        }),
+      );
+
+      writeFileSync(
+        join(nested, ".tau", "config.json"),
+        JSON.stringify({
+          defaultPersona: "custom-persona",
+        }),
+      );
+
+      const deps = createConfigDeps({
+        cwd: nested,
+        home: fx.home,
+        env: {},
+      });
+
+      const config = loadConfig(nested, deps);
+      expect(config.defaultPersona).toBe("custom-persona");
+      expect(config.speech).toEqual({
+        voiceId: "project-voice",
+        recordingShortcut: { key: "§", gesture: "double-tap" },
+      });
+      expect(config.apiKeys).toEqual({
+        openai: "global",
+        anthropic: "anthropic-key",
+        mistral: "mistral-key",
+      });
+      expect(config.subagents).toEqual({
+        launchModels: ["openai/gpt-5.4:high"],
+      });
+      expect(config.history).toEqual({
+        endpoint: "https://history.example.com",
+        apiKeyEnv: "HISTORY_KEY",
+      });
+      expect(config.flySprites).toEqual({
+        baseURL: "https://repo.sprites.example",
+        tokenEnv: "REPO_SPRITES_TOKEN",
+        home: "/home/sprite",
+      });
+      expect(config.modelSystemNotices).toEqual({
+        "openai/gpt-5.4": "repo codex notice",
+        "anthropic/claude-sonnet-4-5": "global anthropic notice",
+      });
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("reports parse errors without throwing", () => {
+    const fx = setupFixture();
+
+    try {
+      mkdirSync(join(fx.repo, ".tau"), { recursive: true });
+      writeFileSync(join(fx.repo, ".tau", "config.json"), "{invalid json");
+
+      const deps = createConfigDeps({
+        cwd: fx.repo,
+        home: fx.home,
+        env: {},
+      });
+
+      const levels = resolveConfigLevels(deps, { cwd: fx.repo });
+      const modelResolver = loadModelResolver();
+      const result = loadConfigWithDiagnostics(deps, { levels, modelResolver });
+      expect(result.config).toMatchObject({
+        defaultPersona: "sonnet-5.5-coder",
+      });
+      expect(result.errors.length).toBeGreaterThan(0);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it.each([undefined, "off"])(
+    "resolves the client cleanup style with project override %j",
+    (cleanupStyle) => {
+      const fx = setupFixture();
+      try {
+        const repo = join(fx.home, "repo");
+        for (const [directory, speech] of [
+          [join(fx.home, ".config", "tau"), { cleanupStyle: "default" }],
+          [join(repo, ".tau"), { cleanupStyle }],
+        ]) {
+          mkdirSync(directory, { recursive: true });
+          writeFileSync(join(directory, "config.json"), JSON.stringify({ speech }));
+        }
+        const deps = createConfigDeps({ cwd: repo, home: fx.home, env: {} });
+        expect(loadClientConfig(repo, deps).speech.cleanupStyle).toBe(cleanupStyle ?? "default");
+        expect(loadSessionConfig(repo, deps)).not.toHaveProperty("speech");
+      } finally {
+        fx.cleanup();
+      }
+    },
+  );
+
+  it.each([undefined, [], [" Tau ", "Nearest", "TAU"]])(
+    "merges speech vocabulary from nearest project to global (%j)",
+    (vocabulary) => {
+      const fx = setupFixture();
+      try {
+        const repo = join(fx.home, "repo");
+        const nested = join(repo, "nested");
+        for (const [directory, speech] of [
+          [join(fx.home, ".config", "tau"), { vocabulary: ["tau", "Global"], voiceId: "global" }],
+          [join(repo, ".tau"), { vocabulary: ["Parent", "Tau"], voiceId: "project" }],
+          [join(nested, ".tau"), { vocabulary }],
+        ]) {
+          mkdirSync(directory, { recursive: true });
+          writeFileSync(join(directory, "config.json"), JSON.stringify({ speech }));
+        }
+        const deps = createConfigDeps({ cwd: nested, home: fx.home, env: {} });
+        expect(loadConfig(nested, deps).speech).toEqual({
+          voiceId: "project",
+          vocabulary: vocabulary?.length
+            ? ["Tau", "Nearest", "Parent", "Global"]
+            : ["Parent", "Tau", "Global"],
+        });
+      } finally {
+        fx.cleanup();
+      }
+    },
+  );
+
+  it.each([
+    { voiceId: 42 },
+    { vocabulary: ["<instruction>"] },
+    { recordingShortcut: { key: "§", gesture: "hold" } },
+  ])("rejects invalid speech configuration %j", (speech) => {
+    const fx = setupFixture();
+    try {
+      mkdirSync(join(fx.repo, ".tau"), { recursive: true });
+      writeFileSync(join(fx.repo, ".tau", "config.json"), JSON.stringify({ speech }));
+      const deps = createConfigDeps({ cwd: fx.repo, home: fx.home, env: {} });
+      const levels = resolveConfigLevels(deps, { cwd: fx.repo });
+      const modelResolver = loadModelResolver();
+      const result = loadConfigWithDiagnostics(deps, { levels, modelResolver });
+      expect(result.config.speech).toBeUndefined();
+      expect(result.errors.length).toBeGreaterThan(0);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("keeps valid scalar fields while reporting invalid scalar fields", () => {
+    const fx = setupFixture();
+
+    try {
+      mkdirSync(join(fx.repo, ".tau"), { recursive: true });
+      writeFileSync(
+        join(fx.repo, ".tau", "config.json"),
+        JSON.stringify({
+          speech: "invalid",
+          defaultTheme: " midnight ",
+        }),
+      );
+
+      const deps = createConfigDeps({
+        cwd: fx.repo,
+        home: fx.home,
+        env: {},
+      });
+
+      const levels = resolveConfigLevels(deps, { cwd: fx.repo });
+      const modelResolver = loadModelResolver();
+      const result = loadConfigWithDiagnostics(deps, { levels, modelResolver });
+      expect(result.config.speech).toBeUndefined();
+      expect(result.config.defaultTheme).toBe("midnight");
+      expect(result.errors.length).toBeGreaterThan(0);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("rejects credentials in remote history endpoints", () => {
+    const fx = setupFixture();
+
+    try {
+      const repo = join(fx.home, "repo");
+      const configPath = join(fx.home, ".config", "tau", "config.json");
+      mkdirSync(repo, { recursive: true });
+      mkdirSync(join(fx.home, ".config", "tau"), { recursive: true });
+      writeFileSync(
+        configPath,
+        JSON.stringify({
+          history: {
+            endpoint: "https://user:secret@history.example.com",
+            apiKey: "history-key",
+          },
+        }),
+      );
+
+      const deps = createConfigDeps({ cwd: repo, home: fx.home, env: {} });
+      const levels = resolveConfigLevels(deps, { cwd: repo });
+      const modelResolver = loadModelResolver();
+      const result = loadConfigWithDiagnostics(deps, { levels, modelResolver });
+
+      expect(result.config.history).toBeUndefined();
+      expect(result.errors).toEqual([
+        `${configPath}: history.endpoint must be an HTTP(S) URL without credentials, a query, or a hash.`,
+      ]);
+      expect(result.errors.join("\n")).not.toContain("secret");
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("rejects modelSystemNotices for unknown model ids", () => {
+    const fx = setupFixture();
+
+    try {
+      mkdirSync(join(fx.repo, ".tau"), { recursive: true });
+      writeFileSync(
+        join(fx.repo, ".tau", "config.json"),
+        JSON.stringify({
+          modelSystemNotices: {
+            "openai/gpt-5.9-custom": "custom notice",
+          },
+        }),
+      );
+
+      const deps = createConfigDeps({
+        cwd: fx.repo,
+        home: fx.home,
+        env: {},
+      });
+
+      const levels = resolveConfigLevels(deps, { cwd: fx.repo });
+      const modelResolver = loadModelResolver();
+      const result = loadConfigWithDiagnostics(deps, { levels, modelResolver });
+
+      expect(result.config.modelSystemNotices).toBeUndefined();
+      expect(result.errors).toContain(
+        `${join(fx.repo, ".tau", "config.json")}: modelSystemNotices.openai/gpt-5.9-custom unknown model 'openai/gpt-5.9-custom'.`,
+      );
+    } finally {
+      fx.cleanup();
+    }
+  });
+});
+
+describe("MCP host configuration", () => {
+  it("merges host launch-directory layers by server name and resolves paths at their defining layer", () => {
+    const fx = setupFixture();
+    try {
+      const repo = join(fx.home, "repo");
+      mkdirSync(join(fx.home, ".config", "tau"), { recursive: true });
+      mkdirSync(join(repo, ".tau"), { recursive: true });
+      writeFileSync(
+        join(fx.home, ".config", "tau", "config.json"),
+        JSON.stringify({
+          mcpServers: {
+            local: {
+              type: "stdio",
+              command: "./bin/mcp",
+              description: "Inherited summary",
+              cwd: "~/services",
+              env: { TOKEN: `\${HOST_TOKEN}` },
+            },
+            remote: {
+              type: "http",
+              url: "https://example.com/mcp",
+              description: "Remote service",
+              headers: { Authorization: `Bearer \${HOST_TOKEN}` },
+            },
+            disabled: { type: "stdio", command: "uvx", enabled: false },
+            invalid: { type: "http", url: "https://user:private-secret@example.com/mcp" },
+            mixed: { type: "stdio", command: "server", url: "https://example.com" },
+          },
+        }),
+      );
+      writeFileSync(
+        join(repo, ".tau", "config.json"),
+        JSON.stringify({
+          mcpServers: {
+            local: { type: "stdio", command: "./project-mcp", cwd: "~/project-services" },
+            project: { type: "stdio", command: "uvx" },
+            disabled: { type: "stdio", command: "disabled-project", enabled: false },
+          },
+        }),
+      );
+      const deps = createConfigDeps({ cwd: repo, home: fx.home, env: {} });
+      const levels = resolveConfigLevels(deps, { cwd: repo });
+      const result = loadConfigWithDiagnostics(deps, {
+        levels,
+        modelResolver: loadModelResolver(),
+      });
+      expect(result.config.mcpServers).toEqual({
+        local: {
+          type: "stdio",
+          command: join(repo, "project-mcp"),
+          cwd: join(fx.home, "project-services"),
+        },
+        remote: {
+          type: "http",
+          url: "https://example.com/mcp",
+          description: "Remote service",
+          headers: { Authorization: `Bearer \${HOST_TOKEN}` },
+        },
+        disabled: { type: "stdio", command: "disabled-project", cwd: repo, enabled: false },
+        project: { type: "stdio", command: "uvx", cwd: repo },
+      });
+      expect(result.errors).toHaveLength(2);
+      expect(result.errors.join("\n")).not.toContain("private-secret");
+    } finally {
+      fx.cleanup();
+    }
+  });
+});
+
+describe("Markdown export configuration", () => {
+  it("keeps the global destination and credentials when a project attempts an override", () => {
+    const fx = setupFixture();
+    try {
+      const repo = join(fx.home, "repo");
+      const globalDir = join(fx.home, ".config", "tau");
+      const projectDir = join(repo, ".tau");
+      mkdirSync(globalDir, { recursive: true });
+      mkdirSync(projectDir, { recursive: true });
+      const markdownExport = {
+        url: "https://example.com/api",
+        token: "inline",
+        tokenEnv: "EXPORT_TOKEN",
+      };
+      writeFileSync(join(globalDir, "config.json"), JSON.stringify({ markdownExport }));
+      writeFileSync(
+        join(projectDir, "config.json"),
+        JSON.stringify({
+          markdownExport: { url: "https://untrusted.example/api", token: "project" },
+        }),
+      );
+      const deps = createConfigDeps({ cwd: repo, home: fx.home, env: {} });
+      expect(loadConfig(repo, deps).markdownExport).toEqual(markdownExport);
+    } finally {
+      fx.cleanup();
+    }
+  });
+});

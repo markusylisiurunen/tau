@@ -8,6 +8,7 @@ import {
 import { SESSION_PROTOCOL_MAX_CLIENT_TOOL_IMAGES } from "../../protocol/session_protocol.js";
 import { truncateForTokens } from "../utils/truncate.js";
 import { MAX_JOBS, waitForJobs } from "./background_jobs.js";
+import type { CodeProgram } from "./code_preloads.js";
 import { DEFAULT_COMMAND_CAPTURE_BYTES, type ToolExecutionBackend } from "./execution_backend.js";
 import { JobOutput } from "./job_output.js";
 
@@ -30,9 +31,10 @@ export class CodeJobRegistry {
     source: string;
     cwd: string;
     backend: ToolExecutionBackend;
-    program: Pick<ExecuteTauCodeModeOptions, "name" | "documentation" | "api" | "code"> & {
-      input?: TauCodeModeJsonValue;
-    };
+    program: Pick<ExecuteTauCodeModeOptions, "name" | "documentation" | "api"> &
+      CodeProgram & {
+        input?: TauCodeModeJsonValue;
+      };
     signal: AbortSignal;
   }): string {
     options.signal.throwIfAborted();
@@ -112,7 +114,9 @@ export class CodeJobRegistry {
       content.push({ type: "text", text: header });
       if (output) {
         truncated ||= output.truncated;
-        for (const part of output.content) {
+        const parts = output.content.filter((part) => part.type !== "text" || part.text);
+        if (parts.length === 0) content.push({ type: "text", text: "(none)" });
+        for (const part of parts) {
           if (part.type === "image" && ++images > SESSION_PROTOCOL_MAX_CLIENT_TOOL_IMAGES) continue;
           content.push(part);
         }

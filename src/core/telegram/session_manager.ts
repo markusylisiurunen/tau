@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { z } from "zod";
 import type {
@@ -11,6 +12,7 @@ import type {
   SessionProtocolFacet,
   SessionProtocolInterruptResult,
   SessionProtocolMessage,
+  SessionProtocolPersonaOverrides,
   SessionProtocolReasoningEffort,
   SessionProtocolRecordResult,
   SessionProtocolResolvePromptResult,
@@ -458,7 +460,7 @@ export type TelegramSessionClientOptions = {
   cwd: string;
   ownerId?: string;
   clientTools?: TauSdkClientTool[];
-  persona?: string;
+  personaSelection?: { personaId: string | null } & SessionProtocolPersonaOverrides;
 };
 
 export type TelegramSessionClientEvent = SessionProtocolDeltaMessage;
@@ -472,7 +474,10 @@ export type TelegramTauSession = {
   record(text: string): Promise<SessionProtocolRecordResult>;
   resolvePrompt(promptId: string): Promise<SessionProtocolResolvePromptResult>;
   compact(mode: "summary-only" | "summary-and-last"): Promise<SessionProtocolCompactResult>;
-  setPersona(personaId: string): Promise<SessionProtocolSnapshot>;
+  setPersona(
+    personaId: string | null,
+    overrides?: SessionProtocolPersonaOverrides,
+  ): Promise<SessionProtocolSnapshot>;
   setAutoCompactThreshold(
     thresholdTokens: number | null,
   ): Promise<SessionProtocolSettingsUpdateResult>;
@@ -522,7 +527,11 @@ export type TelegramSessionManager = {
   interruptSession(sessionId: string): Promise<TelegramSessionInterruptResult>;
   recordPrompt(sessionId: string, promptId: string): Promise<string>;
   compactSession(sessionId: string): Promise<SessionProtocolCompactResult>;
-  setPersona(sessionId: string, personaId: string): Promise<SessionProtocolSnapshot>;
+  setPersona(
+    sessionId: string,
+    personaId: string | null,
+    overrides?: SessionProtocolPersonaOverrides,
+  ): Promise<SessionProtocolSnapshot>;
   setAutoCompactThreshold(
     sessionId: string,
     thresholdTokens: number | null,
@@ -538,6 +547,7 @@ export type TelegramSessionManager = {
 };
 
 export type TelegramSessionManagerOptions = {
+  environmentForOwner?: (ownerId: string | undefined) => Record<string, string>;
   projects: Record<string, TelegramProjectConfig>;
   workspaceRoot?: string;
   maxSessions?: number;
@@ -553,6 +563,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
   private readonly sessions = new Map<string, SessionEntry>();
   private readonly provisionFailures = new Map<string, TelegramSessionProvisionFailure[]>();
   private readonly listeners = new Set<(event: TelegramSessionManagerEvent) => void>();
+  private readonly environmentForOwner: (ownerId: string | undefined) => Record<string, string>;
   private readonly projects: Record<string, TelegramProjectConfig>;
   private readonly workspaceRoot: string;
   private readonly maxSessions?: number;
@@ -572,6 +583,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
 
   constructor(options: TelegramSessionManagerOptions) {
     this.projects = options.projects;
+    this.environmentForOwner = options.environmentForOwner ?? (() => ({}));
     this.workspaceRoot = resolve(
       options.workspaceRoot ?? resolve(process.cwd(), ".tau/telegram-workspaces"),
     );
@@ -841,7 +853,11 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     return await entry.tauSession.compact("summary-only");
   }
 
-  async setPersona(sessionId: string, personaId: string): Promise<SessionProtocolSnapshot> {
+  async setPersona(
+    sessionId: string,
+    personaId: string | null,
+    overrides?: SessionProtocolPersonaOverrides,
+  ): Promise<SessionProtocolSnapshot> {
     const entry = this.requireSession(sessionId);
     if (entry.record.state === "running" || entry.activeSubmit) {
       throw new TelegramSessionManagerError("busy", "session is running");
@@ -849,7 +865,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     if (!entry.tauSession) {
       throw new TelegramSessionManagerError("not_ready", "session is still preparing");
     }
-    return await entry.tauSession.setPersona(personaId);
+    return await entry.tauSession.setPersona(personaId, overrides);
   }
 
   async setAutoCompactThreshold(
@@ -1056,6 +1072,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       workspacePath,
       "repo" in entry.project ? (entry.project.workingDirectory ?? ".") : ".",
     );
+    const env = this.environmentForOwner(entry.record.ownerId);
     let provisionTargets: PreparedWorkspace["provisionTargets"] = [];
     const shouldPrepareWorkspace = !(await pathIsDirectory(sessionCwd));
     if (shouldPrepareWorkspace) {
@@ -1065,6 +1082,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
         project: entry.project,
         projects: this.projects,
         workspaceRoot: this.workspaceRoot,
+        env,
         signal: entry.abortController.signal,
         onLog: (workspaceLog) => {
           this.log(
@@ -1086,6 +1104,14 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     const tauSession = await client.sessions.observe(tauSessionId);
     entry.tauSession = tauSession;
     const snapshot = await tauSession.snapshot();
+    if (
+      snapshot.executionEnvironment.kind !== "local" ||
+      !isDeepStrictEqual(snapshot.executionEnvironment.env ?? {}, env)
+    ) {
+      throw new Error(
+        "the bot's environment changed. save any managed workspace changes before starting a new session with /new",
+      );
+    }
     if (
       isDirectoryProject(entry.project) &&
       (snapshot.executionEnvironment.kind !== "local" ||
@@ -1147,6 +1173,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
 
   private async initializeSession(entry: SessionEntry): Promise<void> {
     try {
+      const env = this.environmentForOwner(entry.record.ownerId);
       const sessionPreparationStart = process.hrtime.bigint();
       this.setState(entry, "preparing-workspace");
       this.log(entry, "info", "preparing workspace", {
@@ -1160,6 +1187,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
         project: entry.project,
         projects: this.projects,
         workspaceRoot: this.workspaceRoot,
+        env,
         signal: entry.abortController.signal,
         onLog: (workspaceLog) => {
           this.log(
@@ -1191,6 +1219,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
         executionEnvironment: {
           kind: "local",
           cwd: workspace.sessionCwd,
+          env,
         },
         attributes: this.buildSessionAttributes(entry),
       });
@@ -1605,6 +1634,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
         return false;
       }
       entry.activeTurnIds.add(historyEntryId);
+      this.setState(entry, "running");
       return true;
     }
 
@@ -1765,9 +1795,11 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
           configuredRepository,
       ),
     );
+    const botId = /^telegram:(.+):chat:-?\d+$/.exec(entry.record.ownerId ?? "")?.[1];
     return {
       source: "telegram",
       project: entry.record.projectId,
+      ...(botId ? { telegram_bot: botId } : {}),
       ...(repository ? { repository } : {}),
     };
   }
@@ -1775,9 +1807,6 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
   private buildClientOptions(entry: SessionEntry, cwd: string): TelegramSessionClientOptions {
     const options: TelegramSessionClientOptions = { cwd };
     if (entry.record.ownerId) options.ownerId = entry.record.ownerId;
-    if (entry.project.persona) {
-      options.persona = entry.project.persona;
-    }
     return options;
   }
 
@@ -2446,9 +2475,13 @@ class ScopedTelegramSessionManager implements TelegramSessionManager {
     return await this.sessionManager.compactSession(sessionId);
   }
 
-  async setPersona(sessionId: string, personaId: string): Promise<SessionProtocolSnapshot> {
+  async setPersona(
+    sessionId: string,
+    personaId: string | null,
+    overrides?: SessionProtocolPersonaOverrides,
+  ): Promise<SessionProtocolSnapshot> {
     this.requireSession(sessionId);
-    return await this.sessionManager.setPersona(sessionId, personaId);
+    return await this.sessionManager.setPersona(sessionId, personaId, overrides);
   }
 
   async setAutoCompactThreshold(

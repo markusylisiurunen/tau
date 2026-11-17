@@ -1,6 +1,6 @@
 {
   "name": "@markusylisiurunen/tau",
-  "version": "0.3.98",
+  "version": "0.3.108",
   "type": "module",
   "bin": {
     "tau": "dist/main.js"
@@ -27,15 +27,16 @@
     "start": "node dist/main.js",
     "history:dev": "wrangler d1 migrations apply tau-history-dev --local --config src/history/worker/wrangler.dev.json && wrangler d1 execute tau-history-dev --local --config src/history/worker/wrangler.dev.json --file src/history/worker/dev-seed.sql && wrangler dev --config src/history/worker/wrangler.dev.json",
     "test": "npm run --silent build && npm run --silent test:only --",
-    "test:only": "vitest run --reporter=minimal --silent=passed-only"
+    "test:only": "vitest run --reporter=minimal --silent=passed-only",
+    "test:list": "vitest list --filesOnly"
   },
   "publishConfig": {
     "access": "public"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "1.4.0",
-    "@earendil-works/pi-mcp": "1.4.0",
-    "@earendil-works/pi-tui": "1.4.0",
+    "@earendil-works/pi-ai": "1.5.2",
+    "@earendil-works/pi-mcp": "1.5.2",
+    "@earendil-works/pi-tui": "1.5.2",
     "@fly/sprites": "^0.2.4",
     "chalk": "^6.0.1",
     "colorjs.io": "^0.7.1",
@@ -43,31 +44,33 @@
     "ses": "2.3.0",
     "sharp": "^0.35.5",
     "strip-ansi": "^7.2.0",
-    "typebox": "^1.4.3",
-    "ws": "^8.22.1",
+    "typebox": "^1.4.7",
+    "ws": "^8.23.0",
     "yaml": "^2.9.1",
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.3.316",
-    "@biomejs/biome": "2.6.4",
-    "@cloudflare/workers-types": "^5.20261102.1",
-    "@types/node": "^24.19.2",
+    "@anthropic-ai/claude-agent-sdk": "0.3.326",
+    "@biomejs/biome": "2.6.8",
+    "@cloudflare/workers-types": "^5.20261117.1",
+    "@types/node": "^26.6.6",
     "@types/ws": "^8.18.2",
     "esbuild": "0.28.2",
-    "prettier": "^3.9.10",
+    "miniflare": "5.20261104.0-beta",
+    "prettier": "^3.10.1",
     "typescript": "^7.0.2",
-    "vitest": "^5.0.5",
-    "wrangler": "^4.156.1"
+    "vitest": "^5.1.0",
+    "wrangler": "^4.163.0"
   },
   "engines": {
-    "node": ">=24.0.0"
+    "node": ">=26.0.0"
   },
   "allowScripts": {
     "esbuild@0.28.2": true,
     "protobufjs@7.6.6": false,
     "fsevents@2.3.3": true,
     "@google/genai@2.21.0": false,
-    "workerd@1.20261101.1": true
+    "workerd@1.20261104.1": true,
+    "workerd@1.20261116.1": true
   }
 }

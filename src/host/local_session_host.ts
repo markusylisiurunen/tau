@@ -4,19 +4,14 @@ import { isDeepStrictEqual } from "node:util";
 import type { Api, AssistantMessage, Message, Model, ToolCall } from "@earendil-works/pi-ai";
 import type { AgentStateRecovery, AgentSubturnResult } from "../core/agent/agent_runtime.js";
 import type { AgentEvent, AgentTurnFailure } from "../core/agent/events.js";
-import { type Config, resolvePromptTemplateWithBackend } from "../core/config/index.js";
+import { resolvePromptTemplateWithBackend, type SessionConfig } from "../core/config/index.js";
+import { AgentHistoryRecorder } from "../core/history/agent_history_recorder.js";
 import type { HistoryManager } from "../core/history/history_manager.js";
-import {
-  assistantHistoryEntries,
-  systemHistoryEntry,
-  toolHistoryEntry,
-  userHistoryEntry,
-} from "../core/history/transcript.js";
+import { HistoryRecorder } from "../core/history/recorder.js";
 import type { HistoryRemoteTarget } from "../core/history/types.js";
 import { McpManager } from "../core/mcp/manager.js";
-import type { ModelResolver } from "../core/models/catalog.js";
 import type { RemoteModelCatalogSnapshot } from "../core/models/remote_catalog.js";
-import type { PromptTemplate } from "../core/prompts.js";
+import { resolvePersonaSelection } from "../core/persona_selection.js";
 import { ChatRuntime, type ChatRuntimeEnvironment } from "../core/runtime/chat_runtime.js";
 import type { CoreDeps } from "../core/runtime/deps.js";
 import type { RuntimePromptBootstrap } from "../core/runtime/runtime_bootstrap.js";
@@ -28,7 +23,7 @@ import {
 import type { SubagentEvent } from "../core/subagents/types.js";
 import type { ToolActivity } from "../core/tools/activity.js";
 import { buildToolRunPresentation, TOOL_UI_FACET_VERSION } from "../core/tools/presentation.js";
-import type { Persona, ReasoningEffort, Skill } from "../core/types.js";
+import type { Persona, ReasoningEffort } from "../core/types.js";
 import {
   appendUsageLogEntry,
   getUsageCostTotal,
@@ -70,6 +65,7 @@ import type {
   SessionProtocolMessage,
   SessionProtocolModelSnapshot,
   SessionProtocolOperation,
+  SessionProtocolPersonaOverrides,
   SessionProtocolPersonaSnapshot,
   SessionProtocolRecordParams,
   SessionProtocolRecordResult,
@@ -98,8 +94,10 @@ import {
   createSessionProtocolEphemeralMessage,
   createSessionProtocolSubagentActivitiesMessage,
   parseAutoCompactThresholdTokens,
+  parseSessionAttributes,
   projectSessionProtocolNoticePresentation,
   projectSessionProtocolSubagentActivity,
+  SESSION_PROTOCOL_MAX_RETENTION_MS,
   SESSION_PROTOCOL_MAX_SUBAGENT_ACTIVITIES,
 } from "../protocol/session_protocol.js";
 import {
@@ -111,9 +109,11 @@ import type { SessionStore } from "../store/session_store.js";
 import { ClientToolBroker } from "./client_tool_broker.js";
 import { createExecutionEnvironmentSubagentPromptResolver } from "./execution_runtime.js";
 import { HostedEphemeralAgentSession } from "./hosted_ephemeral_agent_session.js";
+import type { SessionBootstrap } from "./session_bootstrap.js";
 import {
   SessionExecBusyError,
   SessionRetryUnavailableError,
+  SessionRuntimeNotLoadedError,
   type TauHostedSession,
   type TauSessionHost,
 } from "./session_host.js";
@@ -121,18 +121,12 @@ import {
 const PATH_AUTOCOMPLETE_CACHE_TTL_MS = 5_000;
 const HISTORY_UNAVAILABLE_NOTICE_ID = "notice-history-unavailable";
 
-export type LocalSessionResolvedBootstrap = {
-  persona: Persona;
-  discoveredSkills: Skill[];
-  personas: Persona[];
-  prompts: PromptTemplate[];
-  modelResolver: ModelResolver;
-  config?: Config;
-};
+export type LocalSessionResolvedBootstrap = SessionBootstrap;
 
 export type LocalSessionBootstrapResolver = (args: {
   executionEnvironment: ExecutionEnvironment;
   remoteCatalog: RemoteModelCatalogSnapshot;
+  recovering: boolean;
 }) => Promise<LocalSessionResolvedBootstrap>;
 
 export type LocalSessionHostSessionOptions = {
@@ -158,7 +152,6 @@ export type LocalSessionHostOptions = LocalSessionHostSessionOptions & {
   store: SessionStore;
   history: HistoryManager;
   historyRemote?: HistoryRemoteTarget;
-  mcpServers?: Config["mcpServers"];
   onShutdown?: () => Promise<void>;
 };
 
@@ -171,24 +164,31 @@ export type LocalHostedSession = TauHostedSession & {
 export class LocalSessionHost implements TauSessionHost {
   private readonly sessions = new Set<LocalHostedSessionHandle>();
   private readonly sessionReferences = new Map<LocalHostedSessionHandle, number>();
-  private readonly sessionEvictions = new Set<Promise<void>>();
+  private readonly sessionEvictions = new Map<LocalHostedSessionHandle, Promise<void>>();
+  private readonly disposalFailures = new Map<string, unknown>();
+  private readonly retention = new Map<
+    LocalHostedSessionHandle,
+    { until: number; timer: ReturnType<typeof setTimeout> }
+  >();
   private readonly sessionRecoveryPromises = new Map<
     string,
     Promise<LocalHostedSessionHandle | undefined>
   >();
   private readonly store: SessionStore;
+  private readonly sessionLeases = new Map<
+    string,
+    { release: () => Promise<void>; references: number; settlement?: Promise<void> }
+  >();
   private readonly history: HistoryManager;
   private readonly historyRemote?: HistoryRemoteTarget;
   private readonly onShutdown?: () => Promise<void>;
   private readonly clientToolBroker = new ClientToolBroker();
-  private readonly mcp: McpManager;
   private readonly sessionOptions: LocalSessionHostSessionOptions;
   private shutdownPromise?: Promise<void>;
   private shuttingDown = false;
 
   constructor(options: LocalSessionHostOptions) {
-    const { store, history, historyRemote, mcpServers, onShutdown, ...sessionOptions } = options;
-    this.mcp = new McpManager(mcpServers);
+    const { store, history, historyRemote, onShutdown, ...sessionOptions } = options;
     this.store = store;
     this.history = history;
     this.historyRemote = historyRemote;
@@ -228,9 +228,54 @@ export class LocalSessionHost implements TauSessionHost {
     }
 
     let hostedSession: LocalHostedSessionHandle;
+    const sessionId = randomUUID();
+    let lease: SessionLease | undefined;
     try {
-      hostedSession = await this.createLocalSessionHandle(executionEnvironment, undefined, input);
+      lease = await this.acquireSessionLease(sessionId);
+      const result = await executionEnvironment
+        .getToolExecutionBackend()
+        .runNodeScript('process.stdout.write(require("node:os").hostname())', [], {
+          timeoutMs: 30_000,
+          maxCaptureBytes: 4_096,
+        });
+      if (
+        result.exitCode !== 0 ||
+        result.truncated ||
+        result.timedOut ||
+        result.aborted ||
+        !result.stdout.trim()
+      ) {
+        const reason = result.timedOut
+          ? "probe timed out"
+          : result.aborted
+            ? "probe aborted"
+            : result.truncated
+              ? "probe exceeded the capture limit"
+              : result.exitCode !== 0
+                ? `probe exited with code ${result.exitCode}`
+                : "probe returned an empty hostname";
+        const output = result.output.trim();
+        throw new Error(
+          `failed to determine execution machine hostname: ${reason}${output ? `: ${output}` : ""}`,
+        );
+      }
+      const attributes = parseSessionAttributes({
+        ...input.attributes,
+        machine: result.stdout.trim(),
+        cwd: executionEnvironment.snapshot().cwd,
+      });
+      hostedSession = await this.createLocalSessionHandle(
+        sessionId,
+        lease,
+        executionEnvironment,
+        undefined,
+        {
+          ...input,
+          attributes,
+        },
+      );
     } catch (error) {
+      await lease?.release();
       if (!this.sessionsHasExecutionEnvironment(executionEnvironment)) {
         await executionEnvironment.dispose();
       }
@@ -249,11 +294,14 @@ export class LocalSessionHost implements TauSessionHost {
   private async createRecoveredSession(
     snapshot: SessionProtocolSnapshot,
     executionEnvironment: ExecutionEnvironment,
+    lease: SessionLease,
   ): Promise<LocalHostedSessionHandle> {
     let hostedSession: LocalHostedSessionHandle | undefined;
     try {
       const recovered = normalizeRecoveredSnapshot(snapshot);
       hostedSession = await this.createLocalSessionHandle(
+        snapshot.sessionId,
+        lease,
         executionEnvironment,
         recovered.snapshot,
         undefined,
@@ -278,20 +326,38 @@ export class LocalSessionHost implements TauSessionHost {
       if (hostedSession) {
         await hostedSession.dispose();
       } else {
-        await executionEnvironment.dispose();
+        await this.disposeRecoveredEnvironment(snapshot.sessionId, executionEnvironment);
       }
       throw error;
     }
   }
 
+  private async disposeRecoveredEnvironment(
+    sessionId: string,
+    executionEnvironment: ExecutionEnvironment,
+  ): Promise<void> {
+    try {
+      await executionEnvironment.dispose();
+    } catch (error) {
+      this.disposalFailures.set(sessionId, error);
+      throw error;
+    }
+  }
+
   private async createLocalSessionHandle(
+    sessionId: string,
+    lease: SessionLease,
     executionEnvironment: ExecutionEnvironment,
     committedSnapshot?: SessionProtocolSnapshot,
     createParams?: SessionProtocolCreateParams,
     forceNextSnapshotRevision = false,
   ): Promise<LocalHostedSessionHandle> {
     const remoteCatalog = this.sessionOptions.getRemoteModelCatalog();
-    const bootstrap = await this.resolveNewSessionBootstrap(executionEnvironment, remoteCatalog);
+    const bootstrap = await this.resolveSessionBootstrap(
+      executionEnvironment,
+      remoteCatalog,
+      committedSnapshot !== undefined,
+    );
     if (committedSnapshot) {
       this.applySnapshotSettingsToBootstrap(bootstrap, committedSnapshot);
     } else if (createParams) {
@@ -302,18 +368,28 @@ export class LocalSessionHost implements TauSessionHost {
       discoveredSkills: bootstrap.discoveredSkills,
       includeAgentContext: this.sessionOptions.includeAgentContext,
     });
-    const catalog = createContentCatalogSnapshot(
-      bootstrap,
-      this.mcp
-        .listServers()
-        .map(({ name }) => name)
-        .sort(),
+    const mcp = new McpManager(
+      executionEnvironment.snapshot().kind === "local" ? bootstrap.config.mcpServers : {},
     );
+    const mcpState: SessionProtocolContentCatalogSnapshot["mcp"] =
+      executionEnvironment.snapshot().kind === "local"
+        ? {
+            status: "available",
+            servers: mcp
+              .listServers()
+              .map(({ name }) => name)
+              .sort(),
+          }
+        : { status: "unavailable", reason: "remote-execution" };
+    const catalog = createContentCatalogSnapshot(bootstrap, mcpState);
     return this.createLocalSessionHandleFromRuntimeContext(
+      sessionId,
+      lease,
       executionEnvironment,
       runtimeContext,
       bootstrap,
       catalog,
+      mcp,
       remoteCatalog,
       committedSnapshot,
       createParams,
@@ -322,23 +398,31 @@ export class LocalSessionHost implements TauSessionHost {
   }
 
   private async createLocalSessionHandleFromRuntimeContext(
+    sessionId: string,
+    lease: SessionLease,
     executionEnvironment: ExecutionEnvironment,
     runtimeContext: Awaited<ReturnType<ExecutionEnvironment["resolveRuntimeContext"]>>,
     bootstrap: LocalSessionResolvedBootstrap,
     catalog: SessionProtocolContentCatalogSnapshot,
+    mcp: McpManager,
     remoteCatalog: RemoteModelCatalogSnapshot,
     committedSnapshot?: SessionProtocolSnapshot,
     createParams?: SessionProtocolCreateParams,
     forceNextSnapshotRevision = false,
   ): Promise<LocalHostedSessionHandle> {
     let hostedSession: LocalHostedSessionHandle;
-    const sessionId = committedSnapshot?.sessionId ?? randomUUID();
     const createdAt = committedSnapshot?.createdAt ?? this.sessionOptions.environment.now();
+    const attributes = committedSnapshot?.attributes ?? createParams?.attributes;
+    if (!attributes) {
+      throw new Error("session attributes are required");
+    }
     const runtime = ChatRuntime.create({
       sessionId,
       createdAt,
       persona: bootstrap.persona,
       autoCompactDefaults: this.sessionOptions.autoCompactDefaults,
+      notifications:
+        committedSnapshot?.settings.notifications ?? createParams?.notifications ?? true,
       backend: executionEnvironment.getToolExecutionBackend(),
       clientTools: () => this.clientToolBroker.getToolDefinitions(sessionId),
       modelResolver: bootstrap.modelResolver,
@@ -352,11 +436,28 @@ export class LocalSessionHost implements TauSessionHost {
       eventSink: async (event) => await hostedSession.enqueueRuntimeEvent(event),
       subagentEventSink: async (event) => await hostedSession.recordSubagentEvent(event),
       history: this.history.query(this.historyRemote),
-      mcp: this.mcp,
+      openSubagentHistory: (child) => {
+        const recorder = new HistoryRecorder(
+          this.history.openSession(
+            {
+              sessionId: child.sessionId,
+              parentSessionId: child.parentSessionId,
+              attributes: { ...attributes, cwd: child.workingDirectory },
+              createdAt: child.createdAt,
+            },
+            this.historyRemote,
+          ),
+        );
+        return async (event) => {
+          const failure = recorder.record(event);
+          if (failure) await hostedSession.recordSubagentHistoryFailure(failure);
+        };
+      },
+      mcp,
       initialPromptComposition: committedSnapshot
         ? promptCompositionFromSnapshot(committedSnapshot)
         : undefined,
-      config: bootstrap.config ?? {},
+      config: bootstrap.config,
       recordUsage: this.sessionOptions.recordUsage,
       deps: this.sessionOptions.deps,
     });
@@ -364,59 +465,83 @@ export class LocalSessionHost implements TauSessionHost {
     runtime.setAutoCompactThreshold(
       committedSnapshot
         ? committedSnapshot.settings.autoCompactThresholdTokens
-        : (createParams?.autoCompactThresholdTokens ?? null),
+        : createParams?.autoCompactThresholdTokens !== undefined
+          ? createParams.autoCompactThresholdTokens
+          : (bootstrap.initialAutoCompactThresholdTokens ?? null),
     );
 
-    const attributes = committedSnapshot?.attributes ?? createParams?.attributes;
-    if (!attributes) {
-      throw new Error("session attributes are required");
-    }
+    const historyWriter = this.history.openSession(
+      { sessionId, attributes, createdAt },
+      this.historyRemote,
+    );
     hostedSession = new LocalHostedSessionHandle(
       runtime,
       runtimeContext.promptBootstrap,
       catalog,
+      mcp,
       bootstrap,
       remoteCatalog,
       this.sessionOptions.getRemoteModelCatalog,
       this.sessionOptions.includeAgentContext,
       executionEnvironment,
       this.store,
-      this.history,
-      this.historyRemote,
+      new AgentHistoryRecorder(historyWriter),
       attributes,
       createdAt,
       committedSnapshot,
       forceNextSnapshotRevision,
       this.sessionOptions.recordUsage ?? appendUsageLogEntry,
-      (session) => {
+      lease,
+      (session, error) => {
+        if (error) this.disposalFailures.set(session.sessionId, error);
         this.sessions.delete(session);
         this.sessionReferences.delete(session);
-        this.history.forgetSession(session.sessionId);
       },
     );
-    const historyFailure = this.history.registerSession(
-      {
-        sessionId: committedSnapshot?.sessionId ?? hostedSession.sessionId,
-        attributes,
-        createdAt,
-      },
-      this.historyRemote,
-    );
-    await hostedSession.recordHistoryFailure(historyFailure);
     this.sessions.add(hostedSession);
     return hostedSession;
   }
 
-  private async resolveNewSessionBootstrap(
+  private async acquireSessionLease(sessionId: string): Promise<SessionLease> {
+    let lease = this.sessionLeases.get(sessionId);
+    if (lease?.settlement) {
+      await lease.settlement;
+      lease = undefined;
+    }
+    if (lease) {
+      lease.references += 1;
+    } else {
+      lease = { release: await this.store.acquireSession(sessionId), references: 1 };
+      this.sessionLeases.set(sessionId, lease);
+    }
+    const owned = lease;
+    let released = false;
+    return {
+      release: async () => {
+        if (released) return;
+        released = true;
+        if (--owned.references > 0) return;
+        owned.settlement = (async () => {
+          await this.history.settleSession(sessionId);
+          await owned.release();
+          this.sessionLeases.delete(sessionId);
+        })();
+        await owned.settlement;
+      },
+    };
+  }
+
+  private async resolveSessionBootstrap(
     executionEnvironment: ExecutionEnvironment,
     remoteCatalog: RemoteModelCatalogSnapshot,
+    recovering: boolean,
   ): Promise<LocalSessionResolvedBootstrap> {
     const resolver = this.sessionOptions.resolveSessionBootstrap;
     if (!resolver) {
       return this.defaultSessionBootstrap();
     }
 
-    const bootstrap = await resolver({ executionEnvironment, remoteCatalog });
+    const bootstrap = await resolver({ executionEnvironment, remoteCatalog, recovering });
     return cloneResolvedBootstrap(bootstrap);
   }
 
@@ -473,12 +598,6 @@ export class LocalSessionHost implements TauSessionHost {
       return this.retainSession(liveSession);
     }
 
-    await this.refreshStore();
-    const refreshedLiveSession = this.findLiveSession(sessionId);
-    if (refreshedLiveSession) {
-      return this.retainSession(refreshedLiveSession);
-    }
-
     const existingRecovery = this.sessionRecoveryPromises.get(sessionId);
     if (existingRecovery) {
       const recovered = await existingRecovery;
@@ -498,6 +617,12 @@ export class LocalSessionHost implements TauSessionHost {
   }
 
   private async recoverSession(sessionId: string): Promise<LocalHostedSessionHandle | undefined> {
+    await Promise.all(
+      [...this.sessionEvictions]
+        .filter(([session]) => session.sessionId === sessionId)
+        .map(([, eviction]) => eviction),
+    );
+    await this.refreshStore();
     if (this.shuttingDown) {
       return undefined;
     }
@@ -507,27 +632,36 @@ export class LocalSessionHost implements TauSessionHost {
       return liveSession;
     }
 
-    const snapshot = await this.store.loadSession(sessionId);
-    if (!snapshot || !this.canRestoreSnapshot(snapshot)) {
-      return undefined;
+    const lease = await this.acquireSessionLease(sessionId);
+    try {
+      const snapshot = await this.store.loadSession(sessionId);
+      if (!snapshot || !this.canRestoreSnapshot(snapshot)) {
+        await lease.release();
+        return undefined;
+      }
+
+      const executionEnvironment = await this.sessionOptions.executionEnvironmentResolver.restore(
+        snapshot.executionEnvironment,
+      );
+
+      if (this.shuttingDown) {
+        await this.disposeRecoveredEnvironment(sessionId, executionEnvironment);
+        await lease.release();
+        return undefined;
+      }
+
+      const restoredLiveSession = this.findLiveSession(sessionId);
+      if (restoredLiveSession) {
+        await this.disposeRecoveredEnvironment(sessionId, executionEnvironment);
+        await lease.release();
+        return restoredLiveSession;
+      }
+
+      return await this.createRecoveredSession(snapshot, executionEnvironment, lease);
+    } catch (error) {
+      await lease.release();
+      throw error;
     }
-
-    const executionEnvironment = await this.sessionOptions.executionEnvironmentResolver.restore(
-      snapshot.executionEnvironment,
-    );
-
-    if (this.shuttingDown) {
-      await executionEnvironment.dispose();
-      return undefined;
-    }
-
-    const restoredLiveSession = this.findLiveSession(sessionId);
-    if (restoredLiveSession) {
-      await executionEnvironment.dispose();
-      return restoredLiveSession;
-    }
-
-    return await this.createRecoveredSession(snapshot, executionEnvironment);
   }
 
   private canRestoreSnapshot(snapshot: SessionProtocolSnapshot): boolean {
@@ -562,30 +696,100 @@ export class LocalSessionHost implements TauSessionHost {
     }
 
     this.sessionReferences.delete(hostedSession);
-    const eviction = this.evictReleasedSession(hostedSession);
-    this.sessionEvictions.add(eviction);
+    this.scheduleEviction(hostedSession);
+  }
+
+  setRetention(sessionId: string, durationMs: number | null): { retainedUntil: number | null } {
+    this.assertHostActive();
+    if (
+      durationMs !== null &&
+      (!Number.isInteger(durationMs) ||
+        durationMs < 1 ||
+        durationMs > SESSION_PROTOCOL_MAX_RETENTION_MS)
+    ) {
+      throw new Error("invalid retention duration");
+    }
+    const session = this.findLiveSession(sessionId);
+    if (!session) {
+      if (durationMs === null) return { retainedUntil: null };
+      throw new SessionRuntimeNotLoadedError("session runtime is not loaded");
+    }
+    const previous = this.retention.get(session);
+    if (previous) clearTimeout(previous.timer);
+    this.retention.delete(session);
+    if (durationMs === null) {
+      this.scheduleEviction(session);
+      return { retainedUntil: null };
+    }
+    const until = Date.now() + durationMs;
+    const timer = setTimeout(() => {
+      this.retention.delete(session);
+      this.scheduleEviction(session);
+    }, durationMs);
+    timer.unref();
+    this.retention.set(session, { until, timer });
+    return { retainedUntil: until };
+  }
+
+  async collectSession(sessionId: string): Promise<{ disposed: boolean }> {
+    this.assertHostActive();
+    if (this.sessionRecoveryPromises.has(sessionId)) return { disposed: false };
+    const session = this.findLiveSession(sessionId);
+    if (session) {
+      if (this.isHeld(session) || session.hasActiveWork) return { disposed: false };
+      this.scheduleEviction(session);
+    }
+    while (true) {
+      const evictions = [...this.sessionEvictions]
+        .filter(([candidate]) => candidate.sessionId === sessionId)
+        .map(([, promise]) => promise);
+      if (evictions.length === 0) break;
+      await Promise.all(evictions);
+    }
+    if (this.disposalFailures.has(sessionId)) throw this.disposalFailures.get(sessionId);
+    return {
+      disposed: !this.findLiveSession(sessionId) && !this.sessionRecoveryPromises.has(sessionId),
+    };
+  }
+
+  private isHeld(session: LocalHostedSessionHandle): boolean {
+    return (
+      (this.sessionReferences.get(session) ?? 0) > 0 ||
+      (this.retention.get(session)?.until ?? 0) > Date.now()
+    );
+  }
+
+  private scheduleEviction(session: LocalHostedSessionHandle): void {
+    if (this.sessionEvictions.has(session) || this.isHeld(session) || this.shuttingDown) return;
+    const eviction = this.evictReleasedSession(session);
+    this.sessionEvictions.set(session, eviction);
     void eviction.then(
-      () => this.sessionEvictions.delete(eviction),
-      () => this.sessionEvictions.delete(eviction),
+      () => {
+        this.sessionEvictions.delete(session);
+        if (this.sessions.has(session) && !session.isDisposed) this.scheduleEviction(session);
+      },
+      () => this.sessionEvictions.delete(session),
     );
   }
 
   private async evictReleasedSession(session: LocalHostedSessionHandle): Promise<void> {
-    do {
-      await session.waitForActiveWork().catch(() => undefined);
+    while (true) {
       await session.runtime.jobs.waitForIdle();
+      await session.runtime.supervisor.waitForIdle();
       await session.waitForActiveWork().catch(() => undefined);
-    } while (session.runtime.jobs.hasRunning);
-    if (this.shuttingDown || session.isDisposed || (this.sessionReferences.get(session) ?? 0) > 0) {
-      return;
-    }
+      if (this.shuttingDown || session.isDisposed || this.isHeld(session)) return;
+      if (session.hasActiveWork) continue;
 
-    await session.snapshot();
-    if (this.shuttingDown || (this.sessionReferences.get(session) ?? 0) > 0) return;
-    if (session.runtime.jobs.hasRunning) return await this.evictReleasedSession(session);
+      await session.snapshot();
+      if (this.shuttingDown || session.isDisposed || this.isHeld(session)) return;
+      if (!session.hasActiveWork) break;
+    }
 
     this.sessions.delete(session);
     this.sessionReferences.delete(session);
+    const retention = this.retention.get(session);
+    if (retention) clearTimeout(retention.timer);
+    this.retention.delete(session);
     await session.dispose();
   }
 
@@ -612,6 +816,8 @@ export class LocalSessionHost implements TauSessionHost {
   }
 
   private async shutdownNow(): Promise<void> {
+    for (const hold of this.retention.values()) clearTimeout(hold.timer);
+    this.retention.clear();
     const errors: unknown[] = [];
     const resourceShutdown = this.onShutdown
       ? Promise.resolve()
@@ -657,19 +863,15 @@ export class LocalSessionHost implements TauSessionHost {
     this.sessions.clear();
     this.sessionReferences.clear();
 
-    const evictionResults = await Promise.allSettled(this.sessionEvictions);
+    const evictionResults = await Promise.allSettled(this.sessionEvictions.values());
     for (const result of evictionResults) {
       if (result.status === "rejected") {
         errors.push(result.reason);
       }
     }
     this.sessionEvictions.clear();
+    errors.push(...this.disposalFailures.values());
 
-    try {
-      await this.mcp.close();
-    } catch (error) {
-      errors.push(error);
-    }
     try {
       await this.history.flush();
     } catch (error) {
@@ -683,7 +885,7 @@ export class LocalSessionHost implements TauSessionHost {
     await resourceShutdown;
 
     if (errors.length > 0) {
-      throw new AggregateError(errors, "failed to shut down local session host");
+      throw new AggregateError([...new Set(errors)], "failed to shut down local session host");
     }
   }
 
@@ -712,9 +914,13 @@ export class LocalSessionHost implements TauSessionHost {
 type HostedSteeringAssociation = { userHistoryEntryId: string };
 type HostedSteeringResult = HostedSteeringAssociation & {
   turn: SessionProtocolTurnOutcome;
+  response: string;
 };
 
+type SessionLease = { release(): Promise<void> };
+
 type ActiveLogicalTurn = {
+  response: string;
   cancellationRequested: boolean;
 };
 
@@ -766,11 +972,20 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   private readonly activeWorkAbortControllers = new Set<AbortController>();
   private readonly activeWorkPromises = new Set<Promise<unknown>>();
   private readonly activeExecAbortControllers = new Map<string, AbortController>();
+  private readonly turnIdleListeners = new Set<() => void>();
+  private readonly unsubscribeNotifications: () => void;
+  /** Work that must finish before the agent starts a turn on its own. */
+  private turnAdmissionHolds = 0;
+  /** Set after an interruption or a failed turn, and cleared by the next client turn. */
+  private notificationWakePaused = false;
+  private notificationWakeScheduled = false;
   private activeTurnPromise?: Promise<unknown>;
   private activeLogicalTurn?: ActiveLogicalTurn;
+  private readonly cancelledAcceptedTurns = new Set<string>();
   private disposePromise?: Promise<void>;
   private disposing = false;
   private costTotal = 0;
+  private readonly boundMcpServers: SessionConfig["mcpServers"];
   private forceNextSnapshotRevision: boolean;
   private projectionFailure?: Error;
   private disposed = false;
@@ -779,22 +994,33 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     readonly runtime: ChatRuntime,
     readonly promptBootstrap: RuntimePromptBootstrap,
     private catalog: SessionProtocolContentCatalogSnapshot,
+    private readonly mcp: McpManager,
     private bootstrap: LocalSessionResolvedBootstrap,
     private remoteCatalog: RemoteModelCatalogSnapshot,
     private readonly getLatestRemoteModelCatalog: () => RemoteModelCatalogSnapshot,
     private readonly includeAgentContext: boolean,
     private readonly executionEnvironment: ExecutionEnvironment,
     private readonly store: SessionStore,
-    private readonly history: HistoryManager,
-    private readonly historyRemote: HistoryRemoteTarget | undefined,
+    private readonly historyRecorder: AgentHistoryRecorder,
     private readonly attributes: Record<string, string>,
     private readonly createdAt: number,
     committedSnapshot: SessionProtocolSnapshot | undefined,
     forceNextSnapshotRevision: boolean,
     private readonly recordUsage: UsageRecorder,
-    private readonly removeFromHost: (session: LocalHostedSessionHandle) => void = () => {},
+    private readonly lease: SessionLease,
+    private readonly removeFromHost: (
+      session: LocalHostedSessionHandle,
+      error?: AggregateError,
+    ) => void,
   ) {
     this.session = runtime;
+    this.unsubscribeNotifications =
+      runtime.notifications?.subscribe(() => {
+        this.scheduleNotificationWake();
+      }) ?? (() => {});
+    this.boundMcpServers = structuredClone(
+      catalog.mcp.status === "available" ? bootstrap.config.mcpServers : {},
+    );
     this.persistedSnapshot = committedSnapshot
       ? cloneSessionProtocolSnapshot(committedSnapshot)
       : undefined;
@@ -805,8 +1031,133 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       : { ...this.buildSnapshotDraft(), revision: 1 };
   }
 
+  get hasActiveWork(): boolean {
+    return (
+      Boolean(this.activeTurnPromise) ||
+      this.activeWorkPromises.size > 0 ||
+      this.runtime.isTurnRunning ||
+      this.runtime.jobs.hasRunning ||
+      this.runtime.supervisor.getActiveCount() > 0
+    );
+  }
+
   get isTurnRunning(): boolean {
-    return this.runtime.isTurnRunning;
+    return Boolean(this.activeLogicalTurn) || this.runtime.isTurnRunning;
+  }
+
+  onTurnIdle(handler: () => void): () => void {
+    this.turnIdleListeners.add(handler);
+    return () => {
+      this.turnIdleListeners.delete(handler);
+    };
+  }
+
+  private turnBecameIdle(): void {
+    if (this.isTurnRunning) return;
+    for (const listener of this.turnIdleListeners) {
+      try {
+        listener();
+      } catch {
+        /* Observers cannot fail session work. */
+      }
+    }
+    this.scheduleNotificationWake();
+  }
+
+  holdTurnAdmission(): () => void {
+    this.turnAdmissionHolds += 1;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.turnAdmissionHolds -= 1;
+      this.scheduleNotificationWake();
+    };
+  }
+
+  async waitForActiveTurn(): Promise<void> {
+    await this.activeTurnPromise?.catch(() => undefined);
+    await this.mutationQueue;
+  }
+
+  private canWakeForNotifications(): boolean {
+    return (
+      !this.disposing &&
+      !this.disposed &&
+      !this.notificationWakePaused &&
+      this.turnAdmissionHolds === 0 &&
+      !this.isTurnRunning &&
+      !this.hasUnsettledTurn &&
+      this.runtime.notifications?.hasUndelivered() === true
+    );
+  }
+
+  private get hasUnsettledTurn(): boolean {
+    return (
+      this.pendingAcceptedTurnHistoryEntryIds.size > 0 ||
+      [...this.turns.values()].some((turn) => turn.state === "running")
+    );
+  }
+
+  /** Deferred by one macrotask so that client work released at the same time is admitted first. */
+  private scheduleNotificationWake(): void {
+    if (this.notificationWakeScheduled || !this.canWakeForNotifications()) return;
+    this.notificationWakeScheduled = true;
+    void this.trackActiveWork(async () => {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      this.notificationWakeScheduled = false;
+      if (this.canWakeForNotifications()) await this.runNotificationTurn();
+    });
+  }
+
+  private async runNotificationTurn(): Promise<void> {
+    const id = this.createTurnHistoryEntryId();
+    this.pendingAcceptedTurnHistoryEntryIds.add(id);
+    try {
+      await this.runLogicalTurn((logicalTurn) =>
+        this.runAndSettleTurn(logicalTurn, id, { notificationTurn: true }),
+      );
+    } catch (error) {
+      this.notificationWakePaused = true;
+      await this.recoverFailedNotificationTurn(id, error);
+    } finally {
+      this.pendingAcceptedTurnHistoryEntryIds.delete(id);
+      // A notification that arrived while this turn was being admitted could not wake it.
+      this.scheduleNotificationWake();
+    }
+  }
+
+  /** No client waits for an automatic turn, so its failure must end up in the snapshot. */
+  private async recoverFailedNotificationTurn(id: string, error: unknown): Promise<void> {
+    if (this.turns.has(id)) {
+      // Its receipt could not be settled even as failed.
+      this.invalidateProjection(error);
+      return;
+    }
+    try {
+      await this.enqueueMutation(async () => {
+        const item = this.appendNoticeTimelineItem(
+          `automatic-turn-failed-${randomUUID()}`,
+          Date.now(),
+          {
+            kind: "tau.turn.failed",
+            version: 1,
+            severity: "error",
+            subject: { type: "session" },
+            presentation: projectSessionProtocolNoticePresentation(
+              "failed to start automatic turn",
+              [formatErrorDiagnostic(error)],
+            ),
+            data: { reason: "runtime-error" },
+          },
+        );
+        await this.emitPatch("notice", [{ type: "timeline.append", item: structuredClone(item) }]);
+      });
+    } catch (recoveryError) {
+      this.invalidateProjection(
+        new AggregateError([error, recoveryError], "automatic turn failed"),
+      );
+    }
   }
 
   get canAcceptSteering(): boolean {
@@ -870,10 +1221,11 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     ) {
       throw new Error(`history entry id '${historyEntryId}' belongs to an accepted turn`);
     }
-    const userHistoryEntryId = await this.session.commitUserText(
-      options.text,
-      historyEntryId === undefined ? undefined : { historyEntryId },
-    );
+    const recordOptions = historyEntryId === undefined ? undefined : { historyEntryId };
+    // During a turn, the text joins it and the turn owns any failure.
+    const userHistoryEntryId = this.runtime.isTurnRunning
+      ? await this.session.record(options.text, recordOptions)
+      : await this.runAgentStateMutation(() => this.session.record(options.text, recordOptions));
     return {
       snapshot: await this.snapshot(),
       userHistoryEntryId,
@@ -885,12 +1237,15 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   ): Promise<SessionProtocolRecordResult> {
     this.assertActive();
     const userHistoryEntryId = this.createTurnHistoryEntryId(options.historyEntryId);
+    this.notificationWakePaused = false;
     this.pendingAcceptedTurnHistoryEntryIds.add(userHistoryEntryId);
     try {
       await this.session.commitUserText(options.text, { historyEntryId: userHistoryEntryId });
       return { snapshot: await this.snapshot(), userHistoryEntryId };
-    } finally {
+    } catch (error) {
       this.pendingAcceptedTurnHistoryEntryIds.delete(userHistoryEntryId);
+      this.cancelledAcceptedTurns.delete(userHistoryEntryId);
+      throw error;
     }
   }
 
@@ -899,7 +1254,8 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       const normalizedId = normalizeExplicitHistoryEntryId(preferredId);
       if (
         this.turns.has(normalizedId) ||
-        this.pendingAcceptedTurnHistoryEntryIds.has(normalizedId)
+        this.pendingAcceptedTurnHistoryEntryIds.has(normalizedId) ||
+        this.session.rawHistoryEntries.some((entry) => entry.id === normalizedId)
       ) {
         throw new Error(`turn '${normalizedId}' was already accepted`);
       }
@@ -924,14 +1280,39 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     if (acceptedTurn.state === "settled") {
       throw new Error(`turn '${userHistoryEntryId}' was already settled`);
     }
-    const turn = await this.runLogicalTurn((logicalTurn) =>
-      this.runTurnNow(logicalTurn, userHistoryEntryId),
-    );
-    await this.settleTurn(userHistoryEntryId, turn);
-    return { userHistoryEntryId, turn };
+    this.pendingAcceptedTurnHistoryEntryIds.delete(userHistoryEntryId);
+    const cancelled = this.cancelledAcceptedTurns.delete(userHistoryEntryId);
+    return await this.runLogicalTurn(async (logicalTurn) => {
+      logicalTurn.cancellationRequested = cancelled;
+      const turn = await this.runAndSettleTurn(logicalTurn, userHistoryEntryId, {
+        notificationTurn: false,
+      });
+      return { userHistoryEntryId, turn, response: logicalTurn.response };
+    });
+  }
+
+  private async runAndSettleTurn(
+    logicalTurn: ActiveLogicalTurn,
+    userHistoryEntryId: string,
+    { notificationTurn }: { notificationTurn: boolean },
+  ): Promise<SessionProtocolTurnOutcome> {
+    const outcome = notificationTurn
+      ? await this.runTurnNow(logicalTurn, { notificationHistoryEntryId: userHistoryEntryId })
+      : await this.runTurnNow(logicalTurn, { rootHistoryEntryId: userHistoryEntryId });
+    try {
+      await this.settleTurn(userHistoryEntryId, outcome);
+      return outcome;
+    } catch (error) {
+      // A receipt left running would block every later automatic turn.
+      this.notificationWakePaused = true;
+      const failed = await this.cleanupFailedTurn(userHistoryEntryId, error);
+      await this.settleTurn(userHistoryEntryId, failed);
+      return failed;
+    }
   }
 
   async runTurn(): Promise<SessionProtocolTurnOutcome> {
+    this.notificationWakePaused = false;
     return await this.runLogicalTurn((logicalTurn) => this.runTurnNow(logicalTurn));
   }
 
@@ -976,6 +1357,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     }
     const logicalTurn: ActiveLogicalTurn = {
       cancellationRequested: false,
+      response: "",
     };
     this.activeLogicalTurn = logicalTurn;
     const run = execute(logicalTurn);
@@ -987,52 +1369,85 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         this.activeTurnPromise = undefined;
         this.activeLogicalTurn = undefined;
         await this.enqueueSnapshotResetIfChanged("assistant-message");
+        this.turnBecameIdle();
       }
     }
   }
 
+  /**
+   * Runs a turn rooted at an existing user message, or at the notification message the runtime
+   * commits under `notificationHistoryEntryId` once the turn has started.
+   */
   private async runTurnNow(
     logicalTurn: ActiveLogicalTurn,
-    rootHistoryEntryId?: string,
+    root: { rootHistoryEntryId?: string; notificationHistoryEntryId?: string } = {},
   ): Promise<SessionProtocolTurnOutcome> {
-    const rootUserMessage = rootHistoryEntryId
+    const { notificationHistoryEntryId } = root;
+    const rootHistoryEntryId =
+      notificationHistoryEntryId ?? this.findTurnRootUserMessage(root.rootHistoryEntryId).id;
+    if (logicalTurn.cancellationRequested) return abortedTurnOutcome();
+    try {
+      const result = await this.runtime.runTurn({ notificationHistoryEntryId });
+      if (result.terminalResult.aborted && this.draftAssistantMessage) {
+        await this.interruptDraftAssistantMessage();
+      }
+      await this.enqueueSnapshotResetIfChanged("assistant-message");
+      if (logicalTurn.cancellationRequested) return abortedTurnOutcome();
+      const { terminalResult } = result;
+      if (
+        turnOutcomeFromResult(terminalResult, terminalResult.finalMessage).status !== "completed"
+      ) {
+        this.notificationWakePaused = true;
+      }
+      return turnOutcomeFromResult(result, result.finalMessage);
+    } catch (error) {
+      this.notificationWakePaused = true;
+      // An automatic turn that failed before its message was saved has no turn to fail.
+      if (notificationHistoryEntryId && !this.turns.has(notificationHistoryEntryId)) throw error;
+      return await this.cleanupFailedTurn(rootHistoryEntryId, error);
+    }
+  }
+
+  private findTurnRootUserMessage(historyEntryId: string | undefined) {
+    const rootUserMessage = historyEntryId
       ? this.session.rawHistoryEntries.find(
-          (entry) => entry.id === rootHistoryEntryId && entry.message.role === "user",
+          (entry) => entry.id === historyEntryId && entry.message.role === "user",
         )
       : this.session.rawHistoryEntries.findLast((entry) => entry.message.role === "user");
     if (!rootUserMessage) {
       throw new Error("cannot run a turn without a user message");
     }
-    if (logicalTurn.cancellationRequested) return abortedTurnOutcome();
-    try {
-      const result = await this.runtime.runTurn();
-      if (result.terminalResult.aborted && this.draftAssistantMessage) {
-        await this.interruptDraftAssistantMessage();
-      }
-      await this.enqueueSnapshotResetIfChanged("assistant-message");
-      return logicalTurn.cancellationRequested
-        ? abortedTurnOutcome()
-        : turnOutcomeFromResult(result, result.finalMessage);
-    } catch (error) {
-      return await this.cleanupFailedTurn(rootUserMessage.id, error);
-    }
+    return rootUserMessage;
   }
 
   interruptTurn(): boolean {
     this.assertActive();
+    for (const id of this.pendingAcceptedTurnHistoryEntryIds) this.cancelledAcceptedTurns.add(id);
     const logicalTurn = this.activeLogicalTurn;
     if (logicalTurn) {
       logicalTurn.cancellationRequested = true;
     }
-    return this.runtime.interruptTurn() || Boolean(logicalTurn);
+    const interrupted =
+      this.runtime.interruptTurn() ||
+      Boolean(logicalTurn) ||
+      this.pendingAcceptedTurnHistoryEntryIds.size > 0;
+    if (interrupted) this.notificationWakePaused = true;
+    return interrupted;
   }
 
   interruptActiveWork(): boolean {
+    for (const id of this.pendingAcceptedTurnHistoryEntryIds) this.cancelledAcceptedTurns.add(id);
     const logicalTurn = this.activeLogicalTurn;
     if (logicalTurn) {
       logicalTurn.cancellationRequested = true;
     }
-    let interrupted = this.runtime.interruptTurn() || Boolean(logicalTurn);
+    const interruptedTurn =
+      this.runtime.interruptTurn() ||
+      Boolean(logicalTurn) ||
+      this.pendingAcceptedTurnHistoryEntryIds.size > 0;
+    // Only stopping the main agent pauses automatic turns, not cancelling side work.
+    if (interruptedTurn) this.notificationWakePaused = true;
+    let interrupted = interruptedTurn;
     for (const abortController of this.activeWorkAbortControllers) {
       if (!abortController.signal.aborted) {
         abortController.abort();
@@ -1077,7 +1492,15 @@ class LocalHostedSessionHandle implements LocalHostedSession {
           async (association) => {
             const turn = turnOutcomeFromResult(association.result, association.result.finalMessage);
             await this.settleTurn(association.historyEntryId, turn);
-            return { userHistoryEntryId: association.historyEntryId, turn };
+            return {
+              userHistoryEntryId: association.historyEntryId,
+              turn,
+              response:
+                association.result.finalMessage?.content
+                  .filter((block) => block.type === "text")
+                  .map((block) => block.text)
+                  .join("") ?? "",
+            };
           },
           async (error) => {
             const association = await submission.applied;
@@ -1200,100 +1623,117 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     });
   }
 
-  async setPersona(personaId: string): Promise<SessionProtocolSnapshot> {
+  async setPersona(
+    personaId: string | null,
+    overrides?: SessionProtocolPersonaOverrides,
+  ): Promise<SessionProtocolSnapshot> {
     this.assertActive();
-    const runtimeConfig = await this.executionEnvironment.resolveRuntimeConfig(
-      this.executionEnvironment.snapshot().cwd,
-      { remoteCatalog: this.remoteCatalog },
-    );
-    const personas = runtimeConfig.personas.map(clonePersona);
-    const persona = personas.find(
-      (persona) => persona.id.toLowerCase() === personaId.toLowerCase(),
-    );
-    if (!persona) {
-      throw new Error(`unknown persona '${personaId}'`);
-    }
-
-    const selectedPersona = clonePersona(persona);
-    const runtimeContext = await this.executionEnvironment.resolveRuntimeContext({
-      cwd: this.executionEnvironment.snapshot().cwd,
-      discoveredSkills: runtimeConfig.skills,
-      includeAgentContext: this.includeAgentContext,
-    });
-    return await this.enqueueConfigurationMutation(async () => {
-      this.runtime.setRuntimeConfig(
-        runtimeConfig.config,
-        runtimeConfig.bootstrap.modelResolver.resolveModel,
+    return await this.trackActiveWork(async () => {
+      const runtimeConfig = await this.executionEnvironment.resolveRuntimeConfig(
+        this.executionEnvironment.snapshot().cwd,
+        { remoteCatalog: this.remoteCatalog },
       );
-      this.runtime.updatePromptContext(runtimeContext.promptBootstrap.promptContext);
-      this.runtime.setPersona(selectedPersona);
-      this.bootstrap = {
-        persona: clonePersona(selectedPersona),
-        discoveredSkills: structuredClone(runtimeConfig.skills),
-        personas: personas.map(clonePersona),
-        prompts: structuredClone(runtimeConfig.prompts),
-        modelResolver: runtimeConfig.bootstrap.modelResolver.resolveModel,
-        config: runtimeConfig.config,
-      };
-      this.catalog = createContentCatalogSnapshot(this.bootstrap, this.catalog.mcpServers);
-      const snapshot = await this.commitSnapshot();
-      this.emitSnapshotReset("configuration", snapshot);
-      return snapshot;
+      const personas = runtimeConfig.personas.map(clonePersona);
+      const selectedPersona = resolvePersonaSelection(
+        personas,
+        runtimeConfig.config.defaultPersona,
+        personaId,
+        overrides,
+      );
+      const runtimeContext = await this.executionEnvironment.resolveRuntimeContext({
+        cwd: this.executionEnvironment.snapshot().cwd,
+        discoveredSkills: runtimeConfig.skills,
+        includeAgentContext: this.includeAgentContext,
+      });
+      return await this.enqueueConfigurationMutation(async () => {
+        this.runtime.setRuntimeConfig(
+          runtimeConfig.config,
+          runtimeConfig.bootstrap.modelResolver.resolveModel,
+        );
+        this.runtime.updatePromptContext(runtimeContext.promptBootstrap.promptContext);
+        this.runtime.setPersona(selectedPersona);
+        this.runtime.setAutoCompactThreshold(overrides?.autoCompactThresholdTokens ?? null);
+        this.bootstrap = {
+          persona: clonePersona(selectedPersona),
+          discoveredSkills: structuredClone(runtimeConfig.skills),
+          personas: personas.map(clonePersona),
+          prompts: structuredClone(runtimeConfig.prompts),
+          modelResolver: runtimeConfig.bootstrap.modelResolver.resolveModel,
+          config: runtimeConfig.config,
+        };
+        this.catalog = createContentCatalogSnapshot(this.bootstrap, this.catalog.mcp);
+        const snapshot = await this.commitSnapshot();
+        this.emitSnapshotReset("configuration", snapshot);
+        return snapshot;
+      });
     });
   }
 
   async reload(): Promise<SessionProtocolReloadResult> {
     this.assertActive();
-    const remoteCatalog = this.getLatestRemoteModelCatalog();
-    const runtimeConfig = await this.executionEnvironment.resolveRuntimeConfig(
-      this.executionEnvironment.snapshot().cwd,
-      { remoteCatalog },
-    );
-    if (runtimeConfig.personas.length === 0) {
-      throw new Error("reload failed: no personas available");
-    }
-
-    const personas = runtimeConfig.personas.map(clonePersona);
-    const currentPersonaId = this.runtime.persona.id.toLowerCase();
-    const nextPersona =
-      personas.find((persona) => persona.id.toLowerCase() === currentPersonaId) ?? personas[0]!;
-
-    const runtimeContext = await this.executionEnvironment.resolveRuntimeContext({
-      cwd: this.executionEnvironment.snapshot().cwd,
-      discoveredSkills: runtimeConfig.skills,
-      includeAgentContext: this.includeAgentContext,
-    });
-
-    return await this.enqueueConfigurationMutation(async () => {
-      this.runtime.setRuntimeConfig(
-        runtimeConfig.config,
-        runtimeConfig.bootstrap.modelResolver.resolveModel,
+    return await this.trackActiveWork(async () => {
+      const remoteCatalog = this.getLatestRemoteModelCatalog();
+      const runtimeConfig = await this.executionEnvironment.resolveRuntimeConfig(
+        this.executionEnvironment.snapshot().cwd,
+        { remoteCatalog },
       );
-      this.runtime.updatePromptContext(runtimeContext.promptBootstrap.promptContext);
-      this.runtime.setPersona(nextPersona);
-      this.remoteCatalog = remoteCatalog;
-      this.bootstrap = {
-        persona: clonePersona(nextPersona),
-        discoveredSkills: structuredClone(runtimeConfig.skills),
-        personas: personas.map(clonePersona),
-        prompts: structuredClone(runtimeConfig.prompts),
-        modelResolver: runtimeConfig.bootstrap.modelResolver.resolveModel,
-        config: runtimeConfig.config,
-      };
+      if (runtimeConfig.personas.length === 0) {
+        throw new Error("reload failed: no personas available");
+      }
 
-      this.catalog = createContentCatalogSnapshot(this.bootstrap, this.catalog.mcpServers);
+      const personas = runtimeConfig.personas.map(clonePersona);
+      const currentPersonaId = this.runtime.persona.id.toLowerCase();
+      const nextPersona = clonePersona(
+        personas.find((persona) => persona.id.toLowerCase() === currentPersonaId) ?? personas[0]!,
+      );
+      if (nextPersona.id.toLowerCase() === currentPersonaId) {
+        nextPersona.settings = structuredClone(this.runtime.persona.settings);
+      }
+      const runtimeContext = await this.executionEnvironment.resolveRuntimeContext({
+        cwd: this.executionEnvironment.snapshot().cwd,
+        discoveredSkills: runtimeConfig.skills,
+        includeAgentContext: this.includeAgentContext,
+      });
 
-      const snapshot = await this.commitSnapshot();
-      this.emitSnapshotReset("configuration", snapshot);
-      return {
-        snapshot,
-        warnings: runtimeConfig.warnings,
-        counts: {
-          personas: runtimeConfig.personas.length,
-          prompts: runtimeConfig.prompts.length,
-          skills: runtimeConfig.skills.length,
-        },
-      };
+      return await this.enqueueConfigurationMutation(async () => {
+        this.runtime.setRuntimeConfig(
+          runtimeConfig.config,
+          runtimeConfig.bootstrap.modelResolver.resolveModel,
+        );
+        this.runtime.updatePromptContext(runtimeContext.promptBootstrap.promptContext);
+        this.runtime.setPersona(nextPersona);
+        this.remoteCatalog = remoteCatalog;
+        this.bootstrap = {
+          persona: clonePersona(nextPersona),
+          discoveredSkills: structuredClone(runtimeConfig.skills),
+          personas: personas.map(clonePersona),
+          prompts: structuredClone(runtimeConfig.prompts),
+          modelResolver: runtimeConfig.bootstrap.modelResolver.resolveModel,
+          config: runtimeConfig.config,
+        };
+
+        this.catalog = createContentCatalogSnapshot(this.bootstrap, this.catalog.mcp);
+
+        const snapshot = await this.commitSnapshot();
+        this.emitSnapshotReset("configuration", snapshot);
+        return {
+          snapshot,
+          warnings: [
+            ...runtimeConfig.warnings,
+            ...(this.catalog.mcp.status === "available" &&
+            !isDeepStrictEqual(this.boundMcpServers, runtimeConfig.config.mcpServers)
+              ? [
+                  "MCP configuration changed; new definitions take effect after this session unloads and is opened again.",
+                ]
+              : []),
+          ],
+          counts: {
+            personas: runtimeConfig.personas.length,
+            prompts: runtimeConfig.prompts.length,
+            skills: runtimeConfig.skills.length,
+          },
+        };
+      });
     });
   }
 
@@ -1301,27 +1741,31 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     promptId: SessionProtocolResolvePromptParams["promptId"],
   ): Promise<SessionProtocolResolvePromptResult> {
     this.assertActive();
-    const executionSnapshot = this.executionEnvironment.snapshot();
-    const prompt = await resolvePromptTemplateWithBackend({
-      backend: this.executionEnvironment.getToolExecutionBackend(),
-      cwd: executionSnapshot.cwd,
-      home: executionSnapshot.home,
-      promptId,
+    return await this.trackActiveWork(async () => {
+      const executionSnapshot = this.executionEnvironment.snapshot();
+      const prompt = await resolvePromptTemplateWithBackend({
+        backend: this.executionEnvironment.getToolExecutionBackend(),
+        cwd: executionSnapshot.cwd,
+        home: executionSnapshot.home,
+        promptId,
+      });
+      if (!prompt) {
+        throw new Error(`unknown prompt '${promptId}'`);
+      }
+      return { promptId: prompt.id, text: prompt.template };
     });
-    if (!prompt) {
-      throw new Error(`unknown prompt '${promptId}'`);
-    }
-    return { promptId: prompt.id, text: prompt.template };
   }
 
   async autocompletePaths(
     options: Omit<SessionProtocolAutocompletePathsParams, "sessionId">,
   ): Promise<SessionProtocolAutocompletePathsResult> {
     this.assertActive();
-    const entries = await this.getPathAutocompleteEntries();
-    return {
-      paths: filterProjectPathAutocompleteEntries(entries, options),
-    };
+    return await this.trackActiveWork(async () => {
+      const entries = await this.getPathAutocompleteEntries();
+      return {
+        paths: filterProjectPathAutocompleteEntries(entries, options),
+      };
+    });
   }
 
   private async getPathAutocompleteEntries(): Promise<string[]> {
@@ -1388,6 +1832,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       ? AbortSignal.any([externalSignal, abortController.signal])
       : abortController.signal;
     try {
+      signal.throwIfAborted();
       return await this.runActiveWork(operation, signal);
     } finally {
       if (this.activeExecAbortControllers.get(execId) === abortController) {
@@ -1405,12 +1850,19 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       ? AbortSignal.any([externalSignal, abortController.signal])
       : abortController.signal;
     this.activeWorkAbortControllers.add(abortController);
-    const promise = operation(signal);
+    try {
+      return await this.trackActiveWork(() => operation(signal));
+    } finally {
+      this.activeWorkAbortControllers.delete(abortController);
+    }
+  }
+
+  private async trackActiveWork<T>(operation: () => Promise<T>): Promise<T> {
+    const promise = operation();
     this.activeWorkPromises.add(promise);
     try {
       return await promise;
     } finally {
-      this.activeWorkAbortControllers.delete(abortController);
       this.activeWorkPromises.delete(promise);
     }
   }
@@ -1546,6 +1998,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   async dispose(): Promise<void> {
     if (!this.disposePromise) {
       this.disposing = true;
+      this.unsubscribeNotifications();
       this.disposePromise = this.disposeNow();
     }
     return await this.disposePromise;
@@ -1585,16 +2038,27 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     }
 
     try {
+      await this.mcp.close();
+    } catch (error) {
+      errors.push(error);
+    }
+    try {
       await this.executionEnvironment.dispose();
     } catch (error) {
       errors.push(error);
-    } finally {
-      this.removeFromHost(this);
     }
 
-    if (errors.length > 0) {
-      throw new AggregateError(errors, "failed to dispose hosted session");
+    try {
+      await this.lease.release();
+    } catch (error) {
+      errors.push(error);
     }
+    const error =
+      errors.length > 0
+        ? new AggregateError(errors, "failed to dispose hosted session")
+        : undefined;
+    this.removeFromHost(this, error);
+    if (error) throw error;
   }
 
   private async commitSnapshot(
@@ -1746,7 +2210,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
           ? { usageCheckpoint: { ...agentState.usageCheckpoint } }
           : {}),
       },
-      lifecycle: this.activeTurnPromise || this.runtime.isTurnRunning ? "running" : "idle",
+      lifecycle: this.activeLogicalTurn || this.runtime.isTurnRunning ? "running" : "idle",
       costTotal: this.costTotal,
       settings: {
         autoCompactThresholdTokens: this.runtime.autoCompactOverrideTokens,
@@ -1761,6 +2225,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         ...(this.runtime.persona.settings.serviceTier !== undefined
           ? { serviceTier: this.runtime.persona.settings.serviceTier }
           : {}),
+        notifications: this.runtime.notifications !== undefined,
       },
       bootstrap: {
         model: modelSnapshotFromModel(this.runtime.persona.model),
@@ -1950,6 +2415,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   }
 
   private async runAgentStateMutation<T>(mutation: () => Promise<T>): Promise<T> {
+    const release = this.holdTurnAdmission();
     const runtimeState = this.runtime.snapshot();
     try {
       return await mutation();
@@ -1958,6 +2424,8 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         this.invalidateProjection(error);
       }
       throw error;
+    } finally {
+      release();
     }
   }
 
@@ -2023,7 +2491,10 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   }
 
   async enqueueRuntimeEvent(event: AgentEvent): Promise<void> {
-    await this.enqueueMutation(() => this.recordRuntimeEvent(event));
+    await this.enqueueMutation(async () => {
+      await this.recordRuntimeEvent(event);
+      await this.recordHistoryFailure(this.historyRecorder.record(event));
+    });
   }
 
   private removeToolRun(tool: SessionProtocolToolRun, changes: SessionProtocolChange[]): void {
@@ -2038,6 +2509,15 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       { type: "tool.remove", id: tool.id },
       { type: "timeline.remove", id: timelineItemId },
     );
+  }
+
+  async recordSubagentHistoryFailure(reason: string): Promise<void> {
+    if (this.disposing || this.disposed) return;
+    try {
+      await this.enqueueMutation(() => this.recordHistoryFailure(reason));
+    } catch {
+      // A history diagnostic must not fail a worker when its parent is unavailable.
+    }
   }
 
   async recordHistoryFailure(reason: string | undefined): Promise<void> {
@@ -2079,19 +2559,13 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       throw new Error(`transcript tool call '${tool.toolCallId}' is not terminal`);
     }
     await this.recordHistoryFailure(
-      this.history.append(
-        this.sessionId,
-        [
-          toolHistoryEntry({
-            callHistoryEntryId: tool.call.messageId,
-            resultHistoryEntryId,
-            call,
-            result,
-            outcome: tool.status,
-          }),
-        ],
-        this.historyRemote,
-      ),
+      this.historyRecorder.recordTool({
+        callHistoryEntryId: tool.call.messageId,
+        resultHistoryEntryId,
+        call,
+        result,
+        outcome: tool.status,
+      }),
     );
   }
 
@@ -2257,13 +2731,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
           ],
           { persist: true },
         );
-        await this.recordHistoryFailure(
-          this.history.append(
-            this.sessionId,
-            [systemHistoryEntry(event.historyEntryId, event.message)],
-            this.historyRemote,
-          ),
-        );
         return;
       }
       case "user_message": {
@@ -2279,10 +2746,31 @@ class LocalHostedSessionHandle implements LocalHostedSession {
           }
           this.turns.set(event.historyEntryId, turn);
         }
-        const timelineItem = this.appendMessageTimelineItem(
-          event.historyEntryId,
-          event.message.timestamp,
-        );
+        const timelineItem =
+          event.origin === "notification"
+            ? this.appendNoticeTimelineItem(
+                `notification-${event.historyEntryId}`,
+                event.message.timestamp,
+                {
+                  kind: "tau.notifications",
+                  version: 1,
+                  severity: "info",
+                  subject: { type: "message", id: event.historyEntryId },
+                  presentation: projectSessionProtocolNoticePresentation(
+                    event.notificationTitles.length === 1 && event.omittedNotifications === 0
+                      ? "notification"
+                      : "notifications",
+                    [
+                      ...event.notificationTitles,
+                      ...(event.omittedNotifications > 0
+                        ? [`and ${event.omittedNotifications} more`]
+                        : []),
+                    ],
+                  ),
+                  data: {},
+                },
+              )
+            : this.appendMessageTimelineItem(event.historyEntryId, event.message.timestamp);
         await this.emitPatch(
           "user-message",
           [
@@ -2301,16 +2789,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
           ],
           { persist: true },
         );
-        if (turn) {
-          this.pendingAcceptedTurnHistoryEntryIds.delete(event.historyEntryId);
-        }
-        await this.recordHistoryFailure(
-          this.history.append(
-            this.sessionId,
-            [userHistoryEntry(event.historyEntryId, event.message)],
-            this.historyRemote,
-          ),
-        );
         return;
       }
       case "history_rewound": {
@@ -2327,16 +2805,15 @@ class LocalHostedSessionHandle implements LocalHostedSession {
           { type: "rewind", epoch: this.timeline.epoch, cutoffSequence },
           snapshot,
         );
-        await this.recordHistoryFailure(
-          this.history.truncateFromSources(
-            this.sessionId,
-            event.removedEntryIds,
-            this.historyRemote,
-          ),
-        );
         return;
       }
       case "assistant_final": {
+        if (this.activeLogicalTurn) {
+          this.activeLogicalTurn.response = event.message.content
+            .filter((block) => block.type === "text")
+            .map((block) => block.text)
+            .join("");
+        }
         this.draftAssistantMessage = undefined;
         const messageState = event.message.stopReason === "aborted" ? "interrupted" : "committed";
         if (messageState === "committed") {
@@ -2383,13 +2860,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
             : []),
           ...toolChanges,
         ]);
-        await this.recordHistoryFailure(
-          this.history.append(
-            this.sessionId,
-            assistantHistoryEntries(event.historyEntryId, event.message),
-            this.historyRemote,
-          ),
-        );
         return;
       }
       case "tool_run_queued":
@@ -2448,7 +2918,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
             },
             { type: "tool.set", tool: structuredClone(nextTool) },
           ]);
-          await this.appendToolHistory(existing, event.historyEntryId, event.message);
           return;
         }
         await this.emitPatch("tool-result", [
@@ -2478,10 +2947,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
             },
           },
         ];
-        const historyTools: Array<{
-          tool: Exclude<SessionProtocolToolRun, { status: "streaming" }>;
-          result: (typeof event.toolResults)[number];
-        }> = [];
         for (const toolResult of event.toolResults) {
           const existing = this.tools.get(toolResult.toolCallId);
           if (!existing || existing.status === "streaming") {
@@ -2495,12 +2960,8 @@ class LocalHostedSessionHandle implements LocalHostedSession {
           };
           this.tools.set(nextTool.id, nextTool);
           changes.push({ type: "tool.set", tool: structuredClone(nextTool) });
-          historyTools.push({ tool: existing, result: toolResult });
         }
         await this.emitPatch({ type: "resync" }, changes);
-        for (const { tool, result } of historyTools) {
-          await this.appendToolHistory(tool, event.historyEntryId, result);
-        }
         return;
       }
       case "feedback": {
@@ -3295,18 +3756,19 @@ function cloneResolvedBootstrap(
   bootstrap: LocalSessionResolvedBootstrap,
 ): LocalSessionResolvedBootstrap {
   return {
+    initialAutoCompactThresholdTokens: bootstrap.initialAutoCompactThresholdTokens,
     persona: clonePersona(bootstrap.persona),
     discoveredSkills: structuredClone(bootstrap.discoveredSkills),
     personas: bootstrap.personas.map(clonePersona),
     prompts: structuredClone(bootstrap.prompts),
     modelResolver: bootstrap.modelResolver,
-    ...(bootstrap.config !== undefined ? { config: structuredClone(bootstrap.config) } : {}),
+    config: structuredClone(bootstrap.config),
   };
 }
 
 function createContentCatalogSnapshot(
   bootstrap: LocalSessionResolvedBootstrap,
-  mcpServers: string[],
+  mcp: SessionProtocolContentCatalogSnapshot["mcp"],
 ): SessionProtocolContentCatalogSnapshot {
   return {
     personas: bootstrap.personas.map(personaSnapshotFromPersona),
@@ -3319,7 +3781,8 @@ function createContentCatalogSnapshot(
       description: skill.description,
       path: skill.path,
     })),
-    mcpServers: [...mcpServers],
+    mcp: structuredClone(mcp),
+    speechVocabulary: [...bootstrap.config.speechVocabulary],
   };
 }
 

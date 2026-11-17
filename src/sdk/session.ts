@@ -5,6 +5,7 @@ import type {
   SessionProtocolCreateParams,
   SessionProtocolEphemeralAgentTool,
   SessionProtocolInitializeParams,
+  SessionProtocolPersonaOverrides,
   SessionProtocolReasoningEffort,
   SessionProtocolResultByMethod,
   SessionProtocolSampleParams,
@@ -113,6 +114,14 @@ class TauSdkClientImpl implements TauSdkClient {
     input: SessionProtocolCreateParams,
   ): Promise<SessionProtocolResultByMethod["session.create"]> {
     return this.transport.request("session.create", input);
+  }
+
+  setRetention(sessionId: string, durationMs: number | null) {
+    return this.transport.request("session.setRetention", { sessionId, durationMs });
+  }
+
+  collectSession(sessionId: string) {
+    return this.transport.request("session.collect", { sessionId });
   }
 
   listSessions(): Promise<SessionProtocolResultByMethod["session.list"]> {
@@ -437,11 +446,13 @@ class TauSdkClientImpl implements TauSdkClient {
 
   sendSetPersona(
     sessionId: string,
-    personaId: string,
+    personaId: string | null,
+    overrides?: SessionProtocolPersonaOverrides,
   ): Promise<SessionProtocolResultByMethod["session.setPersona"]> {
     return this.transport.request("session.setPersona", {
       sessionId,
       personaId,
+      ...overrides,
     });
   }
 
@@ -577,6 +588,14 @@ class TauSdkSessionClientImpl implements TauSdkSessionClient {
   async create(input: SessionProtocolCreateParams): Promise<TauSdkSession> {
     const { sessionId } = await this.client.createSession(input);
     return this.observe(sessionId);
+  }
+
+  setRetention(sessionId: string, durationMs: number | null) {
+    return this.client.setRetention(sessionId, durationMs);
+  }
+
+  collect(sessionId: string) {
+    return this.client.collectSession(sessionId);
   }
 
   async list() {
@@ -808,9 +827,10 @@ class TauSdkSessionImpl implements TauSdkSession {
   }
 
   async setPersona(
-    personaId: string,
+    personaId: string | null,
+    overrides?: SessionProtocolPersonaOverrides,
   ): Promise<SessionProtocolResultByMethod["session.setPersona"]> {
-    const snapshot = await this.client.sendSetPersona(this.activeSessionId(), personaId);
+    const snapshot = await this.client.sendSetPersona(this.activeSessionId(), personaId, overrides);
     this.discardBufferedDeltasThrough(snapshot.revision);
     return snapshot;
   }

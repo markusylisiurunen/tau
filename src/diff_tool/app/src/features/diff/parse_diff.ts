@@ -28,7 +28,7 @@ export function parseDiff(
     return [];
   }
 
-  const patches = parsePatchFiles(raw, cacheKeyPrefix);
+  const patches = parsePatchFiles(raw, { cacheKeyPrefix });
   const snapshotRepoPaths = buildSnapshotRepoPathIndex(snapshotFiles);
   let counter = 0;
 

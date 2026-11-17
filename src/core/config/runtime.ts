@@ -9,15 +9,24 @@ import {
 import type { Persona, Skill } from "../types.js";
 import { loadAllContent, parsePrompt } from "./content_loader.js";
 import type { ConfigDeps } from "./deps.js";
+import {
+  type ClientConfig,
+  type HostConfig,
+  type SessionConfig,
+  toClientConfig,
+  toHostConfig,
+  toSessionConfig,
+} from "./ownership.js";
 import type { ConfigLevel } from "./paths.js";
 import { resolveConfigLevels } from "./paths.js";
-import type { Config } from "./schema.js";
 import { loadConfigWithDiagnostics } from "./schema.js";
 import type { ThemeDefinition } from "./theme_variants.js";
 import { buildVirtualBundle, type VirtualBundle } from "./virtual_bundle.js";
 
 export interface RuntimeBootstrap {
-  config: Config;
+  host: HostConfig;
+  client: ClientConfig;
+  session: SessionConfig;
   levels: ConfigLevel[];
   modelResolver: LoadedModelResolver;
   virtualBundle: VirtualBundle;
@@ -26,13 +35,18 @@ export interface RuntimeBootstrap {
 
 export interface RuntimeConfigResult {
   bootstrap: RuntimeBootstrap;
-  config: Config;
+  config: SessionConfig;
   personas: Persona[];
   prompts: PromptTemplate[];
   skills: Skill[];
   themes: ThemeDefinition[];
   warnings: string[];
 }
+
+/** What a session may learn from its execution environment. Host and client settings stay out. */
+export type SessionRuntimeConfigResult = Omit<RuntimeConfigResult, "bootstrap" | "themes"> & {
+  bootstrap: Pick<RuntimeBootstrap, "modelResolver">;
+};
 
 export function loadRuntimeBootstrap(
   cwd: string,
@@ -45,11 +59,12 @@ export function loadRuntimeBootstrap(
     levels,
     modelResolver,
   });
-  const config = configResult.config;
   const virtualBundle = buildVirtualBundle(modelResolver.resolveConfiguredModel);
 
   return {
-    config,
+    host: toHostConfig(configResult.config),
+    client: toClientConfig(configResult.config, configResult.personalSpeechVocabulary),
+    session: toSessionConfig(configResult.config),
     levels,
     modelResolver,
     virtualBundle,
@@ -198,43 +213,54 @@ function parsePromptTemplateCandidates(output: string): PromptTemplateCandidate[
   return files;
 }
 
+export function toSessionRuntimeConfig(result: RuntimeConfigResult): SessionRuntimeConfigResult {
+  return {
+    bootstrap: { modelResolver: result.bootstrap.modelResolver },
+    config: result.config,
+    personas: result.personas,
+    prompts: result.prompts,
+    skills: result.skills,
+    warnings: result.warnings,
+  };
+}
+
 export async function loadRuntimeConfig(
   cwd: string,
   deps: ConfigDeps,
   options: { remoteCatalog?: RemoteModelCatalogSnapshot } = {},
 ): Promise<RuntimeConfigResult> {
   const bootstrap = loadRuntimeBootstrap(cwd, deps, options);
-  const content = await loadAllContent(bootstrap.config, {
+  const content = await loadAllContent(bootstrap.session, {
     deps,
     levels: bootstrap.levels,
     modelResolver: bootstrap.modelResolver.resolveModel,
     virtualBundle: bootstrap.virtualBundle,
   });
   const warnings = [...bootstrap.warnings, ...content.errors];
-  if (bootstrap.config.defaultPersona) {
-    const parsedDefaultPersona = parsePersonaReference(bootstrap.config.defaultPersona);
+  if (bootstrap.session.defaultPersona) {
+    const parsedDefaultPersona = parsePersonaReference(bootstrap.session.defaultPersona);
     const personaId = parsedDefaultPersona.personaId;
     const matched = personaId
       ? content.personas.some((persona) => persona.id === personaId)
       : false;
     if (!matched) {
       warnings.push(
-        `defaultPersona '${bootstrap.config.defaultPersona}' not found in loaded personas.`,
+        `defaultPersona '${bootstrap.session.defaultPersona}' not found in loaded personas.`,
       );
     }
   }
-  if (bootstrap.config.defaultTheme) {
-    const matched = content.themes.some((theme) => theme.id === bootstrap.config.defaultTheme);
+  if (bootstrap.client.defaultTheme) {
+    const matched = content.themes.some((theme) => theme.id === bootstrap.client.defaultTheme);
     if (!matched) {
       warnings.push(
-        `defaultTheme '${bootstrap.config.defaultTheme}' not found in built-in themes.`,
+        `defaultTheme '${bootstrap.client.defaultTheme}' not found in built-in themes.`,
       );
     }
   }
 
   return {
     bootstrap,
-    config: bootstrap.config,
+    config: bootstrap.session,
     personas: content.personas,
     prompts: content.prompts,
     skills: content.skills,

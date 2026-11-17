@@ -1,4 +1,4 @@
-import { startGeminiTranscription, transcribeGeminiAudio } from "./gemini_transcription.js";
+import { startScribeTranscription, transcribeScribeAudio } from "./scribe_transcription.js";
 import type { SpeechToTextContext } from "./speech_to_text_context.js";
 
 export const SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS = 20 * 60 * 1_000;
@@ -63,7 +63,7 @@ export function createSpeechToTextTranscription(
 ): SpeechToTextTranscription {
   if (options.mode === "streaming") {
     return createStreamingTranscription(
-      startGeminiTranscription({
+      startScribeTranscription({
         onProgress: options.onProgress,
         apiKey: options.apiKey,
         openAIApiKey: options.openAIApiKey,
@@ -76,7 +76,7 @@ export function createSpeechToTextTranscription(
   }
 
   return createBatchTranscription(async (recording, signal) => {
-    return await transcribeGeminiAudio({
+    return await transcribeScribeAudio({
       apiKey: options.apiKey,
       openAIApiKey: options.openAIApiKey,
       audio: recording.audio,

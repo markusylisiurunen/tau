@@ -10,8 +10,10 @@ import type {
   HistoryEntry,
   HistoryReadResult,
   HistoryReplicationOperation,
+  HistorySearchParent,
   HistorySearchResult,
   HistorySessionDescriptor,
+  HistoryTimeRange,
   HistoryUserContent,
 } from "../../core/history/types.js";
 import VIEWER_CSS from "./viewer.css";
@@ -85,6 +87,10 @@ const MAX_ENTRIES_PER_OPERATION = 25;
 const MAX_SEARCH_LIMIT = 75;
 const MAX_READ_LIMIT = 100;
 const MAX_READ_PAGE_PAYLOAD_BYTES = 12 * 1024 * 1024;
+const MAX_TREE_DEPTH = 8;
+const MAX_TREE_DESCENDANTS = 200;
+const CHILD_COUNT_COLUMN =
+  "(SELECT COUNT(*) FROM sessions c WHERE c.parent_session_id = s.session_id) AS child_count";
 const VIEWER_USERNAME = "tau";
 const VIEWER_SEARCH_PAGE_SIZE = 20;
 const VIEWER_READ_PAGE_PAYLOAD_BYTES = 512 * 1024;
@@ -96,8 +102,6 @@ const VIEWER_SECURITY_HEADERS = {
   "x-content-type-options": "nosniff",
   "x-frame-options": "DENY",
 };
-const DIGEST_NEW_ENTRY_THRESHOLD = 8;
-const DIGEST_MAX_STALENESS_MS = 12 * 60 * 60 * 1_000;
 const DIGEST_RETRY_BASE_MS = 5 * 60 * 1_000;
 const DIGEST_RETRY_MAX_MS = 12 * 60 * 60 * 1_000;
 const DIGEST_BYTES_PER_TOKEN = 6;
@@ -105,7 +109,6 @@ const DIGEST_TOOL_RESULT_MAX_BYTES = 512 * DIGEST_BYTES_PER_TOKEN;
 const DIGEST_SOURCE_PAGE_SIZE = 8;
 const DIGEST_SOURCE_MAX_BYTES = 12 * 1024 * 1024;
 const DIGEST_MAX_SPLIT_DEPTH = 3;
-const DIGEST_IDLE_MS = 10 * 60 * 1_000;
 const DIGEST_LEASE_MS = 30 * 60 * 1_000;
 const DIGEST_SESSIONS_PER_CRON = 3;
 
@@ -204,47 +207,58 @@ export default {
       .first<{ claimed_at: number }>();
     if (!lease) return;
 
+    let failure: { error: unknown } | undefined;
     try {
       for (let index = 0; index < DIGEST_SESSIONS_PER_CRON; index += 1) {
         const attemptedAt = Date.now();
         const candidate = await selectDigestCandidate(env.DB, attemptedAt);
-        if (!candidate) return;
+        if (!candidate) break;
         await attemptScheduledDigest(env, candidate, attemptedAt);
       }
-    } finally {
-      await env.DB.prepare(
-        "UPDATE digest_worker_lease SET claimed_at = NULL WHERE singleton = 1 AND claimed_at = ?",
-      )
-        .bind(claimedAt)
-        .run();
+    } catch (caught) {
+      failure = { error: caught };
+      logWorkerError("history_digest_scheduler_failed", caught, {});
     }
+    try {
+      await releaseDigestLease(env.DB, claimedAt);
+    } catch (caught) {
+      logWorkerError("history_digest_lease_release_failed", caught, {});
+      failure ??= { error: caught };
+    }
+    if (failure) throw failure.error;
   },
 };
 
-async function selectDigestCandidate(
+async function releaseDigestLease(database: D1Database, claimedAt: number): Promise<void> {
+  for (const delay of [0, 1_000, 5_000, 15_000]) {
+    if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+    try {
+      await database
+        .prepare(
+          "UPDATE digest_worker_lease SET claimed_at = NULL WHERE singleton = 1 AND claimed_at = ?",
+        )
+        .bind(claimedAt)
+        .run();
+      return;
+    } catch (caught) {
+      if (delay === 15_000) throw caught;
+    }
+  }
+}
+
+export async function selectDigestCandidate(
   database: D1Database,
   now: number,
 ): Promise<{ sessionId: string; failureCount: number } | undefined> {
   const candidate = await database
     .prepare(
-      `SELECT s.session_id, s.digest_failure_count
-       FROM sessions s
-       JOIN entries latest ON latest.session_id = s.session_id
-         AND latest.position = (SELECT MAX(position) FROM entries WHERE session_id = s.session_id)
-       LEFT JOIN entries digested ON digested.session_id = s.session_id
-         AND digested.entry_id = s.digest_through_entry_id
-       WHERE (s.digest_through_entry_id IS NULL OR s.digest_through_entry_id != latest.entry_id)
-         AND s.updated_at <= ?
-         AND (s.digest_next_attempt_at IS NULL OR s.digest_next_attempt_at <= ?)
-         AND (
-           s.digest_through_entry_id IS NULL
-           OR latest.position - COALESCE(digested.position, 0) >= ?
-           OR s.updated_at <= ?
-         )
-       ORDER BY COALESCE(s.digest_last_attempt_at, 0), s.updated_at, s.session_id
+      `SELECT session_id, digest_failure_count
+       FROM sessions
+       WHERE digest_due_at <= ?
+       ORDER BY COALESCE(digest_last_attempt_at, 0), updated_at, session_id
        LIMIT 1`,
     )
-    .bind(now - DIGEST_IDLE_MS, now, DIGEST_NEW_ENTRY_THRESHOLD, now - DIGEST_MAX_STALENESS_MS)
+    .bind(now)
     .first<{ session_id: string; digest_failure_count: number }>();
   if (!candidate) return undefined;
   return {
@@ -274,25 +288,32 @@ async function attemptScheduledDigest(
       .bind(updated ? 1 : 0, Date.now(), candidate.sessionId)
       .run();
   } catch (caught) {
+    logWorkerError("history_digest_refresh_failed", caught, {
+      sessionId: candidate.sessionId,
+    });
     const failedAt = Date.now();
-    await env.DB.prepare(
-      `UPDATE sessions
+    try {
+      await env.DB.prepare(
+        `UPDATE sessions
        SET digest_failure_count = ?,
            digest_next_attempt_at = ?,
            digest_last_error = ?
        WHERE session_id = ?`,
-    )
-      .bind(
-        candidate.failureCount + 1,
-        failedAt +
-          digestRetryDelayMs(candidate.failureCount + 1, retryAfterDelayMs(caught, failedAt)),
-        digestErrorMessage(caught),
-        candidate.sessionId,
       )
-      .run();
-    logWorkerError("history_digest_refresh_failed", caught, {
-      sessionId: candidate.sessionId,
-    });
+        .bind(
+          candidate.failureCount + 1,
+          failedAt +
+            digestRetryDelayMs(candidate.failureCount + 1, retryAfterDelayMs(caught, failedAt)),
+          digestErrorMessage(caught),
+          candidate.sessionId,
+        )
+        .run();
+    } catch (persistenceError) {
+      logWorkerError("history_digest_retry_record_failed", persistenceError, {
+        sessionId: candidate.sessionId,
+      });
+      throw caught;
+    }
   }
 }
 
@@ -340,7 +361,12 @@ function digestErrorMessage(caught: unknown): string {
 }
 
 function logWorkerError(
-  event: "history_digest_refresh_failed" | "history_request_failed",
+  event:
+    | "history_digest_refresh_failed"
+    | "history_digest_scheduler_failed"
+    | "history_digest_lease_release_failed"
+    | "history_digest_retry_record_failed"
+    | "history_request_failed",
   caught: unknown,
   context: Record<string, string>,
 ): void {
@@ -440,14 +466,18 @@ export async function applyOperation(
     const appliedAt = Date.now();
     if (operation.type === "create") {
       const attributesJson = stableJson(operation.session.attributes);
+      const parentSessionId = operation.session.parentSessionId ?? null;
       const session = await database
-        .prepare("SELECT attributes_json, created_at FROM sessions WHERE session_id = ?")
+        .prepare(
+          "SELECT attributes_json, created_at, parent_session_id FROM sessions WHERE session_id = ?",
+        )
         .bind(operation.sessionId)
-        .first<{ attributes_json: string; created_at: number }>();
+        .first<{ attributes_json: string; created_at: number; parent_session_id: string | null }>();
       if (session) {
         if (
           session.attributes_json !== attributesJson ||
-          session.created_at !== operation.session.createdAt
+          session.created_at !== operation.session.createdAt ||
+          session.parent_session_id !== parentSessionId
         ) {
           throw new HistoryApiError(
             "immutable_conflict",
@@ -459,13 +489,14 @@ export async function applyOperation(
         statements.push(
           database
             .prepare(
-              "INSERT INTO sessions (session_id, attributes_json, created_at, updated_at) VALUES (?, ?, ?, ?)",
+              "INSERT INTO sessions (session_id, attributes_json, created_at, updated_at, parent_session_id) VALUES (?, ?, ?, ?, ?)",
             )
             .bind(
               operation.sessionId,
               attributesJson,
               operation.session.createdAt,
               operation.session.createdAt,
+              parentSessionId,
             ),
         );
       }
@@ -511,14 +542,9 @@ export async function applyOperation(
               JSON.stringify(entry),
               searchText,
             ),
-          database
-            .prepare(
-              "INSERT INTO entries_fts (session_id, entry_id, position, text) VALUES (?, ?, ?, ?)",
-            )
-            .bind(operation.sessionId, entry.id, position, searchText),
         );
       }
-      if (updatedAt > 0) {
+      if (statements.length > 0) {
         statements.push(
           database
             .prepare(
@@ -531,9 +557,6 @@ export async function applyOperation(
       await requireSession(database, operation.sessionId);
       if (operation.afterEntryId === null) {
         statements.push(
-          database
-            .prepare("DELETE FROM entries_fts WHERE session_id = ?")
-            .bind(operation.sessionId),
           database.prepare("DELETE FROM entries WHERE session_id = ?").bind(operation.sessionId),
         );
       } else {
@@ -549,11 +572,6 @@ export async function applyOperation(
           );
         }
         statements.push(
-          database
-            .prepare(
-              "DELETE FROM entries_fts WHERE session_id = ? AND CAST(position AS INTEGER) > ?",
-            )
-            .bind(operation.sessionId, retained.position),
           database
             .prepare("DELETE FROM entries WHERE session_id = ? AND position > ?")
             .bind(operation.sessionId, retained.position),
@@ -600,8 +618,20 @@ async function search(
   origin: string,
 ): Promise<RemoteHistorySearchResult> {
   const input = asRecord(raw, "search input");
+  if (input.order !== undefined && input.order !== "sessionId")
+    throw invalidRequest("invalid search order");
+  const order =
+    input.order === "sessionId" ? "s.session_id ASC" : "s.updated_at DESC, s.session_id ASC";
   const query = optionalString(input.query, "query", 1_000)?.trim();
   const attributes = parseAttributeFilters(input.attributes);
+  const parent = parseSearchParent(input.parent);
+  const parentClause =
+    parent === "any"
+      ? ""
+      : parent === "none"
+        ? "AND s.parent_session_id IS NULL"
+        : "AND s.parent_session_id = ?";
+  const parentValues = typeof parent === "object" ? [parent.sessionId] : [];
   const limit = boundedInteger(input.limit ?? 10, "limit", 1, MAX_SEARCH_LIMIT);
   const offset = decodeCursor(optionalString(input.cursor, "cursor", 2_048), "offset");
   const attributeValues: unknown[] = [];
@@ -615,15 +645,30 @@ async function search(
   });
   const attributeClause =
     attributeFilters.length > 0 ? `AND ${attributeFilters.join(" AND ")}` : "";
+  const timeRange = parseTimeRange(input.timeRange);
+  const timeFilters: string[] = [];
+  const timeValues: number[] = [];
+  if (timeRange) {
+    const column = timeRange.field === "createdAt" ? "s.created_at" : "s.updated_at";
+    if (timeRange.since !== undefined) {
+      timeFilters.push(`${column} >= ?`);
+      timeValues.push(timeRange.since);
+    }
+    if (timeRange.until !== undefined) {
+      timeFilters.push(`${column} < ?`);
+      timeValues.push(timeRange.until);
+    }
+  }
+  const timeClause = timeFilters.length > 0 ? `AND ${timeFilters.join(" AND ")}` : "";
 
   if (!query) {
     const rows = await database
       .prepare(
-        `SELECT s.* FROM sessions s
-         WHERE 1 = 1 ${attributeClause}
-         ORDER BY s.updated_at DESC, s.session_id ASC LIMIT ? OFFSET ?`,
+        `SELECT s.*, ${CHILD_COUNT_COLUMN} FROM sessions s
+         WHERE 1 = 1 ${parentClause} ${attributeClause} ${timeClause}
+         ORDER BY ${order} LIMIT ? OFFSET ?`,
       )
-      .bind(...attributeValues, limit + 1, offset)
+      .bind(...parentValues, ...attributeValues, ...timeValues, limit + 1, offset)
       .all<Record<string, unknown>>();
     return {
       sessions: rows.results.slice(0, limit).map((row) => descriptor(row, origin)),
@@ -642,21 +687,21 @@ async function search(
          WHERE sessions_fts MATCH ?
          UNION ALL
          SELECT session_id, 1 AS source_rank
-         FROM entries_fts
-         WHERE entries_fts MATCH ?
+         FROM entries_search_fts
+         WHERE entries_search_fts MATCH ?
        ), ranked_sessions AS (
          SELECT session_id, MIN(source_rank) AS source_rank
          FROM matching_sessions
          GROUP BY session_id
        )
-       SELECT s.*
+       SELECT s.*, ${CHILD_COUNT_COLUMN}
        FROM ranked_sessions r
        JOIN sessions s ON s.session_id = r.session_id
-       WHERE 1 = 1 ${attributeClause}
-       ORDER BY r.source_rank, s.updated_at DESC, s.session_id ASC
+       WHERE 1 = 1 ${parentClause} ${attributeClause} ${timeClause}
+       ORDER BY ${input.order === "sessionId" ? order : `r.source_rank, ${order}`}
        LIMIT ? OFFSET ?`,
     )
-    .bind(ftsQuery, ftsQuery, ...attributeValues, limit + 1, offset)
+    .bind(ftsQuery, ftsQuery, ...parentValues, ...attributeValues, ...timeValues, limit + 1, offset)
     .all<Record<string, unknown>>();
   const selectedRows = candidates.results.slice(0, limit);
   const sessions = selectedRows.map((row) => descriptor(row, origin));
@@ -666,22 +711,39 @@ async function search(
     const snippets = await database
       .prepare(
         `WITH ranked_snippets AS (
-           SELECT session_id,
-                  text AS match_text,
+           SELECT rowid AS entry_rowid,
+                  session_id,
                   ROW_NUMBER() OVER (
                     PARTITION BY session_id
                     ORDER BY CAST(position AS INTEGER), entry_id
                   ) AS snippet_rank
-           FROM entries_fts
-           WHERE entries_fts MATCH ?
+           FROM entries_search_fts
+           WHERE entries_search_fts MATCH ?
              AND session_id IN (${sessionIds.map(() => "?").join(", ")})
+         ), snippet_excerpts AS MATERIALIZED (
+           SELECT ranked.entry_rowid, ranked.session_id, ranked.snippet_rank,
+                  substr(snippet(entries_search_fts, 3, '', '', '…', 32), 1, 361) AS excerpt
+           FROM ranked_snippets ranked
+           -- Keep ranked rows outermost so snippet extraction uses rowid lookups.
+           CROSS JOIN entries_search_fts ON entries_search_fts.rowid = ranked.entry_rowid
+           WHERE ranked.snippet_rank <= 3 AND entries_search_fts MATCH ?
          )
-         SELECT session_id, match_text
-         FROM ranked_snippets
-         WHERE snippet_rank <= 3
+         SELECT session_id,
+                CASE WHEN length(excerpt) <= 360 THEN excerpt ELSE (
+                  SELECT CASE
+                    WHEN length(snippet(entries_search_fts, 3, '', '', '…', 16)) <= 360
+                      THEN snippet(entries_search_fts, 3, '', '', '…', 16)
+                    WHEN length(snippet(entries_search_fts, 3, '', '', '…', 8)) <= 360
+                      THEN snippet(entries_search_fts, 3, '', '', '…', 8)
+                    ELSE substr(snippet(entries_search_fts, 3, '', '', '…', 1), 1, 360)
+                  END
+                  FROM entries_search_fts
+                  WHERE rowid = snippet_excerpts.entry_rowid AND entries_search_fts MATCH ?
+                ) END AS match_text
+         FROM snippet_excerpts
          ORDER BY session_id, snippet_rank`,
       )
-      .bind(ftsQuery, ...sessionIds)
+      .bind(ftsQuery, ...sessionIds, ftsQuery, ftsQuery)
       .all<{ session_id: string; match_text: string }>();
     const sessionsById = new Map(
       sessions.map((session) => [String(session.sessionId), session] as const),
@@ -689,7 +751,7 @@ async function search(
     for (const row of snippets.results) {
       const session = sessionsById.get(String(row.session_id));
       if (!session || typeof row.match_text !== "string") continue;
-      (session.snippets as string[]).push(boundedSnippet(row.match_text, query));
+      (session.snippets as string[]).push(row.match_text);
     }
   }
 
@@ -712,7 +774,7 @@ async function read(
   const limit = boundedInteger(input.limit ?? 50, "limit", 1, MAX_READ_LIMIT);
   const position = decodeCursor(optionalString(input.cursor, "cursor", 2_048), "position");
   const session = await database
-    .prepare("SELECT * FROM sessions WHERE session_id = ?")
+    .prepare(`SELECT s.*, ${CHILD_COUNT_COLUMN} FROM sessions s WHERE s.session_id = ?`)
     .bind(sessionId)
     .first<Record<string, unknown>>();
   if (!session) {
@@ -736,6 +798,79 @@ async function read(
     session: descriptor(session, origin),
     entries: rows.results.map((row) => JSON.parse(row.payload_json) as HistoryEntry),
     ...(page.hasMore && last ? { nextCursor: encodeCursor({ position: last.position }) } : {}),
+  };
+}
+
+export type HistorySessionTree = {
+  parent?: RemoteHistorySessionDescriptor;
+  descendants: { session: RemoteHistorySessionDescriptor; depth: number }[];
+  truncated: boolean;
+};
+
+// Parent links are not validated against each other, so traversal must tolerate cycles.
+export async function readSessionTree(
+  database: D1Database,
+  session: Pick<HistorySessionDescriptor, "sessionId" | "parentSessionId">,
+  origin: string,
+): Promise<HistorySessionTree> {
+  const parent = session.parentSessionId
+    ? await database
+        .prepare(`SELECT s.*, ${CHILD_COUNT_COLUMN} FROM sessions s WHERE s.session_id = ?`)
+        .bind(session.parentSessionId)
+        .first<Record<string, unknown>>()
+    : null;
+  const rows = await database
+    .prepare(
+      `WITH RECURSIVE tree(session_id, depth) AS (
+         SELECT session_id, 1 FROM sessions WHERE parent_session_id = ?
+         UNION
+         SELECT c.session_id, t.depth + 1
+         FROM sessions c
+         JOIN tree t ON c.parent_session_id = t.session_id
+         WHERE t.depth < ?
+         ORDER BY 2
+         LIMIT ?
+       )
+       SELECT s.*, ${CHILD_COUNT_COLUMN}, MIN(t.depth) AS depth
+       FROM tree t
+       JOIN sessions s ON s.session_id = t.session_id
+       GROUP BY s.session_id
+       ORDER BY depth`,
+    )
+    .bind(session.sessionId, MAX_TREE_DEPTH, MAX_TREE_DESCENDANTS + 1)
+    .all<Record<string, unknown>>();
+
+  const children = new Map<string, Record<string, unknown>[]>();
+  for (const row of rows.results.slice(0, MAX_TREE_DESCENDANTS)) {
+    const parentId = String(row.parent_session_id);
+    children.set(parentId, [...(children.get(parentId) ?? []), row]);
+  }
+  const descendants: HistorySessionTree["descendants"] = [];
+  const visited = new Set([session.sessionId]);
+  const visit = (parentId: string, depth: number): void => {
+    const siblings = (children.get(parentId) ?? []).toSorted(
+      (left, right) =>
+        Number(left.created_at) - Number(right.created_at) ||
+        String(left.session_id).localeCompare(String(right.session_id)),
+    );
+    for (const row of siblings) {
+      const sessionId = String(row.session_id);
+      if (visited.has(sessionId)) continue;
+      visited.add(sessionId);
+      descendants.push({ session: descriptor(row, origin), depth });
+      visit(sessionId, depth + 1);
+    }
+  };
+  visit(session.sessionId, 1);
+
+  return {
+    ...(parent ? { parent: descriptor(parent, origin) } : {}),
+    descendants,
+    truncated:
+      rows.results.length > MAX_TREE_DESCENDANTS ||
+      descendants.some(
+        (descendant) => descendant.depth === MAX_TREE_DEPTH && descendant.session.childCount > 0,
+      ),
   };
 }
 
@@ -765,6 +900,10 @@ function descriptor(row: Record<string, unknown>, origin: string): RemoteHistory
     attributes: JSON.parse(String(row.attributes_json)),
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
+    ...(typeof row.parent_session_id === "string"
+      ? { parentSessionId: row.parent_session_id }
+      : {}),
+    childCount: Number(row.child_count),
     webUrl: `${origin}/sessions/${encodeURIComponent(String(row.session_id))}`,
     ...(title && summary && through
       ? { digest: { title, summary, updatedThroughEntryId: through } }
@@ -774,6 +913,9 @@ function descriptor(row: Record<string, unknown>, origin: string): RemoteHistory
 }
 
 async function renderViewerIndex(database: D1Database, url: URL): Promise<Response> {
+  const parentSessionId = url.searchParams.get("parent");
+  const parent = parentSessionId === null ? undefined : { sessionId: parentSessionId };
+  const scopeUrl = parent ? `/?parent=${encodeURIComponent(parent.sessionId)}` : "/";
   const query = url.searchParams.get("q")?.trim() || undefined;
   if (query && query.length > 1_000) throw invalidRequest("query is too long");
   const cursor = url.searchParams.get("cursor") || undefined;
@@ -791,6 +933,7 @@ async function renderViewerIndex(database: D1Database, url: URL): Promise<Respon
       attributes: Object.fromEntries(
         Object.entries(attributes).map(([key, value]) => [key, { contains: value }]),
       ),
+      parent,
       limit: VIEWER_SEARCH_PAGE_SIZE,
       cursor,
     },
@@ -801,7 +944,7 @@ async function renderViewerIndex(database: D1Database, url: URL): Promise<Respon
       `<input id="${key}" name="${key}" type="text" aria-label="${key}" maxlength="1024" value="${escapeHtml(attributes[key] ?? "")}" placeholder="${key === "repository" ? "Repository contains…" : "Source contains…"}">`,
   );
   const sessions = result.sessions.map(renderSessionCard).join("");
-  const nextUrl = new URL("/", url.origin);
+  const nextUrl = new URL(scopeUrl, url.origin);
   if (query) nextUrl.searchParams.set("q", query);
   for (const [key, value] of Object.entries(attributes)) nextUrl.searchParams.set(key, value);
   if (result.nextCursor) nextUrl.searchParams.set("cursor", result.nextCursor);
@@ -814,7 +957,9 @@ async function renderViewerIndex(database: D1Database, url: URL): Promise<Respon
 
   return viewerPage(
     "History",
-    `<form class="search" action="/" method="get" role="search">
+    `${parent ? `<nav class="back"><a href="/sessions/${escapeHtml(encodeURIComponent(parent.sessionId))}">← Parent session</a> · <a href="/">All conversations</a></nav><h1>Child sessions</h1>` : ""}
+    <form class="search" action="/" method="get" role="search">
+      ${parent ? `<input type="hidden" name="parent" value="${escapeHtml(parent.sessionId)}">` : ""}
       <div class="search-row">
         <input id="q" name="q" type="search" aria-label="Search conversations" maxlength="1000" value="${escapeHtml(query ?? "")}" placeholder="Search titles, summaries, and transcript text">
         <button type="submit">Search</button>
@@ -824,7 +969,7 @@ async function renderViewerIndex(database: D1Database, url: URL): Promise<Respon
       </div>
     </form>
     <section aria-label="Conversations">
-      ${query || Object.keys(attributes).length > 0 ? '<p><a href="/">Clear filters</a></p>' : ""}
+      ${query || Object.keys(attributes).length > 0 ? `<p><a href="${escapeHtml(scopeUrl)}">Clear filters</a></p>` : ""}
       <div class="session-list">${sessions || '<p class="empty">No conversations found.</p>'}</div>
       ${pagination}
     </section>`,
@@ -883,12 +1028,13 @@ async function readViewerEntries(database: D1Database, url: URL): Promise<Respon
 async function renderViewerSession(database: D1Database, url: URL): Promise<Response> {
   const sessionId = viewerSessionId(url);
   const row = await database
-    .prepare("SELECT * FROM sessions WHERE session_id = ?")
+    .prepare(`SELECT s.*, ${CHILD_COUNT_COLUMN} FROM sessions s WHERE s.session_id = ?`)
     .bind(sessionId)
     .first<Record<string, unknown>>();
   if (!row)
     throw new HistoryApiError("not_found", `history session '${sessionId}' was not found`, 404);
   const session = descriptor(row, url.origin);
+  const tree = await readSessionTree(database, session, url.origin);
 
   return viewerPage(
     session.digest?.title ?? "Untitled session",
@@ -900,6 +1046,7 @@ async function renderViewerSession(database: D1Database, url: URL): Promise<Resp
       ${renderAttributes(session.attributes)}
       <p class="timestamps">Created ${renderTime(session.createdAt)} · Updated ${renderTime(session.updatedAt)}</p>
     </header>
+    ${renderSessionLinks(session, tree)}
     <div class="transcript-actions">
       <select data-copy-mode aria-label="Conversation copy contents">
         <option value="messages" selected>Messages only</option>
@@ -915,6 +1062,47 @@ async function renderViewerSession(database: D1Database, url: URL): Promise<Resp
     <noscript>JavaScript is required to load the conversation.</noscript>
     <main class="transcript" aria-label="Conversation transcript" aria-busy="true" data-transcript-url="/sessions/${escapeHtml(encodeURIComponent(sessionId))}/entries"></main>`,
   );
+}
+
+function renderSessionLinks(
+  session: RemoteHistorySessionDescriptor,
+  tree: HistorySessionTree,
+): string {
+  const parent = tree.parent
+    ? `<p>${renderSessionLink(tree.parent)}</p>`
+    : session.parentSessionId
+      ? `<p class="session-id">${escapeHtml(session.parentSessionId)} (not available)</p>`
+      : "";
+  const descendants = renderSessionTree(tree.descendants);
+  if (!parent && !descendants) return "";
+  return `<nav class="session-links" aria-label="Related sessions">
+    ${parent ? `<section><h2>Parent session</h2>${parent}</section>` : ""}
+    ${
+      descendants
+        ? `<section><h2>Child sessions</h2>${descendants}${
+            tree.truncated
+              ? `<p class="session-tree-note">This tree is too large to list in full. <a href="/?parent=${escapeHtml(encodeURIComponent(session.sessionId))}">Browse all direct children</a>, or open a session above to explore its descendants.</p>`
+              : ""
+          }</section>`
+        : ""
+    }
+  </nav>`;
+}
+
+// Descendants arrive depth-first, so depth grows by at most one between neighbors.
+function renderSessionTree(descendants: HistorySessionTree["descendants"]): string {
+  let html = "";
+  let currentDepth = 0;
+  for (const { session, depth } of descendants) {
+    html += depth > currentDepth ? "<ul>" : `</li>${"</ul></li>".repeat(currentDepth - depth)}`;
+    html += `<li>${renderSessionLink(session)}`;
+    currentDepth = depth;
+  }
+  return html && `<div class="session-tree">${html}${"</li></ul>".repeat(currentDepth)}</div>`;
+}
+
+function renderSessionLink(session: RemoteHistorySessionDescriptor): string {
+  return `<a href="${escapeHtml(session.webUrl)}">${escapeHtml(session.digest?.title ?? "Untitled session")}</a> <span class="session-id">${escapeHtml(session.sessionId)}</span>`;
 }
 
 function renderViewerEntry(entry: HistoryEntry): string {
@@ -1345,6 +1533,14 @@ function parseOperations(raw: unknown): HistoryReplicationOperation[] {
       if (requiredString(session.sessionId, "session.sessionId", 256) !== sessionId) {
         throw invalidRequest("operation session IDs do not match");
       }
+      const parentSessionId = optionalString(
+        session.parentSessionId,
+        "session.parentSessionId",
+        256,
+      );
+      if (parentSessionId === sessionId) {
+        throw invalidRequest("a session cannot be its own parent");
+      }
       return {
         id,
         sessionId,
@@ -1353,6 +1549,7 @@ function parseOperations(raw: unknown): HistoryReplicationOperation[] {
           sessionId,
           attributes: parseAttributes(session.attributes, false),
           createdAt: finiteNumber(session.createdAt, "session.createdAt"),
+          ...(parentSessionId ? { parentSessionId } : {}),
         },
       };
     }
@@ -1503,6 +1700,43 @@ function parseAttributeFilters(raw: unknown): Record<string, string | { contains
       );
     }),
   );
+}
+
+function parseTimeRange(raw: unknown): HistoryTimeRange | undefined {
+  if (raw === undefined) return undefined;
+  const range = asRecord(raw, "timeRange");
+  if (Object.keys(range).some((key) => !["field", "since", "until"].includes(key))) {
+    throw invalidRequest("timeRange may contain only field, since, and until");
+  }
+  if (range.field !== "createdAt" && range.field !== "updatedAt") {
+    throw invalidRequest('timeRange.field must be "createdAt" or "updatedAt"');
+  }
+  if (range.since === undefined && range.until === undefined) {
+    throw invalidRequest("timeRange requires since or until");
+  }
+  const bounds: { since?: number; until?: number } = {};
+  for (const bound of ["since", "until"] as const) {
+    const value = range[bound];
+    if (value === undefined) continue;
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      throw invalidRequest(`timeRange.${bound} must be a finite number`);
+    }
+    bounds[bound] = value;
+  }
+  if (bounds.since !== undefined && bounds.until !== undefined && bounds.since >= bounds.until) {
+    throw invalidRequest("timeRange.since must be before timeRange.until");
+  }
+  return { field: range.field, ...bounds };
+}
+
+function parseSearchParent(raw: unknown): HistorySearchParent {
+  if (raw === undefined) return "none";
+  if (raw === "none" || raw === "any") return raw;
+  const parent = asRecord(raw, "parent");
+  if (Object.keys(parent).length !== 1) {
+    throw invalidRequest('parent must be "none", "any", or an object with only sessionId');
+  }
+  return { sessionId: requiredString(parent.sessionId, "parent.sessionId", 256) };
 }
 
 function parseAttributes(raw: unknown, optional: boolean): Record<string, string> {
@@ -1686,19 +1920,6 @@ function stableJson(value: Record<string, string>): string {
   return JSON.stringify(
     Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b))),
   );
-}
-
-export function boundedSnippet(text: string, query: string): string {
-  const normalizedText = text.toLowerCase();
-  const exactIndex = normalizedText.indexOf(query.toLowerCase());
-  const termIndexes = searchTerms(query)
-    .map((term) => normalizedText.indexOf(term.toLowerCase()))
-    .filter((index) => index >= 0);
-  const index =
-    exactIndex >= 0 ? exactIndex : termIndexes.length > 0 ? Math.min(...termIndexes) : 0;
-  const start = Math.max(0, index - 120);
-  const end = Math.min(text.length, start + 360);
-  return `${start > 0 ? "…" : ""}${text.slice(start, end)}${end < text.length ? "…" : ""}`;
 }
 
 function buildFtsQuery(query: string): string {

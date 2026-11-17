@@ -2,9 +2,11 @@ import type { ChildProcess } from "node:child_process";
 import { readFile, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type Config, getGoogleApiKey, getOpenAIApiKey } from "../core/config/index.js";
+import { getElevenLabsApiKey, getOpenAIApiKey } from "../core/config/index.js";
+import type { ApiKeysConfig } from "../core/config/schema.js";
 import type { CoreDeps } from "../core/runtime/deps.js";
 import type { SpawnCaptureResult } from "../core/utils/spawn_capture.js";
+import type { SpeechCleanupStyle } from "../core/utils/speech_cleanup.js";
 import {
   createSpeechToTextTranscription,
   type SpeechToTextDependencies,
@@ -23,6 +25,7 @@ export type ListenRecording = {
   abortController: AbortController;
   completion: Promise<SpawnCaptureResult>;
   transcription: SpeechToTextTranscription;
+  cleanupStyle: SpeechCleanupStyle;
   maxDurationTimeout?: ReturnType<typeof setTimeout>;
 };
 
@@ -151,34 +154,47 @@ export async function cleanupListenTempFile(path: string): Promise<void> {
   }
 }
 
-export function getSpeechToTextApiKey(config: Config, deps: CoreDeps): string | undefined {
-  return getGoogleApiKey(config, deps.env.env());
+export type RetainedListenAudio = {
+  audioPath: string;
+  durationMs: number;
+  cleanupStyle: SpeechCleanupStyle;
+};
+
+export type SpeechToTextCredentials = {
+  elevenLabsApiKey: string;
+  openAIApiKey?: string;
+};
+
+export function resolveSpeechToTextCredentials(
+  config: ApiKeysConfig,
+  deps: CoreDeps,
+): SpeechToTextCredentials | undefined {
+  const env = deps.env.env();
+  const elevenLabsApiKey = getElevenLabsApiKey(config, env);
+  return elevenLabsApiKey
+    ? { elevenLabsApiKey, openAIApiKey: getOpenAIApiKey(config, env) }
+    : undefined;
 }
 
 export function getSpeechToTextApiKeyErrorMessage(action: string): string {
-  return `set GEMINI_API_KEY or apiKeys.google to ${action}`;
+  return `set ELEVENLABS_API_KEY or apiKeys.elevenlabs to ${action}`;
 }
 
 export function createListenTranscription(args: {
-  config: Config;
-  deps: CoreDeps;
+  credentials: SpeechToTextCredentials;
+  vocabulary: string[];
   mode: "streaming" | "file";
   context?: SpeechToTextContext;
   speechToTextDeps?: SpeechToTextDependencies;
   onProgress?: (text: string) => void;
 }): SpeechToTextTranscription {
-  const apiKey = getSpeechToTextApiKey(args.config, args.deps);
-  if (!apiKey) {
-    throw new Error(getSpeechToTextApiKeyErrorMessage("transcribe speech"));
-  }
-
   return createSpeechToTextTranscription({
     onProgress: args.onProgress,
     mode: args.mode,
-    apiKey,
-    openAIApiKey: getOpenAIApiKey(args.config, args.deps.env.env()),
+    apiKey: args.credentials.elevenLabsApiKey,
+    openAIApiKey: args.credentials.openAIApiKey,
     context: args.context,
-    vocabulary: args.config.speech?.vocabulary,
+    vocabulary: args.vocabulary,
     deps: args.speechToTextDeps,
   });
 }

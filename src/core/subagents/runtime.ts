@@ -1,9 +1,12 @@
-import type { Config } from "../config/index.js";
+import type { AgentsCapabilityOptions } from "../code_mode/agents.js";
+import type { SessionRuntimeSettings } from "../config/index.js";
+import type { HistoryRecordSink } from "../history/recorder.js";
 import type { HistoryQuery } from "../history/types.js";
 import type { McpManager } from "../mcp/manager.js";
 import type { CoreDeps } from "../runtime/deps.js";
 import type { AgentJobRegistry } from "../tools/agent_jobs.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
+import type { AgentSupervisor } from "./agent_supervisor.js";
 import { ClaudeCodeRuntime } from "./claude_code_runtime.js";
 import type { SubagentRuntimeEvent } from "./events.js";
 import { NativeSubagentRuntime } from "./native_subagent_runtime.js";
@@ -32,10 +35,14 @@ export interface SubagentRuntime {
 
 export type SubagentRuntimeOptions = {
   id: string;
-  config: Config;
+  sessionIds: string[];
+  supervisor: AgentSupervisor;
+  agents?: AgentsCapabilityOptions;
+  config: SessionRuntimeSettings;
   backend: ToolExecutionBackend;
   jobs: AgentJobRegistry;
   history?: HistoryQuery;
+  openHistory?: () => HistoryRecordSink;
   mcp?: McpManager;
   personaId?: string;
   deps: CoreDeps;
@@ -50,6 +57,7 @@ export function createSubagentRuntime(
     ? new NativeSubagentRuntime(config, options)
     : new ClaudeCodeRuntime({
         config,
+        history: options.openHistory?.(),
         backend: options.backend,
         onEvent: options.onEvent,
         now: () => options.deps.clock.now(),

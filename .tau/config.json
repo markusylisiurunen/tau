@@ -21,15 +21,15 @@
       "openai-codex/gpt-6-luna:low",
       "openai-codex/gpt-6-luna:medium",
       "openai-codex/gpt-6-luna:xhigh",
-      "openai-codex/gpt-6.1-sol:high",
-      "openai-codex/gpt-6.1-sol:low",
-      "openai-codex/gpt-6.1-sol:medium",
       "openai-codex/gpt-6.1-terra:high",
       "openai-codex/gpt-6.1-terra:low",
       "openai-codex/gpt-6.1-terra:medium",
       "openai-codex/gpt-6.2-astra:high",
       "openai-codex/gpt-6.2-astra:low",
-      "openai-codex/gpt-6.2-astra:medium"
+      "openai-codex/gpt-6.2-astra:medium",
+      "openai-codex/gpt-6.2-sol:high",
+      "openai-codex/gpt-6.2-sol:low",
+      "openai-codex/gpt-6.2-sol:medium"
     ]
   }
 }

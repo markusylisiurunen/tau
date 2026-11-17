@@ -23,7 +23,39 @@ export const claudeCodeInputSchema = z.object({
 
 export type ClaudeCodeInput = z.infer<typeof claudeCodeInputSchema>;
 
+const historyEventSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("message"),
+    entry: z
+      .object({
+        id: z.string(),
+        sourceIds: z.array(z.string()),
+        type: z.enum(["user", "assistant"]),
+        content: z.string(),
+      })
+      .strict(),
+  }),
+  z.object({
+    type: z.literal("toolCall"),
+    callId: z.string(),
+    sourceId: z.string(),
+    name: z.string(),
+    arguments: z.json(),
+  }),
+  z
+    .object({
+      type: z.literal("toolResult"),
+      callId: z.string(),
+      sourceId: z.string(),
+      result: z.json(),
+      outcome: z.enum(["succeeded", "failed", "blocked", "cancelled"]),
+    })
+    .strict(),
+  z.object({ type: z.literal("diagnostic"), message: z.string() }),
+]);
+
 export const claudeCodeEventSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("history"), event: historyEventSchema }),
   z.object({ type: z.literal("control"), path: z.string().min(1) }),
   z.object({ type: z.literal("unconsumed_input"), message: z.string() }),
   z.object({ type: z.literal("trace"), event: observableEventSchema }),

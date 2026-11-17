@@ -3,7 +3,8 @@ import { Type } from "typebox";
 import { z } from "zod";
 import { createCommandClientTools } from "../core/client_tools/command_client_tools.js";
 import { createCommandRegistry } from "../core/commands/index.js";
-import type { CommandClientToolConfig, Config, ThemeDefinition } from "../core/config/index.js";
+import type { CommandClientToolConfig, ThemeDefinition } from "../core/config/index.js";
+import type { ClientConfig } from "../core/config/ownership.js";
 import { DIFF_REVIEW_TOOL, parseDiffReviewToolArgs } from "../core/diff_review/index.js";
 import type { CoreDeps } from "../core/runtime/deps.js";
 import { TOOL_NAME_PREFILL_INPUT } from "../core/tools/tool_names.js";
@@ -27,7 +28,7 @@ export type SessionChatAppOptions = {
   terminalColors?: TerminalColors | Promise<TerminalColors>;
   themeId?: string;
   themes?: ThemeDefinition[];
-  config?: Config;
+  config: ClientConfig;
   deps?: CoreDeps;
   initialUserMessage?: string;
 };
@@ -180,7 +181,7 @@ export class SessionChatApp {
     const clientTools = createTuiClientTools({
       enabled: options.clientToolsEnabled,
       getController: () => controller,
-      commandTools: options.config?.clientTools,
+      commandTools: options.config.clientTools,
       deps: options.deps,
     });
     const transport = new WebSocketSessionProtocolTransport({
@@ -195,7 +196,7 @@ export class SessionChatApp {
       ...options,
       client,
       configuredClientToolNames: options.clientToolsEnabled
-        ? (options.config?.clientTools ?? []).map((tool) => tool.name)
+        ? (options.config.clientTools ?? []).map((tool) => tool.name)
         : [],
       targetLabel: options.url,
     });

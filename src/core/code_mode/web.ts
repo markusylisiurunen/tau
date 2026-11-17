@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { z } from "zod";
-import { type Config, getExaApiKey } from "../config/index.js";
+import { type ApiKeysConfig, getExaApiKey } from "../config/index.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
 import { discoverAgentContent } from "../tools/web_discovery.js";
 import { formatZodError } from "../utils/zod.js";
@@ -132,12 +132,13 @@ async function readExaResponse(response: Response): Promise<string> {
 }
 
 async function requestExa(
+  fetchImpl: typeof fetch,
   apiKey: string,
   endpoint: "/search" | "/contents",
   body: Record<string, unknown>,
   signal: AbortSignal,
 ): Promise<unknown> {
-  const response = await fetch(`${EXA_API_BASE_URL}${endpoint}`, {
+  const response = await fetchImpl(`${EXA_API_BASE_URL}${endpoint}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -175,12 +176,12 @@ async function requestExa(
   return payload;
 }
 
-function createExaClient(apiKey: string): ExaClient {
+export function createExaClient(apiKey: string, fetchImpl: typeof fetch = fetch): ExaClient {
   return {
     search: (query, options, signal) =>
-      requestExa(apiKey, "/search", { query, ...options }, signal),
+      requestExa(fetchImpl, apiKey, "/search", { query, ...options }, signal),
     getContents: (urls, options, signal) =>
-      requestExa(apiKey, "/contents", { urls, ...options }, signal),
+      requestExa(fetchImpl, apiKey, "/contents", { urls, ...options }, signal),
   };
 }
 
@@ -409,7 +410,7 @@ const defaultDeps: WebToolDeps = { createExaClient, discover: discoverAgentConte
 
 export function createWebCapability(
   backend: ToolExecutionBackend,
-  config: Config,
+  config: ApiKeysConfig,
   deps: WebToolDeps = defaultDeps,
 ): CodeModeCapability {
   let exa: ExaClient | undefined;

@@ -1,134 +1,49 @@
 # Image generation
 
-`tau tool image-generate` generates one image from a prompt and optional ordered local references using Google or OpenAI.
-
-```bash
-tau tool image-generate --help
-tau tool image-generate \
-  --model gpt-image-2.5-flare \
-  --prompt 'A quiet lakeside sauna at dusk, editorial photograph, no text' \
-  --size 1536x1024 --quality medium --output ./sauna.png
-```
+`tau tool image-generate` generates one image from a prompt and optional reference images. `tau tool image-generate --help` lists every flag.
 
 ## Credentials and requirements
 
-Requires an OpenAI or Google API key for the selected model. See [feature-specific credentials](credentials.md#feature-specific-keys) for setup.
+OpenAI models need `OPENAI_API_KEY` or `apiKeys.openai`. Google models need `GEMINI_API_KEY` or `apiKeys.google`.
 
-## Models and capabilities
+## Models
 
-`--model` is required; there is no default. Start with `gpt-image-2.5-flare` at `--quality medium` for everyday generation and editing, balancing quality and cost.
+`--model` is required. Start with `gpt-image-2.6-flare` at `--quality medium`. For the best quality, use one of the others.
 
-For demanding generation and editing where image quality is the priority, choose `gemini-nano-banana-2.1` or `gpt-image-2.5-sunburst`. Nano Banana supports very wide aspect ratios and resolution tiers up to `4K`. Sunburst supports exact dimensions, transparent backgrounds, and PNG/JPEG/WebP output. See [approximate cost](#approximate-cost) before choosing settings.
+| Model | Size control | Notes |
+| --- | --- | --- |
+| `gpt-image-2.6-flare` | `--size WIDTHxHEIGHT` | Fast. Transparency, PNG, JPEG, and WebP. |
+| `gpt-image-2.6-sunburst` | `--size WIDTHxHEIGHT` | Demanding edits. Same options as Flare. |
+| `gemini-nano-banana-2.1` | `--aspect-ratio`, `--resolution 1K\|2K\|4K` | Very wide ratios, PNG only, no transparency. |
 
-Choose size, resolution, and aspect ratio for the intended use; no single size fits everything. The sizes in the examples are for those particular cases. Options you leave out use the provider's defaults, except `--format`, which defaults to `png`. Unsupported options fail before anything is generated.
-
-| Model | Resolution | Aspect ratios | Thinking | Other controls |
-| --- | --- | --- | --- | --- |
-| `gemini-nano-banana-2.1` | `1K`, `2K`, `4K` | Standard and wide | `minimal`, `medium`, `high` | PNG |
-| `gpt-image-2.5-flare` | Exact `--size` | Through dimensions | Not exposed | Quality, background, encoding, compression |
-| `gpt-image-2.5-sunburst` | Exact `--size` | Through dimensions | Not exposed | Quality, background, encoding, compression |
-
-Google's defaults are `1K` resolution and `medium` thinking. Use `--thinking minimal` for faster generation and lower thinking-token usage.
-
-Standard `--aspect-ratio` values are `1:1`, `2:3`, `3:2`, `3:4`, `4:3`, `4:5`, `5:4`, `9:16`, `16:9`, `21:9`. Wide values additionally include `1:4`, `4:1`, `1:8`, `8:1`. Resolution tiers describe approximate output size.
-
-OpenAI controls:
-
-- `--size auto` or `WIDTHxHEIGHT`: both dimensions must be multiples of 16, neither above 3840, aspect ratio between 1:3 and 3:1, and total pixels between 655,360 and 8,294,400. Above 2560×1440 total pixels is experimental at the provider.
-- `--quality auto|low|medium|high|xhigh|max`: generation effort. Flare favors speed; Sunburst favors demanding editing and quality.
-- `--background auto|opaque|transparent`: `transparent` requires PNG or WebP.
-- `--format png|jpeg|webp`: the output extension must match (`.jpg` or `.jpeg` for JPEG).
-- `--compression 0..100`: an integer, only with JPEG or WebP.
-
-Gemini does not support transparent-background generation ([Google documentation](https://ai.google.dev/gemini-api/docs/generate-content/image-generation#stylized_illustrations_and_stickers)). For transparent assets, use an OpenAI model with `--background transparent --format png` or `webp` ([OpenAI documentation](https://developers.openai.com/api/docs/guides/image-generation#size-and-quality-options)).
+OpenAI sizes must be multiples of 16, at most 3840 per side, with an aspect ratio between 1:3 and 3:1. `--quality` goes from `low` to `max`. `--complexity low` suits focused edits, and `medium` or `high` suit dense text and layouts.
 
 ## Input and examples
 
-Give exactly one of `--prompt` and `--prompt-file` (UTF-8). Repeat `--reference` for each local PNG, JPEG, or WebP reference image. References are sent in order and unchanged. With references, OpenAI requests use the edit endpoint.
-
-Up to 16 references are accepted for OpenAI and 14 for Gemini. Each reference is limited to 50 MB. Gemini's complete serialized request is limited to 19 MB, including the prompt, base64-encoded references, and JSON escaping.
-
-Create an asset:
+Give `--prompt` or `--prompt-file`. Repeat `--reference` for each local PNG, JPEG, or WebP image. Each run is independent, so an edit sees only what you pass.
 
 ```bash
 tau tool image-generate \
-  --model gpt-image-2.5-flare \
+  --model gpt-image-2.6-flare \
   --prompt 'A friendly otter mascot, isolated, no lettering' \
   --size 1024x1024 --quality medium --background transparent \
   --output ./otter.png
-```
 
-Edit an existing image:
-
-```bash
 tau tool image-generate \
-  --model gpt-image-2.5-flare --reference ./otter.png \
-  --prompt 'Give the otter a blue scarf. Preserve its face, pose, proportions, and transparent background.' \
-  --quality high --background transparent --output ./otter-scarf.png
-```
+  --model gpt-image-2.6-flare --reference ./otter.png \
+  --prompt 'Give the otter a blue scarf. Preserve its face, pose, and background.' \
+  --quality high --complexity low --background transparent --output ./otter-scarf.png
 
-Generate at a higher resolution using a reference:
-
-```bash
 tau tool image-generate \
   --model gemini-nano-banana-2.1 --reference ./sauna.png \
-  --prompt 'Recreate this image at higher resolution. Preserve composition and colors; refine fine detail.' \
+  --prompt 'Recreate this image at higher resolution. Preserve composition and colors.' \
   --aspect-ratio 16:9 --resolution 4K --output ./sauna-4k.png
 ```
 
-Generate inexpensive draft variants:
-
-```bash
-for i in 1 2 3 4; do
-  tau tool image-generate --model gpt-image-2.5-flare \
-    --size 1024x1024 --quality low \
-    --prompt-file ./prompt.txt --output "./variant-$i.png" || break
-done
-```
-
-Each run is independent; an edit sees only the prompt and references you give it.
-
 ## Outputs and recovery
 
-The output's parent directory must exist. Neither the output nor `<output>.parts` may already exist. On success, stdout is one JSON object with absolute `output` and `artifacts` paths and provider `usage` (or `null`). The `.parts` directory contains:
-
-- `original.bin`: the provider's original image bytes.
-- `image.<format>`: the published image. Gemini responses are converted to PNG when needed; OpenAI bytes are saved as returned.
-- `manifest.json`: model, output path, usage, and `source` with the original filename and provider-declared MIME type (`null` when absent).
-
-The original bytes and usage are kept even if conversion fails. Conversion may drop embedded metadata, so use the original when provenance matters.
-
-Failures exit nonzero and name the invalid option or the step that failed. If the output or `.parts` path already exists, choose a new `--output` path, and keep the existing files in case you need them. Once generation has started, errors give the path of the kept directory, which may be empty or incomplete. If only the final copy to `--output` fails, the error points to the finished image, so copy it to a new path instead of generating again. Requests are never retried automatically, because a failed request may already have been charged, and a new request may be charged again.
+The output and `<output>.parts` must not exist yet. Stdout is one JSON object with `output`, `artifacts`, and `usage`. The `.parts` directory keeps the original image and a manifest, so if only the final copy fails, copy the finished image instead of generating again. Requests are never retried, because a failed request may already have been charged.
 
 ## Approximate cost
 
-For OpenAI models, start at `--quality medium`, use `low` for inexpensive exploration, and increase quality when the result needs it. Explicit `--size` and `--quality` make budgeting more predictable than `auto`. For Nano Banana, account for resolution and thinking usage as well as input costs.
-
-### OpenAI: cost per image
-
-Both `gpt-image-2.5-flare` and `gpt-image-2.5-sunburst` charge $30 per million image-output tokens. The [OpenAI output-cost calculator](https://developers.openai.com/api/docs/guides/image-generation#gpt-image-25-and-gpt-image-2-output-tokens) groups both models under GPT Image 2.5 and gives these approximate USD image-output costs:
-
-| Size        | `low`    | `medium` | `high`   | `xhigh`  | `max`    |
-| ----------- | -------- | -------- | -------- | -------- | -------- |
-| `1024x1024` | $0.00588 | $0.01317 | $0.05268 | $0.09366 | $0.21072 |
-| `1536x1024` | $0.00474 | $0.01029 | $0.04116 | $0.07377 | $0.16464 |
-| `2048x2048` | $0.01191 | $0.02676 | $0.10704 | $0.19029 | $0.42816 |
-| `3840x2160` | $0.01113 | $0.02595 | $0.10008 | $0.17790 | $0.40026 |
-
-These are calculator estimates, not fixed prices or a guarantee that Flare and Sunburst cost the same per request. OpenAI notes that actual token consumption can differ by model and quality. The calculator accounts for aspect ratio as well as pixel count, so estimates need not increase with pixel count alone. Sizes above 2560×1440 total pixels are experimental.
-
-For example, 100 square 1024-pixel drafts at `low` have an estimated output cost of $0.59, compared with $1.32 at `medium`, $5.27 at `high`, or $21.07 at `max`. Text input adds $5 per million tokens and reference images add $8 per million image-input tokens. A request with 1,000 text-input tokens and 2,000 image-input tokens adds $0.021 to the output cost. Direct Images API requests do not receive cached-input pricing. The manifest records provider `usage` for checking actual consumption.
-
-### Google: cost per image
-
-Approximate USD image-output costs from [Google pricing](https://ai.google.dev/gemini-api/docs/pricing), excluding input and text/thinking usage:
-
-| Model                    | 1K      | 2K      | 4K     |
-| ------------------------ | ------- | ------- | ------ |
-| `gemini-nano-banana-2.1` | $0.0336 | $0.0504 | $0.113 |
-
-Input costs $1.50 per million tokens. Text and thinking output cost $7.50 per million tokens, in addition to image output. The manifest records provider-reported usage.
-
-Use OpenAI when transparent backgrounds or JPEG/WebP output are required. Compare the quality needed for the task, not just matching tier names across providers. Check [OpenAI pricing](https://developers.openai.com/api/docs/guides/image-generation#gpt-image-25-costs) and Google pricing for current rates before large batches.
-
-See [command-line tools](tools.md) for the other tools and where commands run.
+For OpenAI models at `1024x1024`, one image costs about $0.025 at `low`, $0.043 at `medium`, $0.053 at `high`, and $0.211 at `max`, plus input. `gemini-nano-banana-2.1` costs about $0.034 at 1K, $0.050 at 2K, and $0.113 at 4K, plus input and thinking. Check provider pricing before large batches.

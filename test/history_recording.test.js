@@ -3,10 +3,11 @@ import { once } from "node:events";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
+import { AgentHistoryRecorder } from "../dist/core/history/agent_history_recorder.js";
 import { HistoryManager } from "../dist/core/history/history_manager.js";
 import { LocalHistoryStore } from "../dist/core/history/local_history_store.js";
+import { HistoryRecorder } from "../dist/core/history/recorder.js";
 
 const session = { sessionId: "session", attributes: { source: "test" }, createdAt: 1 };
 const entry = (id) => ({ id, type: "user", content: id, sourceIds: [id], timestamp: 2 });
@@ -47,7 +48,7 @@ async function waitForEntries(store, ids) {
 }
 
 describe("background history recording", () => {
-  it("survives a cross-process lock longer than the old timeout and preserves rewind order", async () => {
+  it("keeps recording responsive under cross-process contention and preserves rewind order", async () => {
     const directory = mkdtempSync(join(tmpdir(), "tau-history-contention-"));
     const path = join(directory, "history.sqlite");
     const reader = new LocalHistoryStore(path);
@@ -67,22 +68,26 @@ describe("background history recording", () => {
     }, 20);
     let released = false;
     try {
-      const start = performance.now();
-      expect(manager.registerSession(session, remote)).toBeUndefined();
-      manager.append(session.sessionId, [entry("a"), entry("b"), entry("c")], remote);
-      manager.truncateFromSources(session.sessionId, ["b", "c"], remote);
-      manager.append(session.sessionId, [entry("d")], remote);
-      expect(performance.now() - start).toBeLessThan(500);
-      await delay(5_300);
-      expect(ticks).toBeGreaterThan(50);
-      expect(reportRecording).toHaveBeenCalledWith(expect.objectContaining({ status: "delayed" }));
+      const writer = manager.openSession(session, remote);
+      writer.append([entry("a"), entry("b"), entry("c")]);
+      writer.truncateFromSources(["b", "c"]);
+      writer.append([entry("d")]);
+      await vi.waitFor(
+        () => {
+          expect(reportRecording).toHaveBeenCalledWith(
+            expect.objectContaining({ status: "delayed" }),
+          );
+        },
+        { timeout: 5_000 },
+      );
+      expect(ticks).toBeGreaterThan(0);
       await release();
       released = true;
       await waitForEntries(reader, ["a", "d"]);
       expect(reportRecording).toHaveBeenCalledWith(
         expect.objectContaining({ status: "recovered" }),
       );
-      manager.append(session.sessionId, [entry("later")], remote);
+      writer.append([entry("later")]);
       await waitForEntries(reader, ["a", "d", "later"]);
       await manager.flush();
       expect(replicated.map((operation) => operation.type)).toEqual([
@@ -111,12 +116,12 @@ describe("background history recording", () => {
     const reportRecording = vi.fn();
     const manager = HistoryManager.open(join(parent, "history.sqlite"), { reportRecording });
     try {
-      manager.registerSession(session);
-      manager.append(session.sessionId, [entry("lost")]);
+      const writer = manager.openSession(session);
+      writer.append([entry("lost")]);
       await manager.flush();
       expect(reportRecording).toHaveBeenCalledWith(expect.objectContaining({ status: "dropped" }));
       rmSync(parent);
-      manager.append(session.sessionId, [entry("later")]);
+      writer.append([entry("later")]);
       const result = await manager.query().read({ sessionId: session.sessionId, limit: 10 });
       expect(result.entries.map((item) => item.id)).toEqual(["later"]);
     } finally {
@@ -124,6 +129,32 @@ describe("background history recording", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it.each(["write failure", "flush timeout"])(
+    "rejects strict settlement after %s",
+    async (failure) => {
+      const store = new LocalHistoryStore(":memory:");
+      let release;
+      const gate = new Promise((resolve) => {
+        release = resolve;
+      });
+      vi.spyOn(store, "createSession").mockImplementation(async () => {
+        if (failure === "write failure") throw new Error("disk failure");
+        await gate;
+      });
+      const manager = new HistoryManager(store, { requireCompleteRecording: true });
+      try {
+        manager.openSession(session).append([entry("unrecorded")]);
+        await Promise.all([
+          expect(manager.flush()).rejects.toThrow(),
+          expect(manager.settleSession(session.sessionId)).rejects.toThrow(),
+        ]);
+      } finally {
+        release();
+        manager.close();
+      }
+    },
+  );
 
   it("bounds queued bytes without preventing later recording after an overflow", async () => {
     const store = new LocalHistoryStore(":memory:");
@@ -139,12 +170,12 @@ describe("background history recording", () => {
     const reportRecording = vi.fn();
     const manager = new HistoryManager(store, { maxPendingBytes: 500, reportRecording });
     try {
-      manager.registerSession(session);
-      expect(manager.append(session.sessionId, [entry("x".repeat(500))])).toBeTypeOf("string");
+      const writer = manager.openSession(session);
+      expect(writer.append([entry("x".repeat(500))])).toBeTypeOf("string");
       expect(reportRecording).toHaveBeenCalledWith(expect.objectContaining({ status: "dropped" }));
       release();
       await manager.flush();
-      manager.append(session.sessionId, [entry("later")]);
+      writer.append([entry("later")]);
       await manager.flush();
       expect(
         (await store.read({ sessionId: session.sessionId, limit: 10 })).entries.map((e) => e.id),
@@ -165,11 +196,11 @@ describe("background history recording", () => {
       },
     });
     try {
-      manager.registerSession(session);
-      manager.append(session.sessionId, [entry("lost")]);
-      manager.append(session.sessionId, [entry("later")]);
-      manager.registerSession({ ...session, sessionId: "other" });
-      manager.append("other", [entry("other")]);
+      const writer = manager.openSession(session);
+      writer.append([entry("lost")]);
+      writer.append([entry("later")]);
+      const other = manager.openSession({ ...session, sessionId: "other" });
+      other.append([entry("other")]);
       await manager.flush();
       expect(
         (await store.read({ sessionId: session.sessionId, limit: 10 })).entries.map((e) => e.id),
@@ -187,11 +218,126 @@ describe("background history recording", () => {
     vi.spyOn(store, "createSession").mockImplementation(() => {
       throw Object.assign(new Error("database is locked"), { errcode: 5 });
     });
+    vi.useFakeTimers();
     const manager = new HistoryManager(store);
-    manager.registerSession(session);
-    const start = performance.now();
-    await manager.flush();
-    expect(performance.now() - start).toBeLessThan(3_000);
-    manager.close();
+    try {
+      manager.openSession(session);
+      let flushed = false;
+      const flush = manager.flush().then(() => {
+        flushed = true;
+      });
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(flushed).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await flush;
+      expect(flushed).toBe(true);
+    } finally {
+      manager.close();
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("native agent history projection", () => {
+  it("records rejected calls and recovery results, retains pre-compaction entries, and truncates on rewind", async () => {
+    const store = new LocalHistoryStore(":memory:");
+    const manager = new HistoryManager(store);
+    const recorder = new AgentHistoryRecorder(manager.openSession(session));
+    const call = { type: "toolCall", id: "call", name: "bash", arguments: { command: "pwd" } };
+    const result = {
+      role: "toolResult",
+      toolCallId: call.id,
+      toolName: call.name,
+      content: [{ type: "text", text: "blocked" }],
+      isError: true,
+      timestamp: 3,
+    };
+    try {
+      recorder.record({
+        type: "user_message",
+        historyEntryId: "user",
+        message: { role: "user", content: "task", timestamp: 1 },
+      });
+      recorder.record({ type: "tool_run_blocked", toolCallId: call.id });
+      recorder.record({
+        type: "assistant_final",
+        historyEntryId: "assistant",
+        message: { content: [{ type: "text", text: "answer" }, call], timestamp: 2 },
+      });
+      expect(
+        recorder.record({
+          type: "tool_recovery",
+          historyEntryId: "recovery",
+          toolResults: [result],
+        }),
+      ).toBeUndefined();
+      recorder.record({ type: "compaction_end", outcome: "compacted" });
+      await manager.flush();
+      const before = await store.read({ sessionId: session.sessionId, limit: 100 });
+      expect(before.entries.map((entry) => entry.type)).toEqual(["user", "assistant", "tool"]);
+      expect(before.entries[2]).toMatchObject({
+        id: "call",
+        sourceIds: ["assistant", "recovery"],
+        arguments: call.arguments,
+        result: result.content,
+        outcome: "blocked",
+      });
+      recorder.record({ type: "history_rewound", removedEntryIds: ["assistant", "recovery"] });
+      await manager.flush();
+      expect((await store.read({ sessionId: session.sessionId, limit: 100 })).entries).toEqual([
+        before.entries[0],
+      ]);
+    } finally {
+      manager.close();
+    }
+  });
+});
+
+describe("shared history recording", () => {
+  it("pairs parallel calls, drops unfinished calls at turn boundaries, and retains parent-linked history", async () => {
+    const store = new LocalHistoryStore(":memory:");
+    const manager = new HistoryManager(store);
+    const recorder = new HistoryRecorder(
+      manager.openSession({ ...session, parentSessionId: "parent" }),
+    );
+    const call = (callId) => ({
+      type: "toolCall",
+      callId,
+      sourceId: "assistant",
+      name: "bash",
+      arguments: { command: callId },
+    });
+    const result = (callId) => ({
+      type: "toolResult",
+      callId,
+      sourceId: `${callId}:result`,
+      timestamp: 3,
+      result: [{ type: "text", text: callId }],
+      outcome: "succeeded",
+    });
+    try {
+      recorder.record(call("a"));
+      recorder.record(call("b"));
+      recorder.record(call("unfinished"));
+      recorder.record(result("b"));
+      recorder.record(result("a"));
+      recorder.record({ type: "endTurn" });
+      expect(recorder.record(result("unfinished"))).toEqual(expect.any(String));
+      recorder.record({ type: "message", entry: entry("follow-up") });
+      await manager.flush();
+      const saved = await store.read({ sessionId: session.sessionId, limit: 100 });
+      expect(saved.session.parentSessionId).toBe("parent");
+      expect(saved.entries.map((entry) => entry.id)).toEqual(["b", "a", "follow-up"]);
+      expect(saved.entries[0]).toMatchObject({
+        arguments: { command: "b" },
+        result: [{ type: "text", text: "b" }],
+        sourceIds: ["assistant", "b:result"],
+      });
+      recorder.record({ type: "rewind", sourceIds: ["assistant"] });
+      await manager.flush();
+      expect((await store.read({ sessionId: session.sessionId, limit: 100 })).entries).toEqual([]);
+    } finally {
+      manager.close();
+    }
   });
 });

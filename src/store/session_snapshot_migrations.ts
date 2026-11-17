@@ -1,4 +1,8 @@
 import { getEffectiveAutoCompactThresholdTokens } from "../core/session/auto_compaction_threshold.js";
+import {
+  normalizeSpeechToTextKeywords,
+  SPEECH_TO_TEXT_MAX_VOCABULARY_CHARACTERS,
+} from "../core/utils/speech_to_text_keywords.js";
 import { formatTauHiddenSystemBlock } from "../core/utils/user_metadata.js";
 import type { SessionProtocolSnapshot } from "../protocol/session_protocol.js";
 import {
@@ -7,7 +11,7 @@ import {
 } from "../protocol/session_protocol.js";
 
 export const STORED_SESSION_DOCUMENT_FORMAT = "tau-session" as const;
-export const STORED_SESSION_DOCUMENT_VERSION = 13 as const;
+export const STORED_SESSION_DOCUMENT_VERSION = 17 as const;
 export const LEGACY_SESSION_MODEL_CONTEXT_KEY = "legacy-v3";
 
 export type StoredSessionDocument = {
@@ -32,6 +36,10 @@ const storedSessionMigrations = new Map<number, StoredSessionMigration>([
   [10, migrateStoredSessionV10ToV11],
   [11, migrateStoredSessionV11ToV12],
   [12, migrateStoredSessionV12ToV13],
+  [13, migrateStoredSessionV13ToV14],
+  [14, migrateStoredSessionV14ToV15],
+  [15, migrateStoredSessionV15ToV16],
+  [16, migrateStoredSessionV16ToV17],
 ]);
 
 export class UnsupportedStoredSessionVersionError extends Error {
@@ -98,6 +106,46 @@ function decodeStoredSessionDocument(value: unknown): {
     version: value.version as number,
     snapshot: value.snapshot,
   };
+}
+
+function migrateStoredSessionV16ToV17(value: unknown): unknown {
+  if (!isRecord(value) || !isRecord(value.settings)) {
+    throw new Error("invalid stored session settings");
+  }
+  return { ...value, settings: { ...value.settings, notifications: true } };
+}
+
+function migrateStoredSessionV15ToV16(value: unknown): unknown {
+  if (!isRecord(value)) throw new Error("stored session snapshot must be an object");
+  const snapshot = structuredClone(value);
+  if (
+    isRecord(snapshot.catalog) &&
+    Array.isArray(snapshot.catalog.speechVocabulary) &&
+    snapshot.catalog.speechVocabulary.every((term) => typeof term === "string")
+  ) {
+    snapshot.catalog.speechVocabulary = normalizeSpeechToTextKeywords(
+      snapshot.catalog.speechVocabulary,
+      { maxTotalCharacters: SPEECH_TO_TEXT_MAX_VOCABULARY_CHARACTERS },
+    );
+  }
+  return snapshot;
+}
+
+function migrateStoredSessionV13ToV14(value: unknown): unknown {
+  if (!isRecord(value)) throw new Error("stored session snapshot must be an object");
+  const snapshot = structuredClone(value);
+  if (isRecord(snapshot.catalog)) {
+    snapshot.catalog.mcp =
+      isRecord(snapshot.executionEnvironment) && snapshot.executionEnvironment.kind !== "local"
+        ? { status: "unavailable", reason: "remote-execution" }
+        : {
+            status: "available",
+            servers: Array.isArray(snapshot.catalog.mcpServers) ? snapshot.catalog.mcpServers : [],
+          };
+    delete snapshot.catalog.mcpServers;
+    snapshot.catalog.speechVocabulary = [];
+  }
+  return snapshot;
 }
 
 function migrateStoredSessionV12ToV13(value: unknown): unknown {
@@ -833,4 +881,26 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isNonNegativeInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+function migrateStoredSessionV14ToV15(value: unknown): unknown {
+  if (!isRecord(value)) return value;
+  const snapshot = structuredClone(value);
+  if (isRecord(snapshot.agents)) {
+    for (const agent of Object.values(snapshot.agents)) {
+      if (!isRecord(agent)) continue;
+      agent.parentId = snapshot.sessionId;
+      agent.depth = 1;
+    }
+  }
+  if (isRecord(snapshot.bootstrap) && isRecord(snapshot.bootstrap.prompt)) {
+    const prompt = snapshot.bootstrap.prompt;
+    if (typeof prompt.subagentSystemPrompt === "string") {
+      prompt.subagentSystemPrompt = prompt.subagentSystemPrompt.replace(
+        /^<subagent-role>[\s\S]*?<\/subagent-role>\s*/,
+        "",
+      );
+    }
+  }
+  return snapshot;
 }

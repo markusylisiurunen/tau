@@ -8,7 +8,11 @@ import {
 } from "../tools/execution_backend.js";
 import type { ConfigDeps } from "./deps.js";
 import { resolveConfigLevels } from "./paths.js";
-import { loadRuntimeConfig, type RuntimeConfigResult } from "./runtime.js";
+import {
+  loadRuntimeConfig,
+  type SessionRuntimeConfigResult,
+  toSessionRuntimeConfig,
+} from "./runtime.js";
 import { loadSkillsContent } from "./skills_loader.js";
 
 type RuntimeConfigFileSnapshot = {
@@ -122,9 +126,11 @@ export async function loadRuntimeConfigFromToolBackend(options: {
   cwd: string;
   home: string;
   remoteCatalog: RemoteModelCatalogSnapshot;
-}): Promise<RuntimeConfigResult> {
+}): Promise<SessionRuntimeConfigResult> {
   const deps = await collectRuntimeConfigDeps(options, "runtime");
-  return await loadRuntimeConfig(options.cwd, deps, { remoteCatalog: options.remoteCatalog });
+  return toSessionRuntimeConfig(
+    await loadRuntimeConfig(options.cwd, deps, { remoteCatalog: options.remoteCatalog }),
+  );
 }
 
 export async function loadSkillsFromToolBackend(options: {

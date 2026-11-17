@@ -21,6 +21,7 @@ import type {
   SessionProtocolExecParams,
   SessionProtocolExecResult,
   SessionProtocolInterruptSubagentResult,
+  SessionProtocolPersonaOverrides,
   SessionProtocolRecordParams,
   SessionProtocolRecordResult,
   SessionProtocolReloadResult,
@@ -51,11 +52,14 @@ export class SessionExecBusyError extends Error {
 
 export class SessionRetryUnavailableError extends Error {}
 
+export class SessionRuntimeNotLoadedError extends Error {}
+
 export type TauHostedSession = {
   readonly sessionId: string;
   readonly isDisposed?: boolean;
   readonly isTurnRunning: boolean;
   readonly canAcceptSteering: boolean;
+  onTurnIdle(handler: () => void): () => void;
   onDelta(handler: (delta: SessionProtocolDeltaMessage) => void): () => void;
   onEphemeral(handler: (message: SessionProtocolEphemeralMessage) => void): () => void;
   subagentActivities(): SessionProtocolSubagentActivitiesState;
@@ -71,6 +75,8 @@ export type TauHostedSession = {
   runAcceptedTurn(userHistoryEntryId: string): Promise<SessionProtocolUserMessageTurnResult>;
   runTurn(): Promise<SessionProtocolTurnOutcome>;
   retryTurn(): Promise<SessionProtocolTurnOutcome>;
+  holdTurnAdmission(): () => void;
+  waitForActiveTurn(): Promise<void>;
   interruptTurn(): boolean;
   interruptActiveWork(): boolean;
   waitForActiveWork(): Promise<void>;
@@ -80,6 +86,7 @@ export type TauHostedSession = {
     id: string;
     applied: Promise<{ userHistoryEntryId: string }>;
     result: Promise<{
+      response: string;
       userHistoryEntryId: string;
       turn: SessionProtocolTurnOutcome;
     }>;
@@ -104,6 +111,7 @@ export type TauHostedSession = {
   ): Promise<SessionProtocolSettingsUpdateResult>;
   setPersona(
     personaId: SessionProtocolSetPersonaParams["personaId"],
+    overrides?: SessionProtocolPersonaOverrides,
   ): Promise<SessionProtocolSnapshot>;
   resolvePrompt(
     promptId: SessionProtocolResolvePromptParams["promptId"],
@@ -137,6 +145,8 @@ export type TauSessionHost = {
   observeSession(sessionId: string): Promise<TauHostedSession | undefined>;
   releaseSession(session: TauHostedSession): void;
   listSessions(): Promise<SessionProtocolSessionSummary[]>;
+  setRetention(sessionId: string, durationMs: number | null): { retainedUntil: number | null };
+  collectSession(sessionId: string): Promise<{ disposed: boolean }>;
   registerClientTools?(options: {
     tools: SessionProtocolClientToolDefinition[];
     sendCall: (message: SessionProtocolClientToolCallMessage) => void;

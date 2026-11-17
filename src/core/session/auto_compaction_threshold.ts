@@ -1,6 +1,5 @@
 export type AutoCompactDefaults = {
   thresholdTokens?: number;
-  personaThresholdTokens: Record<string, number>;
 };
 
 export function getEffectiveAutoCompactThresholdTokens(

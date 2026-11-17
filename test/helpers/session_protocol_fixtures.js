@@ -99,6 +99,7 @@ export function createProtocolSnapshot(overrides = {}) {
       autoCompactThresholdTokens: null,
       effectiveAutoCompactThresholdTokens:
         (bootstrap.model ?? bootstrap.persona?.model ?? model).contextWindow - 16_384,
+      notifications: true,
       ...(overrides.settings ?? {
         personaId: bootstrap.persona?.id ?? "persona-1",
         ...(bootstrap.persona?.settings?.reasoning !== undefined
@@ -135,7 +136,8 @@ export function createProtocolSnapshot(overrides = {}) {
         label: prompt.label,
       })),
       skills: catalog.skills ?? [],
-      mcpServers: catalog.mcpServers ?? [],
+      mcp: catalog.mcp ?? { status: "available", servers: [] },
+      speechVocabulary: catalog.speechVocabulary ?? [],
     },
     executionEnvironment: overrides.executionEnvironment ?? {
       kind: "local",

@@ -1,15 +1,20 @@
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import { AgentRuntime, type AgentSubturnResult, createAgentSpec } from "../agent/agent_runtime.js";
 import type { AgentEvent } from "../agent/events.js";
+import { NativeHistoryAdapter } from "../history/agent_history_recorder.js";
+import type { HistoryRecordSink } from "../history/recorder.js";
 import { resolveAgentModel } from "../runtime/agent_model.js";
 import { createAutoCompactionArchiver } from "../session/auto_compaction_archive.js";
 import type { AgentJobs } from "../tools/agent_jobs.js";
 import { ToolCatalog } from "../tools/catalog.js";
 import type { ToolRunPresentation } from "../tools/presentation.js";
+import type { Persona } from "../types.js";
 import { getUsageCostTotal, getUsageTotals } from "../usage/logs.js";
 import { extractAssistantText } from "../utils/messages.js";
 import { runtimeFailure } from "./errors.js";
 import type { ContentBlock, ObservableEvent } from "./events.js";
+import { buildSubagentSystemPrompt } from "./prompt.js";
+import { formatSubagentsForPrompt } from "./registry.js";
 import type {
   SubagentRuntime,
   SubagentRuntimeOptions,
@@ -29,6 +34,8 @@ function nativeContent(content: (TextContent | ImageContent)[]): ContentBlock[] 
 export class NativeSubagentRuntime implements SubagentRuntime {
   private readonly agent: AgentRuntime;
   private readonly jobs: AgentJobs;
+  private readonly historySink?: HistoryRecordSink;
+  private readonly historyAdapter = new NativeHistoryAdapter();
   private readonly toolPresentations = new Map<string, ToolRunPresentation>();
   private readonly toolOutcomes = new Map<
     string,
@@ -43,30 +50,46 @@ export class NativeSubagentRuntime implements SubagentRuntime {
     private readonly config: NativeSubagentConfig,
     private readonly options: SubagentRuntimeOptions,
   ) {
+    if (config.tools.includes("agents") && !options.agents) {
+      throw new Error("Delegating agents require agent-management dependencies");
+    }
     this.jobs = options.jobs.create();
+    const persona: Persona = {
+      ...options.agents?.persona,
+      id: options.personaId ?? "agent",
+      label: "subagent",
+      description: "Background agent",
+      source: "project",
+      systemPrompt: options.agents?.persona.systemPrompt ?? config.systemPrompt,
+      model: config.model,
+      settings: config.settings,
+      tools: config.tools,
+      subagentLaunchModels: options.agents?.persona.subagentLaunchModels ?? [],
+    };
+    const agents =
+      config.tools.includes("agents") && options.agents
+        ? {
+            ...options.agents,
+            callerId: options.id,
+            persona,
+            cwd: config.workingDirectory,
+            subagentSystemPrompt: config.systemPrompt,
+            autoCompactThresholdTokens: config.autoCompactThresholdTokens,
+          }
+        : undefined;
     this.agent = new AgentRuntime({
       agentId: options.id,
       spec: createAgentSpec({
         autoCompactThresholdTokens: config.autoCompactThresholdTokens,
-        ...resolveAgentModel(
-          {
-            id: `${options.personaId ?? "agent"}-subagent`,
-            label: "subagent",
-            description: "Background agent",
-            source: "project",
-            systemPrompt: config.systemPrompt,
-            model: config.model,
-            settings: config.settings,
-            tools: config.tools,
-            subagentLaunchModels: [],
-          },
-          options.config,
-          {
-            includeModelNotice: true,
-            deps: options.deps,
-          },
-        ),
-        systemPrompt: config.systemPrompt,
+        ...resolveAgentModel(persona, options.config, {
+          includeModelNotice: true,
+          deps: options.deps,
+        }),
+        systemPrompt:
+          buildSubagentSystemPrompt(config.systemPrompt, {
+            sessionIds: options.sessionIds,
+            historyEnabled: config.tools.includes("history"),
+          }) + (formatSubagentsForPrompt(persona) ?? ""),
         tools: ToolCatalog.createSubagentRegistry(
           config.tools,
           options.backend,
@@ -76,12 +99,23 @@ export class NativeSubagentRuntime implements SubagentRuntime {
           this.jobs.codeJobs,
           options.history,
           options.mcp,
+          agents,
         ),
       }),
-      eventSink: async (event) => await this.recordEvent(event),
+      eventSink: async (event) => {
+        await this.recordEvent(event);
+        if (this.historySink) {
+          for (const input of this.historyAdapter.translate(event)) await this.historySink(input);
+        }
+      },
       clock: options.deps.clock,
+      getCompactionContinuationSystemMessages: () => {
+        const context = options.supervisor.getActiveCompactionContext(options.id);
+        return context ? [context] : [];
+      },
       archiveAutoCompaction: createAutoCompactionArchiver(options.backend),
     });
+    this.historySink = options.openHistory?.();
   }
 
   get model() {

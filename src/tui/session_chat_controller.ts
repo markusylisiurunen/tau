@@ -1,4 +1,3 @@
-import { dirname } from "node:path/posix";
 import type { AssistantMessage, Message, ToolResultMessage } from "@earendil-works/pi-ai";
 import {
   formatAutoCompactThreshold,
@@ -9,7 +8,8 @@ import {
   type CommandRegistry,
   createCommandRegistry,
 } from "../core/commands/index.js";
-import { type Config, getElevenLabsApiKey, getOpenAIApiKey } from "../core/config/index.js";
+import { getElevenLabsApiKey, getOpenAIApiKey } from "../core/config/index.js";
+import type { ClientConfig } from "../core/config/ownership.js";
 import type {
   DiffReviewSnapshotSource,
   StartedDiffReviewBridge,
@@ -35,12 +35,20 @@ import { REASONING_LEVELS, type ReasoningEffort } from "../core/types.js";
 import { formatAdaptiveNumber, formatCwd, formatTokenWindow } from "../core/utils/format.js";
 import { extractAssistantText } from "../core/utils/messages.js";
 import {
+  cleanupSpeechTranscript,
+  nextSpeechCleanupStyle,
+  type PreparedSpeechCleanup,
+  prepareSpeechCleanup,
+  type SpeechCleanupStyle,
+} from "../core/utils/speech_cleanup.js";
+import {
   getSpeechToTextRecordingMaxDurationMs,
   getSpeechToTextStreamingSampleRate,
   SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS,
   type SpeechToTextDependencies,
 } from "../core/utils/speech_to_text.js";
 import { collectSpeechToTextContext } from "../core/utils/speech_to_text_context.js";
+import { composeSpeechVocabulary } from "../core/utils/speech_to_text_keywords.js";
 import {
   formatTauUserText,
   hasAutoCompactionContinuationMetadata,
@@ -103,12 +111,13 @@ import {
   createListenTempFilePath,
   createListenTranscription,
   deleteListenTempFile,
-  getSpeechToTextApiKey,
   getSpeechToTextApiKeyErrorMessage,
   LISTEN_CAPTURE_START_TIMEOUT_MS,
   LISTEN_RECORDING_MIN_BYTES,
   type ListenRecording,
+  type RetainedListenAudio,
   readListenAudio,
+  resolveSpeechToTextCredentials,
   startListenAudioCapture,
 } from "./listen_capture.js";
 import { exportMarkdown } from "./markdown_export.js";
@@ -117,6 +126,7 @@ import {
   createSdkToolExecutionBackend,
 } from "./session_tool_execution_backend.js";
 import { runSpeechPlaybackTask } from "./speech_playback.js";
+import type { AppIntroModel } from "./ui/app_intro.js";
 import type { ChatMessageModel } from "./ui/chat_message_model.js";
 import type { EditorSubmissionMode } from "./ui/custom_editor.js";
 import type { ToolUiModel } from "./ui/tool_ui_model.js";
@@ -128,7 +138,7 @@ export type SessionChatControllerOptions = {
   createSession?: (input: SessionProtocolCreateParams) => Promise<TauSdkSession>;
   targetLabel: string;
   configuredClientToolNames?: string[];
-  config?: Config;
+  config: ClientConfig;
   diffToolLauncher?: DiffReviewToolLauncher;
   deps?: CoreDeps;
   speechToTextDeps?: SpeechToTextDependencies;
@@ -139,6 +149,14 @@ export type SessionChatControllerOptions = {
 const TRANSCRIPTION_GUIDANCE =
   "Some or all of this message may have been transcribed from speech and may contain misheard words or other transcription errors.";
 
+const MCP_UNAVAILABLE_EXPLANATIONS: Record<
+  Extract<SessionProtocolSnapshot["catalog"]["mcp"], { status: "unavailable" }>["reason"],
+  string
+> = {
+  "remote-execution":
+    "unavailable: this session runs on a remote machine, but servers would run on the Tau host",
+};
+
 const LISTEN_CAPTURE_START_CANCELLED = Symbol("listen capture start cancelled");
 
 export class SessionChatController {
@@ -147,7 +165,7 @@ export class SessionChatController {
   private readonly createSession?: (input: SessionProtocolCreateParams) => Promise<TauSdkSession>;
   private readonly targetLabel: string;
   private readonly configuredClientToolNames: string[];
-  private readonly config: Config;
+  private readonly config: ClientConfig;
   private markdownExportAbortController?: AbortController;
   private readonly diffToolLauncher?: DiffReviewToolLauncher;
   private readonly deps: CoreDeps;
@@ -174,7 +192,11 @@ export class SessionChatController {
   private readonly snapshotRecoveryDeltas: SessionProtocolDeltaMessage[] = [];
   private hasPendingUserMessages = false;
   private pendingIdleNotification = false;
+  private programStatus: "idle" | "working" | "done" | "error" | "clear" = "clear";
+  private programStatusTurnStart?: SessionProtocolSnapshot;
+  /** A turn is visibly running. Shell commands are counted apart, so neither clears the other. */
   private isStreaming = false;
+  private activeShellCommands = 0;
   private assistantInterruptRequested = false;
   private submittedTurnInProgress = false;
   private manualCompactionInProgress = false;
@@ -189,10 +211,12 @@ export class SessionChatController {
   private lastEmptySubmitAt?: number;
   private disposed = false;
   private listenRecording?: ListenRecording;
-  private retainedListenAudio?: { audioPath: string; durationMs: number };
+  private retainedListenAudio?: RetainedListenAudio;
   private listenTransition?: Promise<void>;
   private listenStartupAbortController?: AbortController;
   private activeListenTranscription?: ListenRecording["transcription"];
+  private activeListenCleanup?: AbortController;
+  private preparedListenCleanup?: PreparedSpeechCleanup;
   private listenActivityLabel?: string;
   private listenPreview?: ReturnType<ChatView["beginEditorTextPreview"]>;
   private editorHiddenSystemMessages: string[] = [];
@@ -215,7 +239,7 @@ export class SessionChatController {
     this.subagentActivities = options.session.subagentActivities();
     this.targetLabel = options.targetLabel;
     this.configuredClientToolNames = options.configuredClientToolNames ?? [];
-    this.config = options.config ?? {};
+    this.config = options.config;
     this.diffToolLauncher = options.diffToolLauncher;
     this.deps = options.deps ?? createDefaultCoreDeps();
     this.speechToTextDeps = options.speechToTextDeps;
@@ -260,10 +284,11 @@ export class SessionChatController {
     this.view.addMessage({
       type: "app_intro",
       title: this.buildStartupIntroTitle(),
-      body: this.buildStartupIntroBody().join("\n"),
+      body: this.buildStartupIntroBody(),
     });
     this.renderSnapshot(this.snapshot);
     this.hydrateRunningSnapshotState();
+    this.syncProgramStatus();
     this.eventUnsubscribe = this.session.onDelta((delta) => this.onSdkDelta(delta));
     this.ephemeralUnsubscribe = this.session.onEphemeral((message) => this.onSdkEphemeral(message));
     this.pendingUserMessagesUnsubscribe = this.session.onPendingUserMessages((message) =>
@@ -277,6 +302,7 @@ export class SessionChatController {
 
   async dispose(): Promise<void> {
     this.disposed = true;
+    this.setProgramStatus("clear");
     this.markdownExportAbortController?.abort();
     this.endListenPreview();
     this.eventUnsubscribe?.();
@@ -285,6 +311,7 @@ export class SessionChatController {
     this.subagentActivitiesUnsubscribe?.();
     this.listenStartupAbortController?.abort(LISTEN_CAPTURE_START_CANCELLED);
     this.activeListenTranscription?.abort();
+    this.activeListenCleanup?.abort();
     if (this.listenTransition) {
       await this.listenTransition;
     }
@@ -302,6 +329,18 @@ export class SessionChatController {
     } catch {
       // The transport may already be closing; detach is best-effort during UI disposal.
     }
+  }
+
+  showSessionConfigWarnings(diagnostic: { cwd: string; warnings: string[] }): void {
+    const directory = formatPathForSessionDisplay(
+      diagnostic.cwd,
+      this.snapshot.executionEnvironment.home,
+    );
+    this.view.addTranscriptNotice(
+      diagnostic.warnings.length === 1 ? "configuration warning" : "configuration warnings",
+      "default",
+      [`found while loading ${directory}`, ...diagnostic.warnings],
+    );
   }
 
   showHistoryDiagnostic(diagnostic: HistoryDiagnostic): void {
@@ -339,7 +378,8 @@ export class SessionChatController {
       onCtrlP: () => void this.cyclePersonality(),
       onCtrlS: () => void this.stashEditorToClipboard(),
       onToggleRecording: () => void this.toggleListenCapture(),
-      recordingShortcut: this.config.speech?.recordingShortcut,
+      onCycleRecordingStyle: () => this.cycleListenCleanupStyle(),
+      recordingShortcut: this.config.speech.recordingShortcut,
       onDisabledSubmit: (mode) => {
         if (this.listenRecording && !this.listenTransition) {
           void this.runListenTransition(() => this.stopListenCapture(mode));
@@ -372,14 +412,14 @@ export class SessionChatController {
 
     const trimmed = text.trimStart();
     if (trimmed.startsWith("!")) {
-      return false;
+      return true;
     }
     if (trimmed.startsWith("/") && this.isSingleLineInput(text)) {
       const parsed = this.commandRegistry.parse(trimmed);
       if (parsed.type === "unknown") {
         return true;
       }
-      if (!this.isStreaming) {
+      if (!this.isWorking) {
         return false;
       }
       return this.commandRegistry.allowsDuringStreaming(parsed);
@@ -405,7 +445,7 @@ export class SessionChatController {
   ): Promise<void> {
     const trimmed = text.trim();
     if (!trimmed) {
-      if (this.isStreaming || this.submittedTurnInProgress) {
+      if (this.isWorking || this.submittedTurnInProgress) {
         return;
       }
 
@@ -424,6 +464,11 @@ export class SessionChatController {
 
     this.lastEmptySubmitAt = undefined;
 
+    if (trimmed.startsWith("!") && !this.isBlockingSessionOperationActive()) {
+      await this.runShellInput(trimmed);
+      return;
+    }
+
     if (this.isSessionOperationActive()) {
       if (this.isBlockingSessionOperationActive()) {
         this.view.showFooterNotice(
@@ -435,7 +480,7 @@ export class SessionChatController {
       if (trimmed.startsWith("/") && this.isSingleLineInput(text)) {
         const parsed = this.commandRegistry.parse(trimmed);
         if (parsed.type !== "unknown") {
-          if (this.isStreaming && this.commandRegistry.allowsDuringStreaming(parsed)) {
+          if (this.isWorking && this.commandRegistry.allowsDuringStreaming(parsed)) {
             await this.commandRegistry.dispatch(parsed, this.commandHandlers);
           } else {
             this.view.showFooterNotice(
@@ -445,9 +490,6 @@ export class SessionChatController {
           }
           return;
         }
-      }
-      if (trimmed.startsWith("!")) {
-        return;
       }
       const submittedText = this.formatSubmittedText(trimmed, hiddenSystemMessages);
       if (mode === "steer") this.submitSteeringText(submittedText);
@@ -461,28 +503,6 @@ export class SessionChatController {
         await this.commandRegistry.dispatch(parsed, this.commandHandlers);
         return;
       }
-    }
-
-    if (trimmed.startsWith("!")) {
-      if (trimmed.startsWith("!!")) {
-        const command = trimmed.slice(2).trim();
-        if (command) {
-          await this.runSessionBashCommand(command, {
-            addToContext: false,
-            labelOverride: "incognito",
-          });
-        }
-        return;
-      }
-
-      const command = trimmed.slice(1).trim();
-      if (command) {
-        await this.runSessionBashCommand(command, {
-          addToContext: true,
-          labelOverride: "you ran",
-        });
-      }
-      return;
     }
 
     await this.runSessionTurn(() =>
@@ -501,7 +521,7 @@ export class SessionChatController {
         contextFiles: this.getContextFilePaths(),
         skills: this.snapshot.catalog.skills,
         themes: this.themeIds,
-        recordingShortcut: this.config.speech?.recordingShortcut
+        recordingShortcut: this.config.speech.recordingShortcut
           ? `${this.config.speech.recordingShortcut.gesture === "double-tap" ? "double-tap " : ""}${this.config.speech.recordingShortcut.key}`
           : "ctrl+y",
         formatPath: (path) =>
@@ -569,60 +589,54 @@ export class SessionChatController {
     if (this.snapshot.catalog.skills.length > 0) {
       parts.push(`${this.snapshot.catalog.skills.length} skills`);
     }
-    if (this.snapshot.catalog.mcpServers.length > 0) {
-      const count = this.snapshot.catalog.mcpServers.length;
-      parts.push(`${count} MCP server${count === 1 ? "" : "s"}`);
-    }
     if (this.configuredClientToolNames.length > 0) {
       const count = this.configuredClientToolNames.length;
       parts.push(`${count} client tool${count === 1 ? "" : "s"}`);
     }
+    const { mcp } = this.snapshot.catalog;
+    if (mcp.status === "unavailable") {
+      parts.push("MCP unavailable");
+    } else if (mcp.servers.length > 0) {
+      const count = mcp.servers.length;
+      parts.push(`${count} MCP server${count === 1 ? "" : "s"}`);
+    }
     return parts.join(" · ");
   }
 
-  private buildStartupIntroBody(): string[] {
-    const lines = [
-      "type `/help` for commands and keybindings",
-      "mention files with `@`, agents and skills with `@@`",
-      "run bash commands with `!` or `!!`",
+  private buildStartupIntroBody(): AppIntroModel["body"] {
+    const lines: AppIntroModel["body"] = [
+      "`/help` commands · `@` files · `@@` skills and agents · `!` or `!!` bash",
     ];
 
-    if (this.snapshot.catalog.skills.length > 0) {
-      lines.push("", "skills:");
-      for (const skill of this.snapshot.catalog.skills) {
-        const skillsRoot = formatPathForSessionDisplay(
-          dirname(dirname(skill.path)),
-          this.snapshot.executionEnvironment.home,
-        );
-        lines.push(`  ${skill.name} (${skillsRoot})`);
-      }
-    }
-
-    const contextFiles = this.getContextFilePaths().map((path) =>
-      formatPathForSessionDisplay(path, this.snapshot.executionEnvironment.home),
-    );
+    const contextFiles = this.getContextFilePaths()
+      .sort((a, b) => b.split("/").length - a.split("/").length || a.localeCompare(b))
+      .map((path) => formatPathForSessionDisplay(path, this.snapshot.executionEnvironment.home));
     if (contextFiles.length > 0) {
-      lines.push("", "context:");
+      lines.push("", "context files:");
       for (const contextFile of contextFiles) {
         lines.push(`  ${contextFile}`);
       }
     }
 
+    if (this.snapshot.catalog.skills.length > 0) {
+      const names = this.snapshot.catalog.skills
+        .map((skill) => skill.name)
+        .sort((a, b) => a.localeCompare(b));
+      lines.push("", "skills:", { names });
+    }
+
     if (this.configuredClientToolNames.length > 0) {
-      lines.push("", "client tools:");
-      for (const clientToolName of this.configuredClientToolNames) {
-        lines.push(`  ${clientToolName}`);
-      }
+      const names = [...this.configuredClientToolNames].sort((a, b) => a.localeCompare(b));
+      lines.push("", "client tools:", { names });
     }
 
-    if (this.snapshot.catalog.mcpServers.length > 0) {
-      lines.push("", "mcp servers:");
-      for (const name of this.snapshot.catalog.mcpServers) {
-        lines.push(`  ${name}`);
-      }
+    const { mcp } = this.snapshot.catalog;
+    if (mcp.status === "unavailable") {
+      lines.push("", "MCP servers:", `  ${MCP_UNAVAILABLE_EXPLANATIONS[mcp.reason]}`);
+    } else if (mcp.servers.length > 0) {
+      const names = [...mcp.servers].sort((a, b) => a.localeCompare(b));
+      lines.push("", "MCP servers:", { names });
     }
-
-    lines.push("", this.formatSessionIdentityText());
 
     return lines;
   }
@@ -631,20 +645,32 @@ export class SessionChatController {
     await this.runSessionTurn(() => this.session.retry());
   }
 
+  private async runShellInput(trimmed: string): Promise<void> {
+    const incognito = trimmed.startsWith("!!");
+    const command = trimmed.slice(incognito ? 2 : 1).trim();
+    if (!command) return;
+    await this.runSessionBashCommand(command, {
+      addToContext: !incognito,
+      labelOverride: incognito ? "incognito" : "you ran",
+    });
+  }
+
   private async runSessionBashCommand(
     command: string,
     options: { addToContext: boolean; labelOverride: string },
   ): Promise<void> {
-    if (this.isSessionOperationActive()) {
-      return;
-    }
-
     const toolCallId = `bash-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const workingDirectory = this.snapshot.executionEnvironment.cwd;
+    // Alongside other work, the output is recorded in the background so this card can finish.
+    // During a turn, it joins the turn at its next step.
+    const duringTurn = this.isSessionOperationActive();
+    if (options.addToContext) this.hiddenHistoryEntryIds.add(toolCallId);
 
-    this.isStreaming = true;
-    this.startTurnTimer();
-    this.view.startWorkingIcon();
+    if (!this.isWorking) {
+      this.startTurnTimer();
+      this.view.startWorkingIcon();
+    }
+    this.activeShellCommands += 1;
     this.view.updateLocalToolUi({
       toolCallId,
       status: "running",
@@ -668,22 +694,22 @@ export class SessionChatController {
         actionLabel: options.labelOverride,
         addToContext: options.addToContext,
         addUserText: async (text) => {
-          const recorded = await this.session.record(text, {
-            historyEntryId: toolCallId,
+          const recording = this.session.record(text, { historyEntryId: toolCallId });
+          if (!duringTurn) return (await recording).userHistoryEntryId;
+          void recording.catch((error) => {
+            this.view.addTranscriptNotice("failed to add command output", "error", [
+              formatSessionError(error),
+            ]);
           });
-          return recorded.userHistoryEntryId;
+          return toolCallId;
         },
       });
-      if (result.userHistoryEntryId) {
-        this.hiddenHistoryEntryIds.add(result.userHistoryEntryId);
-        this.renderedMessageIds.push(this.getViewMessageId(result.userHistoryEntryId));
-      }
       this.view.updateLocalToolUi({
         toolCallId,
         status: result.exitCode === 0 ? "succeeded" : "failed",
         presentation: result.presentation,
       });
-      await this.syncFromSessionSnapshot();
+      if (!duringTurn) await this.syncFromSessionSnapshot();
     } catch (error) {
       const reason = (error as Error).message || "bash failed";
       this.view.updateLocalToolUi({
@@ -696,11 +722,14 @@ export class SessionChatController {
           metadata: [formatCwd(workingDirectory)],
         }),
       });
-      await this.syncFromSessionSnapshot();
+      if (!duringTurn) await this.syncFromSessionSnapshot();
     } finally {
-      this.isStreaming = false;
-      this.view.stopWorkingIcon();
-      this.stopTurnTimer();
+      this.activeShellCommands -= 1;
+      if (!this.isWorking) {
+        this.assistantInterruptRequested = false;
+        this.view.stopWorkingIcon();
+        this.stopTurnTimer();
+      }
       this.refreshStatus();
       this.view.requestRender();
     }
@@ -814,6 +843,7 @@ export class SessionChatController {
     ) {
       this.listenStartupAbortController?.abort(LISTEN_CAPTURE_START_CANCELLED);
       this.activeListenTranscription?.abort();
+      this.activeListenCleanup?.abort();
       this.endListenPreview();
       this.listenActivityLabel = undefined;
       if (this.listenRecording) {
@@ -831,10 +861,7 @@ export class SessionChatController {
       return;
     }
 
-    if (
-      (!this.isStreaming && !this.manualCompactionInProgress) ||
-      this.assistantInterruptRequested
-    ) {
+    if ((!this.isWorking && !this.manualCompactionInProgress) || this.assistantInterruptRequested) {
       return;
     }
 
@@ -883,6 +910,26 @@ export class SessionChatController {
     }
 
     await this.startListenCaptureFromCommand();
+  }
+
+  private cycleListenCleanupStyle(): void {
+    const recording = this.listenRecording;
+    if (!recording) return;
+    recording.cleanupStyle = nextSpeechCleanupStyle(recording.cleanupStyle);
+    this.prepareListenCleanup(recording.cleanupStyle);
+    this.refreshStatus();
+  }
+
+  private prepareListenCleanup(style: SpeechCleanupStyle): void {
+    this.preparedListenCleanup?.dispose();
+    this.preparedListenCleanup =
+      style === "off"
+        ? undefined
+        : prepareSpeechCleanup({
+            style,
+            apiKey: getOpenAIApiKey(this.config, this.deps.env.env()),
+            webSocketFactory: this.speechToTextDeps?.webSocketFactory,
+          });
   }
 
   private async startListenCaptureFromCommand(): Promise<void> {
@@ -948,8 +995,7 @@ export class SessionChatController {
       return;
     }
 
-    const apiKey = getSpeechToTextApiKey(this.config, this.deps);
-    if (!apiKey) {
+    if (!resolveSpeechToTextCredentials(this.config, this.deps)) {
       this.view.addTranscriptNotice("speech-to-text is not configured", "error", [
         getSpeechToTextApiKeyErrorMessage("use /listen"),
       ]);
@@ -1006,12 +1052,14 @@ export class SessionChatController {
         abortController,
         completion,
         transcription,
+        cleanupStyle: this.config.speech.cleanupStyle ?? "off",
       };
       recording.maxDurationTimeout = setTimeout(() => {
         if (this.listenRecording !== recording || this.listenTransition) return;
         void this.runListenTransition(() => this.stopListenCapture());
       }, getSpeechToTextRecordingMaxDurationMs());
       this.listenRecording = recording;
+      this.prepareListenCleanup(recording.cleanupStyle);
       this.refreshStatus();
       void this.watchListenRecording(recording);
     } catch (err) {
@@ -1093,8 +1141,7 @@ export class SessionChatController {
         SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS,
       );
       const transcribed = await this.transcribeListenAudioFile(
-        recording.audioPath,
-        durationMs,
+        { audioPath: recording.audioPath, durationMs, cleanupStyle: recording.cleanupStyle },
         recording.transcription,
       );
       if (mode && transcribed && !this.disposed) this.view.submitEditor(mode);
@@ -1120,7 +1167,7 @@ export class SessionChatController {
     }
 
     await this.runListenTransition(async () => {
-      await this.transcribeListenAudioFile(retainedAudio.audioPath, retainedAudio.durationMs);
+      await this.transcribeListenAudioFile(retainedAudio);
     });
   }
 
@@ -1156,6 +1203,8 @@ export class SessionChatController {
   }
 
   private endListenPreview(): void {
+    this.preparedListenCleanup?.dispose();
+    this.preparedListenCleanup = undefined;
     const preview = this.listenPreview;
     this.listenPreview = undefined;
     preview?.cancel();
@@ -1163,10 +1212,17 @@ export class SessionChatController {
   }
 
   private createSpeechTranscription(mode: "streaming" | "file"): ListenRecording["transcription"] {
+    const credentials = resolveSpeechToTextCredentials(this.config, this.deps);
+    if (!credentials) {
+      throw new Error(getSpeechToTextApiKeyErrorMessage("transcribe speech"));
+    }
     const preview = this.listenPreview;
     return createListenTranscription({
-      config: this.config,
-      deps: this.deps,
+      credentials,
+      vocabulary: composeSpeechVocabulary(
+        this.snapshot.catalog.speechVocabulary,
+        this.config.speech.personalVocabulary,
+      ),
       mode,
       context: collectSpeechToTextContext(this.snapshot),
       speechToTextDeps: this.speechToTextDeps,
@@ -1177,10 +1233,10 @@ export class SessionChatController {
   }
 
   private async transcribeListenAudioFile(
-    audioPath: string,
-    durationMs: number,
+    recording: RetainedListenAudio,
     transcription?: ListenRecording["transcription"],
   ): Promise<boolean> {
+    const { audioPath } = recording;
     if (this.disposed) {
       transcription?.abort();
       if (this.retainedListenAudio?.audioPath === audioPath) {
@@ -1192,9 +1248,9 @@ export class SessionChatController {
     if (!this.listenPreview) this.beginListenPreview();
     const preview = this.listenPreview!;
     try {
-      if (durationMs > SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS) {
+      if (recording.durationMs > SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS) {
         transcription?.abort();
-        this.retainedListenAudio = { audioPath, durationMs };
+        this.retainedListenAudio = recording;
         this.view.addTranscriptNotice("failed to transcribe speech", "error", [
           "audio is longer than 20 minutes",
           `recording retained at ${audioPath}`,
@@ -1239,12 +1295,13 @@ export class SessionChatController {
       }
 
       let activeTranscription = transcription;
+      let text: string;
       this.listenActivityLabel = "transcribing voice input";
       this.refreshStatus();
       try {
         activeTranscription ??= this.createSpeechTranscription("file");
         this.activeListenTranscription = activeTranscription;
-        const text = await activeTranscription.finish({
+        text = await activeTranscription.finish({
           audio,
           mimeType: "audio/wav",
         });
@@ -1259,14 +1316,9 @@ export class SessionChatController {
           ]);
         }
         if (this.listenPreview !== preview) return false;
-        preview.commit(text);
-        if (text.trim() && !this.editorHiddenSystemMessages.includes(TRANSCRIPTION_GUIDANCE)) {
-          this.editorHiddenSystemMessages.push(TRANSCRIPTION_GUIDANCE);
-        }
-        return Boolean(text.trim());
       } catch (error) {
         if (this.listenPreview !== preview) return false;
-        this.retainedListenAudio = { audioPath, durationMs };
+        this.retainedListenAudio = recording;
         this.view.addTranscriptNotice("failed to transcribe speech", "error", [
           (error as Error).message,
           `recording retained at ${audioPath}`,
@@ -1281,6 +1333,17 @@ export class SessionChatController {
         this.listenActivityLabel = undefined;
         this.refreshStatus();
       }
+
+      const cleanup = await this.cleanupListenTranscript(text, recording.cleanupStyle, preview);
+      if (!cleanup || this.listenPreview !== preview) return false;
+      preview.commit(cleanup.text);
+      if (
+        cleanup.text.trim() &&
+        !this.editorHiddenSystemMessages.includes(TRANSCRIPTION_GUIDANCE)
+      ) {
+        this.editorHiddenSystemMessages.push(TRANSCRIPTION_GUIDANCE);
+      }
+      return !cleanup.failed && Boolean(cleanup.text.trim());
     } finally {
       if (this.listenPreview !== preview) {
         if (this.retainedListenAudio?.audioPath === audioPath) {
@@ -1290,6 +1353,51 @@ export class SessionChatController {
       } else {
         this.endListenPreview();
       }
+    }
+  }
+
+  private async cleanupListenTranscript(
+    transcript: string,
+    style: SpeechCleanupStyle,
+    preview: ReturnType<ChatView["beginEditorTextPreview"]>,
+  ): Promise<{ text: string; failed: boolean } | undefined> {
+    if (style === "off" || !transcript.trim()) return { text: transcript, failed: false };
+    preview.update(transcript);
+    const abortController = new AbortController();
+    this.activeListenCleanup = abortController;
+    this.listenActivityLabel = "cleaning up voice input";
+    this.refreshStatus();
+    try {
+      const input = {
+        transcript,
+        context: collectSpeechToTextContext(this.snapshot),
+        vocabulary: composeSpeechVocabulary(
+          this.snapshot.catalog.speechVocabulary,
+          this.config.speech.personalVocabulary,
+        ),
+        signal: abortController.signal,
+      };
+      const text = this.preparedListenCleanup
+        ? await this.preparedListenCleanup.finish(input)
+        : await cleanupSpeechTranscript({
+            ...input,
+            style,
+            apiKey: getOpenAIApiKey(this.config, this.deps.env.env()),
+            fetchImpl: this.speechToTextDeps?.fetchImpl,
+          });
+      if (abortController.signal.aborted || this.listenPreview !== preview) return undefined;
+      return { text, failed: false };
+    } catch (error) {
+      if (abortController.signal.aborted || this.listenPreview !== preview) return undefined;
+      this.view.addTranscriptNotice("failed to clean up speech", "error", [
+        (error as Error).message,
+        "inserted the transcript without cleanup",
+      ]);
+      return { text: transcript, failed: true };
+    } finally {
+      if (this.activeListenCleanup === abortController) this.activeListenCleanup = undefined;
+      this.listenActivityLabel = undefined;
+      this.refreshStatus();
     }
   }
 
@@ -1438,8 +1546,10 @@ export class SessionChatController {
       this.autoSpeak = false;
       this.pendingAutoSpeak = undefined;
       this.lastAutoSpeakMessageId = undefined;
+      this.setProgramStatus("clear");
       this.session = nextSession;
       this.snapshot = nextSnapshot;
+      this.syncProgramStatus();
       this.subagentActivities = nextSession.subagentActivities();
       this.observedSessionRevision = nextSnapshot.revision;
       this.eventUnsubscribe = nextEventUnsubscribe;
@@ -1552,9 +1662,11 @@ export class SessionChatController {
       delta.cause.type === "compaction" ||
       delta.cause.type === "resync";
     if (invalidatesSpeech) this.pendingAutoSpeak = undefined;
+    const previousSnapshot = this.snapshot;
     const previousLifecycle = this.snapshot.lifecycle;
     const previousTurns = this.snapshot.turns;
     if (this.tryApplySdkDelta(delta)) {
+      this.syncProgramStatus(previousSnapshot);
       if (this.autoSpeak && !invalidatesSpeech) {
         if (previousLifecycle !== "running" && this.snapshot.lifecycle === "running") {
           this.pendingAutoSpeak = undefined;
@@ -2097,6 +2209,61 @@ export class SessionChatController {
     return undefined;
   }
 
+  private setProgramStatus(state: typeof this.programStatus): void {
+    if (state === this.programStatus) return;
+    this.programStatus = state;
+    if (state !== "working") this.programStatusTurnStart = undefined;
+    this.view.setProgramStatus(state);
+  }
+
+  private syncProgramStatus(previous?: SessionProtocolSnapshot): void {
+    if (this.disposed) return;
+    const turns = Object.values(this.snapshot.turns);
+    if (this.snapshot.lifecycle === "running" || turns.some((turn) => turn.state === "running")) {
+      if (this.programStatus !== "working") this.programStatusTurnStart = previous ?? this.snapshot;
+      this.setProgramStatus("working");
+      return;
+    }
+    if (!previous) {
+      this.programStatusTurnStart = undefined;
+      this.setProgramStatus("idle");
+      return;
+    }
+    if (this.programStatus !== "working") return;
+    const start = this.programStatusTurnStart ?? previous;
+    const settled = turns.findLast(
+      (turn) =>
+        turn.state === "settled" && start.turns[turn.userHistoryEntryId]?.state !== "settled",
+    );
+    if (settled?.state === "settled") {
+      this.setProgramStatus(
+        settled.outcome.status === "completed"
+          ? "done"
+          : settled.outcome.status === "aborted"
+            ? "idle"
+            : "error",
+      );
+      return;
+    }
+    const failed = this.snapshot.timeline.items.some(
+      (item) =>
+        item.type === "notice" &&
+        (item.notice.kind === "tau.turn.failed" || item.notice.kind === "tau.turn.blocked") &&
+        !start.timeline.items.some((old) => old.id === item.id),
+    );
+    const assistant = this.snapshot.messages.findLast(
+      (entry) =>
+        isAssistantMessage(entry.message) && !start.messages.some((old) => old.id === entry.id),
+    )?.message;
+    this.setProgramStatus(
+      failed || (assistant && isAssistantMessage(assistant) && assistant.stopReason === "error")
+        ? "error"
+        : assistant && isAssistantMessage(assistant) && assistant.stopReason !== "aborted"
+          ? "done"
+          : "idle",
+    );
+  }
+
   private updateStreamingStateFromSnapshot(snapshot: SessionProtocolSnapshot): void {
     if (snapshot.lifecycle === "running") {
       this.startObservedSessionTurn();
@@ -2129,6 +2296,7 @@ export class SessionChatController {
   ): Promise<boolean> {
     try {
       const snapshot = await this.session.snapshot();
+      const previousSnapshot = this.snapshot;
       for (const id of ephemeralTimelineItemIdsToDiscard ?? []) {
         this.ephemeralTimelineItems.delete(id);
       }
@@ -2137,6 +2305,7 @@ export class SessionChatController {
       } else {
         this.syncRenderedHistory(snapshot);
       }
+      this.syncProgramStatus(previousSnapshot);
       this.refreshStatus();
       return true;
     } catch (error) {
@@ -2157,7 +2326,7 @@ export class SessionChatController {
   }
 
   private sendPendingIdleNotification(): void {
-    if (!this.pendingIdleNotification || this.isStreaming || this.hasPendingUserMessages) {
+    if (!this.pendingIdleNotification || this.isWorking || this.hasPendingUserMessages) {
       return;
     }
 
@@ -2170,9 +2339,11 @@ export class SessionChatController {
       return false;
     }
     this.isStreaming = false;
-    this.assistantInterruptRequested = false;
-    this.view.stopWorkingIcon();
-    this.stopTurnTimer();
+    if (this.activeShellCommands === 0) {
+      this.assistantInterruptRequested = false;
+      this.view.stopWorkingIcon();
+      this.stopTurnTimer();
+    }
     this.refreshStatus();
     return true;
   }
@@ -2189,9 +2360,13 @@ export class SessionChatController {
     this.refreshStatus();
   }
 
+  private get isWorking(): boolean {
+    return this.isStreaming || this.activeShellCommands > 0;
+  }
+
   private isSessionOperationActive(): boolean {
     return (
-      this.isStreaming || this.submittedTurnInProgress || this.isBlockingSessionOperationActive()
+      this.isWorking || this.submittedTurnInProgress || this.isBlockingSessionOperationActive()
     );
   }
 
@@ -2229,7 +2404,9 @@ export class SessionChatController {
       const deltas = this.snapshotRecoveryDeltas.splice(0);
       for (let index = 0; index < deltas.length; index++) {
         const delta = deltas[index]!;
+        const previousSnapshot = this.snapshot;
         if (this.tryApplySdkDelta(delta)) {
+          this.syncProgramStatus(previousSnapshot);
           continue;
         }
         if (!(await this.syncFromSessionSnapshotAfterRevisionGap())) {
@@ -2618,7 +2795,7 @@ export class SessionChatController {
       deps: this.deps,
       openAIApiKey: args.openAIApiKey,
       elevenLabsApiKey: args.elevenLabsApiKey,
-      voiceId: this.config.speech?.voiceId,
+      voiceId: this.config.speech.voiceId,
       sourceText: args.sourceText,
       signal: args.signal,
       onActivityLabel: (hint) => {
@@ -2642,7 +2819,9 @@ export class SessionChatController {
             duration: this.getTurnDurationString(),
           },
       editor: {
-        mode: this.getInputMode(),
+        ...(this.listenRecording
+          ? { mode: "recording", recordingStyle: this.listenRecording.cleanupStyle }
+          : { mode: this.getInputMode() }),
         personaName: this.getCurrentPersonaSnapshot()?.label ?? this.snapshot.settings.personaId,
         reasoningLabel: this.snapshot.settings.reasoning ?? "none",
         reasoning:
@@ -2654,8 +2833,7 @@ export class SessionChatController {
     });
   }
 
-  private getInputMode(): ChatInputMode {
-    if (this.listenRecording) return "recording";
+  private getInputMode(): Exclude<ChatInputMode, "recording"> {
     if (this.isBashIncognito) return "bash_incognito";
     if (this.isBashMode) return "bash";
     return "normal";
@@ -2787,10 +2965,6 @@ export class SessionChatController {
       this.snapshot.executionEnvironment.home,
     );
     return this.isRemoteSessionTarget() ? `remote · ${cwd}` : cwd;
-  }
-
-  private formatSessionIdentityText(): string {
-    return `session id: ${this.snapshot.sessionId}`;
   }
 
   private isRemoteSessionTarget(): boolean {

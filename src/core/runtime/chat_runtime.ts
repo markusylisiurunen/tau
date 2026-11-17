@@ -1,7 +1,7 @@
 import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
 import type { SystemMessageMetadata } from "../../protocol/system_message.js";
 import {
-  AgentRuntime,
+  type AgentRuntime,
   type AgentState,
   type AgentStateRecovery,
   type AgentTurnResult,
@@ -13,7 +13,9 @@ import {
   type SteeringSubmission,
 } from "../agent/agent_runtime.js";
 import type { AgentEventSink } from "../agent/events.js";
-import type { Config } from "../config/index.js";
+import { NotificationInbox } from "../agent/notification_inbox.js";
+import type { SessionRuntimeSettings } from "../config/index.js";
+import type { OpenSubagentHistory } from "../history/recorder.js";
 import type { HistoryQuery } from "../history/types.js";
 import type { McpManager } from "../mcp/manager.js";
 import type { ModelResolver } from "../models/catalog.js";
@@ -50,6 +52,8 @@ export type CreateChatRuntimeOptions = {
   createdAt: number;
   persona: Persona;
   autoCompactDefaults?: AutoCompactDefaults;
+  /** Whether the main agent gets notifications and starts turns on its own for them. */
+  notifications: boolean;
   backend: ToolExecutionBackend;
   clientTools?: () => ReturnType<ToolRegistry["getEnabledTools"]>;
   modelResolver: ModelResolver;
@@ -58,10 +62,11 @@ export type CreateChatRuntimeOptions = {
   eventSink: AgentEventSink;
   subagentEventSink: (event: SubagentEvent) => void | Promise<void>;
   history: HistoryQuery;
+  openSubagentHistory: OpenSubagentHistory;
   mcp?: McpManager;
   recordUsage?: UsageRecorder;
   initialPromptComposition?: SessionPromptComposition;
-  config: Config;
+  config: SessionRuntimeSettings;
   deps?: CoreDeps;
 };
 
@@ -70,11 +75,14 @@ export class ChatRuntime {
   readonly jobs = new AgentJobRegistry();
   readonly backgroundJobs = this.jobs.create();
   readonly supervisor: AgentSupervisor;
+  /** Absent when the session has notifications turned off. */
+  readonly notifications: NotificationInbox | undefined;
+  private readonly userInterruptedSubagents = new Set<string>();
   private currentPersona: Persona;
   private readonly autoCompactDefaults: AutoCompactDefaults | undefined;
   private autoCompactOverride: number | null = null;
-  private currentConfig: Config;
-  private readonly hostApiKeys: Config["apiKeys"];
+  private currentConfig: SessionRuntimeSettings;
+  private readonly hostApiKeys: SessionRuntimeSettings["apiKeys"];
   private currentModelResolver: ModelResolver;
   private promptContext: ChatRuntimePromptContext;
   private readonly sessionIdValue: string;
@@ -107,6 +115,7 @@ export class ChatRuntime {
 
   private constructor(options: CreateChatRuntimeOptions, composition: SessionPromptComposition) {
     this.currentPersona = structuredClone(options.persona);
+    this.notifications = options.notifications ? new NotificationInbox() : undefined;
     this.autoCompactDefaults = structuredClone(options.autoCompactDefaults);
     this.currentConfig = options.config;
     this.hostApiKeys = structuredClone(options.config.apiKeys);
@@ -126,13 +135,24 @@ export class ChatRuntime {
     this.mcp = options.mcp;
     this.latestPromptComposition = composition;
     this.supervisor = new AgentSupervisor({
+      mainAgentId: options.sessionId,
       onEvent: options.subagentEventSink,
+      onCompletion: (state) => {
+        const byUser = this.userInterruptedSubagents.delete(state.id);
+        const status =
+          byUser && state.run.status === "interrupted"
+            ? "interrupted by the user"
+            : state.run.status;
+        this.notifications?.add(`subagent ${state.id} is idle (${status})`);
+      },
+      openHistory: options.openSubagentHistory,
       ...(options.recordUsage ? { recordUsage: options.recordUsage } : {}),
       deps: this.deps,
     });
     const tools = this.buildToolRegistry(composition);
-    this.agent = new AgentRuntime({
+    this.agent = this.supervisor.createMainRuntime({
       agentId: options.sessionId,
+      notifications: this.notifications,
       spec: createAgentSpec({
         ...this.resolvedModel,
         autoCompactThresholdTokens: this.resolvedAutoCompactThresholdTokens,
@@ -150,7 +170,7 @@ export class ChatRuntime {
       clock: this.deps.clock,
       archiveAutoCompaction: createAutoCompactionArchiver(this.backend),
       getCompactionContinuationSystemMessages: () => {
-        const context = this.supervisor.getActiveCompactionContext();
+        const context = this.supervisor.getActiveCompactionContext(this.supervisor.mainAgentId);
         return context ? [context] : [];
       },
     });
@@ -164,7 +184,7 @@ export class ChatRuntime {
     return this.latestPromptComposition;
   }
 
-  get config(): Config {
+  get config(): SessionRuntimeSettings {
     return structuredClone({ ...this.currentConfig, apiKeys: this.hostApiKeys });
   }
 
@@ -196,6 +216,10 @@ export class ChatRuntime {
     return await this.agent.commitSystemMessage(content, metadata);
   }
 
+  record(text: string, options?: { historyEntryId?: string }): Promise<string> {
+    return this.agent.record(text, options);
+  }
+
   async commitUserText(text: string, options?: { historyEntryId?: string }): Promise<string> {
     return await this.agent.commitUserText(text, options);
   }
@@ -207,9 +231,9 @@ export class ChatRuntime {
     await this.agent.commitInterruptedAssistant(message, historyEntryId);
   }
 
-  runTurn(): Promise<AgentTurnResult> {
+  runTurn(options: { notificationHistoryEntryId?: string } = {}): Promise<AgentTurnResult> {
     this.refreshSpec();
-    return this.agent.runTurn();
+    return this.agent.runTurn(options);
   }
 
   steer(text: string): SteeringSubmission {
@@ -237,16 +261,18 @@ export class ChatRuntime {
   }
 
   dispose(): void {
-    this.supervisor.reset();
-    this.agent.dispose();
+    this.supervisor.dispose();
   }
 
   hasSubagent(id: string): boolean {
     return this.supervisor.getSnapshot(id) !== undefined;
   }
 
+  /** Interrupts a subagent for the user, so its completion notification can say so. */
   async interruptSubagent(id: string): Promise<boolean> {
-    if (!this.hasSubagent(id)) return false;
+    const state = this.supervisor.getSnapshot(id);
+    if (!state) return false;
+    if (state.availability === "running") this.userInterruptedSubagents.add(id);
     await this.supervisor.interrupt(id);
     return true;
   }
@@ -280,7 +306,7 @@ export class ChatRuntime {
     return this.agent.snapshot();
   }
 
-  setRuntimeConfig(config: Config, modelResolver: ModelResolver): void {
+  setRuntimeConfig(config: SessionRuntimeSettings, modelResolver: ModelResolver): void {
     this.currentConfig = config;
     this.currentModelResolver = modelResolver;
     this.resolvedModel = resolveAgentModel(this.currentPersona, this.config, {
@@ -295,14 +321,8 @@ export class ChatRuntime {
   }
 
   private get resolvedAutoCompactThresholdTokens(): number | null {
-    const thresholds = this.autoCompactDefaults?.personaThresholdTokens;
-    const personaThreshold =
-      thresholds && Object.hasOwn(thresholds, this.currentPersona.id)
-        ? thresholds[this.currentPersona.id]
-        : undefined;
     return (
       this.autoCompactOverride ??
-      personaThreshold ??
       this.autoCompactDefaults?.thresholdTokens ??
       this.currentPersona.autoCompactThresholdTokens ??
       null
@@ -369,6 +389,7 @@ export class ChatRuntime {
       subagentSystemPrompt: composition.subagentSystemPrompt,
       modelResolver: this.currentModelResolver,
       supervisor: this.supervisor,
+      ...(this.notifications ? { notifications: this.notifications } : {}),
       jobs: this.jobs,
       ...this.backgroundJobs,
       history: this.historyQuery,

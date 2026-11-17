@@ -1,6 +1,9 @@
 {
   "name": "tau-diff-tool",
   "private": true,
+  "engines": {
+    "node": ">=26.0.0"
+  },
   "type": "module",
   "scripts": {
     "build": "vite build --logLevel silent",
@@ -9,21 +12,21 @@
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",
-    "@pierre/diffs": "1.6.2",
-    "lucide-react": "^1.66.0",
+    "@pierre/diffs": "1.6.4",
+    "lucide-react": "^1.73.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
-    "shiki": "^4.5.0"
+    "shiki": "^4.6.0"
   },
   "devDependencies": {
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
-    "@vitejs/plugin-react": "^6.1.2",
+    "@vitejs/plugin-react": "^6.3.0",
     "agentation": "^3.1.2",
     "typescript": "^7.0.2",
-    "vite": "^8.3.5"
+    "vite": "^8.3.8"
   },
   "allowScripts": {
     "fsevents@2.3.3": true

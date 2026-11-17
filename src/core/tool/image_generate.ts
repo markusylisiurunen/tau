@@ -36,6 +36,7 @@ const openaiSettings = z
       })
       .optional(),
     quality: z.enum(["auto", "low", "medium", "high", "xhigh", "max"]).optional(),
+    complexity: z.enum(["low", "medium", "high"]).optional(),
     background: z.enum(["auto", "opaque", "transparent"]).optional(),
     format: z.enum(["png", "jpeg", "webp"]).default("png"),
     compression: z
@@ -60,8 +61,8 @@ type ImageModel =
 
 const imageModels: Record<string, ImageModel> = {
   "gemini-nano-banana-2.1": { provider: "google", settings: googleSettings },
-  "gpt-image-2.5-flare": { provider: "openai", settings: openaiSettings },
-  "gpt-image-2.5-sunburst": { provider: "openai", settings: openaiSettings },
+  "gpt-image-2.6-flare": { provider: "openai", settings: openaiSettings },
+  "gpt-image-2.6-sunburst": { provider: "openai", settings: openaiSettings },
 };
 
 type ImageReference = { data: Buffer; mime: string; name: string };
@@ -88,6 +89,7 @@ export function printImageGenerateHelp(log: (line: string) => void = console.log
       "  --resolution <tier>      1K, 2K, or 4K (Gemini).",
       "  --size <WIDTHxHEIGHT>    exact dimensions, or auto (OpenAI).",
       "  --quality <level>        auto, low, medium, high, xhigh, max (OpenAI).",
+      "  --complexity <level>     low, medium, high; provider default high (OpenAI).",
       "  --background <mode>      auto, opaque, transparent (OpenAI).",
       "  --thinking <level>       minimal, medium, high (Gemini).",
       "  --format <encoding>      png (default), jpeg, webp (OpenAI); png (Gemini).",
@@ -132,6 +134,7 @@ function parseImageArgs(argv: string[]) {
     resolution: { type: "string" },
     size: { type: "string" },
     quality: { type: "string" },
+    complexity: { type: "string" },
     background: { type: "string" },
     thinking: { type: "string" },
     format: { type: "string" },
@@ -261,6 +264,7 @@ function buildImageRequest(
     output_format: settings.format,
     size: settings.size,
     quality: settings.quality,
+    complexity: settings.complexity,
     background: settings.background,
     output_compression: settings.compression,
   };

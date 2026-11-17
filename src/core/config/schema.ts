@@ -9,10 +9,12 @@ import {
 import { parseModelId } from "../models/model_id.js";
 import { formatPersonaReference, parsePersonaReference } from "../persona_reference.js";
 import { parseSubagentLaunchModelList } from "../subagents/launch_model.js";
-import { REASONING_LEVELS } from "../types.js";
+import { REASONING_LEVELS, type ReasoningEffort } from "../types.js";
 import { normalizeModelNoticeKey } from "../utils/model_notices.js";
+import { type SpeechCleanupStyle, speechCleanupStyleSchema } from "../utils/speech_cleanup.js";
 import {
   normalizeSpeechToTextKeywords,
+  SPEECH_TO_TEXT_MAX_VOCABULARY_CHARACTERS,
   speechToTextKeywordSchema,
 } from "../utils/speech_to_text_keywords.js";
 import type { CommandClientToolConfig } from "./client_tools.js";
@@ -37,7 +39,12 @@ export const autoCompactThresholdTokensSchema = z
 export interface Config {
   apiKeys?: Record<string, string>;
   markdownExport?: MarkdownExportConfig;
-  speech?: { voiceId?: string; recordingShortcut?: RecordingShortcut; vocabulary?: string[] };
+  speech?: {
+    voiceId?: string;
+    recordingShortcut?: RecordingShortcut;
+    vocabulary?: string[];
+    cleanupStyle?: SpeechCleanupStyle;
+  };
   defaultPersona?: string;
   defaultTheme?: string;
   clientTools?: CommandClientToolConfig[];
@@ -50,6 +57,8 @@ export interface Config {
   history?: HistoryConfig;
   mcpServers?: McpServersConfig;
 }
+
+export type ApiKeysConfig = Pick<Config, "apiKeys">;
 
 export type RecordingShortcut = {
   key: string;
@@ -69,11 +78,24 @@ export type HistoryConfig = {
   apiKeyEnv?: string;
 };
 
+export type TelegramPreset =
+  | { source: "workspace"; label: string }
+  | {
+      source: "persona";
+      label: string;
+      persona: string;
+      reasoning?: ReasoningEffort;
+      autoCompactThresholdTokens?: number;
+    };
+
 export type TelegramBotConfig = {
+  speechCleanupStyle?: SpeechCleanupStyle;
   botToken?: string;
+  env?: Record<string, string>;
   allowedProjectIds?: string[];
   autoCompactThresholdTokens?: number;
-  personaMenu?: { id: string; label?: string; autoCompactThresholdTokens?: number }[];
+  startup: { source: "workspace" } | { source: "preset"; preset: string };
+  presets?: Record<string, TelegramPreset>;
   allowedUserIds?: number[];
   allowedChatIds?: number[];
   defaultProjectId?: string;
@@ -90,17 +112,14 @@ export type TelegramRepositoryProjectConfig = TelegramProjectBaseConfig & {
   repo: string;
   ref?: string;
   workingDirectory?: string;
-  persona?: string;
 };
 
 export type TelegramDirectoryProjectConfig = TelegramProjectBaseConfig & {
   directory: string;
-  persona?: string;
 };
 
 export type TelegramCompositeProjectConfig = TelegramProjectBaseConfig & {
   projectIds: string[];
-  persona: string;
   instructions?: string;
   subagents?: {
     launchModels?: string[];
@@ -335,6 +354,7 @@ function validateConfigData(
       z
         .object({
           voiceId: NonEmptyStringSchema.optional(),
+          cleanupStyle: speechCleanupStyleSchema.optional(),
           vocabulary: z.array(speechToTextKeywordSchema).optional(),
           recordingShortcut: z
             .object({
@@ -349,7 +369,7 @@ function validateConfigData(
             .optional(),
         })
         .strip(),
-      "'speech' must contain a non-empty voiceId, a vocabulary array of non-empty terms of at most 100 characters without angle brackets or line breaks, or a recordingShortcut with a printable key, ctrl+y, or f1–f12 and a press or double-tap gesture.",
+      "'speech' must contain cleanupStyle off or default, a non-empty voiceId, a vocabulary array of non-empty terms of at most 50 characters and 5 words, without line breaks or the characters < > { } [ ] \\, or a recordingShortcut with a printable key, ctrl+y, or f1–f12 and a press or double-tap gesture.",
     ],
   ]);
   Object.assign(config as Record<string, unknown>, scalarResult.values);
@@ -696,7 +716,7 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[], home: strin
         config.speech.vocabulary !== undefined || merged.speech?.vocabulary !== undefined
           ? normalizeSpeechToTextKeywords(
               [...(config.speech.vocabulary ?? []), ...(merged.speech?.vocabulary ?? [])],
-              { maxTotalCharacters: 10_000 },
+              { maxTotalCharacters: SPEECH_TO_TEXT_MAX_VOCABULARY_CHARACTERS },
             )
           : undefined;
       merged.speech = mergeOptionalObject(merged.speech, config.speech);
@@ -766,7 +786,7 @@ export function loadConfigWithDiagnostics(
     levels: ConfigLevel[];
     modelResolver: LoadedModelResolver;
   },
-): { config: Config; errors: string[] } {
+): { config: Config; personalSpeechVocabulary: string[]; errors: string[] } {
   const modelResolverResult = options.modelResolver;
 
   const results = options.levels.map((level) =>
@@ -782,6 +802,12 @@ export function loadConfigWithDiagnostics(
       results.map((result) => result.config),
       deps.env.home(),
     ),
+    personalSpeechVocabulary: normalizeSpeechToTextKeywords(
+      options.levels.flatMap((level, index) =>
+        level.scope === "global" ? (results[index]?.config.speech?.vocabulary ?? []) : [],
+      ),
+      { maxTotalCharacters: SPEECH_TO_TEXT_MAX_VOCABULARY_CHARACTERS },
+    ),
     errors: results.flatMap((result) => result.errors),
   };
 }
@@ -792,7 +818,7 @@ export function loadConfig(cwd: string, deps: ConfigDeps): Config {
   return loadConfigWithDiagnostics(deps, { levels, modelResolver }).config;
 }
 
-export function getApiKeyForProvider(config: Config, provider: string): string | undefined {
+export function getApiKeyForProvider(config: ApiKeysConfig, provider: string): string | undefined {
   const apiKeys = config.apiKeys;
   if (!apiKeys) {
     return undefined;
@@ -818,7 +844,7 @@ function getTrimmedEnvValue(key: string, env?: NodeJS.ProcessEnv): string | unde
   return trimmed || undefined;
 }
 
-export function getExaApiKey(config: Config, env?: NodeJS.ProcessEnv): string | undefined {
+export function getExaApiKey(config: ApiKeysConfig, env?: NodeJS.ProcessEnv): string | undefined {
   const envKey = getTrimmedEnvValue("EXA_API_KEY", env);
   if (envKey) {
     return envKey;
@@ -828,7 +854,10 @@ export function getExaApiKey(config: Config, env?: NodeJS.ProcessEnv): string | 
   return configKey || undefined;
 }
 
-export function getGoogleApiKey(config: Config, env?: NodeJS.ProcessEnv): string | undefined {
+export function getGoogleApiKey(
+  config: ApiKeysConfig,
+  env?: NodeJS.ProcessEnv,
+): string | undefined {
   const envKey = getTrimmedEnvValue("GEMINI_API_KEY", env);
   if (envKey) {
     return envKey;
@@ -838,7 +867,10 @@ export function getGoogleApiKey(config: Config, env?: NodeJS.ProcessEnv): string
   return configKey || undefined;
 }
 
-export function getOpenAIApiKey(config: Config, env?: NodeJS.ProcessEnv): string | undefined {
+export function getOpenAIApiKey(
+  config: ApiKeysConfig,
+  env?: NodeJS.ProcessEnv,
+): string | undefined {
   const envKey = getTrimmedEnvValue("OPENAI_API_KEY", env);
   if (envKey) {
     return envKey;
@@ -848,7 +880,10 @@ export function getOpenAIApiKey(config: Config, env?: NodeJS.ProcessEnv): string
   return configKey || undefined;
 }
 
-export function getElevenLabsApiKey(config: Config, env?: NodeJS.ProcessEnv): string | undefined {
+export function getElevenLabsApiKey(
+  config: ApiKeysConfig,
+  env?: NodeJS.ProcessEnv,
+): string | undefined {
   const envKey = getTrimmedEnvValue("ELEVENLABS_API_KEY", env);
   if (envKey) {
     return envKey;
@@ -858,7 +893,10 @@ export function getElevenLabsApiKey(config: Config, env?: NodeJS.ProcessEnv): st
   return configKey || undefined;
 }
 
-export function getMistralApiKey(config: Config, env?: NodeJS.ProcessEnv): string | undefined {
+export function getMistralApiKey(
+  config: ApiKeysConfig,
+  env?: NodeJS.ProcessEnv,
+): string | undefined {
   const envKey = getTrimmedEnvValue("MISTRAL_API_KEY", env);
   if (envKey) {
     return envKey;

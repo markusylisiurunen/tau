@@ -3,7 +3,7 @@ import { access, mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/pr
 import { tmpdir } from "node:os";
 import { basename, join, relative, resolve } from "node:path";
 import sharp from "sharp";
-import type { Config } from "../config/schema.js";
+import type { ApiKeysConfig } from "../config/schema.js";
 import { getMistralApiKey } from "../config/schema.js";
 import {
   type MistralDocumentOcrPage,
@@ -25,7 +25,7 @@ export type PdfPatchRegion = {
 };
 
 export type RunPdfUnpackCommandOptions = {
-  config: Config;
+  config: ApiKeysConfig;
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   stdout?: (line: string) => void;

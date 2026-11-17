@@ -8,6 +8,15 @@ import {
 
 export class MemorySessionStore implements SessionStore {
   private readonly snapshots = new Map<string, SessionProtocolSnapshot>();
+  private readonly leases = new Set<string>();
+
+  async acquireSession(sessionId: string): Promise<() => Promise<void>> {
+    if (this.leases.has(sessionId)) throw new Error(`session is already in use: ${sessionId}`);
+    this.leases.add(sessionId);
+    return async () => {
+      this.leases.delete(sessionId);
+    };
+  }
 
   async commitSessionSnapshot(
     snapshot: SessionProtocolSnapshot,

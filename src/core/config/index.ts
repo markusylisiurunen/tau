@@ -2,14 +2,31 @@ export type { CommandClientToolConfig } from "./client_tools.js";
 export { loadAllContent } from "./content_loader.js";
 export type { ConfigDeps } from "./deps.js";
 export { createDefaultConfigDeps } from "./deps.js";
+export type {
+  ClientConfig,
+  ClientSpeechConfig,
+  HostConfig,
+  SessionConfig,
+  SessionRuntimeSettings,
+} from "./ownership.js";
+export {
+  loadClientConfig,
+  loadHostConfig,
+  loadSessionConfig,
+} from "./ownership.js";
 export { resolveConfigLevels } from "./paths.js";
-export type { RuntimeBootstrap, RuntimeConfigResult } from "./runtime.js";
+export type {
+  RuntimeBootstrap,
+  RuntimeConfigResult,
+  SessionRuntimeConfigResult,
+} from "./runtime.js";
 export {
   loadRuntimeBootstrap,
   loadRuntimeConfig,
   resolvePromptTemplateWithBackend,
 } from "./runtime.js";
 export type {
+  ApiKeysConfig,
   Config,
   FlySpritesConfig,
   HistoryConfig,
@@ -25,7 +42,6 @@ export {
   getHistoryApiKey,
   getMistralApiKey,
   getOpenAIApiKey,
-  loadConfig,
 } from "./schema.js";
 export type { ThemeAppearance, ThemeDefinition, ThemeVariantTokens } from "./theme_variants.js";
 export { resolveThemeTokensById, resolveThemeTokensForAppearance } from "./theme_variants.js";

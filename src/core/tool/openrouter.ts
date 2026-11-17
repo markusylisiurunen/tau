@@ -45,8 +45,10 @@ async function printHelp(
       ...(operation === "decisions"
         ? [
             "  --input <path|->        required UTF-8 JSON containing state and questions; - reads stdin.",
-            "  --image <path>          repeatable PNG/JPEG attachment; Luna also accepts WebP.",
+            "  --image <path>          repeatable PNG/JPEG/WebP attachment; Jev rejects WebP.",
             "                          Jev: 256–1568 pixels per edge, at least 78,400 total pixels.",
+            "  --audio <path>          repeatable WAV/MP3 attachment (Gemini only).",
+            "  --video <path>          repeatable MP4 attachment (Gemini only).",
           ]
         : operation === "chat"
           ? [
@@ -84,6 +86,8 @@ function parseOptions(argv: string[], operation: Operation) {
           ...shared,
           input: { type: "string" } as const,
           image: { type: "string", multiple: true } as const,
+          audio: { type: "string", multiple: true } as const,
+          video: { type: "string", multiple: true } as const,
         }
       : ({
           ...shared,

@@ -9,9 +9,15 @@ import type {
 } from "@earendil-works/pi-ai";
 import { type ZodError, z } from "zod";
 import { MODEL_IMAGE_MAX_BYTES, SUPPORTED_IMAGE_TYPES } from "../core/utils/model_image.js";
+import {
+  SPEECH_TO_TEXT_MAX_KEYWORDS,
+  SPEECH_TO_TEXT_MAX_VOCABULARY_CHARACTERS,
+  speechToTextKeywordSchema,
+} from "../core/utils/speech_to_text_keywords.js";
+import { environmentVariablesSchema } from "./environment_variables.js";
 import { type IntermediateSystemMessage, isIntermediateSystemMessage } from "./system_message.js";
 
-export const SESSION_PROTOCOL_VERSION = 18 as const;
+export const SESSION_PROTOCOL_VERSION = 21 as const;
 export const MIN_AUTO_COMPACT_THRESHOLD_TOKENS = 50_000;
 export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_IMAGES = 16;
 export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_CONTENT_BLOCKS = 1024;
@@ -39,10 +45,14 @@ const SESSION_PROTOCOL_NOTICE_CONTENT_MAX_ENTRIES = 16;
 const SESSION_PROTOCOL_NOTICE_CONTENT_ENTRY_MAX_CHARS = 4_096;
 const UTF8_ENCODER = new TextEncoder();
 
+export const SESSION_PROTOCOL_MAX_RETENTION_MS = 2_147_483_647;
+
 export const SESSION_PROTOCOL_METHODS = [
   "initialize",
   "session.create",
   "session.list",
+  "session.setRetention",
+  "session.collect",
   "session.observe",
   "session.unobserve",
   "session.record",
@@ -149,7 +159,17 @@ export type SessionProtocolCreateParams = {
   personaId?: string;
   autoCompactThresholdTokens?: number | null;
   reasoning?: SessionProtocolReasoningEffort;
+  /**
+   * Whether the main agent gets notifications, such as finished subagents, and starts a turn on
+   * its own for them. Defaults to true.
+   */
+  notifications?: boolean;
 };
+export type SessionProtocolSetRetentionParams = {
+  sessionId: string;
+  durationMs: number | null;
+};
+
 export type SessionProtocolListParams = Record<string, never>;
 export type SessionProtocolSessionIdParams = {
   sessionId: string;
@@ -203,9 +223,14 @@ export type SessionProtocolSetAutoCompactThresholdParams = SessionProtocolSessio
 export type SessionProtocolSetReasoningParams = SessionProtocolSessionIdParams & {
   reasoning: SessionProtocolReasoningEffort;
 };
-export type SessionProtocolSetPersonaParams = SessionProtocolSessionIdParams & {
-  personaId: string;
+export type SessionProtocolPersonaOverrides = {
+  reasoning?: SessionProtocolReasoningEffort;
+  autoCompactThresholdTokens?: number;
 };
+export type SessionProtocolSetPersonaParams = SessionProtocolSessionIdParams &
+  SessionProtocolPersonaOverrides & {
+    personaId: string | null;
+  };
 export type SessionProtocolSettingsUpdateResult = {
   revision: number;
   settings: SessionProtocolSettingsSnapshot;
@@ -278,6 +303,8 @@ export type SessionProtocolParamsByMethod = {
   initialize: SessionProtocolInitializeParams;
   "session.create": SessionProtocolCreateParams;
   "session.list": SessionProtocolListParams;
+  "session.setRetention": SessionProtocolSetRetentionParams;
+  "session.collect": SessionProtocolSessionIdParams;
   "session.observe": SessionProtocolSessionIdParams;
   "session.unobserve": SessionProtocolUnobserveParams;
   "session.record": SessionProtocolRecordParams;
@@ -346,6 +373,7 @@ export type SessionProtocolTurnResult = {
 };
 
 export type SessionProtocolUserMessageTurnResult = SessionProtocolTurnResult & {
+  response: string;
   userHistoryEntryId: string;
 };
 export type SessionProtocolSubmitResult = SessionProtocolUserMessageTurnResult;
@@ -878,7 +906,10 @@ export type SessionProtocolContentCatalogSnapshot = {
   personas: SessionProtocolPersonaSnapshot[];
   prompts: SessionProtocolPromptTemplateSnapshot[];
   skills: SessionProtocolSkillSnapshot[];
-  mcpServers: string[];
+  mcp:
+    | { status: "available"; servers: string[] }
+    | { status: "unavailable"; reason: "remote-execution" };
+  speechVocabulary: string[];
 };
 
 export type SessionProtocolSettingsSnapshot = {
@@ -887,6 +918,7 @@ export type SessionProtocolSettingsSnapshot = {
   personaId: string;
   reasoning?: SessionProtocolReasoningEffort;
   serviceTier?: SessionProtocolServiceTier;
+  notifications: boolean;
 };
 
 export type SessionProtocolLocalExecutionEnvironmentSnapshot = {
@@ -1012,6 +1044,8 @@ export type SessionProtocolAgentRunState =
 
 export type SessionProtocolAgentRun = {
   id: string;
+  parentId: string;
+  depth: number;
   title: string;
   availability: "running" | "idle";
   model: {
@@ -1111,6 +1145,8 @@ export type SessionProtocolResultByMethod = {
   initialize: SessionProtocolInitializeResult;
   "session.create": SessionProtocolCreateResult;
   "session.list": SessionProtocolListResult;
+  "session.setRetention": { retainedUntil: number | null };
+  "session.collect": { disposed: boolean };
   "session.observe": SessionProtocolObserveResult;
   "session.unobserve": SessionProtocolUnobserveResult;
   "session.record": SessionProtocolRecordResult;
@@ -1445,11 +1481,6 @@ const noticeTitleSchema = nonEmptyStringSchema
 const sessionProtocolRequestIdSchema = nonEmptyStringSchema;
 const nullableSessionProtocolRequestIdSchema = sessionProtocolRequestIdSchema.nullable();
 const absolutePathSchema = nonEmptyStringSchema.refine((value) => value.startsWith("/"));
-const environmentVariableNameSchema = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
-const environmentVariableValueSchema = z.string().refine((value) => !value.includes("\0"));
-const environmentVariablesSchema = z
-  .record(environmentVariableNameSchema, environmentVariableValueSchema)
-  .refine((value) => !("HOME" in value), "HOME is controlled by the execution environment");
 const sessionAttributesSchema = z
   .record(z.string().min(1).max(64), z.string().max(SESSION_PROTOCOL_MAX_ATTRIBUTE_VALUE_CHARS))
   .refine(
@@ -1831,9 +1862,19 @@ const sessionProtocolSetReasoningParamsSchema = z
 const sessionProtocolSetPersonaParamsSchema = z
   .object({
     sessionId: nonEmptyStringSchema,
-    personaId: nonEmptyStringSchema,
+    personaId: nonEmptyStringSchema.nullable(),
+    reasoning: sessionProtocolReasoningEffortSchema.optional(),
+    autoCompactThresholdTokens: z.number().int().min(MIN_AUTO_COMPACT_THRESHOLD_TOKENS).optional(),
   })
-  .strip();
+  .strict()
+  .refine(
+    (value) =>
+      value.personaId !== null ||
+      (value.reasoning === undefined && value.autoCompactThresholdTokens === undefined),
+    {
+      message: "workspace selection does not accept overrides",
+    },
+  );
 
 const sessionProtocolResolvePromptParamsSchema = z
   .object({
@@ -2025,7 +2066,7 @@ const sessionProtocolClientToolResultParamsSchema = z.discriminatedUnion("ok", [
 const sessionProtocolLocalExecutionEnvironmentInputSchema = z
   .object({
     kind: z.literal("local"),
-    cwd: absolutePathSchema,
+    cwd: absolutePathSchema.max(SESSION_PROTOCOL_MAX_ATTRIBUTE_VALUE_CHARS),
     env: environmentVariablesSchema.optional(),
   })
   .strip();
@@ -2034,7 +2075,7 @@ const sessionProtocolFlySpriteExecutionEnvironmentInputSchema = z
   .object({
     kind: z.literal("fly-sprite"),
     spriteName: nonEmptyStringSchema,
-    cwd: absolutePathSchema,
+    cwd: absolutePathSchema.max(SESSION_PROTOCOL_MAX_ATTRIBUTE_VALUE_CHARS),
   })
   .strip();
 
@@ -2046,10 +2087,15 @@ const sessionProtocolExecutionEnvironmentInputSchema = z.discriminatedUnion("kin
 const sessionProtocolCreateParamsSchema = z
   .object({
     executionEnvironment: sessionProtocolExecutionEnvironmentInputSchema,
-    attributes: sessionAttributesSchema,
+    attributes: sessionAttributesSchema.refine(
+      (attributes) =>
+        sessionAttributesSchema.safeParse({ ...attributes, machine: "", cwd: "" }).success,
+      "attributes must leave room for machine and cwd",
+    ),
     personaId: nonEmptyStringSchema.optional(),
     autoCompactThresholdTokens: autoCompactThresholdTokensSchema.optional(),
     reasoning: sessionProtocolReasoningEffortSchema.optional(),
+    notifications: z.boolean().optional(),
   })
   .strip();
 
@@ -2146,7 +2192,20 @@ const sessionProtocolContentCatalogSnapshotSchema = z
     personas: z.array(sessionProtocolPersonaSnapshotSchema),
     prompts: z.array(sessionProtocolPromptTemplateSnapshotSchema),
     skills: z.array(sessionProtocolSkillSnapshotSchema),
-    mcpServers: z.array(nonEmptyStringSchema),
+    mcp: z.discriminatedUnion("status", [
+      z.object({ status: z.literal("available"), servers: z.array(nonEmptyStringSchema) }).strict(),
+      z
+        .object({ status: z.literal("unavailable"), reason: z.literal("remote-execution") })
+        .strict(),
+    ]),
+    speechVocabulary: z
+      .array(speechToTextKeywordSchema)
+      .max(SPEECH_TO_TEXT_MAX_KEYWORDS)
+      .refine(
+        (terms) =>
+          terms.reduce((total, term) => total + [...term].length, 0) <=
+          SPEECH_TO_TEXT_MAX_VOCABULARY_CHARACTERS,
+      ),
   })
   .strip();
 
@@ -2157,6 +2216,7 @@ const sessionProtocolSettingsSnapshotSchema = z
     personaId: nonEmptyStringSchema,
     reasoning: sessionProtocolReasoningEffortSchema.optional(),
     serviceTier: sessionProtocolServiceTierSchema.optional(),
+    notifications: z.boolean(),
   })
   .strip();
 
@@ -2494,6 +2554,8 @@ const sessionProtocolAgentRunStateSchema = z.discriminatedUnion("status", [
 const sessionProtocolAgentRunSchema = z
   .object({
     id: nonEmptyStringSchema,
+    parentId: nonEmptyStringSchema,
+    depth: z.number().int().min(1).max(2),
     title: nonEmptyStringSchema,
     availability: z.enum(["running", "idle"]),
     model: z
@@ -3355,6 +3417,19 @@ const sessionProtocolObserveResultSchema = z
   })
   .strip();
 
+const sessionProtocolSetRetentionResultSchema = z
+  .object({ retainedUntil: z.number().int().nonnegative().nullable() })
+  .strip();
+
+const sessionProtocolCollectResultSchema = z.object({ disposed: z.boolean() }).strip();
+
+const sessionProtocolSetRetentionParamsSchema = z
+  .object({
+    sessionId: nonEmptyStringSchema,
+    durationMs: z.number().int().min(1).max(SESSION_PROTOCOL_MAX_RETENTION_MS).nullable(),
+  })
+  .strip();
+
 const sessionProtocolListResultSchema = z
   .object({
     sessions: z.array(sessionProtocolSessionSummarySchema),
@@ -3373,6 +3448,7 @@ const sessionProtocolRetryResultSchema = sessionProtocolTurnResultSchema;
 
 const sessionProtocolSubmitWithUserResultSchema = sessionProtocolTurnResultSchema
   .extend({
+    response: z.string(),
     userHistoryEntryId: nonEmptyStringSchema,
   })
   .strip();
@@ -4500,6 +4576,14 @@ export function validateSessionProtocolParams(
   params: unknown,
 ): SessionProtocolParamsValidationResult<SessionProtocolCreateParams>;
 export function validateSessionProtocolParams(
+  method: "session.setRetention",
+  params: unknown,
+): SessionProtocolParamsValidationResult<SessionProtocolSetRetentionParams>;
+export function validateSessionProtocolParams(
+  method: "session.collect",
+  params: unknown,
+): SessionProtocolParamsValidationResult<SessionProtocolSessionIdParams>;
+export function validateSessionProtocolParams(
   method: "session.list",
   params: unknown,
 ): SessionProtocolParamsValidationResult<SessionProtocolListParams>;
@@ -4624,6 +4708,14 @@ export function validateSessionProtocolParams(
       return validateInitializeParams(params);
     case "session.create":
       return validateCreateParams(params);
+    case "session.collect":
+      return validateSessionIdParams(method, params);
+    case "session.setRetention": {
+      const parsed = sessionProtocolSetRetentionParamsSchema.safeParse(params);
+      return parsed.success
+        ? { ok: true, value: parsed.data }
+        : invalidParams(formatZodError(parsed.error));
+    }
     case "session.observe":
       return validateSessionIdParams("session.observe", params);
     case "session.unobserve":
@@ -4691,6 +4783,10 @@ export function validateSessionProtocolResult(
       return validateResult(method, result, sessionProtocolInitializeResultSchema);
     case "session.create":
       return validateResult(method, result, sessionProtocolCreateResultSchema);
+    case "session.setRetention":
+      return validateResult(method, result, sessionProtocolSetRetentionResultSchema);
+    case "session.collect":
+      return validateResult(method, result, sessionProtocolCollectResultSchema);
     case "session.observe":
       return validateResult(method, result, sessionProtocolObserveResultSchema);
     case "session.snapshot":
@@ -4748,6 +4844,7 @@ export function validateSessionProtocolResult(
 
 function validateSessionIdParams<
   T extends
+    | "session.collect"
     | "session.observe"
     | "session.unobserve"
     | "session.cancelPendingMessages"
@@ -4952,6 +5049,10 @@ function validateSampleParams(
   return { ok: true, value: parsed.data };
 }
 
+export function parseSessionAttributes(value: unknown): Record<string, string> {
+  return sessionAttributesSchema.parse(value);
+}
+
 export function parseAutoCompactThresholdTokens(value: unknown): number | null {
   const parsed = autoCompactThresholdTokensSchema.safeParse(value);
   if (!parsed.success) {
@@ -5006,7 +5107,7 @@ function validateSetPersonaParams(
       : hasIssue(parsed.error, ["sessionId"])
         ? "session.setPersona params.sessionId must be a non-empty string"
         : hasIssue(parsed.error, ["personaId"])
-          ? "session.setPersona params.personaId must be a non-empty string"
+          ? "session.setPersona params.personaId must be a non-empty string or null"
           : `session.setPersona params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
@@ -5016,6 +5117,10 @@ function validateSetPersonaParams(
     value: {
       sessionId: parsed.data.sessionId,
       personaId: parsed.data.personaId,
+      ...(parsed.data.reasoning !== undefined ? { reasoning: parsed.data.reasoning } : {}),
+      ...(parsed.data.autoCompactThresholdTokens !== undefined
+        ? { autoCompactThresholdTokens: parsed.data.autoCompactThresholdTokens }
+        : {}),
     },
   };
 }
@@ -5274,11 +5379,11 @@ function validateCreateParams(
         : hasIssue(parsed.error, ["executionEnvironment", "kind"])
           ? "session.create params.executionEnvironment.kind must be 'local' or 'fly-sprite'"
           : hasIssue(parsed.error, ["executionEnvironment", "cwd"])
-            ? "session.create params.executionEnvironment.cwd must be an absolute path"
+            ? `session.create params.executionEnvironment.cwd must be an absolute path of at most ${SESSION_PROTOCOL_MAX_ATTRIBUTE_VALUE_CHARS} characters`
             : hasIssue(parsed.error, ["executionEnvironment", "env"])
               ? "session.create params.executionEnvironment.env must use valid environment variable names and string values without null bytes and cannot override HOME"
               : hasIssue(parsed.error, ["attributes"])
-                ? "session.create params.attributes must contain at most 32 bounded string pairs"
+                ? "session.create params.attributes must contain bounded string pairs with room for machine and cwd"
                 : hasIssue(parsed.error, ["personaId"])
                   ? "session.create params.personaId must be a non-empty string"
                   : hasIssue(parsed.error, ["reasoning"])

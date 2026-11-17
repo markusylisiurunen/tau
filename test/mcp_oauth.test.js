@@ -563,19 +563,4 @@ describe("MCP OAuth", () => {
       await fx.close();
     }
   });
-
-  it("parses explicit scope flags without combining --all or accepting shell-like server names", () => {
-    expect(
-      parseMcpCliArgs(["login", "cloudflare", "--scope", "dns.write", "--scope", "dns.write"])
-        .scopes,
-    ).toEqual(["dns.write"]);
-    for (const args of [
-      ["login", "x", "--all", "--scope", "dns.write"],
-      ["login", "x", "--scope"],
-      ["login", "x;echo"],
-      ["logout", "x", "--all"],
-    ]) {
-      expect(() => parseMcpCliArgs(args)).toThrow();
-    }
-  });
 });

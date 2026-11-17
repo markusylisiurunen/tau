@@ -7,7 +7,7 @@ import {
   createAgentSpec,
 } from "../core/agent/agent_runtime.js";
 import type { AgentEvent } from "../core/agent/events.js";
-import type { Config } from "../core/config/index.js";
+import type { SessionRuntimeSettings } from "../core/config/index.js";
 import { loadSkillsFromToolBackend } from "../core/config/runtime_config_snapshot.js";
 import { resolveAgentModel } from "../core/runtime/agent_model.js";
 import { createDefaultCoreDeps } from "../core/runtime/deps.js";
@@ -66,7 +66,7 @@ export type HostedEphemeralAgentSessionOptions = {
   sessionId: string;
   sessionStartedAt: number;
   persona: Persona;
-  config: Config;
+  config: SessionRuntimeSettings;
   includeAgentContext: boolean;
   executionEnvironment: ExecutionEnvironment;
   instructions: string;

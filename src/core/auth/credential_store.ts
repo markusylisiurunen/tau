@@ -6,7 +6,7 @@ import type {
 } from "@earendil-works/pi-ai";
 import { defaultProviderAuthContext } from "@earendil-works/pi-ai";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
-import type { Config } from "../config/schema.js";
+import type { ApiKeysConfig } from "../config/schema.js";
 import { getApiKeyForProvider } from "../config/schema.js";
 import type { AuthStorage } from "./auth_storage.js";
 import type { StoredAccount, StoredOAuthAccount } from "./types.js";
@@ -15,7 +15,7 @@ const OPENAI_CODEX_PROVIDER_ID = "openai-codex";
 
 type CredentialStoreOptions = {
   authStorage: AuthStorage;
-  getConfig: () => Config;
+  getConfig: () => ApiKeysConfig;
   env?: NodeJS.ProcessEnv;
 };
 

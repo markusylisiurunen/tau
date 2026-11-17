@@ -5,12 +5,12 @@ import { readdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
+import { HistoryRecorder } from "../dist/core/history/recorder.js";
 import { RemoteHistoryClient } from "../dist/core/history/remote_history_client.js";
 import { batchHistoryEntriesForRemote } from "../dist/core/history/replication.js";
 import {
   assistantHistoryEntries,
   systemHistoryEntry,
-  toolHistoryEntry,
   userHistoryEntry,
 } from "../dist/core/history/transcript.js";
 import { parseStoredSessionDocument } from "../dist/store/session_snapshot_migrations.js";
@@ -116,18 +116,33 @@ export function inferSnapshotSources(snapshots, { home = homedir() } = {}) {
 }
 
 export function snapshotToHistoryEntries(snapshot) {
-  const calls = new Map();
+  const calls = new Set();
+  const entries = [];
+  const recorder = new HistoryRecorder({
+    append: (batch) => {
+      entries.push(...batch);
+    },
+    truncateFromSources: () => {
+      throw new Error("snapshot imports do not rewind");
+    },
+  });
   for (const wrapped of snapshot.messages) {
     if (wrapped.message.role !== "assistant") continue;
     for (const content of wrapped.message.content) {
       if (content.type === "toolCall") {
-        calls.set(content.id, { historyEntryId: wrapped.id, call: content });
+        calls.add(content.id);
+        recorder.record({
+          type: "toolCall",
+          callId: content.id,
+          sourceId: wrapped.id,
+          name: content.name,
+          arguments: content.arguments,
+        });
       }
     }
   }
 
   const tools = new Map(Object.values(snapshot.tools).map((tool) => [tool.toolCallId, tool]));
-  const entries = [];
   for (const wrapped of snapshot.messages) {
     if (wrapped.state !== "committed" && wrapped.state !== "interrupted") continue;
     const message = wrapped.message;
@@ -138,18 +153,16 @@ export function snapshotToHistoryEntries(snapshot) {
     } else if (message.role === "assistant") {
       entries.push(...assistantHistoryEntries(wrapped.id, message));
     } else if (message.role === "toolResult") {
-      const found = calls.get(message.toolCallId);
-      if (!found) continue;
+      if (!calls.has(message.toolCallId)) continue;
       const tool = tools.get(message.toolCallId);
-      entries.push(
-        toolHistoryEntry({
-          callHistoryEntryId: found.historyEntryId,
-          resultHistoryEntryId: wrapped.id,
-          call: found.call,
-          result: message,
-          outcome: terminalToolOutcome(tool?.status, message.isError),
-        }),
-      );
+      recorder.record({
+        type: "toolResult",
+        callId: message.toolCallId,
+        sourceId: wrapped.id,
+        timestamp: message.timestamp,
+        result: message.content,
+        outcome: terminalToolOutcome(tool?.status, message.isError),
+      });
     }
   }
   return entries;

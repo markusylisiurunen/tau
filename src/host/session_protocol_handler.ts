@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { PersonaSelectionError } from "../core/persona_selection.js";
 import {
   createSessionProtocolErrorResponse,
   createSessionProtocolPendingUserMessagesMessage,
@@ -22,6 +23,7 @@ import {
   EphemeralThreadBusyError,
   SessionExecBusyError,
   SessionRetryUnavailableError,
+  SessionRuntimeNotLoadedError,
   type TauHostedSession,
   type TauSessionHost,
 } from "./session_host.js";
@@ -46,7 +48,7 @@ type SessionProtocolPendingIdleSubmission = {
   id: string;
   delivery: "when-idle";
   handler: SessionProtocolHandler;
-  request: Extract<SessionProtocolRequestMessage, { method: "session.queue" | "session.steer" }>;
+  request: SessionProtocolUserSubmissionRequest;
 };
 
 type SessionProtocolPendingBoundarySubmission = {
@@ -63,6 +65,7 @@ type SessionProtocolPendingUserSubmission =
 
 type SessionProtocolUserSubmissionAction =
   | { type: "busy" }
+  | { type: "cancelled" }
   | { type: "pending" }
   | { type: "started"; activeSubmit: SessionProtocolActiveSubmit }
   | {
@@ -74,6 +77,8 @@ type SessionProtocolUserSubmissionAction =
 type SessionProtocolLiveSessionState = {
   activeSubmit?: SessionProtocolActiveSubmit;
   interrupting: boolean;
+  admissions: Set<{ cancelled: boolean }>;
+  releasePendingAdmission?: () => void;
   revision: number;
   pendingSubmissions: SessionProtocolPendingUserSubmission[];
   listeners: Set<(message: SessionProtocolPendingUserMessagesMessage) => void>;
@@ -87,6 +92,7 @@ type SessionProtocolHandlerSessionState = {
   session: TauHostedSession;
   live: SessionProtocolLiveSessionState;
   unsubscribeDelta?: () => void;
+  unsubscribeTurnIdle?: () => void;
   unsubscribeEphemeral?: () => void;
   unsubscribePendingUserMessages?: () => void;
   unsubscribeSubagentActivities?: () => void;
@@ -110,6 +116,7 @@ function getSessionLiveState(session: TauHostedSession): SessionProtocolLiveSess
   if (!state) {
     state = {
       interrupting: false,
+      admissions: new Set(),
       revision: 1,
       pendingSubmissions: [],
       listeners: new Set(),
@@ -133,7 +140,7 @@ function toPendingUserMessage(
 ): SessionProtocolPendingUserMessage {
   return {
     id: pending.id,
-    mode: pending.request.method === "session.queue" ? "queue" : "steer",
+    mode: pending.request.method === "session.steer" ? "steer" : "queue",
     text: pending.request.params.text,
   };
 }
@@ -151,6 +158,12 @@ function publishPendingUserMessages(
   session: TauHostedSession,
   state: SessionProtocolLiveSessionState,
 ): void {
+  if (state.pendingSubmissions.length > 0) {
+    state.releasePendingAdmission ??= session.holdTurnAdmission();
+  } else {
+    state.releasePendingAdmission?.();
+    state.releasePendingAdmission = undefined;
+  }
   state.revision += 1;
   const message = createSessionProtocolPendingUserMessagesMessage({
     sessionId: session.sessionId,
@@ -221,6 +234,24 @@ export class SessionProtocolHandler {
           return;
         case "session.create":
           await this.handleCreate(request);
+          return;
+        case "session.setRetention":
+          this.sendMessage(
+            createSessionProtocolSuccessResponse(
+              request.id,
+              request.method,
+              this.host.setRetention(request.params.sessionId, request.params.durationMs),
+            ),
+          );
+          return;
+        case "session.collect":
+          this.sendMessage(
+            createSessionProtocolSuccessResponse(
+              request.id,
+              request.method,
+              await this.host.collectSession(request.params.sessionId),
+            ),
+          );
           return;
         case "session.list":
           await this.handleList(request);
@@ -308,6 +339,26 @@ export class SessionProtocolHandler {
           return;
       }
     } catch (error) {
+      if (error instanceof SessionRuntimeNotLoadedError) {
+        this.sendMessage(
+          createSessionProtocolErrorResponse(
+            request.id,
+            SESSION_PROTOCOL_ERROR_CODES.notFound,
+            error.message,
+          ),
+        );
+        return;
+      }
+      if (error instanceof PersonaSelectionError) {
+        this.sendMessage(
+          createSessionProtocolErrorResponse(
+            request.id,
+            SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+            error.message,
+          ),
+        );
+        return;
+      }
       this.sendMessage(
         createSessionProtocolErrorResponse(
           request.id,
@@ -337,6 +388,7 @@ export class SessionProtocolHandler {
     for (const state of states) {
       this.unsubscribeSessionListeners(state);
       if (interruptActiveTurns) {
+        for (const admission of state.live.admissions) admission.cancelled = true;
         state.session.interruptActiveWork();
       }
     }
@@ -463,9 +515,29 @@ export class SessionProtocolHandler {
       return;
     }
 
-    const action = await this.enqueueMutation(state, () =>
-      this.dispatchUserSubmission(state, request),
-    );
+    const admission = { cancelled: false };
+    state.live.admissions.add(admission);
+    let action: SessionProtocolUserSubmissionAction;
+    try {
+      action = await this.enqueueMutation(state, () => {
+        state.live.admissions.delete(admission);
+        return admission.cancelled
+          ? { type: "cancelled" as const }
+          : this.dispatchUserSubmission(state, request);
+      });
+    } finally {
+      state.live.admissions.delete(admission);
+    }
+    if (action.type === "cancelled") {
+      this.sendMessage(
+        createSessionProtocolErrorResponse(
+          request.id,
+          SESSION_PROTOCOL_ERROR_CODES.cancelled,
+          "user submission was interrupted before admission",
+        ),
+      );
+      return;
+    }
     if (action.type === "busy") {
       this.sendSubmitBusy(state, request.id);
       return;
@@ -504,7 +576,7 @@ export class SessionProtocolHandler {
     }
 
     if (state.live.activeSubmit || state.session.isTurnRunning) {
-      if (request.method === "session.submit") {
+      if (request.method === "session.submit" && state.live.activeSubmit) {
         return { type: "busy" as const };
       }
       const pending: SessionProtocolPendingIdleSubmission = {
@@ -854,14 +926,34 @@ export class SessionProtocolHandler {
       return;
     }
 
-    await this.withSessionMutation(request, "user message added", async (mutationState) => {
-      const result = await mutationState.session.record({
+    await this.withNonInterruptingSessionMutation(request, async (mutationState) => {
+      const joinsTurn = mutationState.session.canAcceptSteering;
+      const recording = mutationState.session.record({
         text: request.params.text,
         ...(request.params.historyEntryId !== undefined
           ? { historyEntryId: request.params.historyEntryId }
           : {}),
       });
-      this.sendMessage(createSessionProtocolSuccessResponse(request.id, "session.record", result));
+      const respond = (result: Awaited<typeof recording>) =>
+        this.sendMessage(
+          createSessionProtocolSuccessResponse(request.id, "session.record", result),
+        );
+      if (!joinsTurn) {
+        respond(await recording);
+        return;
+      }
+      // Text that joins a running turn is added at its next step boundary, so other session
+      // changes need not wait for that.
+      void recording.then(respond, (error: unknown) => {
+        this.sendMessage(
+          createSessionProtocolErrorResponse(
+            request.id,
+            SESSION_PROTOCOL_ERROR_CODES.internalError,
+            "failed to record user text",
+            { cause: error instanceof Error ? error.message : String(error) },
+          ),
+        );
+      });
     });
   }
 
@@ -918,6 +1010,7 @@ export class SessionProtocolHandler {
         return { type: "idle" as const };
       }
 
+      const release = state.session.holdTurnAdmission();
       const [pending] = state.live.pendingSubmissions.splice(pendingIndex, 1) as [
         SessionProtocolPendingIdleSubmission,
       ];
@@ -930,6 +1023,8 @@ export class SessionProtocolHandler {
       } catch (error) {
         this.sendUserMessageDrainFailure([pending], error);
         return { type: "failed" as const, error };
+      } finally {
+        release();
       }
     });
 
@@ -1056,21 +1151,7 @@ export class SessionProtocolHandler {
     signal: AbortSignal,
   ): Promise<void> {
     try {
-      const result = await state.session.exec({
-        execId: request.params.execId,
-        command: request.params.command,
-        ...(request.params.args !== undefined ? { args: request.params.args } : {}),
-        ...(request.params.env !== undefined ? { env: request.params.env } : {}),
-        ...(request.params.stdinBase64 !== undefined
-          ? { stdinBase64: request.params.stdinBase64 }
-          : {}),
-        ...(request.params.cwd !== undefined ? { cwd: request.params.cwd } : {}),
-        ...(request.params.timeoutMs !== undefined ? { timeoutMs: request.params.timeoutMs } : {}),
-        ...(request.params.maxCaptureBytes !== undefined
-          ? { maxCaptureBytes: request.params.maxCaptureBytes }
-          : {}),
-        signal,
-      });
+      const result = await state.session.exec({ ...request.params, signal });
       this.sendMessage(createSessionProtocolSuccessResponse(request.id, "session.exec", result));
     } catch (error) {
       const cancelled = signal.aborted || isAbortError(error);
@@ -1127,7 +1208,8 @@ export class SessionProtocolHandler {
     }
 
     // Cancellation must reach maintenance work while it holds the mutation queue.
-    const interrupted = state.session.interruptActiveWork();
+    for (const admission of state.live.admissions) admission.cancelled = true;
+    const interrupted = state.session.interruptActiveWork() || state.live.admissions.size > 0;
     const result = await this.enqueueMutation(state, async () => {
       if (interrupted) {
         state.live.interrupting = true;
@@ -1217,7 +1299,10 @@ export class SessionProtocolHandler {
     request: Extract<SessionProtocolRequestMessage, { method: "session.setPersona" }>,
   ): Promise<void> {
     await this.withSessionMutation(request, "session persona changed", async (state) => {
-      const snapshot = await state.session.setPersona(request.params.personaId);
+      const snapshot = await state.session.setPersona(request.params.personaId, {
+        reasoning: request.params.reasoning,
+        autoCompactThresholdTokens: request.params.autoCompactThresholdTokens,
+      });
       this.sendMessage(
         createSessionProtocolSuccessResponse(request.id, "session.setPersona", snapshot),
       );
@@ -1495,6 +1580,9 @@ export class SessionProtocolHandler {
       released: false,
     };
 
+    state.unsubscribeTurnIdle = session.onTurnIdle(() =>
+      this.schedulePendingSubmissionDrain(state),
+    );
     state.unsubscribeDelta = session.onDelta((delta) => {
       if (this.closed || !this.sessionStates.has(session.sessionId)) {
         return;
@@ -1668,10 +1756,12 @@ export class SessionProtocolHandler {
   ): Promise<T> {
     const queue = getSessionMutationQueueState(state.session);
     queue.pending += 1;
+    const release = state.session.holdTurnAdmission();
     try {
       return await this.enqueueMutation(state, handler);
     } finally {
       queue.pending -= 1;
+      release();
     }
   }
 
@@ -1688,9 +1778,8 @@ export class SessionProtocolHandler {
     }
 
     state.session.interruptTurn();
-    if (!activeSubmit) {
-      return;
-    }
+    await state.session.waitForActiveTurn();
+    if (!activeSubmit) return;
 
     try {
       await activeSubmit.promise;
@@ -1699,13 +1788,34 @@ export class SessionProtocolHandler {
     }
   }
 
+  /** Queued input is this client's request, so it cannot outlive the client's attachment. */
+  private cancelQueuedSubmissions(state: SessionProtocolHandlerSessionState): void {
+    const queued = state.live.pendingSubmissions.filter(
+      (submission): submission is SessionProtocolPendingIdleSubmission =>
+        submission.delivery === "when-idle" && submission.handler === this,
+    );
+    if (!this.removePendingSubmissions(state, queued)) return;
+    for (const { request } of queued) {
+      this.sendMessage(
+        createSessionProtocolErrorResponse(
+          request.id,
+          SESSION_PROTOCOL_ERROR_CODES.cancelled,
+          "pending user message was cancelled",
+        ),
+      );
+    }
+  }
+
   private unsubscribeSessionListeners(state: SessionProtocolHandlerSessionState): void {
+    this.cancelQueuedSubmissions(state);
     this.clientToolRegistration?.detachSession(state.session.sessionId);
     if (!state.released) {
       state.released = true;
       this.host.releaseSession(state.session);
     }
 
+    state.unsubscribeTurnIdle?.();
+    state.unsubscribeTurnIdle = undefined;
     state.unsubscribeDelta?.();
     state.unsubscribeDelta = undefined;
     state.unsubscribeEphemeral?.();

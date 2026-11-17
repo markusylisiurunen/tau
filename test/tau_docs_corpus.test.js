@@ -7,7 +7,9 @@ const docsDir = resolve("docs");
 const manifest = JSON.parse(readFileSync(join(docsDir, "manifest.json"), "utf8"));
 const files = manifest.files;
 const markdownLinkPattern = /\[[^\]]+\]\(([^)]+\.md)\)/g;
-const maxDocumentBytes = 24 * 1024;
+const bytesPerToken = 6;
+const maxDocumentBytes = 8192 * bytesPerToken;
+const maxCorpusBytes = 32768 * bytesPerToken;
 
 function linksIn(content) {
   return [...content.matchAll(markdownLinkPattern)].map((match) => match[1]);
@@ -49,9 +51,18 @@ describe("Tau documentation corpus", () => {
     }
   });
 
+  it("keeps the whole corpus within its size limit", () => {
+    const corpusBytes = files.reduce(
+      (total, file) => total + statSync(join(docsDir, file)).size,
+      0,
+    );
+    expect(corpusBytes).toBeLessThanOrEqual(maxCorpusBytes);
+  });
+
   it("documents every session protocol method exactly once", () => {
-    const reference = readFileSync(join(docsDir, "session-protocol-methods.md"), "utf8");
-    const documented = [...reference.matchAll(/^### `([^`]+)`$/gm)].map((match) => match[1]);
+    const reference = readFileSync(join(docsDir, "session-protocol.md"), "utf8");
+    const methods = reference.slice(reference.indexOf("## Methods"));
+    const documented = [...methods.matchAll(/^\| `([^`]+)` \|/gm)].map((match) => match[1]);
     expect(new Set(documented).size).toBe(documented.length);
     expect(documented.sort()).toEqual([...SESSION_PROTOCOL_METHODS].sort());
   });

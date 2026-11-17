@@ -440,7 +440,7 @@ export async function loadProjectPrompts(args: {
 }
 
 export async function loadAllContent(
-  config: Config | undefined,
+  config: Pick<Config, "subagents"> | undefined,
   options: {
     deps: ConfigDeps;
     levels: ConfigLevel[];

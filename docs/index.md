@@ -1,47 +1,48 @@
 # Tau documentation
 
-These pages describe how to install, configure, operate, and integrate the version of Tau they ship with. Tau's agent reads the same pages through its built-in documentation tool, one page at a time.
+This is the manual for the Tau version it ships with, for people and agents who use, operate, or integrate Tau. It covers what you need to get work done. For implementation details, read the [source](https://github.com/markusylisiurunen/tau).
 
-## Start and orient
+## Start
 
-- [Getting started](getting-started.md): install Tau, set up a provider, and run a first local session.
-- [Ownership and scope](ownership-and-scope.md): which machine runs what in local and remote sessions. Read it before changing paths or remote-session configuration.
-- [TUI](tui.md): interactive commands, keybindings, themes, speech, and other terminal behavior.
-- [Troubleshooting](troubleshooting.md): checks for common startup, configuration, provider, tool, and remote-session problems.
+- [Getting started](getting-started.md): install Tau and run a first session.
+- [How Tau works](how-tau-works.md): client, host, and execution environment, and what runs where.
 
-## Configure Tau
+## Use Tau
 
-- [Configuration](configuration.md): where configuration lives, which layer wins, how to edit safely, and when changes apply.
-- [Configuration reference](config-reference.md): every top-level `config.json` field and when a change takes effect.
-- [Credentials](credentials.md): API keys, Codex OAuth accounts, key precedence, and where credentials belong.
-- [Models](models.md): the bundled model catalog and how it is refreshed.
-- [Personas](personas.md): model, instructions, reasoning, tools, and custom persona files.
-- [Subagents](subagents.md): when agents can start subagents, which models they may use, and how to supervise them.
-- [Skills](skills.md): skill discovery, frontmatter, trigger sensitivity, and tool eligibility.
-- [Prompts and project context](prompts-and-project-context.md): prompt templates, `AGENTS.md`, and extra context files.
-- [Client tools](client-tools.md): command-backed tools that run on the machine of the attached client.
-- [Security](security.md): trust boundaries, secrets, process execution, and remote access.
+- [TUI](tui.md): the commands and keys worth knowing.
+- [Sessions](sessions.md): turns, compaction, rewind, reload, recovery, and usage.
+- [Troubleshooting](troubleshooting.md): how to find out why something does not apply.
 
-## Build integrations
+## Set up the agent
 
-- [Session protocol](session-protocol.md): transports, message envelopes, session state, deltas, errors, and rules for clients.
-- [Session protocol method reference](session-protocol-methods.md): every request method and its result.
-- [Node SDK](node-sdk.md): choosing a client, the session API, streamed state, client tools, cancellation, and exported types.
-- [SDK browser diff review](sdk-diff-review.md): hosting the built-in review UI from an SDK application.
+- [Configuration](configuration.md): `config.json` fields, levels, and when changes apply.
+- [Models and credentials](models-and-credentials.md): API keys, Codex accounts, and the model catalog.
+- [Personas](personas.md): model, prompt, reasoning, and tools.
+- [Instructions and skills](instructions-and-skills.md): `AGENTS.md`, prompt templates, and skills.
 
-## Work with sessions and services
+## Extend what the agent can do
 
-- [Tools](tools.md): built-in tools, when they are available, and how they run and stop.
-- [Code mode](code-mode.md): the `code` tool, saved programs and input, output and limits, background code jobs, and capabilities.
-- [Sessions](sessions.md): creating sessions, turns, queueing, compaction, rewind, recovery, and storage.
-- [Remote sessions](remote-sessions.md): `serve`, `attach`, remote paths, and authentication.
-- [History](history.md): searchable local history, optional remote replication, and the history tool.
-- [Telegram](telegram.md): running the Telegram runner, bot access, chat commands, attachments, and recovery.
-- [Telegram projects and workspaces](telegram-projects.md): repository, persistent-directory, and composite projects, workspace lifecycle, and provision hooks.
+- [Tools](tools.md): built-in tools, background jobs, and command-line tools.
+- [Code mode](code-mode.md): programs that combine tools in one call, with examples.
+- [MCP](mcp.md): connect MCP servers.
+- [Subagents](subagents.md): background workers, including Claude Code.
+- [Client tools](client-tools.md): tools that run in the attached client.
 
-## Run command-line tools
+## Run Tau as a service
 
-- [PDF unpacking](pdf-unpacking.md): OCR PDFs with Mistral into Markdown and page images.
-- [Image generation](image-generation.md): generate and edit images with Google and OpenAI.
-- [Speech generation](speech-generation.md): narration and dialogue with ElevenLabs voices, assembled into long WAV files.
-- [OpenRouter](openrouter.md): typed decisions and text, image, audio, and video understanding with fixed models.
+- [Remote sessions](remote-sessions.md): `tau serve`, `tau attach`, and Fly Sprites.
+- [Telegram](telegram.md): bots, projects, workspaces, and chat use.
+- [History](history.md): transcript search and the optional shared service.
+- [Security](security.md): what Tau does and does not protect against.
+
+## Integrate
+
+- [Node SDK](sdk.md): create and control sessions from Node.
+- [Session protocol](session-protocol.md): the WebSocket protocol and its methods.
+
+## Command-line tools
+
+- [PDF unpacking](pdf-unpacking.md): OCR a PDF into Markdown and page images.
+- [Image generation](image-generation.md): generate and edit images.
+- [Speech generation](speech-generation.md): narration and dialogue as a WAV file.
+- [OpenRouter](openrouter.md): typed decisions and text or media analysis.

@@ -1,8 +1,8 @@
-import { type Config, getHistoryApiKey } from "../config/index.js";
+import { getHistoryApiKey, type HostConfig } from "../config/index.js";
 import type { HistoryRemoteTarget } from "./types.js";
 
 export function resolveHistoryRemoteTarget(
-  config: Config,
+  config: Pick<HostConfig, "history">,
   env?: NodeJS.ProcessEnv,
 ): HistoryRemoteTarget | undefined {
   if (!config.history) return undefined;

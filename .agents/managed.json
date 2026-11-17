@@ -371,11 +371,11 @@
     },
     ".tau/skills/tau-workflows/scripts/rewrite.js": {
       "type": "file",
-      "hash": "c0e3786392e3db535570ef9100a395fdad999ae5fe8481bed6595f021d889d73"
+      "hash": "f8b62de2a000cb400b88f47ca1b7f99437884547e948dec2a78a410b30df7608"
     },
     ".tau/skills/tau-workflows/SKILL.md": {
       "type": "file",
-      "hash": "09f5409fab98cc220fabcd8e2f5a00a5bb490f57da1239efa6bdaadc0f841bbd"
+      "hash": "6da02c9a210df78d045017a140dab920599c592b9d43ffe2b25d3855564a16c9"
     },
     "AGENTS.md": {
       "type": "section",

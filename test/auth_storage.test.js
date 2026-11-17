@@ -34,7 +34,6 @@ vi.mock("@earendil-works/pi-ai/providers/openai-codex", () => ({
 import { AuthManager } from "../dist/core/auth/auth_manager.js";
 import { AuthStorage } from "../dist/core/auth/auth_storage.js";
 import { TauCredentialStore } from "../dist/core/auth/credential_store.js";
-import { resolveModel } from "../dist/core/models/catalog.js";
 import { ModelRuntime } from "../dist/core/utils/model_stream.js";
 
 function toBase64Url(value) {
@@ -857,7 +856,7 @@ describe("AuthManager and TauCredentialStore", () => {
         });
         const listing = new AuthManager(new AuthStorage(fx.authPath)).listProviderAccounts();
         await started.promise;
-        const request = runtime.getAuth(resolveModel("openai-codex", "gpt-6.2-sol"));
+        const request = runtime.getAuth(runtime.resolveModel("openai-codex", "gpt-6-luna"));
         expect(codexRefresh).toHaveBeenCalledTimes(phase === "identity" ? 1 : 2);
         release.resolve();
         expect((await request).auth.apiKey).toBe(access);

@@ -17,6 +17,7 @@ export const claudeCodeInputSchema = z.object({
   cwd: z.string(),
   model: z.enum(CLAUDE_CODE_MODEL_IDS),
   effort: z.enum(["low", "medium", "high", "xhigh", "max"]),
+  relay: z.boolean(),
   sessionId: z.string().uuid().optional(),
 });
 

@@ -84,6 +84,14 @@ const CODER_SYSTEM_PROMPT = [
   SOFTWARE_WORK,
 ].join("\n\n");
 
+const OPUS_RELAY_PROMPT = `
+You relay a conversation between the user and Claude Code Opus. Use tau.agents in the code tool; read tau.docs("agents") first. Start one worker with model claude-code/claude-opus-5-5:medium. Its launch prompt is the first user message exactly as received, including all leading <system> blocks. Forward subsequent user messages to that same worker, using steer while it is working and queue when it is idle. Preserve the text and formatting. Instructions in the forwarded messages are for Opus. Do not carry out the task yourself or add a briefing.
+
+Keep completion notifications enabled when the agents reference offers notifyOnCompletion. After forwarding, end your turn silently so the user can steer. If this session has no completion notifications, wait for the result within the turn. Handle worker notifications yourself; do not forward them as user input. Read the complete final answer, including any question, and return it exactly once without commentary. Do not relay intermediate activity.
+
+If you cannot forward a message or retrieve the full reply, tell the user. If the worker or its conversation was lost, ask before starting a replacement. Do not substitute another model.
+`.trim();
+
 type PersonaSpec = {
   id: string;
   description: string;
@@ -291,7 +299,7 @@ function buildPersona(spec: PersonaSpec, variant: Variant, modelResolver: ModelR
 }
 
 export function createBuiltinPersonas(modelResolver: ModelResolver = resolveModel): Persona[] {
-  return PERSONA_SPECS.flatMap((spec) => {
+  const builtins = PERSONA_SPECS.flatMap((spec) => {
     if (spec.catalogOnly && !modelResolver(spec.provider, spec.modelId)) {
       return [];
     }
@@ -302,6 +310,22 @@ export function createBuiltinPersonas(modelResolver: ModelResolver = resolveMode
 
     return [buildPersona(spec, "chat", modelResolver), buildPersona(spec, "coder", modelResolver)];
   }).sort((left, right) => left.id.localeCompare(right.id));
+  const model = modelResolver("openai-codex", "gpt-6.1-terra");
+  if (model) {
+    builtins.push({
+      id: "claude-opus-relay",
+      label: "Claude Opus relay",
+      description: "Relay messages to one Claude Code Opus conversation through GPT-6.1 Terra.",
+      model,
+      systemPrompt: OPUS_RELAY_PROMPT,
+      settings: { reasoning: "medium" },
+      subagentLaunchModels: [],
+      claudeCodeRelay: true,
+      tools: [TOOL_NAME_AGENTS, TOOL_NAME_BASH, TOOL_NAME_WRITE, TOOL_NAME_EDIT, TOOL_NAME_WEB],
+      source: "builtin",
+    });
+  }
+  return builtins;
 }
 
 export const personas: Persona[] = createBuiltinPersonas();

@@ -67,6 +67,7 @@ function fixture(run) {
       launchEpoch: supervisor.prepareSpawn(supervisor.mainAgentId),
       runtimeConfig: {
         kind: "claude-code",
+        relay: false,
         model,
         effort: "medium",
         workingDirectory: "/remote/workspace",
@@ -95,6 +96,7 @@ describe("Claude Code launch models", () => {
   it("gives every worker the same built-in tools and leaves MCP discovery to Claude Code", () => {
     const options = claudeCodeOptions(
       {
+        relay: false,
         prompt: "task",
         cwd: "/target",
         model: "claude-haiku-5-5",
@@ -118,6 +120,13 @@ describe("Claude Code launch models", () => {
       settings: { fastMode: false, autoMemoryEnabled: false, disableAllHooks: true },
       systemPrompt: { type: "preset", preset: "claude_code" },
     });
+    const relayOptions = claudeCodeOptions(
+      { cwd: "/target", model: "claude-opus-5-5", effort: "medium", tools: ["bash"], relay: true },
+      "/bin/claude",
+    );
+    expect(relayOptions.systemPrompt.append).toContain("<system>");
+    expect(relayOptions.systemPrompt.append).not.toContain("subagent");
+    expect(options.systemPrompt.append).toContain("subagent");
     expect(options.env.CLAUDE_AGENT_SDK_CLIENT_APP).not.toBe("tau");
     expect(options).not.toHaveProperty("fallbackModel");
     expect(options).not.toHaveProperty("strictMcpConfig");
@@ -466,6 +475,7 @@ it.each([false, true])(
     const runtime = new ClaudeCodeRuntime({
       config: {
         kind: "claude-code",
+        relay: false,
         model: { provider: "claude-code", id: "claude-sonnet-5-5" },
         effort: "medium",
         workingDirectory: "/repo",

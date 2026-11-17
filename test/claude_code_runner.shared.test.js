@@ -127,6 +127,7 @@ function createRuntimeOptions(directory, events) {
     config: {
       model,
       kind: "claude-code",
+      relay: false,
       effort: "medium",
       workingDirectory: directory,
     },

@@ -31,6 +31,7 @@ export function resolveSubagentEffectiveSettings(args: {
       kind: "claude-code",
       model: args.launchModel.model,
       effort: args.launchModel.reasoning,
+      relay: args.persona.claudeCodeRelay === true,
     };
   }
   const settings = { ...args.persona.settings };

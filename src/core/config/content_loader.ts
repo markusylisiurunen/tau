@@ -96,6 +96,7 @@ const personaFrontMatterSchema = z
     reasoning: ReasoningEffortSchema.optional(),
     serviceTier: ServiceTierSchema.optional(),
     allowedReasoningLevels: z.array(ReasoningEffortSchema).optional(),
+    claudeCodeRelay: z.boolean().optional(),
     autoCompactThresholdTokens: autoCompactThresholdTokensSchema.optional(),
     subagentAutoCompactThresholdTokens: z
       .record(z.string(), autoCompactThresholdTokensSchema)

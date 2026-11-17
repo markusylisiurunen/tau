@@ -188,10 +188,26 @@ describe("agents capability", () => {
     expect(fx.supervisor.spawn.mock.calls[0][0].runtimeConfig).toMatchObject({
       kind: "claude-code",
       workingDirectory: "/repo/other",
+      relay: false,
       effort: "medium",
     });
     expect(modelResolver).not.toHaveBeenCalled();
     expect(resolveSubagentPrompt).not.toHaveBeenCalled();
+  });
+
+  it("preserves the relay persona's prompt mode and message text on launch and steering", async () => {
+    const model = "claude-code/claude-opus-5-5:medium";
+    const relay = personas.find((p) => p.id === "claude-opus-relay");
+    const { api, supervisor } = fixture({ persona: { ...relay, subagentLaunchModels: [model] } });
+    const message = "<system>turn context</system>\n  indented text\n";
+    await api.spawn([{ title: "Opus", prompt: message, model }], context());
+    expect(supervisor.spawn.mock.calls[0][0]).toMatchObject({
+      runtimeConfig: { relay: true },
+      prompt: message,
+      notifyOnCompletion: true,
+    });
+    await api.sendInput([{ id: "worker", message, mode: "steer" }], context());
+    expect(supervisor.sendInput.mock.calls[0][0].prompt).toBe(message);
   });
 
   it("requires explicit delivery mode and propagates wait cancellation without interrupting workers", async () => {

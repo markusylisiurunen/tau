@@ -38,6 +38,7 @@ describe("headless run", () => {
     expect(client.sessions.create).toHaveBeenCalledWith({
       executionEnvironment: { kind: "local", cwd: "/repo" },
       attributes: { source: "cli" },
+      notifications: false,
       personaId: "example",
       reasoning: "high",
     });

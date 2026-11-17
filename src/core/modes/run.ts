@@ -102,6 +102,7 @@ export async function runHeadlessCommand(
       : await client.sessions.create({
           executionEnvironment: { kind: "local", cwd: options.cwd ?? process.cwd() },
           attributes: { source: "cli" },
+          notifications: false,
           ...(persona
             ? { personaId: persona.personaId, reasoning: persona.reasoningOverride }
             : {}),

@@ -2,7 +2,7 @@
 
 A persona defines how the agent works: model, base system prompt, and default reasoning. Every persona has the same [tools](tools.md). Tau ships chat and coder personas for its supported models: chat personas are general assistants for any kind of task, and coder personas are for software development. `tau --help` lists what is available. GPT models have variants for the API and for a ChatGPT subscription. A built-in persona appears only when its model is in the catalog. The default is `sonnet-5.5-coder`.
 
-Select `claude-code-opus-5.5-low`, `claude-code-opus-5.5-medium`, or `claude-code-opus-5.5-high` to choose Opus’s reasoning effort. GPT-6.1 Terra relays messages at medium effort in all three. [Set up Claude Code](subagents.md#claude-code-subagents) and allow the matching `claude-code/claude-opus-5-5:<effort>` launch model first. The relay forwards text and returns only the final reply. With completion notifications enabled you can send more messages while Opus works; without them the relay waits within the turn.
+The `claude-code-opus-5.5-low`, `claude-code-opus-5.5-medium`, and `claude-code-opus-5.5-high` personas let you talk with Claude Code Opus 5.5 at that reasoning effort. GPT-6.1 Terra, at medium effort, relays your messages to one Opus conversation and shows you only Opus’s final reply to each turn. To use one, [set up Claude Code](subagents.md#claude-code-subagents) and allow the matching `claude-code/claude-opus-5-5:<effort>` launch model. You can send more messages while Opus works, except in sessions without completion notifications, such as `tau run`, where the relay waits for each reply.
 
 ## Writing a persona
 

@@ -1,7 +1,7 @@
 ---
 target: issue
 triggers: [command]
-persona: gpt-6-astra-chatgpt-coder
+persona: gpt-6.2-astra-chatgpt-coder
 reasoning: medium
 ---
 

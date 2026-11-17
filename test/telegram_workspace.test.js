@@ -100,7 +100,7 @@ describe("telegram workspace", () => {
     cowork: { repo: "owner/cowork", ref: "feature", workingDirectory: "packages/core" },
     platform: {
       projectIds: ["tau", "cowork"],
-      persona: "gpt-5.6-sol-coder:high",
+      persona: "gpt-6.2-sol-coder:high",
       instructions: "Coordinate changes across both repositories.",
     },
   };
@@ -150,7 +150,7 @@ describe("telegram workspace", () => {
     git(origin, "commit", "-q", "-am", "v2");
     const configuredProject = {
       ...projects.platform,
-      subagents: { launchModels: ["openai/gpt-5.6-sol:high"] },
+      subagents: { launchModels: ["openai/gpt-6.2-sol:high"] },
     };
     await rm(log, { force: true });
     let configured;
@@ -172,7 +172,7 @@ describe("telegram workspace", () => {
     );
     expect(
       JSON.parse(await readFile(join(configured.workspacePath, ".tau", "config.json"), "utf8")),
-    ).toEqual({ subagents: { launchModels: ["openai/gpt-5.6-sol:high"] } });
+    ).toEqual({ subagents: { launchModels: ["openai/gpt-6.2-sol:high"] } });
   });
 
   it("keeps concurrent bot environments separate through cache creation and refresh", async () => {
@@ -210,7 +210,7 @@ describe("telegram workspace", () => {
     const failing = {
       tau: projects.tau,
       missing: { repo: "owner/missing" },
-      platform: { projectIds: ["tau", "missing"], persona: "gpt-5.6-sol-coder" },
+      platform: { projectIds: ["tau", "missing"], persona: "gpt-6.2-sol-coder" },
     };
 
     await expect(

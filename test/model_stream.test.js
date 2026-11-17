@@ -5,6 +5,7 @@ import { AssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { describe, expect, test, vi } from "vitest";
 import { AuthManager } from "../dist/core/auth/auth_manager.js";
 import { AuthStorage } from "../dist/core/auth/auth_storage.js";
+import { resolveModel } from "../dist/core/models/catalog.js";
 import {
   ModelRuntime,
   resolveOpenAIResponsesOptions,
@@ -167,7 +168,7 @@ describe("model stream option resolution", () => {
         authPath: fx.authPath,
         env: {},
       });
-      const model = runtime.resolveModel("openai-codex", "gpt-5.6-sol");
+      const model = resolveModel("openai-codex", "gpt-6.2-sol");
       expect(model).toBeDefined();
 
       const stream = runtime.streamModel(
@@ -219,7 +220,7 @@ function createCodexRuntime(authPath, expires = Number.MAX_SAFE_INTEGER) {
     authPath,
     env: {},
   });
-  const model = runtime.resolveModel("openai-codex", "gpt-6.1-sol");
+  const model = resolveModel("openai-codex", "gpt-6.2-sol");
   const provider = runtime.models.getProvider("openai-codex");
   const refresh = vi.fn(async (credential) => ({
     ...credential,

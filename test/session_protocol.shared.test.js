@@ -226,8 +226,8 @@ describe("session_protocol", () => {
       ],
       api: "openai-responses",
       provider: "openai",
-      model: "gpt-5.6-sol",
-      responseModel: "gpt-5.6-sol-2026-07-01",
+      model: "gpt-6.2-sol",
+      responseModel: "gpt-6.2-sol-2026-07-01",
       responseId: "response-1",
       providerThinkingLevel: "high",
       diagnostics: [

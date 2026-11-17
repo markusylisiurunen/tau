@@ -99,7 +99,7 @@ export const openRouterModels: Record<Operation, OpenRouterModel[]> = {
       role: "Efficient visual reasoning, writing, and everyday coding.",
     },
     {
-      id: "openai/gpt-6.1-sol",
+      id: "openai/gpt-6.2-sol",
       inputs: ["text", "image"],
       reasoning: ["low", "medium", "high", "xhigh", "max"],
       role: "Coding, debugging, and technical reasoning.",

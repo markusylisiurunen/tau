@@ -2,7 +2,7 @@
 target: repository
 schedule: "15 5 * * *"
 timezone: Europe/Helsinki
-persona: gpt-6.1-sol-chatgpt-coder
+persona: gpt-6.2-sol-chatgpt-coder
 reasoning: medium
 ---
 

@@ -56,11 +56,11 @@ An example:
 
 ```json
 {
-  "defaultPersona": "gpt-6.1-sol-coder:high",
+  "defaultPersona": "gpt-6.2-sol-coder:high",
   "speech": { "vocabulary": ["Tau", "PostgreSQL"] },
   "subagents": { "launchModels": ["openai/gpt-6-luna:medium"] },
   "modelSystemNotices": {
-    "openai/gpt-6.1-sol": "Use the repository's formatter for source changes."
+    "openai/gpt-6.2-sol": "Use the repository's formatter for source changes."
   }
 }
 ```
@@ -85,7 +85,7 @@ The nearest level replaces the whole field, with these exceptions:
 An invalid value produces a warning and is skipped, so a broader value may stay in effect. Unknown fields are removed without a warning, which means a misspelled field has no effect:
 
 ```json
-{ "defaultPersnoa": "gpt-6.1-sol-coder" }
+{ "defaultPersnoa": "gpt-6.2-sol-coder" }
 ```
 
 `tau` prints warnings at startup, `/reload` shows them for the current session, and `tau serve` and `tau telegram` write them to stderr. To check a new local startup, run `tau --debug` from the project directory.

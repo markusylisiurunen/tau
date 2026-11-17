@@ -93,7 +93,7 @@ describe("local Telegram session client", () => {
               },
               123,
             ),
-            personaSelection: { personaId: "gpt-6.1-sol-coder", reasoning: "high" },
+            personaSelection: { personaId: "gpt-6.2-sol-coder", reasoning: "high" },
             autoCompactDefaults: {
               thresholdTokens: 128000,
             },
@@ -141,17 +141,17 @@ describe("local Telegram session client", () => {
       expect(createSdkClient.mock.calls.map((call) => call[2])).toEqual([
         {
           remoteModelCatalog,
-          initialPersonaSelection: { personaId: "gpt-6.1-sol-coder", reasoning: "high" },
+          initialPersonaSelection: { personaId: "gpt-6.2-sol-coder", reasoning: "high" },
           autoCompactDefaults: { thresholdTokens: 128000 },
         },
         {
           remoteModelCatalog,
-          initialPersonaSelection: { personaId: "gpt-6.1-sol-coder", reasoning: "high" },
+          initialPersonaSelection: { personaId: "gpt-6.2-sol-coder", reasoning: "high" },
           autoCompactDefaults: { thresholdTokens: 128000 },
         },
         {
           remoteModelCatalog,
-          initialPersonaSelection: { personaId: "gpt-6.1-sol-coder", reasoning: "high" },
+          initialPersonaSelection: { personaId: "gpt-6.2-sol-coder", reasoning: "high" },
           autoCompactDefaults: { thresholdTokens: 128000 },
         },
       ]);

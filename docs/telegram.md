@@ -92,7 +92,7 @@ type Project = { description?: string } & (
     "astra": {
       "source": "persona",
       "label": "Astra",
-      "persona": "gpt-6-astra-chat",
+      "persona": "gpt-6.2-astra-chat",
       "reasoning": "low"
     }
   }

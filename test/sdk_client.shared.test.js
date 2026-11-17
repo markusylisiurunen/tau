@@ -176,7 +176,7 @@ class FakeSessionProtocolTransport {
               content: [{ type: "text", text: "sampled" }],
               api: "openai-responses",
               provider: "openai",
-              model: "gpt-5.6-sol",
+              model: "gpt-6.2-sol",
               stopReason: "stop",
               usage: {
                 input: 1,

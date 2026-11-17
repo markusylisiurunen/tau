@@ -91,7 +91,7 @@ describe("agents capability", () => {
         modelId === "missing-model" ? undefined : resolveModel(provider, modelId),
     });
     options.persona.subagentLaunchModels = [
-      "openai/gpt-6.1-sol:high",
+      "openai/gpt-6.2-sol:high",
       "claude-code/claude-sonnet-5-5:medium",
       "openai/missing-model:high",
     ];
@@ -107,7 +107,7 @@ describe("agents capability", () => {
       expect(`${config.model.provider}/${config.model.id}:${reasoning}`).toBe(model);
     }
     await expect(
-      api.spawn([{ title: "child", prompt: "task", model: "openai/gpt-6.1-sol:low" }], context()),
+      api.spawn([{ title: "child", prompt: "task", model: "openai/gpt-6.2-sol:low" }], context()),
     ).rejects.toMatchObject({ code: "operation_failed" });
     await expect(
       api.spawn(
@@ -331,7 +331,7 @@ describe("subagent compaction thresholds", () => {
   it.each([
     [undefined, undefined, 120000],
     ["anthropic/claude-opus-5-5:high", 80000, 80000],
-    ["openai/gpt-6.1-sol:high", 9000000, null],
+    ["openai/gpt-6.2-sol:high", 9000000, null],
   ])("resolves launch %s with configured budget %s", async (model, budget, expected) => {
     const { options, api, supervisor } = fixture();
     options.persona.subagentLaunchModels = model ? [model] : [];

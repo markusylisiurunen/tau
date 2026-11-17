@@ -9,13 +9,13 @@ globalThis.review = (() => {
   // models for independent views.
   const MODELS = {
     classifier: "openai-codex/gpt-6.1-terra:medium",
-    codeReview: "openai-codex/gpt-6-astra:medium",
+    codeReview: "openai-codex/gpt-6.2-astra:medium",
     codeReviewPeer: "claude-code/claude-opus-5-5:medium",
     focusedReview: "openai-codex/gpt-6.1-terra:medium",
     designReview: "claude-code/claude-opus-5-5:medium",
-    designReviewPeer: "openai-codex/gpt-6-astra:medium",
-    chooseFindings: "openai-codex/gpt-6.1-sol:medium",
-    implement: "openai-codex/gpt-6-astra:medium",
+    designReviewPeer: "openai-codex/gpt-6.2-astra:medium",
+    chooseFindings: "openai-codex/gpt-6.2-sol:medium",
+    implement: "openai-codex/gpt-6.2-astra:medium",
     find: "openai-codex/gpt-6.1-terra:medium",
     prune: "claude-code/claude-opus-5-5:medium",
     write: "claude-code/claude-opus-5-5:medium",

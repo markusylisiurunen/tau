@@ -176,7 +176,7 @@ describe("sdk client integration", () => {
           `---
 id: ${id}
 provider: openai
-model: gpt-6.1-sol
+model: gpt-6.2-sol
 reasoning: ${effort}
 allowedReasoningLevels: [low, medium, high]
 ---

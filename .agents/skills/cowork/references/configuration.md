@@ -25,7 +25,7 @@ Cowork reads session settings only when it creates a session, so existing persis
 
 ```markdown
 ---
-persona: gpt-6.1-sol-chatgpt-coder
+persona: gpt-6.2-sol-chatgpt-coder
 reasoning: medium
 ---
 
@@ -57,7 +57,7 @@ Each `workflows/<name>.md` defines one workflow. The name must start with a lowe
 ---
 target: pull-request
 triggers: [command]
-persona: gpt-6.1-sol-chatgpt-coder
+persona: gpt-6.2-sol-chatgpt-coder
 reasoning: medium
 ---
 
@@ -117,7 +117,7 @@ A workflow with `target: repository` runs on a schedule. For example:
 target: repository
 schedule: "0 9 * * 1"
 timezone: Europe/Helsinki
-persona: gpt-6.1-sol-chatgpt-coder
+persona: gpt-6.2-sol-chatgpt-coder
 reasoning: medium
 ---
 

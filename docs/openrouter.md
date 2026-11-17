@@ -22,7 +22,7 @@ tau tool openrouter chat --list-models
 | `chat` | `google/gemini-4-carbon` | Multimodal analysis |
 | `chat` | `openai/gpt-6-luna` | Cheap extraction and summaries |
 | `chat` | `openai/gpt-6.1-terra` | Visual reasoning, writing, everyday coding |
-| `chat` | `openai/gpt-6.1-sol` | Coding and technical reasoning |
+| `chat` | `openai/gpt-6.2-sol` | Coding and technical reasoning |
 | `chat` | `anthropic/claude-sonnet-5.5` | Writing, coding, general reasoning |
 | `chat` | `anthropic/claude-opus-5.5` | Difficult reasoning and second opinions |
 

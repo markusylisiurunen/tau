@@ -124,7 +124,7 @@ describe("telegram cli", () => {
           projectIds: ["tau", "cowork"],
           instructions: "Keep changes coordinated.",
           subagents: {
-            launchModels: ["openai/gpt-5.6-sol:high"],
+            launchModels: ["openai/gpt-6.2-sol:high"],
           },
         },
       },
@@ -134,7 +134,7 @@ describe("telegram cli", () => {
       projectIds: ["tau", "cowork"],
       instructions: "Keep changes coordinated.",
       subagents: {
-        launchModels: ["openai/gpt-5.6-sol:high"],
+        launchModels: ["openai/gpt-6.2-sol:high"],
       },
     });
   });

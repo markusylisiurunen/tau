@@ -18,7 +18,7 @@ Export the API key of the provider you want to use:
 export ANTHROPIC_API_KEY='sk-ant-...'
 ```
 
-`OPENAI_API_KEY` and `GEMINI_API_KEY` work the same way. To use a ChatGPT subscription instead, run `tau auth login codex` and start Tau with a ChatGPT persona: `tau --persona gpt-6.1-sol-chatgpt-coder`. See [models and credentials](models-and-credentials.md).
+`OPENAI_API_KEY` and `GEMINI_API_KEY` work the same way. To use a ChatGPT subscription instead, run `tau auth login codex` and start Tau with a ChatGPT persona: `tau --persona gpt-6.2-sol-chatgpt-coder`. See [models and credentials](models-and-credentials.md).
 
 ## Run a session
 
@@ -40,13 +40,13 @@ The agent starts in this directory and can run any command your user can run. Ta
 A persona selects the model, instructions, and tools. `tau --help` lists the available ones:
 
 ```sh
-tau --persona gpt-6.1-sol-coder:high
+tau --persona gpt-6.2-sol-coder:high
 ```
 
 The optional suffix sets the reasoning level. To make a choice permanent, set a default in `~/.config/tau/config.json`:
 
 ```json
-{ "defaultPersona": "gpt-6.1-sol-coder:high" }
+{ "defaultPersona": "gpt-6.2-sol-coder:high" }
 ```
 
 Inside a session, `/persona:<id>` switches persona and `Shift+Tab` cycles reasoning.

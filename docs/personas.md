@@ -2,7 +2,7 @@
 
 A persona defines how the agent works: model, base system prompt, and default reasoning. Every persona has the same [tools](tools.md). Tau ships chat and coder personas for its supported models: chat personas are general assistants for any kind of task, and coder personas are for software development. `tau --help` lists what is available. GPT models have variants for the API and for a ChatGPT subscription. A built-in persona appears only when its model is in the catalog. The default is `sonnet-5.5-coder`.
 
-Select `claude-opus-relay` to talk to Claude Code Opus through GPT-6.1 Terra at medium reasoning. [Set up Claude Code](subagents.md#claude-code-subagents) and allow `claude-code/claude-opus-5-5:medium` first. The relay forwards text and returns only the final reply. With completion notifications enabled you can send more messages while Opus works; without them the relay waits within the turn.
+Select `claude-code-opus-5.5-low`, `claude-code-opus-5.5-medium`, or `claude-code-opus-5.5-high` to choose Opus’s reasoning effort. GPT-6.1 Terra relays messages at medium effort in all three. [Set up Claude Code](subagents.md#claude-code-subagents) and allow the matching `claude-code/claude-opus-5-5:<effort>` launch model first. The relay forwards text and returns only the final reply. With completion notifications enabled you can send more messages while Opus works; without them the relay waits within the turn.
 
 ## Writing a persona
 
@@ -33,7 +33,6 @@ type Frontmatter = {
   reasoning?: Reasoning; // default effort
   allowedReasoningLevels?: Reasoning[]; // what Shift+Tab cycles through
   serviceTier?: "priority" | "flex"; // openai and openai-codex only
-  claudeCodeRelay?: boolean; // Claude Code workers get turn context guidance instead of a worker briefing
   autoCompactThresholdTokens?: number; // at least 50000
   subagentAutoCompactThresholdTokens?: Record<string, number>; // keyed by "<provider>/<model>"
 };

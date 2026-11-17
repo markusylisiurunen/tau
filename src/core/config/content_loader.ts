@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { ModelResolver } from "../models/catalog.js";
 import { parseModelId } from "../models/model_id.js";
 import type { PromptTemplate } from "../prompts.js";
+import { opusPreset } from "../subagents/claude_code_models.js";
 import type { Persona, Skill } from "../types.js";
 import { ReasoningEffortSchema, ServiceTierSchema } from "../types.js";
 import { formatZodError } from "../utils/zod.js";
@@ -96,7 +97,6 @@ const personaFrontMatterSchema = z
     reasoning: ReasoningEffortSchema.optional(),
     serviceTier: ServiceTierSchema.optional(),
     allowedReasoningLevels: z.array(ReasoningEffortSchema).optional(),
-    claudeCodeRelay: z.boolean().optional(),
     autoCompactThresholdTokens: autoCompactThresholdTokensSchema.optional(),
     subagentAutoCompactThresholdTokens: z
       .record(z.string(), autoCompactThresholdTokensSchema)
@@ -387,7 +387,10 @@ export async function loadAllContent(
     // Precedence: virtual bundle < global < nearest .tau levels.
     const launchModels = config?.subagents?.launchModels;
     const personas = mergeById(
-      virtualBundle.personas,
+      virtualBundle.personas.filter((persona) => {
+        const preset = opusPreset(persona);
+        return !preset || launchModels?.includes(preset.launchModel);
+      }),
       userPersonasResult.personas,
       projectPersonasResult.personas,
     ).map((persona) => withSubagentLaunchModels(persona, launchModels));

@@ -42,7 +42,6 @@ export interface Persona {
   settings: PersonaSettings;
   allowedReasoningLevels?: ReasoningEffort[];
   subagentLaunchModels: string[];
-  claudeCodeRelay?: boolean;
   autoCompactThresholdTokens?: number;
   subagentAutoCompactThresholdTokens?: Record<string, number>;
   source: PersonaSource;

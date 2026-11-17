@@ -58,6 +58,8 @@ Tau ships a model catalog with limits, capabilities, and prices. A host refreshe
 tau models refresh
 ```
 
+If a built-in persona is missing because its model is only in the remote catalog, run `tau models refresh` on the host before starting a session with that persona.
+
 A session keeps its catalog until `/reload`. A catalog record can change a model's endpoint and headers, so treat this refresh like a software update channel. Set `TAU_OFFLINE` to skip automatic checks.
 
 A persona or launch allowlist can name a model ID missing from the catalog if the provider is known. Tau then uses the provider's default template, so its limits and prices may be wrong.

@@ -23,35 +23,25 @@ describe("model catalog", () => {
   });
 
   it.each(["openai", "openai-codex"])(
-    "resolves both GPT-6.2 models and their personas for %s before a catalog refresh",
+    "builds GPT-6.2 personas from the remote catalog for %s",
     (provider) => {
-      const resolver = loadModelResolver();
+      const template = resolveModel(provider, "gpt-6-luna");
+      const models = ["gpt-6.2-astra", "gpt-6.2-sol"].map((id) => ({
+        ...template,
+        id,
+      }));
+      const resolver = loadModelResolver({ remoteCatalog: new Map([[provider, models]]) });
       const personas = createBuiltinPersonas(resolver.resolveConfiguredModel);
-      for (const family of ["astra", "sol"]) {
-        const id = `gpt-6.2-${family}`;
-        const model = resolver.resolveConfiguredModel(provider, id);
-        expect(model).toMatchObject({
-          id,
-          provider,
-          reasoning: true,
-          cost:
-            family === "astra"
-              ? { input: 8, output: 40, cacheRead: 0.4 }
-              : { input: 2, output: 10, cacheRead: 0.1 },
-          maxTokens: 128000,
-        });
-        const prefix = provider === "openai-codex" ? `${id}-chatgpt` : id;
+      for (const model of models) {
+        const prefix = provider === "openai-codex" ? `${model.id}-chatgpt` : model.id;
         for (const variant of ["chat", "coder"]) {
-          expect(personas.find((p) => p.id === `${prefix}-${variant}`)?.model.id).toBe(id);
+          expect(personas.find((p) => p.id === `${prefix}-${variant}`)?.model).toEqual(model);
         }
         if (provider === "openai-codex") {
-          expect(personas.find((p) => p.id === `${prefix}-fast-coder`)?.settings.serviceTier).toBe(
-            "priority",
-          );
+          const fast = personas.find((p) => p.id === `${prefix}-fast-coder`);
+          expect(fast?.model).toEqual(model);
+          expect(fast?.settings.serviceTier).toBe("priority");
         }
-        const remote = { ...model, contextWindow: 654321 };
-        const refreshed = loadModelResolver({ remoteCatalog: new Map([[provider, [remote]]]) });
-        expect(refreshed.resolveConfiguredModel(provider, id)?.contextWindow).toBe(654321);
       }
     },
   );

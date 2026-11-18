@@ -107,6 +107,33 @@ type PersonaSpec = {
 
 const PERSONA_SPECS: PersonaSpec[] = [
   {
+    id: "gemini-4-hydrogen",
+    description: "Gemini 4 Hydrogen",
+    provider: "google",
+    modelId: "gemini-4-hydrogen",
+    catalogOnly: true,
+    allowedReasoningLevels: ["low", "medium", "high"],
+    settings: { reasoning: "high" },
+  },
+  {
+    id: "gemini-4-carbon",
+    description: "Gemini 4 Carbon",
+    provider: "google",
+    modelId: "gemini-4-carbon",
+    catalogOnly: true,
+    allowedReasoningLevels: ["low", "medium", "high"],
+    settings: { reasoning: "medium" },
+  },
+  {
+    id: "gemini-4-neon",
+    description: "Gemini 4 Neon",
+    provider: "google",
+    modelId: "gemini-4-neon",
+    catalogOnly: true,
+    allowedReasoningLevels: ["medium"],
+    settings: { reasoning: "medium" },
+  },
+  {
     id: "gpt-6.2-sol",
     description: "GPT-6.2 Sol",
     provider: "openai",

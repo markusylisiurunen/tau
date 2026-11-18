@@ -1570,7 +1570,7 @@ class TelegramAdapterImpl {
         this.log("warn", "telegram poll failed", {
           cause: error instanceof Error ? error.message : String(error),
         });
-        await this.wait(TELEGRAM_POLL_RETRY_INTERVAL_MS);
+        await this.wait(TELEGRAM_POLL_RETRY_INTERVAL_MS, { keepAlive: true });
       }
     }
   }
@@ -3966,7 +3966,7 @@ class TelegramAdapterImpl {
           throw new TelegramDeliveryError(error, attempt, retryable);
         }
 
-        await this.wait(Math.max(retryDelayMs, error.retryAfterMs ?? 0), externalSignal);
+        await this.wait(Math.max(retryDelayMs, error.retryAfterMs ?? 0), { externalSignal });
         if (this.abortController.signal.aborted || externalSignal?.aborted) {
           return ABORTED;
         }
@@ -4038,7 +4038,13 @@ class TelegramAdapterImpl {
     }
   }
 
-  private async wait(durationMs: number, externalSignal?: AbortSignal): Promise<void> {
+  private async wait(
+    durationMs: number,
+    {
+      externalSignal,
+      keepAlive = false,
+    }: { externalSignal?: AbortSignal; keepAlive?: boolean } = {},
+  ): Promise<void> {
     const waitSignal = externalSignal
       ? AbortSignal.any([this.abortController.signal, externalSignal])
       : this.abortController.signal;
@@ -4051,7 +4057,7 @@ class TelegramAdapterImpl {
         waitSignal.removeEventListener("abort", onAbort);
         resolve();
       }, durationMs);
-      timeout.unref?.();
+      if (!keepAlive) timeout.unref?.();
 
       const onAbort = () => {
         clearTimeout(timeout);

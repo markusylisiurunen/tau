@@ -1,6 +1,6 @@
 # @tau/files
 
-Read, write, and edit whole files. Only the operations your tools permit are present: reads when you have Bash, `writeText` and `writeBytes` with `write`, and `edit` with `edit`. Paths resolve like the file tools, from the working directory or as absolute paths.
+Read, write, and edit whole files. Paths resolve like the file tools, from the working directory or as absolute paths. Each function needs one of your tools: reads need Bash, writes need `write`, and `edit` needs `edit`. The tool description names any function you are not permitted to call.
 
 ```js
 import * as files from "@tau/files";
@@ -30,6 +30,7 @@ Writes create missing parent directories and replace existing files. `edit` appl
 
 | `code` | Meaning |
 | --- | --- |
+| `not_permitted` | The function needs a tool you do not have. |
 | `invalid_utf8` | `readText` or `edit` found bytes that are not UTF-8. |
 | `file_too_large` | The file, or the text to write, exceeds 16 MiB. |
 | `edit_no_match` | An `oldText` does not occur in the file. |

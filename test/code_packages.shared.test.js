@@ -52,12 +52,13 @@ const output = (result) =>
     .join("\n");
 
 it("loads only enabled packages and does not expose the Code Mode globals", async () => {
-  await withTool(["edit"], async (run) => {
+  await withTool(["edit"], async (run, cwd) => {
     const result = await run(`
       import { docs, printText } from "@tau/core";
       import * as files from "@tau/files";
       const summary = [typeof tau, typeof globalThis.input, typeof globalThis.printText,
         typeof files.readText, typeof files.writeText, typeof files.edit];
+      try { await files.writeText("denied.txt", "x"); } catch (error) { summary.push(error.code); }
       for (const page of [undefined, "examples", "@tau/files", "@tau/web"]) {
         try { summary.push((await (page === undefined ? docs() : docs(page))).split("\\n")[0]); }
         catch (error) { summary.push(error.code); }
@@ -69,14 +70,16 @@ it("loads only enabled packages and does not expose the Code Mode globals", asyn
       "undefined",
       "undefined",
       "undefined",
-      "undefined",
-      "undefined",
       "function",
+      "function",
+      "function",
+      "not_permitted",
       "# Code programs and @tau/core",
       "# Code program examples",
       "# @tau/files",
       "unknown_page",
     ]);
+    await expect(readFile(join(cwd, "denied.txt"))).rejects.toMatchObject({ code: "ENOENT" });
     for (const code of [
       'import { search } from "@tau/web"; await search("books");',
       'import { run } from "@tau/bash"; await run("true");',

@@ -1,3 +1,5 @@
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import {
   createTelegramApi,
@@ -439,6 +441,30 @@ function emitAssistantProgress(manager, messageId, text) {
 }
 
 describe("telegram adapter", () => {
+  it("resumes polling when all bots back off together in an otherwise idle process", () => {
+    const fixture = fileURLToPath(new URL("./fixtures/telegram-poll-recovery.js", import.meta.url));
+    execFileSync(process.execPath, [fixture], { timeout: 10_000 });
+  });
+
+  it("cancels a pending poll retry on close", async () => {
+    vi.useFakeTimers();
+    try {
+      const { api } = createApiHarness([]);
+      api.getUpdates.mockRejectedValueOnce(new Error("transient poll failure"));
+      const adapter = await startAdapter({
+        api,
+        sessionManager: createSessionManagerHarness().manager,
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(vi.getTimerCount()).toBe(1);
+      await adapter.close();
+      expect(vi.getTimerCount()).toBe(0);
+      expect(api.getUpdates).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("persists TTS enablement and sends the final response as a voice note", async () => {
     const chatId = 13;
     const ownerId = ownerIdForChat(chatId);

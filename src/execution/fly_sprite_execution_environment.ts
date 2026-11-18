@@ -139,6 +139,7 @@ export function createFlySpriteToolExecutionBackend(options: {
         timeoutMs: runOptions.timeoutMs,
         env: applyBashEnvironment(runOptions.env),
         maxCaptureBytes: runOptions.maxCaptureBytes,
+        terminateOnCaptureLimit: runOptions.terminateOnCaptureLimit,
         streamOutput: Boolean(runOptions.onOutput),
       },
       { signal: runOptions.signal, onStarted: runOptions.onStarted, onOutput: runOptions.onOutput },
@@ -219,6 +220,7 @@ export function createFlySpriteToolExecutionBackend(options: {
 type FlySpriteWorkerRequestByMethod = {
   exec: {
     streamOutput: boolean;
+    terminateOnCaptureLimit?: boolean;
     command: string;
     args?: string[];
     stdinBase64?: string;
@@ -659,6 +661,7 @@ async function handleLine(line) {
           maxCaptureBytes: request.maxCaptureBytes,
           stdinBase64: request.stdinBase64,
           streamOutput: request.streamOutput,
+          terminateOnCaptureLimit: request.terminateOnCaptureLimit,
         },
       );
       respond(request.id, result);
@@ -725,6 +728,7 @@ function runCommand(id, command, args, options) {
     const stdoutChunks = [];
     const stderrChunks = [];
     let bytes = 0;
+    let totalBytes = 0;
     let stdoutBytes = 0;
     let stderrBytes = 0;
     let truncated = false;
@@ -769,6 +773,12 @@ function runCommand(id, command, args, options) {
 
     const append = (chunk, target) => {
       const buffer = Buffer.from(chunk);
+      totalBytes += buffer.byteLength;
+      if (totalBytes > maxCaptureBytes && options.terminateOnCaptureLimit) {
+        truncated = true;
+        cancel("limit");
+        return;
+      }
       if (options.streamOutput) {
         console.log(JSON.stringify({ id, event: "output", data: buffer.toString("base64") }));
       }

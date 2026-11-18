@@ -45,20 +45,14 @@ function fixture(overrides = {}) {
 describe("agents capability", () => {
   it("exposes subscriptions only to main and rejects worker options before spawning", async () => {
     const main = fixture();
-    await main.api.spawn(
-      [{ title: "child", prompt: "task", notifyOnCompletion: false }],
-      context(),
-    );
+    await main.api.spawn(["task", { title: "child", notifyOnCompletion: false }], context());
     expect(main.supervisor.spawn.mock.lastCall[0].notifyOnCompletion).toBe(false);
-    await main.api.setCompletionNotification([{ id: "worker", enabled: true }], context());
+    await main.api.setCompletionNotification(["worker", true], context());
     expect(main.supervisor.setCompletionNotification).toHaveBeenCalledWith("worker", true);
     const worker = fixture({ callerId: "worker" });
     expect(worker.api.setCompletionNotification).toBeUndefined();
-    expect(createAgentsCapability(worker.options, "origin").documentation).not.toContain(
-      "notifyOnCompletion",
-    );
     await expect(
-      worker.api.spawn([{ title: "child", prompt: "task", notifyOnCompletion: true }], context()),
+      worker.api.spawn(["task", { title: "child", notifyOnCompletion: true }], context()),
     ).rejects.toMatchObject({ code: "invalid_arguments" });
     expect(worker.supervisor.prepareSpawn).not.toHaveBeenCalled();
     expect(worker.supervisor.spawn).not.toHaveBeenCalled();
@@ -73,7 +67,7 @@ describe("agents capability", () => {
       expect(choices.overrides).toEqual([]);
       expect(supervisor.prepareSpawn).not.toHaveBeenCalled();
       expect(supervisor.spawn).not.toHaveBeenCalled();
-      await api.spawn([{ title: "child", prompt: "task" }], context());
+      await api.spawn(["task", { title: "child" }], context());
       const { model, settings } = supervisor.spawn.mock.calls[0][0].runtimeConfig;
       expect(`${model.provider}/${model.id}:${settings.reasoning ?? "none"}`).toBe(
         choices.inherited.model,
@@ -101,26 +95,23 @@ describe("agents capability", () => {
     );
     expect(supervisor.spawn).not.toHaveBeenCalled();
     for (const { model } of choices.overrides) {
-      await api.spawn([{ title: "child", prompt: "task", model }], context());
+      await api.spawn(["task", { title: "child", model }], context());
       const config = supervisor.spawn.mock.lastCall[0].runtimeConfig;
       const reasoning = config.kind === "native" ? config.settings.reasoning : config.effort;
       expect(`${config.model.provider}/${config.model.id}:${reasoning}`).toBe(model);
     }
     await expect(
-      api.spawn([{ title: "child", prompt: "task", model: "openai/gpt-6.2-sol:low" }], context()),
+      api.spawn(["task", { title: "child", model: "openai/gpt-6.2-sol:low" }], context()),
     ).rejects.toMatchObject({ code: "operation_failed" });
     await expect(
-      api.spawn(
-        [{ title: "child", prompt: "task", model: "openai/missing-model:high" }],
-        context(),
-      ),
+      api.spawn(["task", { title: "child", model: "openai/missing-model:high" }], context()),
     ).rejects.toMatchObject({ code: "operation_failed" });
     expect(supervisor.spawn).toHaveBeenCalledTimes(2);
   });
 
   it("inherits launch settings and binds the launching conversation origin", async () => {
     const { api, options, supervisor } = fixture();
-    await api.spawn([{ title: "child", prompt: "task" }], context());
+    await api.spawn(["task", { title: "child" }], context());
     expect(supervisor.spawn).toHaveBeenCalledWith(
       expect.objectContaining({
         originHistoryEntryId: "origin",
@@ -140,15 +131,12 @@ describe("agents capability", () => {
   it("rebuilds native instructions for another directory and rejects unavailable context", async () => {
     const resolver = vi.fn(async () => "other instructions");
     const { api, supervisor } = fixture({ resolveSubagentPrompt: resolver });
-    await api.spawn([{ title: "child", prompt: "task", workingDirectory: "other" }], context());
+    await api.spawn(["task", { title: "child", workingDirectory: "other" }], context());
     expect(resolver).toHaveBeenCalledWith(expect.objectContaining({ cwd: "/repo/other" }));
     expect(supervisor.spawn.mock.calls[0][0].runtimeConfig.systemPrompt).toBe("other instructions");
     const unavailable = fixture();
     await expect(
-      unavailable.api.spawn(
-        [{ title: "child", prompt: "task", workingDirectory: "other" }],
-        context(),
-      ),
+      unavailable.api.spawn(["task", { title: "child", workingDirectory: "other" }], context()),
     ).rejects.toThrow();
     expect(unavailable.supervisor.spawn).not.toHaveBeenCalled();
   });
@@ -163,14 +151,13 @@ describe("agents capability", () => {
     const fx = fixture({ modelResolver, resolveSubagentPrompt });
     const input = {
       title: "child",
-      prompt: "task",
       model: "claude-code/claude-sonnet-5-5:medium",
       workingDirectory: "other",
     };
-    await expect(fx.api.spawn([input], context())).rejects.toThrow();
+    await expect(fx.api.spawn(["task", input], context())).rejects.toThrow();
     expect(fx.supervisor.spawn).not.toHaveBeenCalled();
     fx.options.persona.subagentLaunchModels = [input.model];
-    await fx.api.spawn([input], context());
+    await fx.api.spawn(["task", input], context());
     expect(fx.supervisor.spawn.mock.calls[0][0].runtimeConfig).toMatchObject({
       kind: "claude-code",
       workingDirectory: "/repo/other",
@@ -182,27 +169,46 @@ describe("agents capability", () => {
 
   it("requires explicit delivery mode and propagates wait cancellation without interrupting workers", async () => {
     const { api, supervisor } = fixture();
-    await expect(
-      api.sendInput([{ id: "worker", message: "task" }], context()),
-    ).rejects.toMatchObject({ code: "invalid_arguments" });
-    await api.sendInput([{ id: "worker", message: "task", mode: "steer" }], context());
+    await expect(api.sendInput(["worker", "task"], context())).rejects.toMatchObject({
+      code: "invalid_arguments",
+    });
+    await api.sendInput(["worker", "task", { mode: "steer" }], context());
     expect(supervisor.sendInput).toHaveBeenCalledWith({
       id: "worker",
       prompt: "task",
       mode: "steer",
     });
     const waitContext = context();
-    await api.waitUntilIdle([{ id: "worker" }], waitContext);
+    await api.waitUntilIdle(["worker"], waitContext);
     expect(supervisor.waitForAgents).toHaveBeenCalledWith(["worker"], waitContext.signal);
     expect(supervisor.interrupt).not.toHaveBeenCalled();
-    await api.interrupt([{ id: "worker", wait: false }], waitContext);
+    await api.interrupt(["worker", { wait: false }], waitContext);
     expect(supervisor.interrupt).toHaveBeenCalledWith("worker", waitContext.signal, false, "agent");
+  });
+
+  it("reads the whole response only after the latest worker turn completes normally", async () => {
+    const text = "x".repeat(100_001);
+    const getLastResponse = vi.fn(() => ({ seq: 7, text, complete: true }));
+    const { api, supervisor } = fixture({ supervisor: { getLastResponse } });
+    for (const state of [
+      { status: "working" },
+      { status: "idle", reason: "failed" },
+      { status: "idle", reason: "interrupted" },
+    ]) {
+      supervisor.read.mockReturnValueOnce(state);
+      await expect(api.readResponse(["worker"], context())).rejects.toThrow();
+    }
+    expect(getLastResponse).not.toHaveBeenCalled();
+    supervisor.read.mockReturnValue({ status: "idle", reason: "completed" });
+    await expect(api.readResponse(["worker"], context())).resolves.toBe(text);
+    getLastResponse.mockReturnValueOnce(undefined);
+    await expect(api.readResponse(["worker"], context())).rejects.toThrow();
   });
 
   it("rejects cancelled launches before side effects", async () => {
     const { api, supervisor } = fixture();
     await expect(
-      api.spawn([{ title: "child", prompt: "task" }], { signal: AbortSignal.abort() }),
+      api.spawn(["task", { title: "child" }], { signal: AbortSignal.abort() }),
     ).rejects.toThrow();
     expect(supervisor.spawn).not.toHaveBeenCalled();
   });
@@ -341,7 +347,7 @@ describe("subagent compaction thresholds", () => {
       `${options.persona.model.provider}/${options.persona.model.id}`;
     options.persona.subagentAutoCompactThresholdTokens =
       budget === undefined ? {} : { [key]: budget };
-    await api.spawn([{ title: "child", prompt: "work", ...(model ? { model } : {}) }], context());
+    await api.spawn(["work", { title: "child", ...(model ? { model } : {}) }], context());
     const config = supervisor.spawn.mock.calls[0][0].runtimeConfig;
     expect(config.autoCompactThresholdTokens).toBe(
       Math.min(expected ?? Infinity, config.model.contextWindow - 16384),

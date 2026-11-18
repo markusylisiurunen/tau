@@ -219,10 +219,17 @@ export async function runOpenRouterCommand(
   const result = await requestOpenRouterChat(
     {
       model: requestedModel,
-      prompt,
       system,
       reasoning: values.reasoning as string | undefined,
-      attachments: attachments.map((item) => ({ kind: item.kind, path: resolve(cwd, item.path!) })),
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: prompt },
+            ...attachments.map((item) => ({ kind: item.kind, path: resolve(cwd, item.path!) })),
+          ],
+        },
+      ],
     },
     {
       ...options,

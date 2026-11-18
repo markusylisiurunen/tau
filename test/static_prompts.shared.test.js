@@ -9,7 +9,7 @@ describe("static prompts", () => {
     ]) {
       for (const historyEnabled of [false, true]) {
         const prompt = renderSubagentPrefixPrompt({ sessionIds, historyEnabled });
-        expect(prompt.includes("tau.history.read")).toBe(historyEnabled);
+        expect(prompt.includes("`read` from `@tau/history`")).toBe(historyEnabled);
         expect(prompt.includes('source: "local"')).toBe(historyEnabled);
         let previous = -1;
         for (const id of sessionIds) {

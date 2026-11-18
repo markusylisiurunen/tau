@@ -78,7 +78,9 @@ describe("ChatRuntime", () => {
         {
           id: "spawn",
           name: "code",
-          arguments: { code: 'await tau.agents.spawn({ title: "child", prompt: "work" });' },
+          arguments: {
+            code: 'import * as agents from "@tau/agents"; await agents.spawn("work", { title: "child" });',
+          },
         },
         {
           signal: new AbortController().signal,

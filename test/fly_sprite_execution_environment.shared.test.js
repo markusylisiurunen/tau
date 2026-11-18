@@ -1,6 +1,6 @@
 import { spawn as spawnChild } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -386,6 +386,30 @@ describe("Fly Sprite execution environment", () => {
       expect(() => process.kill(pid, 0)).toThrow();
     } finally {
       await backend.dispose();
+    }
+  });
+
+  it("terminates the Sprite process group on combined capture overflow when requested", async () => {
+    const root = await mkdtemp(join(tmpdir(), "tau-fly-capture-"));
+    const sprite = {
+      spawn(command, args, options) {
+        return spawnChild(command, args, { ...options, stdio: ["pipe", "pipe", "pipe"] });
+      },
+    };
+    const backend = createFlySpriteToolExecutionBackend({ sprite, cwd: root });
+    try {
+      const result = await backend.runBash(
+        "printf 12345; printf 67890 >&2; sleep 4; touch finished",
+        {
+          maxCaptureBytes: 8,
+          terminateOnCaptureLimit: true,
+        },
+      );
+      expect(result).toMatchObject({ truncated: true, exitCode: null });
+      await expect(readFile(join(root, "finished"))).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await backend.dispose();
+      await rm(root, { recursive: true, force: true });
     }
   });
 

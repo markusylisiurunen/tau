@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { z } from "zod";
 import type { HistoryQuery } from "../history/types.js";
 import { formatZodError } from "../utils/zod.js";
@@ -6,7 +5,7 @@ import type { CodeModeCapability } from "./capability.js";
 
 const description = [
   "Search and read saved conversation transcripts across repositories and machines. It is read-only.",
-  "Use tau.history only when the user or active instructions explicitly ask to reference, search, or read historical transcripts, not merely because prior sessions might be relevant.",
+  "Use @tau/history only when the user or active instructions explicitly ask to reference, search, or read historical transcripts, not merely because prior sessions might be relevant.",
 ].join(" ");
 
 const attributeFilterSchema = z.union([
@@ -48,17 +47,11 @@ const searchInputSchema = z
   .strict();
 const readInputSchema = z
   .object({
-    sessionId: z.string().trim().min(1).max(256),
     source: z.literal("local").optional(),
     limit: z.number().int().min(1).max(100).default(50),
     cursor: z.string().min(1).max(2_048).optional(),
   })
   .strict();
-
-const documentation = readFileSync(
-  new URL("../static/code_mode/history/documentation.md", import.meta.url),
-  "utf8",
-);
 
 async function handleHistoryRequest(
   method: "search" | "read",
@@ -66,22 +59,24 @@ async function handleHistoryRequest(
   history: HistoryQuery,
   signal: AbortSignal,
 ): Promise<unknown> {
-  if (args.length !== 1) {
-    throw new Error(`tau.history.${method} expects one options object`);
-  }
   if (method === "search") {
-    const parsed = searchInputSchema.safeParse(args[0] ?? {});
+    const parsed = z.tuple([searchInputSchema.optional()]).safeParse(args);
     if (!parsed.success) {
-      throw new Error(`Invalid tau.history.search options: ${formatZodError(parsed.error)}`);
+      throw new Error(`Invalid @tau/history.search options: ${formatZodError(parsed.error)}`);
     }
-    return await history.search(parsed.data, signal);
+    return await history.search(parsed.data[0] ?? searchInputSchema.parse({}), signal);
   }
   if (method === "read") {
-    const parsed = readInputSchema.safeParse(args[0]);
+    const parsed = z
+      .tuple([z.string().trim().min(1).max(256), readInputSchema.optional()])
+      .safeParse(args);
     if (!parsed.success) {
-      throw new Error(`Invalid tau.history.read options: ${formatZodError(parsed.error)}`);
+      throw new Error(`Invalid @tau/history.read options: ${formatZodError(parsed.error)}`);
     }
-    return await history.read(parsed.data, signal);
+    return await history.read(
+      { ...(parsed.data[1] ?? readInputSchema.parse({})), sessionId: parsed.data[0] },
+      signal,
+    );
   }
   throw new Error(`unsupported history method '${method}'`);
 }
@@ -90,7 +85,6 @@ export function createHistoryCapability(history: HistoryQuery): CodeModeCapabili
   return {
     name: "history",
     description,
-    documentation,
     api: {
       search: (args, context) => handleHistoryRequest("search", args, history, context.signal),
       read: (args, context) => handleHistoryRequest("read", args, history, context.signal),

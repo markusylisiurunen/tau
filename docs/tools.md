@@ -12,16 +12,16 @@ A tool runs with the permissions of the machine behind it, and nothing limits it
 
 | Name in `tools` | Gives the agent |
 | --- | --- |
-| `bash` | `bash`, its job tools, and `tau.bash` |
-| `write`, `edit` | File tools |
+| `bash` | `bash`, its job tools, and `bash` and file reads in `@tau/core` |
+| `write`, `edit` | File tools and matching `files` operations in `@tau/core` |
 | `view_image` | Shows an image to the model |
-| `web` | `tau.web`: search, fetch, and discovery (search and fetch need an Exa key) |
-| `history` | `tau.history`: read-only [transcript search](history.md) |
-| `mcp` | `tau.mcp`: [MCP servers](mcp.md) |
-| `models` | `tau.models`: standalone OpenRouter calls |
-| `agents` | `tau.agents` and `wait_for_agents`: [subagents](subagents.md) |
+| `web` | `@tau/web`: search, fetch, and discovery (search and fetch need an Exa key) |
+| `history` | `@tau/history`: read-only [transcript search](history.md) |
+| `mcp` | `@tau/mcp`: [MCP servers](mcp.md) |
+| `models` | `@tau/models`: standalone model calls |
+| `agents` | `@tau/agents` and `wait_for_agents`: [subagents](subagents.md) |
 
-Names starting with `tau.` are APIs inside the [`code` tool](code-mode.md), which Tau adds when at least one of them is available.
+Packages starting with `@tau/` are APIs inside the [`code` tool](code-mode.md).
 
 ## Bash
 

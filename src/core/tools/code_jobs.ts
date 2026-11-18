@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import {
+  type CodeModeModules,
   type ExecuteTauCodeModeOptions,
   runTauCodeMode,
   type TauCodeModeJsonValue,
@@ -8,7 +9,7 @@ import {
 import { SESSION_PROTOCOL_MAX_CLIENT_TOOL_IMAGES } from "../../protocol/session_protocol.js";
 import { truncateForTokens } from "../utils/truncate.js";
 import { MAX_JOBS, waitForJobs } from "./background_jobs.js";
-import type { CodeProgram } from "./code_preloads.js";
+import { type CodeProgram, readCodeModule } from "./code_modules.js";
 import { DEFAULT_COMMAND_CAPTURE_BYTES, type ToolExecutionBackend } from "./execution_backend.js";
 import { JobOutput } from "./job_output.js";
 
@@ -31,9 +32,10 @@ export class CodeJobRegistry {
     source: string;
     cwd: string;
     backend: ToolExecutionBackend;
-    program: Pick<ExecuteTauCodeModeOptions, "name" | "documentation" | "api"> &
+    program: Pick<ExecuteTauCodeModeOptions, "name" | "documentation"> &
       CodeProgram & {
         input?: TauCodeModeJsonValue;
+        packages: CodeModeModules["packages"];
       };
     signal: AbortSignal;
   }): string {
@@ -62,6 +64,12 @@ export class CodeJobRegistry {
       try {
         const result = await runTauCodeMode({
           ...options.program,
+          modules: {
+            packages: options.program.packages,
+            cwd: options.program.cwd,
+            entryPath: options.program.entryPath,
+            readSource: (path, signal) => readCodeModule(options.backend, path, signal),
+          },
           timeoutMs: null,
           signal: job.controller.signal,
           output: job.output.capture,

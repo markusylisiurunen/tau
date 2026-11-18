@@ -1,7 +1,9 @@
 import { Buffer } from "node:buffer";
 import { parentPort, workerData } from "node:worker_threads";
+import { decodeModuleValue, encodeModuleValue } from "../../../code_mode/wire.js";
 import { truncateToBytesFromEnd } from "../../utils/truncate.js";
 import { codeModeMath, createCodeModeDate } from "./capabilities.mjs";
+import { compileModules } from "./modules.mjs";
 
 if (!parentPort) {
   throw new Error("code-mode sandbox requires a parent port");
@@ -12,11 +14,6 @@ if (
   typeof workerData.code !== "string" ||
   typeof workerData.docs !== "string" ||
   (workerData.sourceName !== undefined && typeof workerData.sourceName !== "string") ||
-  !Array.isArray(workerData.preloads) ||
-  workerData.preloads.some(
-    (source) =>
-      !source || typeof source.code !== "string" || typeof source.sourceName !== "string",
-  ) ||
   !Number.isSafeInteger(workerData.imageMethodId) ||
   workerData.imageMethodId < 0 ||
   !Array.isArray(workerData.apis) ||
@@ -70,7 +67,7 @@ parentPort.on("message", (message) => {
       ) {
         throw new Error("invalid code-mode bridge response");
       }
-      request.resolve(JSON.parse(message.valueJson));
+      request.resolve(workerData.moduleConfig ? decodeModuleValue(message.valueJson) : JSON.parse(message.valueJson));
     } catch {
       request.reject(new Error("code-mode bridge returned invalid JSON"));
     }
@@ -80,6 +77,7 @@ parentPort.on("message", (message) => {
   const error = new Error(message.error?.message || "Code-mode API request failed");
   if (message.error?.name) error.name = message.error.name;
   if (typeof message.error?.code === "string") error.code = message.error.code;
+  if (message.error?.exitCode === null || typeof message.error?.exitCode === "number") error.exitCode = message.error.exitCode;
   request.reject(error);
 });
 
@@ -158,15 +156,19 @@ const compartment = new Compartment({
     _imageMethodId: workerData.imageMethodId,
     _requestApi: harden(requestApi),
     _writeOutput: harden(writeOutput),
-    docs: workerData.docs,
+    ...(workerData.moduleConfig
+      ? { _encodeModuleValue: harden(encodeModuleValue) }
+      : { docs: workerData.docs }),
     _inputJson: workerData.inputJson,
   },
   __options__: true,
 });
 
-compartment.evaluate(String.raw`
+const packages = compartment.evaluate(String.raw`
 (() => {
-  Object.defineProperty(globalThis, "input", { value: JSON.parse(_inputJson) });
+  const input = JSON.parse(_inputJson);
+  const encodeModule = globalThis._encodeModuleValue;
+  delete globalThis._encodeModuleValue;
   delete globalThis._inputJson;
   const apis = _apis;
   const requestApiBridge = _requestApi;
@@ -177,12 +179,10 @@ compartment.evaluate(String.raw`
   delete globalThis._requestApi;
   delete globalThis._writeOutput;
 
-  Object.defineProperty(globalThis, "printText", {
-    value: (text) => {
+  const printText = (text) => {
       if (typeof text !== "string") throw new TypeError("printText expects a string. Select relevant fields and format concise plain text to save tokens. Only use JSON.stringify on selected data when JSON structure is needed; do not dump whole responses.");
-      writeOutputBridge("stdout", text);
-    },
-  });
+    writeOutputBridge("stdout", text);
+  };
   delete globalThis.console;
 
   function bound(values, limit, position, unit) {
@@ -203,20 +203,33 @@ compartment.evaluate(String.raw`
     const tail = kept - head;
     return [...values.slice(0, head), marker, ...(tail ? values.slice(-tail) : [])].join(joiner);
   }
-  Object.defineProperty(globalThis, "truncate", {
-    value: (text, { maxChars, position = "middle" }) => {
-      if (typeof text !== "string") throw new TypeError("truncate expects a string");
-      return bound(Array.from(text), maxChars, position, "characters");
-    },
-  });
-  Object.defineProperty(globalThis, "truncateLines", {
-    value: (text, { maxLines, position = "middle" }) => {
-      if (typeof text !== "string") throw new TypeError("truncateLines expects a string");
-      return bound(text.replace(/\r\n?/g, "\n").split("\n"), maxLines, position, "lines");
-    },
-  });
+  const truncateLegacy = (text, { maxChars, position = "middle" }) => {
+    if (typeof text !== "string") throw new TypeError("truncate expects a string");
+    return bound(Array.from(text), maxChars, position, "characters");
+  };
+  const truncateLines = (text, { maxLines, position = "middle" }) => {
+    if (typeof text !== "string") throw new TypeError("truncateLines expects a string");
+    return bound(text.replace(/\r\n?/g, "\n").split("\n"), maxLines, position, "lines");
+  };
+  const truncate = (text, options) => {
+    if (typeof text !== "string") throw new TypeError("truncate expects a string");
+    const { maxChars, maxLines, keep = "both" } = options;
+    if ((maxChars === undefined) === (maxLines === undefined)) {
+      throw new TypeError("Specify exactly one of maxChars and maxLines");
+    }
+    const limit = maxChars ?? maxLines;
+    if (!Number.isSafeInteger(limit) || limit <= 0) throw new TypeError("limit must be a positive integer");
+    if (!["head", "tail", "both"].includes(keep)) throw new TypeError("invalid keep option");
+    const values = maxLines === undefined ? Array.from(text) : text.split(/\r\n|\n|\r/);
+    if (values.length <= limit) return text;
+    const head = keep === "head" ? limit : keep === "tail" ? 0 : Math.ceil(limit / 2);
+    const tail = limit - head;
+    return [...values.slice(0, head), "…", ...(tail > 0 ? values.slice(-tail) : [])]
+      .join(maxLines === undefined ? "" : "\n");
+  };
 
   function serializeArguments(args) {
+    if (encodeModule) return encodeModule(args, true);
     return JSON.stringify(args, function (_key, value) {
       if (value === undefined && !Array.isArray(this)) return undefined;
       if (
@@ -232,11 +245,9 @@ compartment.evaluate(String.raw`
     });
   }
 
-  Object.defineProperty(globalThis, "printImage", {
-    value: async (...args) => {
-      await requestApiBridge(imageMethodId, serializeArguments(args));
-    },
-  });
+  const printImage = async (value) => {
+    await requestApiBridge(imageMethodId, serializeArguments([value]));
+  };
 
   function freezeApi(value) {
     for (const child of Object.values(value)) {
@@ -245,6 +256,7 @@ compartment.evaluate(String.raw`
     return Object.freeze(value);
   }
 
+  const packages = Object.create(null);
   for (const definition of apis) {
     const api = Object.create(null);
     for (const method of definition.methods) {
@@ -256,21 +268,41 @@ compartment.evaluate(String.raw`
       target[method.path.at(-1)] = (...args) =>
         requestApiBridge(method.id, serializeArguments(args));
     }
-    Object.defineProperty(globalThis, definition.name, {
-      value: freezeApi(api),
-    });
+    packages[definition.name] = api;
+  }
+  if (encodeModule) {
+    Object.assign(packages["@tau/core"], { input, printText, printImage, truncate });
+    for (const api of Object.values(packages)) {
+      for (const value of Object.values(api)) {
+        if (value !== input && value !== null && typeof value === "object") freezeApi(value);
+      }
+      Object.freeze(api);
+    }
+    return Object.freeze(packages);
+  }
+  for (const [name, value] of Object.entries({
+    ...packages, input, printText, printImage, truncate: truncateLegacy, truncateLines,
+  })) {
+    Object.defineProperty(globalThis, name, { value: name in packages ? freezeApi(value) : value });
   }
 })();
 `);
 
-let sourceName = workerData.sourceName;
+const sourceName = workerData.sourceName;
 try {
-  for (const source of [
-    ...workerData.preloads,
-    { code: workerData.code, sourceName: workerData.sourceName },
-  ]) {
-    sourceName = source.sourceName;
-    await compartment.evaluate("(async () => {\n" + source.code + "\n})()");
+  if (workerData.moduleConfig) {
+    const { cwd, entryPath, sourceMethodId } = workerData.moduleConfig;
+    const program = await compileModules({
+      code: workerData.code,
+      cwd,
+      entryPath,
+      packages,
+      readSource: (path) => requestApi(sourceMethodId, encodeModuleValue([path], false)),
+    });
+    const execute = compartment.evaluate("(async (__tauPackages) => {\n\"use strict\";\n" + program + "\n})");
+    await execute(packages);
+  } else {
+    await compartment.evaluate("(async () => {\n" + workerData.code + "\n})()");
   }
 } catch (error) {
   writeOutput(

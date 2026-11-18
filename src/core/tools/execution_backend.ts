@@ -30,6 +30,7 @@ export type BashExecutionOptions = {
   cwd?: string;
   env?: Record<string, string>;
   maxCaptureBytes?: number;
+  terminateOnCaptureLimit?: boolean;
   args?: string[];
   stdin?: Buffer;
 };
@@ -184,8 +185,8 @@ export function createLocalToolExecutionBackend(
         signal: options.signal,
         timeoutMs: effectiveTimeoutMs,
         maxCaptureBytes: options.maxCaptureBytes ?? DEFAULT_COMMAND_CAPTURE_BYTES,
-        maxCaptureMode: "ignore",
-        maxCaptureStrategy: "tail",
+        maxCaptureMode: options.terminateOnCaptureLimit ? "terminate" : "ignore",
+        maxCaptureStrategy: options.terminateOnCaptureLimit ? "head" : "tail",
         captureOutput: "combined-and-split",
         killGraceMs: COMMAND_KILL_GRACE_MS,
         ...(options.stdin !== undefined ? { input: options.stdin } : {}),

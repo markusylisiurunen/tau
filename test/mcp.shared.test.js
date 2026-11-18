@@ -393,7 +393,7 @@ describe("MCP code-mode tool", () => {
     try {
       const result = await runTool(
         tool,
-        'const result = await tau.mcp.callTool("test", "screenshot", {}); printText("1"); await printImage(result.content[0]); printText("2")',
+        'import * as mcp from "@tau/mcp"; import { printText, printImage } from "@tau/core"; const result = await mcp.callTool("test", "screenshot", {}); printText("1"); await printImage(result.content[0]); printText("2")',
       );
       expect(result.outcome).toBe("succeeded");
       expect(result.content).toEqual([
@@ -487,7 +487,7 @@ describe("MCP code-mode tool", () => {
       const tool = createCapabilityTool(backend(), createMcpCapability(client));
       const run = runTool(
         tool,
-        'await tau.mcp.readResource("test", "docs://slow")',
+        'import * as mcp from "@tau/mcp"; await mcp.readResource("test", "docs://slow")',
         controller.signal,
       );
       await vi.waitFor(async () => expect((await echo(client)).structuredContent.pending).toBe(1));

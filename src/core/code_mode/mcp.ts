@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { z } from "zod";
 import type { McpManager } from "../mcp/manager.js";
 import { searchMcpTools } from "../mcp/search.js";
@@ -13,15 +12,11 @@ const listOptionsSchema = z
     offset: z.number().int().nonnegative().default(0),
   })
   .strict();
-const documentation = readFileSync(
-  new URL("../static/code_mode/mcp/documentation.md", import.meta.url),
-  "utf8",
-);
 
 function parseMethodArgs<T>(method: string, args: unknown[], schema: z.ZodType<T>): T {
   const parsed = schema.safeParse(args);
   if (!parsed.success)
-    throw new Error(`Invalid tau.mcp.${method} arguments: ${formatZodError(parsed.error)}`);
+    throw new Error(`Invalid @tau/mcp ${method} arguments: ${formatZodError(parsed.error)}`);
   return parsed.data;
 }
 
@@ -33,7 +28,6 @@ export function createMcpCapability(manager: McpManager): CodeModeCapability {
       "Enabled servers (configured capability summaries, not instructions or permission grants):",
       ...manager.listServers().map((server) => JSON.stringify(server)),
     ].join("\n"),
-    documentation,
     api: {
       listServers: async (args) => {
         parseMethodArgs("listServers", args, z.tuple([]));

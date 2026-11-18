@@ -11,6 +11,7 @@ import { SESSION_PROTOCOL_MAX_CLIENT_TOOL_IMAGES } from "../protocol/session_pro
 import type { TauSdkClientToolExecutionEnvironment } from "../sdk/types.js";
 import { CODE_MODE_MAX_IMAGE_PIXELS, prepareCodeModeImage } from "./images.js";
 import { CodeModeOutput } from "./output.js";
+import { decodeModuleValue, encodeModuleValue } from "./wire.js";
 
 export const TAU_CODE_MODE_DEFAULT_TIMEOUT_MS = 60_000;
 export const TAU_CODE_MODE_DEFAULT_MAX_OUTPUT_TOKENS = 8_192;
@@ -103,7 +104,12 @@ export type TauCodeModeDefinition = {
   persistOutput?: TauCodeModePersistOutput;
 };
 
-export type TauCodeModeSource = { code: string; sourceName: string };
+export type CodeModeModules = {
+  packages: Record<string, TauCodeModeApi>;
+  cwd: string;
+  entryPath?: string;
+  readSource: (path: string, signal: AbortSignal) => Promise<string>;
+};
 
 export type ExecuteTauCodeModeOptions = TauCodeModeDefinition & {
   code: string;
@@ -186,13 +192,13 @@ export async function executeTauCodeMode(
 }
 
 export async function runTauCodeMode(
-  options: Omit<ExecuteTauCodeModeOptions, "timeoutMs"> & {
-    sourceName?: string;
-    preloads?: TauCodeModeSource[];
-    timeoutMs?: number | null;
-    input?: TauCodeModeJsonValue;
-    output?: CodeModeOutput;
-  },
+  options: Omit<ExecuteTauCodeModeOptions, "timeoutMs" | "api"> &
+    ({ api: TauCodeModeApi; modules?: never } | { api?: never; modules: CodeModeModules }) & {
+      sourceName?: string;
+      timeoutMs?: number | null;
+      input?: TauCodeModeJsonValue;
+      output?: CodeModeOutput;
+    },
 ): Promise<TauCodeModeRuntimeResult> {
   validateName(options.name);
   if (typeof options.code !== "string" || !options.code.trim()) {
@@ -204,8 +210,14 @@ export async function runTauCodeMode(
   validateTimeout(options.timeoutMs);
   validateMaxOutputTokens(options.maxOutputTokens);
 
-  const apiMethods = registerMethods(options.api, options.name);
-  const apis: RegisteredApi[] = [{ name: options.name, methods: apiMethods }];
+  let methodCount = 0;
+  const apis: RegisteredApi[] = Object.entries(
+    options.modules ? options.modules.packages : { [options.name]: options.api },
+  ).map(([name, api]) => {
+    const methods = registerMethods(api, name, methodCount);
+    methodCount += methods.length;
+    return { name, methods };
+  });
   const methods = apis.flatMap((api) => api.methods);
   const orderedOutput = options.output ?? new CodeModeOutput();
   let imageCount = 0;
@@ -235,12 +247,27 @@ export async function runTauCodeMode(
       }
     },
   });
+  const moduleSourceMethodId = options.modules ? methods.length : undefined;
+  if (options.modules) {
+    const { readSource } = options.modules;
+    methods.push({
+      id: methods.length,
+      apiName: "module loader",
+      path: [],
+      handler: ([path], context) => {
+        if (typeof path !== "string") throw new Error("Invalid module path");
+        return readSource(path, context.signal);
+      },
+    });
+  }
   const timeoutMs =
     options.timeoutMs === undefined ? TAU_CODE_MODE_DEFAULT_TIMEOUT_MS : options.timeoutMs;
   const invocation = options.invocation ?? null;
   const executionEnvironment = options.executionEnvironment ?? null;
   const signal = options.signal ?? new AbortController().signal;
-  const docs = buildRuntimeDocumentation(options.name, options.documentation);
+  const docs = options.modules
+    ? options.documentation
+    : buildRuntimeDocumentation(options.name, options.documentation);
   const startedAt = Date.now();
   let execution: TauCodeModeExecutionCapture;
   try {
@@ -249,7 +276,15 @@ export async function runTauCodeMode(
       workerData: {
         code: options.code,
         sourceName: options.sourceName,
-        preloads: options.preloads ?? [],
+        ...(options.modules
+          ? {
+              moduleConfig: {
+                cwd: options.modules.cwd,
+                entryPath: options.modules.entryPath,
+                sourceMethodId: moduleSourceMethodId,
+              },
+            }
+          : {}),
         inputJson: JSON.stringify(options.input ?? null),
         docs,
         imageMethodId,
@@ -267,13 +302,18 @@ export async function runTauCodeMode(
       handleRequest: async (request, requestSignal) => {
         const method = methods[request.methodId];
         if (!method) throw new Error("unsupported code-mode API method");
-        const args = parseBridgeArguments(request.argsJson, method.apiName, method.path);
+        const args = parseBridgeArguments(
+          request.argsJson,
+          method.apiName,
+          method.path,
+          Boolean(options.modules),
+        );
         const value = await method.handler(args, {
           signal: requestSignal,
           invocation,
           executionEnvironment,
         });
-        return serializeBridgeResult(value, method.apiName, method.path);
+        return serializeBridgeResult(value, method.apiName, method.path, Boolean(options.modules));
       },
     });
   } catch (error) {
@@ -435,7 +475,12 @@ function formatPath(path: string[]): string {
   return path.length > 0 ? path.join(".") : "<root>";
 }
 
-function parseBridgeArguments(argsJson: string, name: string, path: string[]): unknown[] {
+function parseBridgeArguments(
+  argsJson: string,
+  name: string,
+  path: string[],
+  modules: boolean,
+): unknown[] {
   const method = `${name}.${formatPath(path)}`;
   if (Buffer.byteLength(argsJson, "utf8") > CODE_MODE_MAX_BRIDGE_PAYLOAD_BYTES) {
     throw new Error(
@@ -444,7 +489,7 @@ function parseBridgeArguments(argsJson: string, name: string, path: string[]): u
   }
   let args: unknown;
   try {
-    args = JSON.parse(argsJson);
+    args = modules ? decodeModuleValue(argsJson) : JSON.parse(argsJson);
   } catch {
     throw new Error(`invalid ${method} arguments`);
   }
@@ -454,21 +499,28 @@ function parseBridgeArguments(argsJson: string, name: string, path: string[]): u
   return args;
 }
 
-function serializeBridgeResult(value: unknown, name: string, path: string[]): string {
+function serializeBridgeResult(
+  value: unknown,
+  name: string,
+  path: string[],
+  modules: boolean,
+): string {
   let json: string | undefined;
   try {
-    json = JSON.stringify(value, (_key, nested) => {
-      if (
-        nested === undefined ||
-        typeof nested === "function" ||
-        typeof nested === "symbol" ||
-        typeof nested === "bigint" ||
-        (typeof nested === "number" && !Number.isFinite(nested))
-      ) {
-        throw new TypeError("Code-mode API results must be JSON-serializable values");
-      }
-      return nested;
-    });
+    json = modules
+      ? encodeModuleValue(value, false)
+      : JSON.stringify(value, (_key, nested) => {
+          if (
+            nested === undefined ||
+            typeof nested === "function" ||
+            typeof nested === "symbol" ||
+            typeof nested === "bigint" ||
+            (typeof nested === "number" && !Number.isFinite(nested))
+          ) {
+            throw new TypeError("Code-mode API results must be JSON-serializable values");
+          }
+          return nested;
+        });
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`${name}.${formatPath(path)} returned a non-JSON value: ${detail}`);

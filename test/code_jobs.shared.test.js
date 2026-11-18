@@ -42,7 +42,7 @@ it("loads saved JavaScript once through the backend and exposes JSON input witho
   try {
     await writeFile(
       join(directory, "script.js"),
-      "printText(JSON.stringify({ input, node: typeof process, imports: typeof require, network: typeof fetch }));",
+      'import { input, printText } from "@tau/core"; printText(JSON.stringify({ input, node: typeof process, imports: typeof require, network: typeof fetch }));',
     );
     const input = { nested: [false, null, "日本語", 42], __protoText: "value" };
     const result = await call(tool, { file: "script.js", input });
@@ -56,7 +56,13 @@ it("loads saved JavaScript once through the backend and exposes JSON input witho
     expect(read).toHaveBeenCalledExactlyOnceWith(join(directory, "script.js"), {
       maxBytes: 1024 * 1024,
     });
-    expect(text(await call(tool, { code: "printText(JSON.stringify(input))" }))).toBe("null");
+    expect(
+      text(
+        await call(tool, {
+          code: 'import { input, printText } from "@tau/core"; printText(JSON.stringify(input))',
+        }),
+      ),
+    ).toBe("null");
     for (const args of [
       {},
       { code: "1", file: "script.js" },
@@ -78,16 +84,16 @@ it("loads saved JavaScript once through the backend and exposes JSON input witho
 });
 
 it.each([false, true])(
-  "runs preloads in the same sandbox for saved foreground and inline background programs (background: %s)",
+  "runs relative imports in the same sandbox for saved foreground and inline background programs (background: %s)",
   async (background) => {
     const backend = createLocalToolExecutionBackend();
     const files = {
       "/remote/workflow.js":
-        '// @preload lib/helpers.js\nconst local = "main"; printText(helpers.format(input));',
+        'import { input, printText } from "@tau/core"; import { format } from "./lib/helpers.js"; printText(format(input));',
       "/remote/lib/helpers.js":
-        '// @preload shared.js\nconst local = "helper"; await Promise.resolve(); helpers.format = (value) => value + helpers.suffix;',
+        'import { suffix } from "./shared.js"; await Promise.resolve(); export const format = value => value + suffix;',
       "/remote/lib/shared.js":
-        'globalThis.helpers = { suffix: ":" + typeof process + ":" + typeof require + ":" + typeof fetch + ":" + typeof tau.bash.run };',
+        'import { bash } from "@tau/core"; export const suffix = ":" + typeof process + ":" + typeof require + ":" + typeof fetch + ":" + typeof bash.run;',
     };
     vi.spyOn(backend, "readFileBinary").mockImplementation(async (path) => ({
       content: Buffer.from(files[path]),
@@ -109,13 +115,13 @@ it.each([false, true])(
       expect(background ? (await jobs.inspect()).text : text(success)).toContain(
         "result:undefined:undefined:undefined:function",
       );
-      files["/remote/lib/helpers.js"] = 'throw new Error("preload failure");';
+      files["/remote/lib/helpers.js"] =
+        'export const format = null; throw new Error("module failure");';
       const result = await call(tool, { file: "workflow.js", background });
       if (background) await jobs.waitForIdle();
       else expect(result.outcome).toBe("failed");
       const output = background ? (await jobs.inspect()).text : text(result);
-      expect(output).toContain("/remote/lib/helpers.js");
-      expect(output).toContain("preload failure");
+      expect(output).toContain("module failure");
     } finally {
       await jobs.dispose();
     }
@@ -138,20 +144,22 @@ it("keeps live output and capability ownership after launch, and cancels waits i
     signal: turn.signal,
     program: {
       sourceName: "inline code",
-      preloads: [],
+      cwd: "/workspace",
       name: "tau",
       documentation: "test",
-      code: 'printText("progress"); await tau.pause(); printText("unexpected");',
-      api: {
-        pause: async (_args, context) => {
-          requestSignal = context.signal;
-          entered();
-          await new Promise((_, reject) =>
-            context.signal.addEventListener("abort", () => reject(context.signal.reason), {
-              once: true,
-            }),
-          );
-          return null;
+      code: 'import { printText, pause } from "@tau/core"; printText("progress"); await pause(); printText("unexpected");',
+      packages: {
+        "@tau/core": {
+          pause: async (_args, context) => {
+            requestSignal = context.signal;
+            entered();
+            await new Promise((_, reject) =>
+              context.signal.addEventListener("abort", () => reject(context.signal.reason), {
+                once: true,
+              }),
+            );
+            return null;
+          },
         },
       },
     },
@@ -208,11 +216,11 @@ it("retains ordered images, failure output and a log independent of the shared r
       signal: signal(),
       program: {
         sourceName: "inline code",
-        preloads: [],
+        cwd: "/workspace",
         name: "tau",
         documentation: "test",
-        api: { image: () => image },
-        code: 'printText("start " + "x".repeat(100000)); await printImage(await tau.image()); printText("end"); throw new Error("diagnostic");',
+        packages: { "@tau/core": { getImage: () => image } },
+        code: 'import { printText, printImage, getImage } from "@tau/core"; printText("start " + "x".repeat(100000)); await printImage(await getImage()); printText("end"); throw new Error("diagnostic");',
       },
     }),
   );
@@ -261,11 +269,11 @@ it("bounds capture independently of inspection budgets and reports lost text", a
     signal: signal(),
     program: {
       sourceName: "inline code",
-      preloads: [],
+      cwd: "/workspace",
       name: "tau",
       documentation: "test",
-      api: { unused: () => null },
-      code: 'printText("oldest" + "x".repeat(2 * 1024 * 1024) + "latest");',
+      packages: { "@tau/core": { unused: () => null } },
+      code: 'import { printText } from "@tau/core"; printText("oldest" + "x".repeat(2 * 1024 * 1024) + "latest");',
     },
   });
   try {
@@ -301,11 +309,11 @@ it("bounds images in combined inspections without discarding retained job images
       signal: signal(),
       program: {
         sourceName: "inline code",
-        preloads: [],
+        cwd: "/workspace",
         name: "tau",
         documentation: "test",
-        api: { image: () => image },
-        code: "const image = await tau.image(); for (let i = 0; i < 9; i++) await printImage(image);",
+        packages: { "@tau/core": { getImage: () => image } },
+        code: "import { printImage, getImage } from '@tau/core'; const image = await getImage(); for (let i = 0; i < 9; i++) await printImage(image);",
       },
     }),
   );
@@ -340,10 +348,16 @@ it("bounds serialized UTF-8 input before reading a source file or starting a job
   const input = "é".repeat(8191);
   expect(Buffer.byteLength(JSON.stringify(input))).toBe(16 * 1024);
   try {
-    const result = await call(tool, { code: "printText(input.length.toString())", input });
+    const result = await call(tool, {
+      code: "import { printText, input } from '@tau/core'; printText(input.length.toString())",
+      input,
+    });
     expect(result.outcome).toBe("succeeded");
     expect(text(result)).toBe("8191");
-    for (const source of [{ code: "printText(input)" }, { file: "workflow.js" }]) {
+    for (const source of [
+      { code: "import { printText, input } from '@tau/core'; printText(input)" },
+      { file: "workflow.js" },
+    ]) {
       for (const background of [false, true]) {
         expect((await call(tool, { ...source, input: `${input}a`, background })).outcome).toBe(
           "blocked",
@@ -380,17 +394,19 @@ it.each([false, true])(
       signal: signal(),
       program: {
         sourceName: "inline code",
-        preloads: [],
+        cwd: "/workspace",
         name: "tau",
         documentation: "test",
-        api: {
-          pause: async () => {
-            paused.resolve();
-            await resume.promise;
-            return null;
+        packages: {
+          "@tau/core": {
+            pause: async () => {
+              paused.resolve();
+              await resume.promise;
+              return null;
+            },
           },
         },
-        code: `printText("START"); await tau.pause(); ${fail ? 'throw new Error("FINAL DIAGNOSTIC");' : 'printText("FINAL RESULT");'}`,
+        code: `import { printText, pause } from "@tau/core"; printText("START"); await pause(); ${fail ? 'throw new Error("FINAL DIAGNOSTIC");' : 'printText("FINAL RESULT");'}`,
       },
     });
     try {
@@ -442,15 +458,17 @@ it("releases discarded agents only after their code and subsequently launched Ba
     signal: signal(),
     program: {
       sourceName: "inline code",
-      preloads: [],
+      cwd: "/workspace",
       name: "tau",
       documentation: "test",
-      code: "await tau.start();",
-      api: {
-        start: async () => {
-          ready.resolve();
-          await resume.promise;
-          return jobs.bashJobs.start(backend, "work", "/workspace", signal());
+      code: "import { start } from '@tau/core'; await start();",
+      packages: {
+        "@tau/core": {
+          start: async () => {
+            ready.resolve();
+            await resume.promise;
+            return jobs.bashJobs.start(backend, "work", "/workspace", signal());
+          },
         },
       },
     },

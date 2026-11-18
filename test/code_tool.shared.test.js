@@ -61,7 +61,10 @@ describe("code composition", () => {
         {
           id: "invalid",
           name: "code",
-          arguments: { code: "await tau.history.search({})", timeout },
+          arguments: {
+            code: "import * as history from '@tau/history'; await history.search()",
+            timeout,
+          },
         },
         context(),
       );
@@ -97,19 +100,19 @@ describe("code composition", () => {
   it("forwards bounded foreground Bash timeouts and rejects invalid ones before launch", async () => {
     const runBash = vi.fn(async () => ({}));
     const capability = createBashCapability({ runBash }, process.cwd(), new BashJobRegistry());
-    await capability.api.run([{ command: "true" }], context());
+    await capability.api.run(["true"], context());
     expect(runBash).toHaveBeenLastCalledWith(
       "true",
       expect.objectContaining({ timeoutMs: 60_000 }),
     );
-    await capability.api.run([{ command: "true", timeout: 3_600_000 }], context());
+    await capability.api.run(["true", { timeout: 3_600_000 }], context());
     expect(runBash).toHaveBeenLastCalledWith(
       "true",
       expect.objectContaining({ timeoutMs: 3_600_000 }),
     );
     runBash.mockClear();
     for (const timeout of [0, -1, "60000", null, Infinity]) {
-      await expect(capability.api.run([{ command: "true", timeout }], context())).rejects.toThrow();
+      await expect(capability.api.run(["true", { timeout }], context())).rejects.toThrow();
     }
     expect(runBash).not.toHaveBeenCalled();
   });
@@ -118,12 +121,16 @@ describe("code composition", () => {
     const fetchImpl = vi.fn();
     const mediaAdapter = { readFile: vi.fn(), probe: vi.fn() };
     const options = { config: {}, signal: new AbortController().signal, fetchImpl, mediaAdapter };
-    const input = { model: "openai/gpt-6-luna", prompt: "Describe", attachments: [] };
+    const message = (text, ...parts) => ({
+      role: "user",
+      content: [{ type: "text", text }, ...parts],
+    });
+    const input = { model: "openai/gpt-6-luna", messages: [message("Describe")] };
     for (const invalid of [
       { ...input, model: "unknown" },
       { ...input, reasoning: "unsupported" },
-      { ...input, prompt: " " },
-      { ...input, attachments: [{ kind: "audio", path: "input.wav" }] },
+      { ...input, messages: [message(" ")] },
+      { ...input, messages: [message("Describe", { kind: "audio", path: "input.wav" })] },
     ])
       await expect(requestOpenRouterChat(invalid, options)).rejects.toThrow();
     expect(mediaAdapter.readFile).not.toHaveBeenCalled();
@@ -146,7 +153,7 @@ describe("code composition", () => {
     });
     const result = await execute(
       tool,
-      'printText([typeof tau.bash, typeof console, typeof image, typeof files].join(" ")); const page = await tau.history.search({}); printText(page.sessions[0].sessionId);',
+      'import { search } from "@tau/history"; import { printText } from "@tau/core"; printText([typeof bash, typeof console, typeof image, typeof files].join(" ")); const page = await search(); printText(page.sessions[0].sessionId);',
     );
     expect(result.outcome).toBe("succeeded");
     expect(text(result)).toBe("undefined undefined undefined undefined\npast");
@@ -169,15 +176,11 @@ describe("code composition", () => {
       const backend = createLocalToolExecutionBackend();
       const run = vi.spyOn(backend, "runBash");
       const capability = createBashCapability(backend, process.cwd(), new BashJobRegistry());
-      const result = await capability.api.run(
-        [{ command: "cat", stdin, timeout: 5000 }],
-        context(),
-      );
+      const result = await capability.api.run(["cat", { stdin, timeout: 5000 }], context());
       expect(result).toMatchObject({
         stdout: stdin,
         stderr: "",
         exitCode: 0,
-        truncated: false,
         timedOut: false,
         aborted: false,
       });
@@ -199,15 +202,13 @@ describe("code composition", () => {
       "x".repeat(SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES + 1),
       "é".repeat(SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES / 2 + 1),
     ]) {
-      await expect(capability.api.run([{ command: "cat", stdin }], context())).rejects.toThrow();
+      await expect(capability.api.run(["cat", { stdin }], context())).rejects.toThrow();
     }
-    await expect(
-      capability.api.start([{ command: "cat", stdin: "data" }], context()),
-    ).rejects.toThrow();
+    await expect(capability.api.start(["cat", { stdin: "data" }], context())).rejects.toThrow();
     expect(runBash).not.toHaveBeenCalled();
     expect(start).not.toHaveBeenCalled();
     await capability.api.run(
-      [{ command: "cat", stdin: "é".repeat(SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES / 2) }],
+      ["cat", { stdin: "é".repeat(SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES / 2) }],
       context(),
     );
     expect(runBash).toHaveBeenCalledOnce();
@@ -245,7 +246,7 @@ describe("code composition", () => {
     try {
       const started = await execute(
         registry.get("code"),
-        'const job = await tau.bash.start({ command: "server" }); printText(job.id);',
+        'import { bash, printText } from "@tau/core"; const job = await bash.start("server"); printText(job.id);',
       );
       expect(started.outcome).toBe("succeeded");
       const id = text(started);
@@ -283,8 +284,15 @@ describe("code composition", () => {
     ]);
     const result = await runTauCodeMode({
       name: "tau",
-      ...sdk,
-      code: `const result = await tau.models.chat({ model: "openai/gpt-6-luna", prompt: "Extract Ada", schema: ${JSON.stringify(schema)} }); printText(result.answer.person); printText(JSON.stringify(result.usage));`,
+      documentation: sdk.documentation,
+      modules: {
+        packages: sdk.packages,
+        cwd: process.cwd(),
+        readSource: () => {
+          throw new Error("Unexpected module");
+        },
+      },
+      code: `import * as models from "@tau/models"; import { printText } from "@tau/core"; const result = await models.chat("Extract Ada", { model: "openai/gpt-6-luna", schema: ${JSON.stringify(schema)} }); printText(result.answer.person); printText(JSON.stringify(result.usage));`,
     });
     expect(result.status).toBe("succeeded");
     expect(text(result.result).split("\n")[0]).toBe("Ada");
@@ -325,13 +333,13 @@ describe("code composition", () => {
       );
       const result = await capability.api.decisions(
         [
+          "Compare the two images.",
           {
             model,
-            state: "Compare the two images.",
             questions: { same: { type: "noul", instructions: "Do the images look the same?" } },
             attachments: [
               { type: "image", path: "screenshot.png" },
-              { type: "image", ...image },
+              { type: "image", bytes },
             ],
           },
         ],
@@ -398,14 +406,15 @@ describe("code composition", () => {
     );
     const input = {
       model: reply.model,
-      state: "Inspect",
       questions,
       attachments: [
         { type: "video", path: "clip.mp4" },
         { type: "audio", path: "clip.wav" },
       ],
     };
-    expect((await capability.api.decisions([input], context())).answers).toEqual(reply.answers);
+    expect((await capability.api.decisions(["Inspect", input], context())).answers).toEqual(
+      reply.answers,
+    );
     expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({
       model: reply.model,
       questions,
@@ -426,28 +435,28 @@ describe("code composition", () => {
     const fetchImpl = vi.fn();
     const capability = createModelsCapability(backend, {}, fetchImpl);
     const image = createProtocolImage();
-    const inline = { type: "image", data: image.data, mimeType: image.mimeType };
+    const inline = { type: "image", bytes: new Uint8Array(Buffer.from(image.data, "base64")) };
     const input = {
       model: "openai/gpt-6-luna-decisions",
-      state: "Compare",
       questions: { q: { type: "noul", instructions: "Are they the same?" } },
     };
     for (const attachments of [
       [{ ...inline, path: "image.png" }],
-      [{ ...inline, data: "invalid" }],
+      [{ ...inline, bytes: new Uint8Array([0, 1, 2]) }],
       [{ ...inline, mimeType: "image/jpeg" }],
-      [{ ...inline, data: "A".repeat(4 * Math.ceil((32 * 1024 * 1024) / 3) + 1) }],
+      [{ ...inline, bytes: new Uint8Array(32 * 1024 * 1024 + 1) }],
       Array.from({ length: 65 }, () => ({ type: "image", path: "missing.png" })),
       [{ type: "audio", path: "missing.wav" }],
       [{ type: "video", path: "missing.mp4" }],
     ]) {
       await expect(
-        capability.api.decisions([{ ...input, attachments }], context()),
+        capability.api.decisions(["Compare", { ...input, attachments }], context()),
       ).rejects.toThrow();
     }
     await expect(
       capability.api.decisions(
         [
+          "Compare",
           {
             ...input,
             model: "typesafe/jev-1.14",
@@ -475,9 +484,9 @@ describe("code composition", () => {
     await expect(
       capability.api.decisions(
         [
+          "Inspect",
           {
             model: "openai/gpt-6-luna-decisions",
-            state: "Inspect",
             questions: { q: { type: "noul", instructions: "Is this an image?" } },
             attachments: [{ type: "image", path: "image.png" }],
           },
@@ -509,11 +518,8 @@ describe("code composition", () => {
       await expect(
         capability.api.chat(
           [
-            {
-              model: "openai/gpt-6-luna",
-              prompt: "Describe",
-              attachments: [attachment],
-            },
+            [{ role: "user", content: [{ type: "text", text: "Describe" }, attachment] }],
+            { model: "openai/gpt-6-luna" },
           ],
           context(),
         ),
@@ -565,11 +571,16 @@ describe("code composition", () => {
       );
       await capability.api.chat(
         [
-          {
-            model: "openai/gpt-6-luna",
-            prompt: "Describe",
-            attachments: [{ type: "image", path: "image.png" }],
-          },
+          [
+            {
+              role: "user",
+              content: [
+                { type: "text", text: "Describe" },
+                { type: "image", path: "image.png" },
+              ],
+            },
+          ],
+          { model: "openai/gpt-6-luna" },
         ],
         context(),
       );
@@ -591,11 +602,16 @@ describe("code composition", () => {
       const probing = capability.api
         .chat(
           [
-            {
-              model: "google/gemini-3.8-flash",
-              prompt: "Describe",
-              attachments: [{ type: "audio", path: "audio.wav" }],
-            },
+            [
+              {
+                role: "user",
+                content: [
+                  { type: "text", text: "Describe" },
+                  { type: "audio", path: "audio.wav" },
+                ],
+              },
+            ],
+            { model: "google/gemini-3.8-flash" },
           ],
           context({ signal: controller.signal }),
         )
@@ -636,12 +652,19 @@ describe("code composition", () => {
       ]);
       const running = runTauCodeMode({
         name: "tau",
-        ...sdk,
+        documentation: sdk.documentation,
+        modules: {
+          packages: sdk.packages,
+          cwd: process.cwd(),
+          readSource: () => {
+            throw new Error("Unexpected module");
+          },
+        },
         signal: controller.signal,
         code:
           operation === "chat"
-            ? 'await tau.models.chat({ model: "openai/gpt-6-luna", prompt: "Describe" })'
-            : 'await tau.models.decisions({ model: "openai/gpt-6-luna-decisions", state: "Inspect", questions: { q: { type: "noul", instructions: "Is this valid?" } } })',
+            ? 'import * as models from "@tau/models"; await models.chat("Describe", { model: "openai/gpt-6-luna" })'
+            : 'import * as models from "@tau/models"; await models.decisions("Inspect", { model: "openai/gpt-6-luna-decisions", questions: { q: { type: "noul", instructions: "Is this valid?" } } })',
       });
       await ready;
       controller.abort();

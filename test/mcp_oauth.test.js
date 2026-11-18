@@ -249,7 +249,9 @@ describe("MCP OAuth", () => {
         {
           id: "oauth",
           name: "mcp",
-          arguments: { code: 'await tau.mcp.callTool("cloudflare", "dns", {})' },
+          arguments: {
+            code: 'import * as mcp from "@tau/mcp"; await mcp.callTool("cloudflare", "dns", {})',
+          },
         },
         {
           agentId: "agent",

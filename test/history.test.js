@@ -633,7 +633,7 @@ describe("session history", () => {
       const query = history.query({ endpoint: "https://history.example.com", apiKey: "secret" });
       const capability = createHistoryCapability(query);
       const context = { signal: new AbortController().signal };
-      const page = await capability.api.read([{ sessionId: "parent", source: "local" }], context);
+      const page = await capability.api.read(["parent", { source: "local" }], context);
       expect(page.entries.map((entry) => entry.id)).toEqual(["entry"]);
       expect(remoteRead).not.toHaveBeenCalled();
       await expect(

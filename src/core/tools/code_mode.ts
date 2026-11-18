@@ -1,13 +1,13 @@
 import type { Tool, ToolCall } from "@earendil-works/pi-ai";
 import {
+  type CodeModeModules,
   runTauCodeMode,
-  type TauCodeModeApi,
   type TauCodeModeJsonValue,
   type TauCodeModeRuntimeResult,
 } from "../../code_mode/runtime.js";
 import type { ToolActivity } from "./activity.js";
 import { buildBashPresentation } from "./bash.js";
-import type { CodeProgram } from "./code_preloads.js";
+import { type CodeProgram, readCodeModule } from "./code_modules.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import { writeOutputFile } from "./output_file.js";
 import { buildToolRunPresentation } from "./presentation.js";
@@ -45,8 +45,8 @@ export function executeInternalCodeMode(
   options: CodeProgram & {
     name: string;
     documentation: string;
-    api: TauCodeModeApi;
     input?: TauCodeModeJsonValue;
+    packages: CodeModeModules["packages"];
     maxOutputTokens: number;
     backend: ToolExecutionBackend;
     signal: AbortSignal;
@@ -56,10 +56,14 @@ export function executeInternalCodeMode(
   return runTauCodeMode({
     name: options.name,
     documentation: options.documentation,
-    api: options.api,
     code: options.code,
     sourceName: options.sourceName,
-    preloads: options.preloads,
+    modules: {
+      packages: options.packages,
+      cwd: options.cwd,
+      entryPath: options.entryPath,
+      readSource: (path, signal) => readCodeModule(options.backend, path, signal),
+    },
     input: options.input,
     maxOutputTokens: options.maxOutputTokens,
     signal: options.signal,
@@ -126,7 +130,8 @@ export async function executeCodeModeTool(
           context,
           code: parsed.code,
           sourceName: parsed.sourceName,
-          preloads: parsed.preloads,
+          cwd: parsed.cwd,
+          entryPath: parsed.entryPath,
           input: parsed.input,
           maxOutputTokens: parsed.maxOutputTokens,
           timeoutMs: parsed.timeoutMs,

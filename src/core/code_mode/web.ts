@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { z } from "zod";
 import { type ApiKeysConfig, getExaApiKey } from "../config/index.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
@@ -12,9 +11,9 @@ const EXA_MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 const description = [
   "Search the web, discover agent-friendly resources, and retrieve page content.",
   "Use it when the task needs open-web search or page extraction and no more direct source can answer, such as local files and repository data, purpose-built CLIs, first-party APIs and SDKs, or structured endpoints.",
-  "A URL alone is no reason to use tau.web.",
+  "A URL alone is no reason to use @tau/web.",
   "For a GitHub URL, use gh for pull requests, issues, releases, repository metadata, and authenticated access, and use git for source, diffs, status, and history in a checkout.",
-  "Use tau.web for these only when those tools cannot provide what you need, or when the user explicitly asks to search the open web or inspect the page itself.",
+  "Use @tau/web for these only when those tools cannot provide what you need, or when the user explicitly asks to search the open web or inspect the page itself.",
 ].join(" ");
 
 type ExaClient = {
@@ -81,36 +80,31 @@ const fetchUrlsSchema = z.union([
   fetchUrlSchema.transform((url) => [url]),
   z.array(fetchUrlSchema).min(1).max(100),
 ]);
-const fetchOptionsSchema = z
-  .object({
-    mode: z.enum(["highlights", "text"]).default("highlights"),
-    query: nonEmptyStringSchema.optional(),
-    maxCharacters: z.number().int().min(1).max(10_000).optional(),
-    maxAgeHours: maxAgeHoursSchema.optional(),
-    subpages: z.number().int().min(0).max(100).optional(),
-    subpageTarget: subpageTargetSchema.optional(),
-    links: z.number().int().min(0).max(1_000).optional(),
-  })
-  .strict()
-  .superRefine((options, context) => {
-    if (options.mode === "text" && options.query !== undefined) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["query"],
-        message: "is only supported in highlights mode",
-      });
-    }
-  });
+const maxCharacters = z.number().int().min(1).max(10_000);
+const fetchOptionsSchema = z.strictObject({
+  text: z
+    .union([z.boolean(), z.strictObject({ maxCharacters: maxCharacters.optional() })])
+    .optional(),
+  highlights: z
+    .union([
+      z.boolean(),
+      z.strictObject({
+        maxCharacters: maxCharacters.optional(),
+        query: nonEmptyStringSchema.optional(),
+      }),
+    ])
+    .optional(),
+  maxAgeHours: maxAgeHoursSchema.optional(),
+  subpages: z.number().int().min(0).max(100).optional(),
+  subpageTarget: subpageTargetSchema.optional(),
+  extras: z.strictObject({ links: z.number().int().min(0).max(1_000).optional() }).optional(),
+});
 
-const documentation = readFileSync(
-  new URL("../static/code_mode/web/documentation.md", import.meta.url),
-  "utf8",
-);
 async function readExaResponse(response: Response): Promise<string> {
   const contentLength = response.headers.get("content-length");
   if (contentLength !== null && Number(contentLength) > EXA_MAX_RESPONSE_BYTES) {
     await response.body?.cancel().catch(() => {});
-    throw new Error("Exa response exceeded the 16 MiB limit");
+    throw new Error("Web response exceeded the 16 MiB limit");
   }
   if (!response.body) return "";
 
@@ -123,7 +117,7 @@ async function readExaResponse(response: Response): Promise<string> {
     bytes += value.byteLength;
     if (bytes > EXA_MAX_RESPONSE_BYTES) {
       await reader.cancel().catch(() => {});
-      throw new Error("Exa response exceeded the 16 MiB limit");
+      throw new Error("Web response exceeded the 16 MiB limit");
     }
     chunks.push(Buffer.from(value));
   }
@@ -155,7 +149,7 @@ async function requestExa(
       payload = JSON.parse(responseText);
     } catch {
       if (response.ok) {
-        throw new Error("Exa returned a non-JSON response");
+        throw new Error("Web service returned a non-JSON response");
       }
     }
   }
@@ -167,10 +161,10 @@ async function requestExa(
     const detail = [error?.error, error?.message]
       .filter((value): value is string => typeof value === "string" && Boolean(value.trim()))
       .join(". ");
-    throw new Error(detail || `Exa request failed with HTTP ${response.status}`);
+    throw new Error(detail || `Web request failed with HTTP ${response.status}`);
   }
   if (payload === undefined) {
-    throw new Error("Exa returned an empty response");
+    throw new Error("Web service returned an empty response");
   }
   return payload;
 }
@@ -199,16 +193,16 @@ function parseMethodOptions<T>(
 ): T {
   const parsed = schema.safeParse(value ?? {});
   if (!parsed.success) {
-    throw new Error(`Invalid tau.web.${method} options: ${formatZodError(parsed.error)}`);
+    throw new Error(`Invalid @tau/web ${method} options: ${formatZodError(parsed.error)}`);
   }
   return parsed.data;
 }
 
 function normalizeSearchArguments(args: unknown): [string, Record<string, unknown>] {
   if (!Array.isArray(args) || args.length < 1 || args.length > 2) {
-    throw new Error("tau.web.search expects query and optional options");
+    throw new Error("@tau/web search expects query and optional options");
   }
-  const query = requireString(args[0], "tau.web.search query");
+  const query = requireString(args[0], "@tau/web search query");
   const options = parseMethodOptions(args[1], searchOptionsSchema, "search");
 
   return [
@@ -233,44 +227,26 @@ function normalizeSearchArguments(args: unknown): [string, Record<string, unknow
 
 function normalizeFetchArguments(args: unknown): [string[], Record<string, unknown>] {
   if (!Array.isArray(args) || args.length < 1 || args.length > 2) {
-    throw new Error("tau.web.fetch expects urls and optional options");
+    throw new Error("@tau/web fetch expects urls and optional options");
   }
   const parsedUrls = fetchUrlsSchema.safeParse(args[0]);
   if (!parsedUrls.success) {
-    throw new Error(`Invalid tau.web.fetch urls: ${formatZodError(parsedUrls.error)}`);
+    throw new Error(`Invalid @tau/web fetch urls: ${formatZodError(parsedUrls.error)}`);
   }
   const options = parseMethodOptions(args[1], fetchOptionsSchema, "fetch");
-  const contentOptions =
-    options.mode === "text"
-      ? {
-          text:
-            options.maxCharacters === undefined ? true : { maxCharacters: options.maxCharacters },
-        }
-      : {
-          highlights:
-            options.query === undefined && options.maxCharacters === undefined
-              ? true
-              : {
-                  ...(options.query ? { query: options.query } : {}),
-                  ...(options.maxCharacters !== undefined
-                    ? { maxCharacters: options.maxCharacters }
-                    : {}),
-                },
-        };
-
   return [
     parsedUrls.data,
     {
-      ...contentOptions,
-      ...(options.maxAgeHours !== undefined ? { maxAgeHours: options.maxAgeHours } : {}),
-      ...(options.subpages !== undefined ? { subpages: options.subpages } : {}),
-      ...(options.subpageTarget ? { subpageTarget: options.subpageTarget } : {}),
-      ...(options.links !== undefined ? { extras: { links: options.links } } : {}),
+      ...(options.text === undefined && options.highlights === undefined
+        ? { highlights: true }
+        : {}),
+      ...options,
     },
   ];
 }
 
 type ExaResult = {
+  id?: string;
   title: string;
   url: string;
   publishedDate?: string;
@@ -284,6 +260,7 @@ type ExaResult = {
 const exaResultSchema: z.ZodType<ExaResult> = z.lazy(() =>
   z
     .object({
+      id: z.string().optional(),
       title: z.string(),
       url: z.string(),
       publishedDate: z.string().optional(),
@@ -348,6 +325,7 @@ function normalizeStatus(status: ExaStatus): Record<string, unknown> {
 
 function normalizeResult(result: ExaResult): Record<string, unknown> {
   return {
+    ...(result.id !== undefined ? { id: result.id } : {}),
     title: result.title,
     url: result.url,
     ...(result.publishedDate !== undefined ? { publishedDate: result.publishedDate } : {}),
@@ -355,7 +333,7 @@ function normalizeResult(result: ExaResult): Record<string, unknown> {
     ...(result.text !== undefined ? { text: result.text } : {}),
     ...(result.highlights !== undefined ? { highlights: result.highlights } : {}),
     ...(result.subpages !== undefined ? { subpages: result.subpages.map(normalizeResult) } : {}),
-    ...(result.extras?.links !== undefined ? { links: result.extras.links } : {}),
+    ...(result.extras?.links !== undefined ? { extras: { links: result.extras.links } } : {}),
   };
 }
 
@@ -366,7 +344,7 @@ function normalizeResponse(value: unknown): {
 } {
   const parsed = exaResponseSchema.safeParse(value);
   if (!parsed.success) {
-    throw new Error(`Invalid Exa response: ${formatZodError(parsed.error)}`);
+    throw new Error(`Invalid web response: ${formatZodError(parsed.error)}`);
   }
   return {
     results: parsed.data.results.map(normalizeResult),
@@ -386,17 +364,17 @@ async function handleWebRequest(
   switch (method) {
     case "discover": {
       if (!Array.isArray(args) || args.length !== 1) {
-        throw new Error("tau.web.discover expects one URL");
+        throw new Error("@tau/web discover expects one URL");
       }
-      return await deps.discover(backend, requireString(args[0], "tau.web.discover url"), signal);
+      return await deps.discover(backend, requireString(args[0], "@tau/web discover url"), signal);
     }
     case "search": {
-      if (!exa) throw new Error("Missing Exa API key.");
+      if (!exa) throw new Error("Web search and fetch are not configured.");
       const [query, options] = normalizeSearchArguments(args);
       return normalizeResponse(await exa.search(query, options, signal));
     }
     case "fetch": {
-      if (!exa) throw new Error("Missing Exa API key.");
+      if (!exa) throw new Error("Web search and fetch are not configured.");
       const [urls, options] = normalizeFetchArguments(args);
       return normalizeResponse(await exa.getContents(urls, options, signal));
     }
@@ -421,7 +399,6 @@ export function createWebCapability(
   return {
     name: "web",
     description,
-    documentation,
     api: {
       discover: (args, context) =>
         handleWebRequest("discover", args, undefined, deps, backend, context.signal),

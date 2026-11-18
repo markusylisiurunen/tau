@@ -25,6 +25,7 @@ export function createCapabilityTool(backend, capability, { timeoutMs = 60_000 }
         name: "tau",
         ...sdk,
         code,
+        cwd: process.cwd(),
         maxOutputTokens,
         backend,
         signal: context.signal,

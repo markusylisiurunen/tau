@@ -29,7 +29,7 @@ The agent's Bash commands do not inherit variables whose names end in `_KEY`, `_
 | `/speak` rewriting, spelling hints, transcript cleanup, OpenAI images | `OPENAI_API_KEY` | `openai` | Client, runner, or command |
 | `/listen`, `/speak`, Telegram transcription and voice, speech generation | `ELEVENLABS_API_KEY` | `elevenlabs` | Client, runner, or command |
 | PDF OCR | `MISTRAL_API_KEY` | `mistral` | Command |
-| `tau.models`, OpenRouter tool | `OPENROUTER_API_KEY` | `openrouter` | Host or command |
+| `@tau/models`, OpenRouter tool | `OPENROUTER_API_KEY` | `openrouter` | Host or command |
 
 ## ChatGPT subscription
 

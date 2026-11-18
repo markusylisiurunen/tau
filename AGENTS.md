@@ -47,7 +47,7 @@ Tests live flat in `test/`, mostly named after the module they cover.
 | `src/core/runtime/`, `src/core/agent/`, `src/core/session/` | `ChatRuntime`, `AgentRuntime`, compaction |
 | `src/core/subagents/` | Supervisor and the native and Claude Code runtimes |
 | `src/core/tools/` | Agent tools, Bash and code jobs, tool presentation |
-| `src/code_mode/`, `src/core/code_mode/` | Code-mode sandbox and its `tau.*` APIs |
+| `src/code_mode/`, `src/core/code_mode/` | Code-mode sandbox and its `@tau/*` APIs |
 | `src/execution/` | Local and Fly Sprite execution environments |
 | `src/store/` | Session persistence and migrations |
 | `src/core/config/`, `src/core/personas.ts`, `src/core/models/`, `src/core/auth/` | Config layers, personas and base prompts, model catalogs, credentials |
@@ -146,7 +146,7 @@ Remote sessions shape the architecture: client, host, and execution environment 
 **Subagents.** `AgentSupervisor` holds one flat pool of agents per session. Parent IDs and depth decide policy, such as who may manage whom, and never select a different execution path.
 
 - Workers are general-purpose, without named types or definitions. Only the launch-model allowlist is configurable.
-- Agents manage descendants through `tau.agents` and wait with `wait_for_agents`. Both bind the caller's identity, so the model never supplies a parent or caller ID.
+- Agents manage descendants through `@tau/agents` and wait with `wait_for_agents`. Both bind the caller's identity, so the model never supplies a parent or caller ID.
 - Native children inherit the immediate parent's prompt, model, settings, working directory, and eligible tools. A worker in another directory rebuilds only target-dependent context, and persona and tool policy stay with the parent.
 - Native and Claude Code runtimes implement one contract, `src/core/subagents/runtime.ts`, so a new runtime adds an adapter that feeds the shared trace recorder and the history recorder in `src/core/history/recorder.ts`. An adapter records input only after the worker consumes it, and never invents a result for a tool call that did not finish, because history must show only what the worker did. The supervisor owns queued input, and a runtime only delivers steering into its active turn.
 - Only input from an ancestor wakes an idle worker. Its jobs, notifications, and finishing children do not.
@@ -228,7 +228,7 @@ These do not belong in the docs:
 
 - Internals: class names, call chains, state transitions, and how components coordinate.
 - Rare failures, validation details, and limits or deadlines that do not change what the reader does.
-- Anything readers get from `--help`, `/help`, tool descriptions, `tau.docs`, or exported types.
+- Anything readers get from `--help`, `/help`, tool descriptions, the Code Mode reference, or exported types.
 - General developer knowledge, and setup steps owned by other products.
 - Instructions for the agent, feature history, change narratives ("added", "no longer"), and security advice beyond `docs/security.md`.
 - Unrelated undocumented behavior, unless someone asks.

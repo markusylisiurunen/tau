@@ -91,4 +91,4 @@ Each session has creation attributes that never change and are used to filter [h
 tau usage --since 2026-08-01 --provider openai-codex --group-by model
 ```
 
-Other filters are `--persona` and `--model`. Costs are estimates, and they do not include calls made through `tau.models` or command-line tools.
+Other filters are `--persona` and `--model`. Costs are estimates, and they do not include calls made through `@tau/models` or command-line tools.

@@ -74,8 +74,8 @@ describe("ToolCatalog", () => {
     expect(child.schemas.map((tool) => tool.name)).toEqual(
       main.schemas.filter((tool) => !management.includes(tool.name)).map((tool) => tool.name),
     );
-    expect(main.get("code").schema.description).toContain("tau.agents");
-    expect(child.get("code").schema.description).not.toContain("tau.agents");
+    expect(main.get("code").schema.description).toContain("@tau/agents");
+    expect(child.get("code").schema.description).not.toContain("@tau/agents");
     for (const name of management) expect(child.get(name)).toBeUndefined();
   });
 
@@ -181,7 +181,7 @@ describe("ToolCatalog", () => {
     });
     await execute(registry, "view_image", { path: "image.png" });
     await execute(registry, "code", {
-      code: "printText(JSON.stringify(await tau.web.discover('https://example.com/docs')))",
+      code: "import * as web from '@tau/web'; import { printText } from '@tau/core'; printText(JSON.stringify(await web.discover('https://example.com/docs')))",
     });
 
     expect(backend.writeFile).toHaveBeenCalledWith("/workspace/child/created.txt", "created");

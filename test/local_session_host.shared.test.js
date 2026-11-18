@@ -1920,7 +1920,7 @@ describe("LocalSessionHost", () => {
         const call = fauxToolCall(
           "code",
           {
-            code: `const result = await tau.models.chat({ model: "openai/gpt-6-luna", prompt: "sample" }); printText(JSON.stringify(result.usage)); ${ending === "failure" ? 'throw new Error("later failure")' : ""}`,
+            code: `import * as models from "@tau/models"; import { printText } from "@tau/core"; const result = await models.chat("sample", { model: "openai/gpt-6-luna" }); printText(JSON.stringify(result.usage)); ${ending === "failure" ? 'throw new Error("later failure")' : ""}`,
           },
           { id: "sampling-call" },
         );
@@ -3124,9 +3124,9 @@ describe("LocalSessionHost", () => {
         const last = context.messages.at(-1);
         const text = JSON.stringify(last.content);
         const code = text.includes("start delegation")
-          ? 'const parent = await tau.agents.spawn({ title: "parent", prompt: "coordinate", workingDirectory: "parent" }); await tau.agents.waitUntilIdle({ id: parent.id }); printText(JSON.stringify(await tau.agents.list()));'
+          ? 'import * as agents from "@tau/agents"; import { printText } from "@tau/core"; const parent = await agents.spawn("coordinate", { title: "parent", workingDirectory: "parent" }); await agents.waitUntilIdle(parent.id); printText(JSON.stringify(await agents.list()));'
           : text.includes("coordinate")
-            ? 'const child = await tau.agents.spawn({ title: "leaf", prompt: "leaf work", workingDirectory: "../leaf" }); await tau.agents.waitUntilIdle({ id: child.id }); printText(child.id);'
+            ? 'import * as agents from "@tau/agents"; import { printText } from "@tau/core"; const child = await agents.spawn("leaf work", { title: "leaf", workingDirectory: "../leaf" }); await agents.waitUntilIdle(child.id); printText(child.id);'
             : undefined;
         const response =
           last.role === "user" && code
@@ -3703,7 +3703,7 @@ describe("LocalSessionHost", () => {
           id: "spawn-call",
           name: "spawn_agent",
           arguments: {
-            code: 'await tau.agents.spawn({ title: "independent task", prompt: "inspect the changes" });',
+            code: 'import * as agents from "@tau/agents"; await agents.spawn("inspect the changes", { title: "independent task" });',
           },
         },
         {
@@ -4877,17 +4877,20 @@ describe("LocalSessionHost", () => {
         program: {
           name: "tau",
           documentation: "test",
-          code: 'printText("ready"); await tau.wait();',
-          api: {
-            wait: async (_args, context) => {
-              requestSignal = context.signal;
-              entered.resolve();
-              await new Promise((_, reject) =>
-                context.signal.addEventListener("abort", () => reject(context.signal.reason), {
-                  once: true,
-                }),
-              );
-              return null;
+          cwd: process.cwd(),
+          code: 'import { printText, wait } from "@tau/core"; printText("ready"); await wait();',
+          packages: {
+            "@tau/core": {
+              wait: async (_args, context) => {
+                requestSignal = context.signal;
+                entered.resolve();
+                await new Promise((_, reject) =>
+                  context.signal.addEventListener("abort", () => reject(context.signal.reason), {
+                    once: true,
+                  }),
+                );
+                return null;
+              },
             },
           },
         },
@@ -5318,7 +5321,7 @@ describe("session-owned MCP tools", () => {
         .mockReturnValue({ id: "worker", status: "working" });
       const result = await session.runtime.agent.spec.tools.get("code").execute(
         fauxToolCall("code", {
-          code: 'printText(typeof tau.mcp); await tau.agents.spawn({ title: "remote", prompt: "work" });',
+          code: 'import * as agents from "@tau/agents"; import { printText } from "@tau/core"; printText(typeof mcp); await agents.spawn("work", { title: "remote" });',
         }),
         {
           agentId: "main",
@@ -5386,7 +5389,7 @@ describe("session-owned MCP tools", () => {
       });
       const spawned = await session.runtime.agent.spec.tools.get("code").execute(
         fauxToolCall("code", {
-          code: 'await tau.agents.spawn({ title: "service task", prompt: "use the service" });',
+          code: 'import * as agents from "@tau/agents"; await agents.spawn("use the service", { title: "service task" });',
         }),
         {
           agentId: "main",
@@ -5409,10 +5412,12 @@ describe("session-owned MCP tools", () => {
         "code",
         {
           code: `
-        printText(JSON.stringify(await tau.mcp.listServers()));
-        const result = await tau.mcp.callTool("host", "echo", { message: "host service result" });
+        import * as mcp from "@tau/mcp";
+        import { printText, printImage } from "@tau/core";
+        printText(JSON.stringify(await mcp.listServers()));
+        const result = await mcp.callTool("host", "echo", { message: "host service result" });
         printText(JSON.stringify({ message: result.structuredContent.message, pid: result.structuredContent.pid }));
-        await printImage((await tau.mcp.callTool("host", "screenshot", {})).content[0]);
+        await printImage((await mcp.callTool("host", "screenshot", {})).content[0]);
         printText("after screenshot");
       `,
         },

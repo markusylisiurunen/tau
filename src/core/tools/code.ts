@@ -13,6 +13,7 @@ import {
 } from "../code_mode/agents.js";
 import { createBashCapability } from "../code_mode/bash.js";
 import type { CodeModeCapability } from "../code_mode/capability.js";
+import { createFilesApi } from "../code_mode/files.js";
 import { createHistoryCapability } from "../code_mode/history.js";
 import { createMcpCapability } from "../code_mode/mcp.js";
 import { createModelsCapability } from "../code_mode/models.js";
@@ -29,7 +30,7 @@ import {
   executeCodeModeTool,
   executeInternalCodeMode,
 } from "./code_mode.js";
-import { loadCodeProgram } from "./code_preloads.js";
+import { loadCodeProgram } from "./code_modules.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import { buildToolRunPresentation } from "./presentation.js";
 import { type AgentTool, createTextToolOutcome, executeTool } from "./registry.js";
@@ -102,20 +103,30 @@ export function createCodeToolDefinition(options: {
   if (allowed.has("models"))
     capabilities.push(createModelsCapability(options.backend, options.config));
   const metadata = [...capabilities, ...(options.agents ? [agentsCapabilityMetadata] : [])];
-  if (!metadata.length) return undefined;
+  const files = createFilesApi(options.backend, allowed);
+  if (!metadata.length && !Object.keys(files).length) return undefined;
   const sdkFor = (origin: string) =>
-    bindCodeModeSdk([
-      ...capabilities,
-      ...(options.agents ? [createAgentsCapability(options.agents, origin)] : []),
-    ]);
+    bindCodeModeSdk(
+      [
+        ...capabilities,
+        ...(options.agents ? [createAgentsCapability(options.agents, origin)] : []),
+      ],
+      files,
+    );
   const schema: Tool = {
     name: TOOL_NAME_CODE,
     description: [
       "Run a JavaScript program using enabled Tau capabilities, either inline or from a saved .js file. Use it to chain dependent calls, combine independent work, or process results before printing a concise answer.",
-      `Available capabilities: ${metadata.map((capability) => capability.name).join(", ")}.`,
-      ...metadata.map((capability) => `tau.${capability.name}: ${capability.description}`),
-      'Before your first program, run a documentation-only program that prints the runtime guide and the reference of each capability you plan to use, such as `printText(docs); printText(await tau.docs("web"))`. Skip what is already visible in the conversation. Read a newly needed capability\'s reference the same way before using it, and do not guess API signatures.',
-      "Use printText(string) and await printImage({ data, mimeType }) for output. printText rejects objects and arrays, so select the relevant fields and format them as concise plain text. Use JSON.stringify only on selected data when the JSON structure matters. Return values are ignored. Programs have request and output limits, and foreground programs also have a deadline. Side effects are not rolled back, and programs are not retried automatically.",
+      `Available packages: @tau/core${metadata
+        .filter(({ name }) => name !== "bash")
+        .map(({ name }) => `, @tau/${name}`)
+        .join("")}.`,
+      ...metadata
+        .filter(({ name }) => name !== "bash")
+        .map(({ name, description }) => `@tau/${name}: ${description}`),
+      `@tau/core provides input, output, truncation, and docs${allowed.has("bash") ? ", plus Bash commands and jobs" : ""}${Object.keys(files).length ? ", plus permitted file operations" : ""}.`,
+      'Read the general guide and @tau/core reference with `import { docs, printText } from "@tau/core"; printText(await docs());`. Use `docs("@tau/web")` for an enabled package or `docs("examples")` for recipes. Load only the pages you need and reuse any already visible in the conversation.',
+      "Programs use static imports and top-level await. Only printed output is returned. Side effects are not rolled back, and programs are not retried automatically.",
       "Use background: true only when you can make useful progress while the program runs. If you would only wait for it to finish, run it in the foreground with a timeout that fits. A background launch returns a job ID right away, and the code job tools read, wait for, or stop the job. Jobs keep running across turns and interruptions, but are lost when the session restarts.",
     ].join("\n\n"),
     parameters: Type.Object(
@@ -138,13 +149,13 @@ export function createCodeToolDefinition(options: {
         file: Type.Optional(
           Type.String({
             description:
-              "Path to a saved .js program, absolute or relative to the current working directory. The file and any files it names with // @preload are read when the call starts. Each file can be at most 1 MiB. The program runs with the same capabilities and limits as inline code. Supply exactly one of code or file.",
+              "Path to a saved .js program, absolute or relative to the current working directory. Use static relative imports for local .js helpers. Each saved source file can be at most 1 MiB. The program runs with the same capabilities and limits as inline code. Supply exactly one of code or file.",
           }),
         ),
         input: Type.Optional(
           Type.Unknown({
             description:
-              "JSON value available to the program as the global input. Defaults to null. At most 16 KiB when serialized as JSON.",
+              "JSON value available as the input export of @tau/core. Defaults to null. At most 16 KiB when serialized as JSON.",
           }),
         ),
         background: Type.Optional(
@@ -165,13 +176,23 @@ export function createCodeToolDefinition(options: {
   };
   const implementation: CodeModeToolImplementation = {
     schema,
-    execute: async ({ code, sourceName, preloads, input, maxOutputTokens, timeoutMs, context }) => {
+    execute: async ({
+      code,
+      sourceName,
+      cwd,
+      entryPath,
+      input,
+      maxOutputTokens,
+      timeoutMs,
+      context,
+    }) => {
       return await executeInternalCodeMode({
         name: "tau",
         ...sdkFor(context.assistantMessageId),
         code,
         sourceName,
-        preloads,
+        cwd,
+        entryPath,
         input,
         maxOutputTokens,
         backend: options.backend,

@@ -190,7 +190,9 @@ describe("AgentSupervisor", () => {
         {
           id: "mcp-call",
           name: "code",
-          arguments: { code: "printText(JSON.stringify(await tau.mcp.listServers()))" },
+          arguments: {
+            code: "import * as mcp from '@tau/mcp'; import { printText } from '@tau/core'; printText(JSON.stringify(await mcp.listServers()))",
+          },
         },
         {
           agentId: spawned.id,
@@ -263,7 +265,9 @@ describe("AgentSupervisor", () => {
         {
           id: "spawn-call",
           name: "spawn_agent",
-          arguments: { code: 'await tau.agents.spawn({ title: "child", prompt: "do work" });' },
+          arguments: {
+            code: 'import * as agents from "@tau/agents"; await agents.spawn("do work", { title: "child" });',
+          },
         },
         {
           agentId: "parent-agent",
@@ -528,7 +532,10 @@ it("isolates main and sibling jobs while retaining child jobs across follow-ups"
           kind,
           kind === "bash"
             ? { command: "server", background: true }
-            : { code: 'printText("owned");', background: true },
+            : {
+                code: 'import { printText } from "@tau/core"; printText("owned");',
+                background: true,
+              },
         );
         expect(started.outcome).toBe("succeeded");
         const id = started.content[0].text.match(/job ([^ ]+)/)[1];
@@ -740,7 +747,7 @@ it("keeps background orchestration attribution and cancels only its wait", async
         name: "code",
         arguments: {
           background: true,
-          code: 'const worker = await tau.agents.spawn({ title: "child", prompt: "task" }); await tau.agents.waitUntilIdle({ id: worker.id }); printText("done");',
+          code: 'import * as agents from "@tau/agents"; import { printText } from "@tau/core"; const worker = await agents.spawn("task", { title: "child" }); await agents.waitUntilIdle(worker.id); printText("done");',
         },
       },
       {

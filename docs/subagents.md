@@ -49,7 +49,7 @@ A subagent without an override uses its parent's compaction threshold. With an o
 
 ## Managing subagents
 
-Agents use `@tau/agents` inside [`code`](code-mode.md), and the `wait_for_agents` tool. They read the full reference with `docs("@tau/agents")` from `@tau/core`.
+Agents use `@tau/agents` inside [`code`](code-mode.md), and the `wait_for_agents` tool. With the package they start, steer, interrupt, and wait for subagents and read what they said and did. They read the reference with `docs("@tau/agents")` from `@tau/core`.
 
 ```js
 import { spawn } from "@tau/agents";
@@ -58,15 +58,6 @@ const { id } = await spawn("Review the session expiry checks in src/auth.", {
   title: "Review authentication",
 });
 ```
-
-| Method | Purpose |
-| --- | --- |
-| `spawn(prompt, { title, model?, workingDirectory? })` | Start a subagent. |
-| `list()`, `read(id)` | See state and usage. |
-| `sendInput(id, message, { mode })` | Add input, with `mode` set to `queue` or `steer`. |
-| `interrupt(id, { wait?, scope? }?)` | Stop a turn and drop pending input. `scope: "subtree"` includes descendants. |
-| `waitUntilIdle(id)` | Wait inside a program. |
-| `readResponse(id)`, `trace(id, filters?)`, `readText(...)`, `readContent(...)` | Read what the subagent said and did. |
 
 `wait_for_agents` returns as soon as one requested subagent is idle, with its last response. A `completed` status means the turn ended normally, so the parent still has to read the answer to know whether the task succeeded.
 

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it, vi } from "vitest";
-import { createHistoryCapability } from "../dist/core/code_mode/history.js";
+import { createHistoryPackage } from "../dist/core/code_mode/history.js";
 import { runHistoryCommand } from "../dist/core/history/cli.js";
 import { resolveHistoryRemoteTarget } from "../dist/core/history/config.js";
 import { readHistoryExport } from "../dist/core/history/export.js";
@@ -305,7 +305,7 @@ describe("history search time ranges", () => {
           async (url, init) =>
             callHistoryWorker(new URL(url).pathname, JSON.parse(init.body), harness),
         );
-      const capability = createHistoryCapability(history);
+      const capability = createHistoryPackage(history);
       const context = { signal: new AbortController().signal };
       const search = (input) => capability.api.search([input], context);
       const ids = (page) => page.sessions.map((session) => session.sessionId);
@@ -386,7 +386,7 @@ describe("history search time ranges", () => {
 
   it("rejects malformed ranges before querying local or remote history", async () => {
     const history = { search: vi.fn() };
-    const capability = createHistoryCapability(history);
+    const capability = createHistoryPackage(history);
     const context = { signal: new AbortController().signal };
     const harness = createD1Harness();
     for (const timeRange of [
@@ -631,7 +631,7 @@ describe("session history", () => {
         .openSession({ sessionId: "parent", attributes: {}, createdAt: 1 })
         .append([createTextEntry("entry", "user", "local context", 2)]);
       const query = history.query({ endpoint: "https://history.example.com", apiKey: "secret" });
-      const capability = createHistoryCapability(query);
+      const capability = createHistoryPackage(query);
       const context = { signal: new AbortController().signal };
       const page = await capability.api.read(["parent", { source: "local" }], context);
       expect(page.entries.map((entry) => entry.id)).toEqual(["entry"]);

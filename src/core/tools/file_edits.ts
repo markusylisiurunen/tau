@@ -10,7 +10,7 @@ export function replaceExactText(content: string, oldText: string, newText: stri
       new Error(
         `No exact match for oldText was found in the file. Read the file first to see its current content.${hint}`,
       ),
-      { code: "EDIT_NO_MATCH" },
+      { code: "edit_no_match" },
     );
   }
   let count = 1;
@@ -24,7 +24,7 @@ export function replaceExactText(content: string, oldText: string, newText: stri
       new Error(
         `Found ${count} matches for oldText, but exactly 1 is required. Make oldText more specific to match only one location.`,
       ),
-      { code: "EDIT_AMBIGUOUS" },
+      { code: "edit_ambiguous" },
     );
   }
   return content.slice(0, first) + newText + content.slice(first + oldText.length);

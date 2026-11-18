@@ -1,15 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
-import {
-  type CodeModeModules,
-  type ExecuteTauCodeModeOptions,
-  runTauCodeMode,
-  type TauCodeModeJsonValue,
-} from "../../code_mode/runtime.js";
 import { SESSION_PROTOCOL_MAX_CLIENT_TOOL_IMAGES } from "../../protocol/session_protocol.js";
 import { truncateForTokens } from "../utils/truncate.js";
 import { MAX_JOBS, waitForJobs } from "./background_jobs.js";
-import { type CodeProgram, readCodeModule } from "./code_modules.js";
+import { type CodeProgramRun, runCodeProgram } from "./code_mode.js";
 import { DEFAULT_COMMAND_CAPTURE_BYTES, type ToolExecutionBackend } from "./execution_backend.js";
 import { JobOutput } from "./job_output.js";
 
@@ -28,18 +22,7 @@ export class CodeJobRegistry {
   private readonly jobs = new Map<string, CodeJob>();
   private closed = false;
 
-  start(options: {
-    source: string;
-    cwd: string;
-    backend: ToolExecutionBackend;
-    program: Pick<ExecuteTauCodeModeOptions, "name" | "documentation"> &
-      CodeProgram & {
-        input?: TauCodeModeJsonValue;
-        packages: CodeModeModules["packages"];
-      };
-    signal: AbortSignal;
-  }): string {
-    options.signal.throwIfAborted();
+  start(options: { source: string; backend: ToolExecutionBackend; run: CodeProgramRun }): string {
     if (this.closed) throw new Error("Code jobs are closed.");
     if (this.jobs.size >= MAX_JOBS) {
       const oldest = [...this.jobs.values()].find((job) => !job.active);
@@ -52,7 +35,8 @@ export class CodeJobRegistry {
     const job: CodeJob = {
       id: randomUUID(),
       source: truncateForTokens(options.source, { maxTokens: 128, strategy: "middle" }).content,
-      cwd: truncateForTokens(options.cwd, { maxTokens: 128, strategy: "middle" }).content,
+      cwd: truncateForTokens(options.run.program.cwd, { maxTokens: 128, strategy: "middle" })
+        .content,
       status: "running",
       controller: new AbortController(),
       output: new JobOutput(options.backend, DEFAULT_COMMAND_CAPTURE_BYTES),
@@ -62,17 +46,11 @@ export class CodeJobRegistry {
     this.jobs.set(job.id, job);
     job.done = (async () => {
       try {
-        const result = await runTauCodeMode({
-          ...options.program,
-          modules: {
-            packages: options.program.packages,
-            cwd: options.program.cwd,
-            entryPath: options.program.entryPath,
-            readSource: (path, signal) => readCodeModule(options.backend, path, signal),
-          },
+        const result = await runCodeProgram(options.backend, options.run, {
           timeoutMs: null,
           signal: job.controller.signal,
           output: job.output.capture,
+          persistTruncatedOutput: false,
         });
         job.output.capture.truncated ||= result.execution.truncated;
         job.status =

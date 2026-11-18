@@ -92,4 +92,4 @@ After `execute`, a command can send `exec` frames to run commands in the executi
 
 ## Code-mode tools
 
-`runTauCodeModeCommand` and the SDK's `createTauCodeModeClientTool` let the model run JavaScript against an API you define, in the [code mode](code-mode.md) sandbox. Programs have a 60-second deadline unless you set `timeoutMs`. For a command tool, make `executionTimeoutMs` longer than that deadline. See [the SDK page](sdk.md) for an example.
+`runTauCodeModeCommand` and the SDK's `createTauCodeModeClientTool` let the model run JavaScript against an API you define, in the [code mode](code-mode.md) sandbox. Programs import your API from a module named after the tool, next to `@tau/core`, and `docs(name)` returns the `documentation` you supply. Programs have a 60-second deadline unless you set `timeoutMs`. For a command tool, make `executionTimeoutMs` longer than that deadline, and build its configured `description` with `buildTauCodeModeToolDescription`. See [the SDK page](sdk.md) for an example.

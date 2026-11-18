@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { StringDecoder } from "node:string_decoder";
-import { codeModeError } from "../code_mode/errors.js";
+import { codeModeError } from "../../code_mode/errors.js";
 import { truncateForTokens } from "../utils/truncate.js";
 import { MAX_JOBS, waitForJobs } from "./background_jobs.js";
 import {
@@ -190,7 +190,7 @@ export class BashJobRegistry {
   async waitForFinished(ids: string[], timeout: number, signal: AbortSignal) {
     const timedOut = await this.waitJobs(ids, timeout, signal);
     if (timedOut)
-      throw codeModeError("WAIT_TIMEOUT", "No Bash job finished before the wait timed out");
+      throw codeModeError("wait_timeout", "No Bash job finished before the wait timed out");
     const finished = this.read(ids).find((job) => job.status !== "running");
     if (!finished) throw new Error("No finished Bash job found");
     return finished;

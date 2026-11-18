@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { AgentRuntime } from "../agent/agent_runtime.js";
-import type { AgentsCapabilityOptions } from "../code_mode/agents.js";
+import type { AgentsPackageOptions } from "../code_mode/agents.js";
 import type { SessionRuntimeSettings } from "../config/index.js";
 import type { OpenSubagentHistory } from "../history/recorder.js";
 import type { HistoryQuery } from "../history/types.js";
@@ -193,7 +193,7 @@ export class AgentSupervisor {
     parentId: string;
     notifyOnCompletion: boolean;
     launchEpoch: number;
-    agents?: AgentsCapabilityOptions;
+    agents?: AgentsPackageOptions;
     runtimeConfig: SubagentRuntimeConfig;
     prompt: string;
     title: string;

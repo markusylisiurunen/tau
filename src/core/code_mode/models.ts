@@ -8,7 +8,7 @@ import {
 } from "../models/openrouter.js";
 import type { OpenRouterAttachment, OpenRouterMediaAdapter } from "../models/openrouter_media.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
-import type { CodeModeCapability } from "./capability.js";
+import { type CodeModePackage, definePackage, method } from "./package.js";
 
 const kind = z.enum(["image", "audio", "video"]);
 const attachment = z.union([
@@ -58,11 +58,11 @@ async function infer<T>(request: Promise<T>): Promise<T> {
   }
 }
 
-export function createModelsCapability(
+export function createModelsPackage(
   backend: ToolExecutionBackend,
   config: ApiKeysConfig,
   fetchImpl?: typeof fetch,
-): CodeModeCapability {
+): CodeModePackage {
   function mediaAdapter(signal: AbortSignal): OpenRouterMediaAdapter {
     return {
       readFile: async (path, limit) => {
@@ -113,22 +113,19 @@ export function createModelsCapability(
     };
   }
 
-  return {
-    name: "models",
-    description:
-      "Run standalone model calls for text and media analysis, structured output, and typed decisions.",
-    api: {
-      list: (args) => {
-        z.tuple([]).parse(args);
-        return Object.fromEntries(
+  return definePackage(
+    "models",
+    "Run standalone model calls for text and media analysis, structured output, and typed decisions.",
+    {
+      list: method(z.tuple([]), () =>
+        Object.fromEntries(
           Object.entries(openRouterModels).map(([operation, models]) => [
             operation,
             models.map(({ id, inputs, reasoning, role }) => ({ id, inputs, reasoning, role })),
           ]),
-        );
-      },
-      chat: async (args, context) => {
-        const [input, options] = z.tuple([chatInput, chatOptions]).parse(args);
+        ),
+      ),
+      chat: method(z.tuple([chatInput, chatOptions]), async ([input, options], context) => {
         const turns =
           typeof input === "string" ? [{ role: "user" as const, content: input }] : input;
         const result = await infer(
@@ -170,17 +167,15 @@ export function createModelsCapability(
           ...(usage
             ? {
                 usage: {
-                  prompt_tokens: usage.prompt_tokens,
-                  completion_tokens: usage.completion_tokens,
-                  total_tokens: usage.total_tokens,
+                  inputTokens: usage.prompt_tokens,
+                  outputTokens: usage.completion_tokens,
                   ...(usage.cost !== undefined ? { cost: usage.cost } : {}),
                 },
               }
             : {}),
         };
-      },
-      decisions: async (args, context) => {
-        const [state, options] = z.tuple([z.json(), decisionOptions]).parse(args);
+      }),
+      decisions: method(z.tuple([z.json(), decisionOptions]), async ([state, options], context) => {
         const { answers, usage } = await infer(
           requestOpenRouterDecisions(
             {
@@ -198,19 +193,15 @@ export function createModelsCapability(
         );
         return {
           answers,
-          ...(usage
-            ? {
-                usage: {
-                  input_tokens: usage.input_tokens,
-                  output_tokens: usage.output_tokens,
-                  ...(usage.cost !== undefined ? { cost: usage.cost } : {}),
-                },
-              }
-            : {}),
+          usage: {
+            inputTokens: usage.input_tokens,
+            outputTokens: usage.output_tokens,
+            ...(usage.cost !== undefined ? { cost: usage.cost } : {}),
+          },
         };
-      },
+      }),
     },
-  };
+  );
 }
 
 const stageScript = `

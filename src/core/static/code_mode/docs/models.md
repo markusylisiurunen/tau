@@ -1,52 +1,81 @@
 # @tau/models
 
-Use standalone model calls for focused analysis, extraction, or typed judgments. Each call is stateless and sees only the inputs you pass.
-
-`list()` returns `{ chat, decisions }`, the models available to each function, with their IDs, supported `inputs`, `reasoning` settings, and a short description of each model's role. Listing runs no model, and every call needs an explicit model ID from the matching list.
-
-## Chat
+Call a model for focused analysis, extraction, or typed judgments. Each call is stateless and sees only what you pass. `chat` returns text or structured output, and `decisions` answers named questions with typed values such as probabilities and scores.
 
 ```js
+import { printText } from "@tau/core";
 import { chat, list } from "@tau/models";
 
 const { chat: models } = await list();
-const model = models.find(({ inputs }) => inputs.includes("text"));
-if (!model) throw new Error("No text model available");
-
-const result = await chat("What does HTTP 304 mean?", {
-  model: model.id,
-});
+const model = models.find(({ inputs }) => inputs.includes("image"));
+if (!model) throw new Error("No image model available");
+const result = await chat([{ role: "user", content: [
+  { type: "text", text: "What error does this screenshot show?" },
+  { type: "image", path: "screenshot.png" },
+] }], { model: model.id });
+printText(result.answer ?? result.status);
 ```
 
-`chat(promptOrMessages, { model, system?, reasoning?, schema? })` takes a prompt string or an ordered array of `{ role, content }` messages. A string is shorthand for one user message. The roles are `"user"` and `"assistant"`. User content can be a string or an ordered array of parts:
+## API
 
 ```ts
-type Media = { type: "image" | "audio" | "video" } & (
-  | { path: string }
-  | { bytes: Uint8Array }
-);
-type Part = { type: "text"; text: string } | Media;
-```
+function list(): Promise<{ chat: ModelInfo[]; decisions: ModelInfo[] }>;
+function chat(prompt: string | Message[], options: ChatOptions): Promise<ChatResult>;
+function decisions(state: Guidance, options: DecisionOptions): Promise<DecisionResult>;
 
-Paths resolve from the working directory. Prefer them for large media, because bytes pass through the program. Tau detects the media format and rejects media the selected model cannot handle. Assistant content is a string.
+type ModelInfo = {
+  id: string;
+  inputs: string[]; // such as "text", "image", "audio", "video"
+  reasoning: string[]; // accepted reasoning settings, empty when there are none
+  role: string; // what the model is good for
+};
 
-The result is `{ status, answer, usage? }`. `status` is `"complete"`, `"incomplete"`, or `"refused"`, and `answer` is `null` unless the call completed. The answer is a string, or with a JSON Schema in `schema`, the parsed JSON value. Tau requests structured output but does not check the value against the schema, and invalid JSON throws. Request failures throw and are not retried.
+type Message =
+  | { role: "user"; content: string | Array<{ type: "text"; text: string } | Media> }
+  | { role: "assistant"; content: string };
+type Media = { type: "image" | "audio" | "video" } & ({ path: string } | { bytes: Uint8Array });
 
-## Decisions
+type ChatOptions = {
+  model: string; // an ID from list().chat
+  system?: string;
+  reasoning?: string;
+  schema?: Record<string, JsonValue>; // JSON Schema for a structured answer
+};
+type ChatResult = {
+  status: "complete" | "incomplete" | "refused";
+  answer: string | JsonValue | null; // null unless complete; parsed JSON with a schema
+  usage?: Usage;
+};
 
-`decisions(state, { model, questions, attachments? })` asks several named questions about the same state. `state` is text, a JSON object, or a JSON array. Attachments use the same media types as chat. Each question has `type` and `instructions`, plus `criteria` for choice and score questions:
-
-- `noul`: a yes-or-no judgment. The answer's `noul` field is the probability, from 0 to 1, that the condition holds. Optional criteria describe `true` and `false`.
-- `choice`: one named category. Pass a map from category names to criteria. The answer's `choice` field is the selected name.
-- `score`: a rating against an ordered array of criteria. The answer's `score` field is a position on that scale, starting at 0, and can be fractional.
-
-The result is `{ answers, usage? }`, with answers keyed by question name. Each answer's `type` matches its question, so check `type` before reading its field:
-
-```ts
+type DecisionOptions = {
+  model: string; // an ID from list().decisions
+  questions: Record<string, Question>;
+  attachments?: Media[]; // up to 64
+};
+type Question =
+  | { type: "noul"; instructions: Guidance; criteria?: { true: Guidance; false: Guidance } }
+  | { type: "choice"; instructions: Guidance; criteria: Record<string, Guidance | null> }
+  | { type: "score"; instructions: Guidance; criteria: Guidance[] }; // ordered, lowest first
+type Guidance = string | JsonValue[] | Record<string, JsonValue>; // text or JSON
+type DecisionResult = { answers: Record<string, Answer>; usage: Usage };
 type Answer =
-  | { type: "noul"; noul: number }
+  | { type: "noul"; noul: number } // probability from 0 to 1 that the condition holds
   | { type: "choice"; choice: string; confidence?: number }
-  | { type: "score"; score: number; confidence?: number };
+  | { type: "score"; score: number; confidence?: number }; // position on the criteria, can be fractional
+
+type Usage = { inputTokens: number; outputTokens: number; cost?: number };
 ```
 
-Missing or invalid answers throw.
+## Models and media
+
+Every call needs a model ID from the matching list, and each model's `role` says what it suits. Listing runs no model.
+
+Media paths resolve from the working directory. Prefer paths for large media, because bytes pass through the program. Tau detects each file's format and rejects media the model cannot take.
+
+## Answers
+
+With `schema`, Tau requests structured output and parses the answer, but does not check it against the schema. `decisions` answers each question under its name. Check an answer's `type` before reading its field.
+
+## Errors
+
+Request failures throw without a `code` and are not retried, as do answers that are missing or not valid JSON.

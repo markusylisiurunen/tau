@@ -4871,28 +4871,31 @@ describe("LocalSessionHost", () => {
     try {
       const id = childJobs.codeJobs.start({
         backend,
-        cwd: process.cwd(),
         source: "inline code",
-        signal: new AbortController().signal,
-        program: {
-          name: "tau",
-          documentation: "test",
-          cwd: process.cwd(),
-          code: 'import { printText, wait } from "@tau/core"; printText("ready"); await wait();',
-          packages: {
-            "@tau/core": {
-              wait: async (_args, context) => {
-                requestSignal = context.signal;
-                entered.resolve();
-                await new Promise((_, reject) =>
-                  context.signal.addEventListener("abort", () => reject(context.signal.reason), {
-                    once: true,
-                  }),
-                );
-                return null;
+        run: {
+          program: {
+            code: 'import { printText } from "@tau/core"; import { wait } from "test"; printText("ready"); await wait();',
+            sourceName: "inline code",
+            cwd: process.cwd(),
+          },
+          packages: [
+            {
+              name: "test",
+              documentation: "# test",
+              api: {
+                wait: async (_args, context) => {
+                  requestSignal = context.signal;
+                  entered.resolve();
+                  await new Promise((_, reject) =>
+                    context.signal.addEventListener("abort", () => reject(context.signal.reason), {
+                      once: true,
+                    }),
+                  );
+                  return null;
+                },
               },
             },
-          },
+          ],
         },
       });
       await entered.promise;

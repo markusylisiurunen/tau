@@ -1,51 +1,52 @@
-# Code Mode and @tau/core
+# Code programs and @tau/core
 
-## Running programs
-
-Pass inline JavaScript in `code` or the path of a saved `.js` program in `file`. Programs use static imports from enabled `@tau/*` packages and from relative `.js` files. A relative path resolves from the importing file, or from the working directory for inline code. Top-level `await` works. Node built-ins, npm packages, and dynamic imports are unavailable. A program can load at most 64 source files, each saved file up to 1 MiB and 8 MiB in total.
-
-Each call starts a fresh program, so values from earlier calls are gone. Return values are ignored, and only what you print comes back. `maxOutputTokens` on the tool call limits printed text. A program can make at most 4,096 API calls, 32 at a time. The arguments and result of each call must fit within 64 MiB, so request less with filters, pagination, or file paths when a result could be large.
-
-Foreground calls time out after five minutes unless the tool call sets `timeout` in milliseconds, up to an hour. Cancelling or timing out a program cancels its active calls, but completed side effects stay. A program launched with `background: true` has no overall deadline and accepts neither `timeout` nor `maxOutputTokens`. Inspect it with the code job tools.
-
-## Input, output, and docs
+A program is JavaScript that imports the packages listed in the tool description. Use one to chain dependent calls, run independent calls in parallel with `Promise.all`, and print only what your answer needs.
 
 ```js
-import { input, printText, truncate } from "@tau/core";
+import { printText } from "@tau/core";
+import * as bash from "@tau/bash";
 
-printText(truncate(input.message, { maxChars: 2_000 }));
+const [branch, status] = await Promise.all([
+  bash.text("git branch --show-current"),
+  bash.text("git status --short"),
+]);
+printText(`${branch.trim()}\n${status || "clean"}`);
 ```
 
-- `input` is the JSON value passed to the tool, or `null` if none was passed.
-- `printText(text)` accepts only a string. Print the fields you need and the IDs you will use in follow-up calls.
-- `await printImage(image)` accepts a `Uint8Array` of JPEG, PNG, or WebP data, or an image block `{ data, mimeType }` with base64 `data`, as MCP tools return. A program can print up to 16 images. Printed text and images keep their order.
-- `truncate(text, { maxChars, keep? })` or `truncate(text, { maxLines, keep? })` shortens a string to one positive integer limit. `keep` is `"head"`, `"tail"`, or `"both"` (the default). The `…` marker does not count toward the limit, and in line mode it takes its own line. Text that fits is returned unchanged.
-- `await docs()` returns this page. `docs("@tau/web")` returns the reference for an enabled package, and `docs("examples")` returns recipes.
+## How programs run
 
-## Bash
+- Programs are ES modules with static imports and top-level `await`. Import named functions, or a namespace such as `import * as bash from "@tau/bash"` when names are generic. Relative `.js` imports load local files when the tool runs saved programs: a path resolves from the importing file, or from the working directory for inline code. Node built-ins, npm packages, dynamic `import()`, `require`, `fetch`, timers, and `console` are unavailable.
+- Each call starts a fresh program, so nothing carries over between calls. The return value is ignored, and only printed output comes back, cut from the middle when it exceeds the call's `maxOutputTokens`.
+- Every package function returns a promise. Arguments and results are JSON values, except that `Uint8Array` bytes pass through unchanged. Object properties set to `undefined` are dropped from arguments.
+- A failed call rejects with an `Error`. Arguments that do not match the reference fail with `code: "invalid_arguments"` before anything happens, and each reference lists the other codes its package uses. An uncaught error ends the program, and what it printed so far still comes back.
+- When a program times out or is cancelled, its pending calls are cancelled too. Completed side effects stay, so check what a mutation did before you repeat it.
 
-`bash` is available when Bash is enabled. Each command runs in a fresh noninteractive Bash login shell. Pass data through `stdin` instead of interpolating it into the command.
-
-| Function | Result |
+| Limit | Value |
 | --- | --- |
-| `bash.text(command, options?)` | Untrimmed stdout. A nonzero exit, timeout, or interruption throws, and exit errors include `exitCode` and a short diagnostic. |
-| `bash.run(command, options?)` | `{ exitCode, stdout, stderr, output, timedOut, aborted, closeSignal }`, so failures are data. `output` interleaves stdout and stderr in the order Tau received them. Use `2>&1` to send both streams through one pipe. |
-| `bash.start(command, { workingDirectory }?)` | `{ id }` of a background job, which can outlive the program. |
-| `bash.list()` / `bash.read(id)` | Metadata for all retained jobs, or one job with the tail of its combined log. |
-| `bash.wait(idOrIds, { timeout }?)` | Waits for any listed job to finish and returns one finished job. Waits 60 seconds by default and at most five minutes. A timeout throws `WAIT_TIMEOUT` and leaves the jobs running. |
-| `bash.stop(id)` | Stops the job's process group and returns its final state. |
+| Source files | 64 per program, 1 MiB each, 8 MiB in total |
+| Package calls | 4,096 per program, 32 at a time |
+| Arguments or result of one call | 64 MiB |
+| Printed images | 16 per program |
 
-`run` and `text` accept `workingDirectory`, `stdin` (UTF-8 text), and `timeout` in milliseconds (60 seconds by default). If stdout and stderr together exceed 24 MiB, Tau stops the command and throws `OUTPUT_LIMIT`, so redirect large output to a file. Background jobs keep running and retain the last 24 MiB of their combined log. Check `truncated` to see whether earlier output was dropped. A job's `status` is `running`, `succeeded`, `failed`, or `stopped`, with `exitCode` or `error` when present.
+A result over the size limit fails instead of being truncated, so request less with filters, pagination, or file paths when a result could be large.
 
-## Files
+## @tau/core
 
-`files` holds the operations your tools permit: reads with Bash, writes with `write`, and `edit` with `edit`. Paths resolve as in the standalone tools. Each operation handles a whole file of up to 16 MiB. Process larger files with Bash.
+```ts
+const input: JsonValue; // the tool call's input, or null
+function printText(text: string): void;
+function printImage(image: Uint8Array | { data: string; mimeType: string }): Promise<void>;
+function truncate(text: string, limit: TruncateLimit): string;
+function docs(page?: string): Promise<string>;
 
-| Function | Result |
-| --- | --- |
-| `files.readText(path)` | The file as a string. Invalid UTF-8 throws. |
-| `files.readBytes(path)` | The file as a `Uint8Array`. |
-| `files.writeText(path, text)` / `files.writeBytes(path, bytes)` | Creates or replaces the file, with any missing parent directories. Returns `{ path, bytes }`. |
-| `files.edit(path, oldText, newText)` / `files.edit(path, replacements)` | Applies exact replacements, given as an array of `{ oldText, newText }` for a batch. Returns `{ path, replacements }` with the number applied. |
+type TruncateLimit = ({ maxChars: number } | { maxLines: number }) & {
+  keep?: "head" | "tail" | "both"; // default "both"
+};
+```
 
-Failures throw, such as a missing file or an `oldText` that does not match exactly once, including whitespace. A batch applies in order and writes the file only if every replacement matches. Separate calls commit independently.
+- `printText` accepts only strings, so select the fields you need and format them as short lines. Include the IDs you will use in later calls. Use `JSON.stringify` on selected values only when their structure matters.
+- `printImage` forwards JPEG, PNG, or WebP bytes, or a block with base64 `data` such as MCP tools return. Await it. Text and images come back in the order you print them. Never print base64 data as text.
+- `truncate` shortens text to a positive number of characters or lines. The `…` marker does not count toward the limit, and in line mode it takes its own line. Text that fits comes back unchanged.
+- `docs()` returns this page. `docs(name)` returns the reference of an available package, or another page the tool description names.
+
+`docs` fails with `unknown_page` for any other name.

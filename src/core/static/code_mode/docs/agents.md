@@ -1,9 +1,9 @@
 # @tau/agents
 
-Manage workers you started and their descendants. Follow the delegation policy in your instructions. Workers keep running when a program finishes or is cancelled.
+Start workers, steer and wait for them, and read what they did. You can manage the workers you started and the workers they started. Follow the delegation policy in your instructions. Workers keep running when a program ends or is cancelled.
 
 ```js
-import { spawn, waitUntilIdle, readResponse } from "@tau/agents";
+import { readResponse, spawn, waitUntilIdle } from "@tau/agents";
 import { printText } from "@tau/core";
 
 const { id } = await spawn("Review docs/code-mode.md for unclear examples.", {
@@ -13,20 +13,109 @@ await waitUntilIdle(id);
 printText(await readResponse(id));
 ```
 
-## Worker lifecycle
+## API
 
-- `launchOptions()` returns the inherited model, allowed model overrides, and current capacity. Capacity is shared across the session and is not a reservation.
-- `spawn(prompt, { title, model?, workingDirectory?, notifyOnCompletion? })` starts a worker and returns its state. The prompt must include the context the worker needs. The model and directory default to the caller's. Supply a model only when your instructions call for an allowed override. The main agent can disable completion notifications with `notifyOnCompletion: false` when notifications are available.
-- `list()` returns `{ agents, capacity }`, with access limited to descendants. `read(id)` returns the current state of one worker. State includes `status`, pending input counts, usage, and a `reason` when idle (`completed`, `failed`, or `interrupted`).
-- `sendInput(id, message, { mode })` accepts `mode: "queue"` to start a separate turn after current work, or `"steer"` to deliver input during the current turn as soon as possible. Either starts a new turn if the worker is idle.
-- `interrupt(id, { wait?, scope? }?)` interrupts the turn and clears pending input. It waits for the worker by default. Set `wait: false` to return before stopping finishes or `scope: "subtree"` to include descendants. Background jobs the workers started keep running.
-- `waitUntilIdle(id)` returns the worker's state when it has no active turn or pending input. Failed and interrupted turns still return state. Cancelling the wait leaves the worker running. This does not wait for descendants or background jobs.
-- `setCompletionNotification(id, enabled)` is available to the main agent when notifications are enabled. It applies to future completions of workers it started directly.
+```ts
+function launchOptions(): Promise<{
+  inherited: { model: string };
+  overrides: Array<{ model: string }>; // models you may pass to spawn
+  capacity: Capacity;
+}>;
+function spawn(prompt: string, options: SpawnOptions): Promise<Worker>;
+function list(): Promise<{ agents: Worker[]; capacity: Capacity }>;
+function read(id: string): Promise<Worker>;
+function sendInput(id: string, message: string, options: { mode: "queue" | "steer" }): Promise<Worker>;
+function interrupt(id: string, options?: { wait?: boolean; scope?: "agent" | "subtree" }): Promise<Worker>;
+function waitUntilIdle(id: string): Promise<Worker>;
+function readResponse(id: string): Promise<string>;
+function trace(id: string, options?: TraceOptions): Promise<TracePage>;
+function readText(id: string, seq: number): Promise<string>;
+function readContent(id: string, ref: string, options?: { cursor?: string }): Promise<ContentPage>;
+function setCompletionNotification(id: string, enabled: boolean): Promise<Worker>; // main agent only
+
+type SpawnOptions = {
+  title: string; // one line
+  model?: string; // an allowed override from launchOptions()
+  workingDirectory?: string; // defaults to yours
+  notifyOnCompletion?: boolean; // main agent only, default true
+};
+
+type Capacity = { running: number; limit: number }; // shared across the session, not reserved
+
+type Worker = {
+  id: string;
+  parentId: string;
+  depth: number;
+  title: string;
+  model: string;
+  workingDirectory: string;
+  pending: { queue: number; steer: number };
+  usage: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    contextTokens: number;
+    contextWindow: number;
+    cost: number;
+  };
+} & (
+  | { status: "working" | "stopping" }
+  | { status: "idle"; reason: "completed" | "interrupted" }
+  | { status: "idle"; reason: "failed"; error: { code: string; message: string } }
+);
+
+type TraceOptions = {
+  kinds?: Array<"input" | "assistant" | "tool_call" | "tool_result" | "notice" | "status">;
+  toolName?: string;
+  limit?: number; // 1–50, default 20
+  cursor?: string;
+};
+type TracePage = { entries: TraceEntry[]; nextCursor?: string; historyEvicted: boolean };
+type TraceEntry = { seq: number; timestamp: number } & (
+  | { kind: "input"; mode: "initial" | "queue" | "steer"; content: TraceContent }
+  | { kind: "assistant"; content: TraceContent }
+  | { kind: "tool_call"; callId: string; toolName: string; arguments: TraceContent }
+  | {
+      kind: "tool_result";
+      callId: string;
+      toolName: string;
+      outcome: "succeeded" | "failed" | "blocked" | "cancelled";
+      content: TraceContent;
+    }
+  | { kind: "notice"; code: string; content: TraceContent }
+  | { kind: "status"; status: "working" | "stopping" | "idle"; reason?: "completed" | "failed" | "interrupted" }
+);
+type TraceContent =
+  | { kind: "inline"; blocks: ContentBlock[] }
+  | { kind: "reference"; ref: string; bytes: number };
+type ContentBlock =
+  | { type: "text"; text: string }
+  | { type: "json"; value: JsonValue }
+  | { type: "image"; mimeType: string; data: string }
+  | { type: "unavailable"; reason: string };
+type ContentPage = { blocks: ContentBlock[]; nextCursor?: string };
+```
+
+## Workers
+
+The prompt must carry all the context a worker needs. A worker inherits your model and working directory. Pass a `model` only when your instructions call for one of the allowed overrides.
+
+`sendInput` with `"queue"` starts a separate turn after current work, and `"steer"` delivers the message during the current turn as soon as possible. Either starts a turn when the worker is idle. `interrupt` stops the turn and drops pending input, and by default waits until the worker has stopped. `scope: "subtree"` includes the worker's descendants. Background jobs that workers started keep running.
+
+`waitUntilIdle` returns once the worker has no active turn or pending input, also after a failed or interrupted turn. It does not wait for the worker's descendants or jobs, and cancelling the wait leaves the worker running.
 
 ## Responses and traces
 
-`readResponse(id)` returns the full text of the latest normally completed turn. It throws if the latest turn is active, failed, interrupted, or has no complete response. It never reads an older turn in its place. A normally completed turn can still report that the worker did not accomplish its task.
+`readResponse` returns the full text of the latest turn and fails unless that turn completed normally. A completed turn can still report that the worker did not accomplish its task.
 
-`trace(id, { kinds?, toolName?, limit?, cursor? }?)` returns `{ entries, nextCursor, historyEvicted }`. Kinds include `input`, `assistant`, `tool_call`, `tool_result`, `notice`, and `status`. Entries have a `seq`, a timestamp, a `kind`, and fields specific to that kind. Read inline content directly. Referenced content has a `ref` for further reads.
+`trace` returns the newest matching entries, and `nextCursor` pages back through older ones. Small content is inline. Larger content has a `ref`: read it with `readText` for an assistant or tool result entry, or page through it with `readContent`, joining text blocks in order. The trace is bounded and ends with the worker, and `historyEvicted` reports that early entries were dropped.
 
-`readText(id, seq)` reads the complete text of an assistant or tool result entry, including text from an interrupted turn. If the entry is unavailable or contains mixed content, it throws. Use `truncate()` to display a preview. `readContent(id, ref, { cursor }?)` reads referenced content in pages and returns `{ blocks, nextCursor }`. Join text chunks in order. Images and JSON blocks arrive whole. The trace is bounded and does not outlive the worker; use `@tau/history` for saved transcripts when your request calls for them.
+## Errors
+
+| `code` | Meaning |
+| --- | --- |
+| `unknown_agent` | The ID is not a worker you can manage. |
+| `operation_failed` | The request cannot be done now, such as a full capacity, a stopping worker, a model you may not use, or a turn that did not complete. |
+| `expired_content` | The content is no longer available or not complete. |
+| `invalid_cursor` | The cursor does not belong to this query. |

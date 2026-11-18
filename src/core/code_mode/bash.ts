@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { z } from "zod";
+import { codeModeError } from "../../code_mode/errors.js";
 import { SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES } from "../../protocol/session_protocol.js";
 import { JOB_WAIT_DEFAULT_MS, JOB_WAIT_MAX_MS } from "../tools/background_jobs.js";
 import { BASH_DEFAULT_TIMEOUT_MS } from "../tools/bash.js";
@@ -8,8 +9,7 @@ import {
   MAX_COMMAND_CAPTURE_BYTES,
   type ToolExecutionBackend,
 } from "../tools/execution_backend.js";
-import type { CodeModeCapability } from "./capability.js";
-import { codeModeError } from "./errors.js";
+import { type CodeModePackage, definePackage, method } from "./package.js";
 
 const commandOptions = {
   workingDirectory: z
@@ -36,13 +36,16 @@ const waitOptions = z.strictObject({
   timeout: z.number().int().positive().max(JOB_WAIT_MAX_MS).optional(),
 });
 
-export function createBashCapability(
+export function createBashPackage(
   backend: ToolExecutionBackend,
   cwd: string,
   jobs: BashJobRegistry,
-): CodeModeCapability {
-  const run = async (args: unknown[], signal: AbortSignal) => {
-    const [source, options] = z.tuple([command, runOptions.optional()]).parse(args);
+): CodeModePackage {
+  const run = async (
+    source: string,
+    options: z.output<typeof runOptions> | undefined,
+    signal: AbortSignal,
+  ) => {
     const { truncated, ...result } = await backend.runBash(source, {
       cwd: resolve(cwd, options?.workingDirectory ?? "."),
       timeoutMs: options?.timeout ?? BASH_DEFAULT_TIMEOUT_MS,
@@ -51,22 +54,23 @@ export function createBashCapability(
       stdin: options?.stdin === undefined ? undefined : Buffer.from(options.stdin, "utf8"),
       signal,
     });
-    if (truncated) throw codeModeError("OUTPUT_LIMIT", "Command output exceeded 24 MiB");
+    if (truncated) throw codeModeError("output_limit", "Command output exceeded 24 MiB");
     return result;
   };
-  return {
-    name: "bash",
-    description: "Run Bash commands and manage background jobs.",
-    api: {
-      run: (args, context) => run(args, context.signal),
-      text: async (args, context) => {
-        const result = await run(args, context.signal);
+  return definePackage("bash", "Run Bash commands and manage background jobs.", {
+    run: method(z.tuple([command, runOptions.optional()]), ([source, options], { signal }) =>
+      run(source, options, signal),
+    ),
+    text: method(
+      z.tuple([command, runOptions.optional()]),
+      async ([source, options], { signal }) => {
+        const result = await run(source, options, signal);
         if (!result.timedOut && !result.aborted && result.exitCode === 0) return result.stdout;
         const code = result.timedOut
-          ? "COMMAND_TIMEOUT"
+          ? "command_timeout"
           : result.aborted
-            ? "COMMAND_ABORTED"
-            : "COMMAND_FAILED";
+            ? "command_interrupted"
+            : "command_failed";
         const outcome = result.timedOut
           ? "timed out"
           : result.aborted
@@ -77,42 +81,35 @@ export function createBashCapability(
         const detail = (result.stderr || result.output).trim().slice(-1500);
         throw Object.assign(
           codeModeError(code, `Command ${outcome}${detail ? `: ${detail}` : ""}`),
-          {
-            exitCode: result.exitCode,
-          },
+          { exitCode: result.exitCode },
         );
       },
-      start: async (args, context) => {
-        const [source, options] = z.tuple([command, startOptions.optional()]).parse(args);
-        return {
-          id: await jobs.start(
-            backend,
-            source,
-            resolve(cwd, options?.workingDirectory ?? "."),
-            context.signal,
-          ),
-        };
-      },
-      list: (args) => {
-        z.tuple([]).parse(args);
-        return jobs.read(undefined, false);
-      },
-      read: (args) => {
-        const [jobId] = z.tuple([id]).parse(args);
-        return jobs.read([jobId])[0]!;
-      },
-      wait: async (args, context) => {
-        const [selection, options] = z
-          .tuple([z.union([id, z.array(id).min(1).max(64)]), waitOptions.optional()])
-          .parse(args);
-        const ids = Array.isArray(selection) ? selection : [selection];
-        return jobs.waitForFinished(ids, options?.timeout ?? JOB_WAIT_DEFAULT_MS, context.signal);
-      },
-      stop: async (args) => {
-        const [jobId] = z.tuple([id]).parse(args);
-        await jobs.stopJob(jobId);
-        return jobs.read([jobId])[0]!;
-      },
-    },
-  };
+    ),
+    start: method(
+      z.tuple([command, startOptions.optional()]),
+      async ([source, options], { signal }) => ({
+        id: await jobs.start(
+          backend,
+          source,
+          resolve(cwd, options?.workingDirectory ?? "."),
+          signal,
+        ),
+      }),
+    ),
+    list: method(z.tuple([]), () => jobs.read(undefined, false)),
+    read: method(z.tuple([id]), ([jobId]) => jobs.read([jobId])[0]!),
+    wait: method(
+      z.tuple([z.union([id, z.array(id).min(1).max(64)]), waitOptions.optional()]),
+      ([selection, options], { signal }) =>
+        jobs.waitForFinished(
+          Array.isArray(selection) ? selection : [selection],
+          options?.timeout ?? JOB_WAIT_DEFAULT_MS,
+          signal,
+        ),
+    ),
+    stop: method(z.tuple([id]), async ([jobId]) => {
+      await jobs.stopJob(jobId);
+      return jobs.read([jobId])[0]!;
+    }),
+  });
 }

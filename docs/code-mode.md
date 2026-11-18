@@ -2,10 +2,11 @@
 
 The `code` tool runs a JavaScript program that combines Tau capabilities in one call. The agent uses it to pass results between calls, run independent work in parallel, and print only what its answer needs.
 
-Programs import the packages the persona enables, such as `@tau/core`, `@tau/web`, or `@tau/models`. [Tools](tools.md#tool-names) lists which `tools` entry enables each package. Programs have no file, network, credential, or process access of their own, only what those packages provide.
+Every program can import `@tau/core`, which holds the program's input, output, and docs. The other packages, such as `@tau/bash`, `@tau/web`, or `@tau/models`, are those the persona enables, and [tools](tools.md#tool-names) lists which `tools` entry enables each. Programs have no file, network, credential, or process access of their own, only what those packages provide.
 
 ```js
-import { bash, printText } from "@tau/core";
+import * as bash from "@tau/bash";
+import { printText } from "@tau/core";
 
 const status = await bash.text("git status --short");
 printText(status || "Working tree is clean.");

@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { createMcpCapability } from "../dist/core/code_mode/mcp.js";
+import { createMcpPackage } from "../dist/core/code_mode/mcp.js";
 import { parseMcpCliArgs, runMcpCommand } from "../dist/core/mcp/cli.js";
 import { McpManager } from "../dist/core/mcp/manager.js";
 import {
@@ -14,7 +14,7 @@ import {
   mcpOAuthFetch,
 } from "../dist/core/mcp/oauth.js";
 import { searchMcpTools } from "../dist/core/mcp/search.js";
-import { createCapabilityTool } from "./helpers/code_mode.js";
+import { createPackageTool } from "./helpers/code_mode.js";
 
 const signal = () => new AbortController().signal;
 
@@ -244,7 +244,7 @@ describe("MCP OAuth", () => {
         code: "mcp_authorization_required",
         scopes: ["dns.write"],
       });
-      const tool = createCapabilityTool({}, createMcpCapability(client));
+      const tool = createPackageTool({}, createMcpPackage(client));
       const failure = await tool.execute(
         {
           id: "oauth",

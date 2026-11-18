@@ -1,6 +1,6 @@
 import { Buffer } from "node:buffer";
 import { parentPort, workerData } from "node:worker_threads";
-import { decodeModuleValue, encodeModuleValue } from "../../../code_mode/wire.js";
+import { decodeBridgeValue, encodeBridgeValue } from "../../../code_mode/wire.js";
 import { truncateToBytesFromEnd } from "../../utils/truncate.js";
 import { codeModeMath, createCodeModeDate } from "./capabilities.mjs";
 import { compileModules } from "./modules.mjs";
@@ -12,12 +12,12 @@ if (
   typeof workerData !== "object" ||
   workerData === null ||
   typeof workerData.code !== "string" ||
-  typeof workerData.docs !== "string" ||
   (workerData.sourceName !== undefined && typeof workerData.sourceName !== "string") ||
-  !Number.isSafeInteger(workerData.imageMethodId) ||
-  workerData.imageMethodId < 0 ||
+  typeof workerData.cwd !== "string" ||
+  (workerData.entryPath !== undefined && typeof workerData.entryPath !== "string") ||
+  !Number.isSafeInteger(workerData.sourceMethodId) ||
+  typeof workerData.inputJson !== "string" ||
   !Array.isArray(workerData.apis) ||
-  workerData.apis.length === 0 ||
   workerData.apis.some(
     (api) =>
       typeof api !== "object" ||
@@ -43,8 +43,6 @@ const codeModeDate = createCodeModeDate();
 const pending = new Map();
 let nextRequestId = 1;
 let outputText = "";
-let outputStdout = "";
-let outputStderr = "";
 let outputBytes = 0;
 let nextOutputId = 1;
 const pendingOutputs = new Set();
@@ -67,7 +65,7 @@ parentPort.on("message", (message) => {
       ) {
         throw new Error("invalid code-mode bridge response");
       }
-      request.resolve(workerData.moduleConfig ? decodeModuleValue(message.valueJson) : JSON.parse(message.valueJson));
+      request.resolve(decodeBridgeValue(message.valueJson));
     } catch {
       request.reject(new Error("code-mode bridge returned invalid JSON"));
     }
@@ -88,7 +86,7 @@ function requestApi(methodId, argsJson) {
   if (Buffer.byteLength(argsJson, "utf8") > workerData.maxBridgePayloadBytes) {
     return Promise.reject(
       new Error(
-        `code-mode API arguments exceeded ${workerData.maxBridgePayloadBytes} bridge payload bytes; use attachment paths instead of inline media`,
+        `code-mode API arguments exceeded ${workerData.maxBridgePayloadBytes} bridge payload bytes; use file paths instead of inline media`,
       ),
     );
   }
@@ -123,28 +121,17 @@ function flushOutput(force = false) {
     type: "output",
     id,
     text: outputText,
-    stdout: outputStdout,
-    stderr: outputStderr,
     bytes: outputBytes,
   });
   outputText = "";
-  outputStdout = "";
-  outputStderr = "";
   outputBytes = 0;
 }
 
-function writeOutput(stream, text) {
-  if ((stream !== "stdout" && stream !== "stderr") || typeof text !== "string") {
-    throw new Error("invalid console bridge output");
-  }
+function writeOutput(text) {
+  if (typeof text !== "string") throw new Error("invalid program output");
   const output = text + "\n";
   outputBytes += Buffer.byteLength(output);
   outputText = truncateToBytesFromEnd(outputText + output, workerData.maxCaptureBytes);
-  if (stream === "stdout") {
-    outputStdout = truncateToBytesFromEnd(outputStdout + output, workerData.maxCaptureBytes);
-  } else {
-    outputStderr = truncateToBytesFromEnd(outputStderr + output, workerData.maxCaptureBytes);
-  }
   flushOutput();
 }
 
@@ -153,12 +140,9 @@ const compartment = new Compartment({
     Date: codeModeDate,
     Math: codeModeMath,
     _apis: harden(workerData.apis),
-    _imageMethodId: workerData.imageMethodId,
     _requestApi: harden(requestApi),
     _writeOutput: harden(writeOutput),
-    ...(workerData.moduleConfig
-      ? { _encodeModuleValue: harden(encodeModuleValue) }
-      : { docs: workerData.docs }),
+    _encodeValue: harden(encodeBridgeValue),
     _inputJson: workerData.inputJson,
   },
   __options__: true,
@@ -167,49 +151,17 @@ const compartment = new Compartment({
 const packages = compartment.evaluate(String.raw`
 (() => {
   const input = JSON.parse(_inputJson);
-  const encodeModule = globalThis._encodeModuleValue;
-  delete globalThis._encodeModuleValue;
-  delete globalThis._inputJson;
   const apis = _apis;
-  const requestApiBridge = _requestApi;
-  const writeOutputBridge = _writeOutput;
-  const imageMethodId = _imageMethodId;
-  delete globalThis._imageMethodId;
-  delete globalThis._apis;
-  delete globalThis._requestApi;
-  delete globalThis._writeOutput;
+  const requestApi = _requestApi;
+  const writeOutput = _writeOutput;
+  const encodeValue = _encodeValue;
+  for (const name of ["_inputJson", "_apis", "_requestApi", "_writeOutput", "_encodeValue", "console"]) {
+    delete globalThis[name];
+  }
 
   const printText = (text) => {
-      if (typeof text !== "string") throw new TypeError("printText expects a string. Select relevant fields and format concise plain text to save tokens. Only use JSON.stringify on selected data when JSON structure is needed; do not dump whole responses.");
-    writeOutputBridge("stdout", text);
-  };
-  delete globalThis.console;
-
-  function bound(values, limit, position, unit) {
-    if (!Number.isSafeInteger(limit) || limit <= 0) throw new TypeError("limit must be a positive integer");
-    if (!["middle", "start", "end"].includes(position)) throw new TypeError("invalid truncation position");
-    if (values.length <= limit) return values.join(unit === "lines" ? "\n" : "");
-    const joiner = unit === "lines" ? "\n" : "";
-    let kept = unit === "lines" ? limit - 1 : limit;
-    let marker;
-    while (true) {
-      marker = "[" + (values.length - kept) + " " + unit + " omitted]";
-      const next = unit === "lines" ? kept : Math.max(0, limit - Array.from(marker).length);
-      if (next === kept) break;
-      kept = next;
-    }
-    if (unit !== "lines" && marker.length > limit) return "…";
-    const head = position === "end" ? 0 : position === "start" ? kept : Math.ceil(kept / 2);
-    const tail = kept - head;
-    return [...values.slice(0, head), marker, ...(tail ? values.slice(-tail) : [])].join(joiner);
-  }
-  const truncateLegacy = (text, { maxChars, position = "middle" }) => {
-    if (typeof text !== "string") throw new TypeError("truncate expects a string");
-    return bound(Array.from(text), maxChars, position, "characters");
-  };
-  const truncateLines = (text, { maxLines, position = "middle" }) => {
-    if (typeof text !== "string") throw new TypeError("truncateLines expects a string");
-    return bound(text.replace(/\r\n?/g, "\n").split("\n"), maxLines, position, "lines");
+    if (typeof text !== "string") throw new TypeError("printText expects a string. Select relevant fields and format concise plain text to save tokens. Only use JSON.stringify on selected data when JSON structure is needed; do not dump whole responses.");
+    writeOutput(text);
   };
   const truncate = (text, options) => {
     if (typeof text !== "string") throw new TypeError("truncate expects a string");
@@ -228,34 +180,12 @@ const packages = compartment.evaluate(String.raw`
       .join(maxLines === undefined ? "" : "\n");
   };
 
-  function serializeArguments(args) {
-    if (encodeModule) return encodeModule(args, true);
-    return JSON.stringify(args, function (_key, value) {
-      if (value === undefined && !Array.isArray(this)) return undefined;
-      if (
-        value === undefined ||
-        typeof value === "function" ||
-        typeof value === "symbol" ||
-        typeof value === "bigint" ||
-        (typeof value === "number" && !Number.isFinite(value))
-      ) {
-        throw new TypeError("Code-mode API arguments must be JSON-serializable values");
-      }
-      return value;
-    });
-  }
-
-  const printImage = async (value) => {
-    await requestApiBridge(imageMethodId, serializeArguments([value]));
-  };
-
-  function freezeApi(value) {
+  const freeze = (value) => {
     for (const child of Object.values(value)) {
-      if (typeof child === "object" && child !== null) freezeApi(child);
+      if (typeof child === "object" && child !== null) freeze(child);
     }
     return Object.freeze(value);
-  }
-
+  };
   const packages = Object.create(null);
   for (const definition of apis) {
     const api = Object.create(null);
@@ -265,49 +195,37 @@ const packages = compartment.evaluate(String.raw`
         target[segment] ??= Object.create(null);
         target = target[segment];
       }
-      target[method.path.at(-1)] = (...args) =>
-        requestApiBridge(method.id, serializeArguments(args));
+      target[method.path.at(-1)] = (...args) => requestApi(method.id, encodeValue(args, true));
     }
     packages[definition.name] = api;
   }
-  if (encodeModule) {
-    Object.assign(packages["@tau/core"], { input, printText, printImage, truncate });
-    for (const api of Object.values(packages)) {
-      for (const value of Object.values(api)) {
-        if (value !== input && value !== null && typeof value === "object") freezeApi(value);
-      }
-      Object.freeze(api);
+  const core = packages["@tau/core"];
+  const printImage = core.printImage;
+  core.printImage = async (image) => { await printImage(image); };
+  Object.assign(core, { input, printText, truncate });
+  for (const api of Object.values(packages)) {
+    for (const value of Object.values(api)) {
+      if (value !== input && typeof value === "object" && value !== null) freeze(value);
     }
-    return Object.freeze(packages);
+    Object.freeze(api);
   }
-  for (const [name, value] of Object.entries({
-    ...packages, input, printText, printImage, truncate: truncateLegacy, truncateLines,
-  })) {
-    Object.defineProperty(globalThis, name, { value: name in packages ? freezeApi(value) : value });
-  }
+  return Object.freeze(packages);
 })();
 `);
 
-const sourceName = workerData.sourceName;
 try {
-  if (workerData.moduleConfig) {
-    const { cwd, entryPath, sourceMethodId } = workerData.moduleConfig;
-    const program = await compileModules({
-      code: workerData.code,
-      cwd,
-      entryPath,
-      packages,
-      readSource: (path) => requestApi(sourceMethodId, encodeModuleValue([path], false)),
-    });
-    const execute = compartment.evaluate("(async (__tauPackages) => {\n\"use strict\";\n" + program + "\n})");
-    await execute(packages);
-  } else {
-    await compartment.evaluate("(async () => {\n" + workerData.code + "\n})()");
-  }
+  const program = await compileModules({
+    code: workerData.code,
+    cwd: workerData.cwd,
+    entryPath: workerData.entryPath,
+    packages,
+    readSource: (path) => requestApi(workerData.sourceMethodId, encodeBridgeValue([path], false)),
+  });
+  const execute = compartment.evaluate("(async (__tauPackages) => {\n\"use strict\";\n" + program + "\n})");
+  await execute(packages);
 } catch (error) {
   writeOutput(
-    "stderr",
-    (sourceName ? sourceName + ": " : "") +
+    (workerData.sourceName ? workerData.sourceName + ": " : "") +
       (error instanceof Error ? error.stack || error.message : String(error)),
   );
   process.exitCode = 1;

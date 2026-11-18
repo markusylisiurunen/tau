@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { createExaClient, createWebCapability } from "../dist/core/code_mode/web.js";
+import { createExaClient, createWebPackage } from "../dist/core/code_mode/web.js";
 import { discoverAgentContent } from "../dist/core/tools/web_discovery.js";
-import { createCapabilityTool } from "./helpers/code_mode.js";
+import { createPackageTool } from "./helpers/code_mode.js";
 
 function createExecutionResult(output, exitCode = 0) {
   return {
@@ -36,7 +36,7 @@ function createDeps(client) {
 }
 
 function createWebTool(backend, deps, config = { apiKeys: { exa: "exa-key" } }) {
-  return createCapabilityTool(backend, createWebCapability(backend, config, deps));
+  return createPackageTool(backend, createWebPackage(backend, config, deps));
 }
 
 async function runTool(tool, arguments_, signal = new AbortController().signal) {
@@ -396,14 +396,13 @@ describe("Exa web code-mode tool", () => {
         "  () => web.fetch('https://example.com', { text: { maxCharacters: 10001 }, maxAgeHours: 721, subpages: 101, subpageTarget: Array(101).fill('docs'), extras: { links: 1001 } }),",
         "];",
         "for (const call of calls) {",
-        "  try { await call(); } catch (error) { printText(error.message); }",
+        "  try { await call(); } catch (error) { printText(error.code + ' ' + error.message); }",
         "}",
       ].join("\n"),
     });
 
     expect(result.toolResult.outcome).toBe("succeeded");
-    expect(getToolText(result)).toContain("Invalid @tau/web search options");
-    expect(getToolText(result)).toContain("Invalid @tau/web fetch urls");
+    expect(getToolText(result).match(/invalid_arguments/g)).toHaveLength(3);
     expect(getToolText(result)).toContain("maxCharacters");
     expect(getToolText(result)).toContain("maxAgeHours");
     expect(getToolText(result)).toContain("subpages");

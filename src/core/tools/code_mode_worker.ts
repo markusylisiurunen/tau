@@ -1,8 +1,8 @@
 import { finished } from "node:stream/promises";
 import { StringDecoder } from "node:string_decoder";
 import { Worker } from "node:worker_threads";
-import { truncateToBytesFromEnd } from "../utils/truncate.js";
-import { type BashExecutionResult, DEFAULT_COMMAND_CAPTURE_BYTES } from "./execution_backend.js";
+import type { CodeModeWorkerResult } from "../../code_mode/runtime.js";
+import { DEFAULT_COMMAND_CAPTURE_BYTES } from "./execution_backend.js";
 
 export const CODE_MODE_MAX_BRIDGE_REQUESTS = 4096;
 export const CODE_MODE_MAX_CONCURRENT_BRIDGE_REQUESTS = 32;
@@ -26,10 +26,6 @@ type CodeModeWorkerOptions = {
   handleRequest(request: CodeModeBridgeRequest, signal: AbortSignal): Promise<string>;
   onOutput(text: string, truncated: boolean): void;
 };
-
-function appendCapture(current: string, chunk: string): string {
-  return truncateToBytesFromEnd(current + chunk, DEFAULT_COMMAND_CAPTURE_BYTES);
-}
 
 function serializeError(error: unknown): {
   name?: string;
@@ -67,7 +63,7 @@ function isWorkerRequest(value: unknown): value is CodeModeWorkerRequest {
 
 export function executeCodeModeWorker(
   options: CodeModeWorkerOptions,
-): Promise<BashExecutionResult> {
+): Promise<CodeModeWorkerResult> {
   return new Promise((resolve, reject) => {
     const worker = new Worker(options.sandboxRunnerUrl, {
       workerData: {
@@ -92,9 +88,6 @@ export function executeCodeModeWorker(
       stderr: true,
     });
 
-    let stdout = "";
-    let stderr = "";
-    let output = "";
     let capturedBytes = 0;
     let truncated = false;
     let timedOut = false;
@@ -109,20 +102,11 @@ export function executeCodeModeWorker(
     const requestSignal = AbortSignal.any([options.signal, requestController.signal]);
     const inFlightRequests = new Set<Promise<void>>();
 
-    const appendOutput = (target: "stdout" | "stderr", text: string): void => {
-      if (!text) return;
-      output = appendCapture(output, text);
-      options.onOutput(text, truncated);
-      if (target === "stdout") {
-        stdout = appendCapture(stdout, text);
-      } else {
-        stderr = appendCapture(stderr, text);
-      }
-    };
-    const capture = (target: "stdout" | "stderr", decoder: StringDecoder, chunk: Buffer): void => {
-      capturedBytes += chunk.length;
+    // Program output and anything the runtime itself writes form one ordered stream.
+    const appendOutput = (text: string, bytes: number): void => {
+      capturedBytes += bytes;
       if (capturedBytes > DEFAULT_COMMAND_CAPTURE_BYTES) truncated = true;
-      appendOutput(target, decoder.write(chunk));
+      if (text) options.onOutput(text, truncated);
     };
     const settleRequests = async (): Promise<void> => {
       requestController.abort();
@@ -170,8 +154,12 @@ export function executeCodeModeWorker(
       } catch {}
     };
 
-    worker.stdout.on("data", (chunk: Buffer) => capture("stdout", stdoutDecoder, chunk));
-    worker.stderr.on("data", (chunk: Buffer) => capture("stderr", stderrDecoder, chunk));
+    worker.stdout.on("data", (chunk: Buffer) =>
+      appendOutput(stdoutDecoder.write(chunk), chunk.length),
+    );
+    worker.stderr.on("data", (chunk: Buffer) =>
+      appendOutput(stderrDecoder.write(chunk), chunk.length),
+    );
     worker.on("message", (message: unknown) => {
       if (settled || terminating || workerError) return;
       if (
@@ -186,24 +174,15 @@ export function executeCodeModeWorker(
           !Number.isSafeInteger(entry.id) ||
           entry.id <= 0 ||
           typeof entry.text !== "string" ||
-          typeof entry.stdout !== "string" ||
-          typeof entry.stderr !== "string" ||
           typeof entry.bytes !== "number" ||
           !Number.isSafeInteger(entry.bytes) ||
           entry.bytes < Buffer.byteLength(entry.text) ||
-          Buffer.byteLength(entry.text) > DEFAULT_COMMAND_CAPTURE_BYTES ||
-          Buffer.byteLength(entry.stdout) > DEFAULT_COMMAND_CAPTURE_BYTES ||
-          Buffer.byteLength(entry.stderr) > DEFAULT_COMMAND_CAPTURE_BYTES
+          Buffer.byteLength(entry.text) > DEFAULT_COMMAND_CAPTURE_BYTES
         ) {
           failWorker(new Error("code-mode sandbox sent invalid console output"));
           return;
         }
-        capturedBytes += entry.bytes;
-        if (capturedBytes > DEFAULT_COMMAND_CAPTURE_BYTES) truncated = true;
-        output = appendCapture(output, entry.text);
-        stdout = appendCapture(stdout, entry.stdout);
-        stderr = appendCapture(stderr, entry.stderr);
-        options.onOutput(entry.text, truncated);
+        appendOutput(entry.text, entry.bytes);
         postResponse({ type: "output.ack", id: entry.id });
         return;
       }
@@ -265,22 +244,18 @@ export function executeCodeModeWorker(
       cleanup();
       void (async () => {
         await Promise.allSettled([finished(worker.stdout), finished(worker.stderr)]);
-        appendOutput("stdout", stdoutDecoder.end());
-        appendOutput("stderr", stderrDecoder.end());
+        appendOutput(stdoutDecoder.end(), 0);
+        appendOutput(stderrDecoder.end(), 0);
         await settleRequests();
         if (workerError && !terminating) {
           reject(workerError);
           return;
         }
         resolve({
-          output,
-          stdout,
-          stderr,
           exitCode: aborted || timedOut ? null : workerExitCode,
           truncated,
           timedOut,
           aborted,
-          closeSignal: null,
         });
       })();
     });

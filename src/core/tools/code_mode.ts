@@ -1,200 +1,141 @@
-import type { Tool, ToolCall } from "@earendil-works/pi-ai";
+import type { ToolCall } from "@earendil-works/pi-ai";
+import type { CodeModeOutput } from "../../code_mode/output.js";
 import {
-  type CodeModeModules,
   runTauCodeMode,
   type TauCodeModeJsonValue,
+  type TauCodeModePackage,
   type TauCodeModeRuntimeResult,
 } from "../../code_mode/runtime.js";
+import { readPage } from "../code_mode/package.js";
 import type { ToolActivity } from "./activity.js";
 import { buildBashPresentation } from "./bash.js";
 import { type CodeProgram, readCodeModule } from "./code_modules.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import { writeOutputFile } from "./output_file.js";
 import { buildToolRunPresentation } from "./presentation.js";
-import {
-  createTextToolOutcome,
-  executeTool,
-  type ToolExecutionContext,
-  type ToolExecutionOutcome,
-  type ToolImplementationOutcome,
-} from "./registry.js";
+import type { ToolImplementationOutcome } from "./registry.js";
+import { TOOL_NAME_CODE } from "./tool_names.js";
 
-export type ParsedCodeModeArguments =
-  | (CodeProgram & {
-      ok: true;
-      maxOutputTokens: number;
-      timeoutMs: number;
-      subject: string;
-      input?: TauCodeModeJsonValue;
-    })
-  | { ok: false; error: string; subject: string };
-
-export type CodeModeToolImplementation = {
-  schema: Tool;
-  execute(
-    input: CodeProgram & {
-      context: ToolExecutionContext;
-      input?: TauCodeModeJsonValue;
-      maxOutputTokens: number;
-      timeoutMs: number;
-    },
-  ): Promise<TauCodeModeRuntimeResult>;
+/** Everything one run of the code tool needs, in the foreground or as a background job. */
+export type CodeProgramRun = {
+  program: CodeProgram;
+  packages: TauCodeModePackage[];
+  input?: TauCodeModeJsonValue;
 };
 
-export function executeInternalCodeMode(
-  options: CodeProgram & {
-    name: string;
-    documentation: string;
-    input?: TauCodeModeJsonValue;
-    packages: CodeModeModules["packages"];
-    maxOutputTokens: number;
-    backend: ToolExecutionBackend;
+export function runCodeProgram(
+  backend: ToolExecutionBackend,
+  { program, packages, input }: CodeProgramRun,
+  options: {
     signal: AbortSignal;
-    timeoutMs: number;
+    timeoutMs: number | null;
+    maxOutputTokens?: number;
+    output?: CodeModeOutput;
+    persistTruncatedOutput: boolean;
   },
 ): Promise<TauCodeModeRuntimeResult> {
   return runTauCodeMode({
-    name: options.name,
-    documentation: options.documentation,
-    code: options.code,
-    sourceName: options.sourceName,
-    modules: {
-      packages: options.packages,
-      cwd: options.cwd,
-      entryPath: options.entryPath,
-      readSource: (path, signal) => readCodeModule(options.backend, path, signal),
+    packages,
+    pages: { examples: readPage("examples") },
+    code: program.code,
+    sourceName: program.sourceName,
+    sources: {
+      cwd: program.cwd,
+      entryPath: program.entryPath,
+      read: (path, signal) => readCodeModule(backend, path, signal),
     },
-    input: options.input,
+    input,
     maxOutputTokens: options.maxOutputTokens,
     signal: options.signal,
     timeoutMs: options.timeoutMs,
-    persistOutput: async (output) => {
-      if (!output.contextTruncated) return undefined;
-      const path = await writeOutputFile(options.backend, output.content);
-      return path ? { path } : undefined;
-    },
+    output: options.output,
+    ...(options.persistTruncatedOutput
+      ? {
+          persistOutput: async (output) => {
+            if (!output.contextTruncated) return undefined;
+            const path = await writeOutputFile(backend, output.content);
+            return path ? { path } : undefined;
+          },
+        }
+      : {}),
   });
 }
 
-function getCodeModeTerminationNote(
-  runtime: TauCodeModeRuntimeResult,
+/** Turns a finished foreground run into the tool result and its card. */
+export function presentCodeProgramResult(
+  call: ToolCall,
+  subject: string,
   timeoutMs: number,
-): string | undefined {
-  if (runtime.status === "timed-out") {
-    return `Program timed out after ${timeoutMs}ms.`;
-  }
-  if (runtime.status === "cancelled") return "Program was cancelled.";
-  if (runtime.execution.closeSignal) {
-    return `Program was terminated by signal ${runtime.execution.closeSignal}.`;
-  }
-  return undefined;
+  runtime: TauCodeModeRuntimeResult,
+): ToolImplementationOutcome {
+  const execution = runtime.execution;
+  const terminationNote =
+    runtime.status === "timed-out"
+      ? `Program timed out after ${timeoutMs}ms.`
+      : runtime.status === "cancelled"
+        ? "Program was cancelled."
+        : undefined;
+  const outputPresentation = buildBashPresentation({
+    toolName: TOOL_NAME_CODE,
+    operation: TOOL_NAME_CODE,
+    subject,
+    truncationInfo: {
+      output: runtime.projection.content,
+      model: runtime.projection,
+      captureTruncated: execution.truncated,
+      ...(runtime.persistedPath ? { fullOutputPath: runtime.persistedPath } : {}),
+    },
+    exitCode: execution.exitCode,
+    durationMs: runtime.durationMs,
+    includeExitCode: false,
+  });
+  const presentation = terminationNote
+    ? {
+        ...outputPresentation,
+        details: outputPresentation.details.map((line) =>
+          line.text === terminationNote || line.text === `[${terminationNote}]`
+            ? { ...line, wrap: "word" as const }
+            : line,
+        ),
+      }
+    : outputPresentation;
+  const uiEvent: ToolActivity = {
+    type: "code_mode_finished",
+    toolCallId: call.id,
+    toolName: TOOL_NAME_CODE,
+    presentation,
+    status: runtime.status === "succeeded" ? "success" : "error",
+  };
+  return {
+    content: runtime.result.content,
+    outcome:
+      runtime.status === "cancelled" || runtime.status === "timed-out"
+        ? "cancelled"
+        : runtime.status,
+    uiEvent,
+  };
 }
 
-export async function executeCodeModeTool(
-  implementation: CodeModeToolImplementation,
-  toolCall: ToolCall,
-  context: ToolExecutionContext,
-  parsed: ParsedCodeModeArguments,
-): Promise<ToolExecutionOutcome> {
-  const subject = parsed.subject;
-
-  const blocked = (
-    reason: string,
-    semanticOutcome: ToolExecutionOutcome["outcome"] = "blocked",
-  ): ToolImplementationOutcome => {
-    const outcome = createTextToolOutcome(reason, semanticOutcome);
-    const uiEvent: ToolActivity = {
+export function presentCodeProgramBlocked(
+  call: ToolCall,
+  subject: string,
+  reason: string,
+  outcome: ToolImplementationOutcome["outcome"],
+): ToolImplementationOutcome {
+  return {
+    content: [{ type: "text", text: reason }],
+    outcome,
+    uiEvent: {
       type: "code_mode_blocked",
-      toolCallId: toolCall.id,
-      toolName: implementation.schema.name,
+      toolCallId: call.id,
+      toolName: TOOL_NAME_CODE,
+      reason,
       presentation: buildToolRunPresentation({
-        toolName: implementation.schema.name,
-        operation: implementation.schema.name,
+        toolName: TOOL_NAME_CODE,
+        operation: TOOL_NAME_CODE,
         subject,
         details: [{ text: reason }],
       }),
-      reason,
-    };
-    return { content: outcome.content, outcome: outcome.outcome, uiEvent };
+    },
   };
-
-  if (!parsed.ok) {
-    return executeTool(context, () => blocked(`Invalid arguments: ${parsed.error}`));
-  }
-
-  return executeTool(
-    context,
-    async () => {
-      try {
-        const runtime = await implementation.execute({
-          context,
-          code: parsed.code,
-          sourceName: parsed.sourceName,
-          cwd: parsed.cwd,
-          entryPath: parsed.entryPath,
-          input: parsed.input,
-          maxOutputTokens: parsed.maxOutputTokens,
-          timeoutMs: parsed.timeoutMs,
-        });
-        const execution = runtime.execution;
-        const terminationNote = getCodeModeTerminationNote(runtime, parsed.timeoutMs);
-        const isError = runtime.status !== "succeeded";
-        const semanticOutcome =
-          runtime.status === "cancelled" || runtime.status === "timed-out"
-            ? "cancelled"
-            : isError
-              ? "failed"
-              : "succeeded";
-        const outputPresentation = buildBashPresentation({
-          toolName: implementation.schema.name,
-          operation: implementation.schema.name,
-          subject,
-          truncationInfo: {
-            output: runtime.projection.content,
-            model: runtime.projection,
-            captureTruncated: execution.truncated,
-            ...(runtime.persistedPath ? { fullOutputPath: runtime.persistedPath } : {}),
-          },
-          exitCode: execution.exitCode,
-          durationMs: runtime.durationMs,
-          includeExitCode: false,
-        });
-        const presentation = terminationNote
-          ? {
-              ...outputPresentation,
-              details: outputPresentation.details.map((line) =>
-                line.text === terminationNote || line.text === `[${terminationNote}]`
-                  ? { ...line, wrap: "word" as const }
-                  : line,
-              ),
-            }
-          : outputPresentation;
-        const uiEvent: ToolActivity = {
-          type: "code_mode_finished",
-          toolCallId: toolCall.id,
-          toolName: implementation.schema.name,
-          presentation,
-          status: isError ? "error" : "success",
-        };
-        return {
-          content: runtime.result.content,
-          outcome: semanticOutcome,
-          uiEvent,
-        };
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        return blocked(`Could not execute program: ${errorMessage}`, "failed");
-      }
-    },
-    {
-      type: "code_mode_started",
-      toolCallId: toolCall.id,
-      toolName: implementation.schema.name,
-      presentation: buildToolRunPresentation({
-        toolName: implementation.schema.name,
-        operation: implementation.schema.name,
-        subject,
-      }),
-    },
-  );
 }

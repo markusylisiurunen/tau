@@ -1,5 +1,5 @@
 import { NotificationInbox } from "../agent/notification_inbox.js";
-import type { AgentsCapabilityOptions } from "../code_mode/agents.js";
+import type { AgentsPackageOptions } from "../code_mode/agents.js";
 import type { SessionConfig, SessionRuntimeSettings } from "../config/index.js";
 import type { HistoryQuery } from "../history/types.js";
 import { McpManager } from "../mcp/manager.js";
@@ -32,7 +32,7 @@ function createCommonTools(options: {
   codeJobs: CodeJobRegistry;
   history?: HistoryQuery;
   mcp?: McpManager;
-  agents?: AgentsCapabilityOptions;
+  agents?: AgentsPackageOptions;
 }): AgentTool[] {
   const backend = scopeToolExecutionBackend(options.backend, options.cwd);
   const enabled = new Set(options.allowedTools);
@@ -123,7 +123,7 @@ export const ToolCatalog = {
     codeJobs: CodeJobRegistry,
     history?: HistoryQuery,
     mcp?: McpManager,
-    agents?: AgentsCapabilityOptions,
+    agents?: AgentsPackageOptions,
   ): ToolRegistry {
     return new ToolRegistry([
       ...createCommonTools({

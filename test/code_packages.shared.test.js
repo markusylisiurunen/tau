@@ -54,11 +54,11 @@ const output = (result) =>
 it("loads only enabled packages and does not expose the Code Mode globals", async () => {
   await withTool(["edit"], async (run) => {
     const result = await run(`
-      import { docs, printText, files } from "@tau/core";
-      import * as core from "@tau/core";
+      import { docs, printText } from "@tau/core";
+      import * as files from "@tau/files";
       const summary = [typeof tau, typeof globalThis.input, typeof globalThis.printText,
-        typeof core.bash, typeof files.readText, typeof files.writeText, typeof files.edit];
-      for (const page of [undefined, "examples", "@tau/web"]) {
+        typeof files.readText, typeof files.writeText, typeof files.edit];
+      for (const page of [undefined, "examples", "@tau/files", "@tau/web"]) {
         try { summary.push((await (page === undefined ? docs() : docs(page))).split("\\n")[0]); }
         catch (error) { summary.push(error.code); }
       }
@@ -71,14 +71,15 @@ it("loads only enabled packages and does not expose the Code Mode globals", asyn
       "undefined",
       "undefined",
       "undefined",
-      "undefined",
       "function",
-      "# Code Mode and @tau/core",
-      "# Code Mode examples",
-      "UNAVAILABLE_PACKAGE",
+      "# Code programs and @tau/core",
+      "# Code program examples",
+      "# @tau/files",
+      "unknown_page",
     ]);
     for (const code of [
       'import { search } from "@tau/web"; await search("books");',
+      'import { run } from "@tau/bash"; await run("true");',
       'import "node:fs";',
       'await import("./helper.js");',
       'const name = "./helper.js"; await import(name);',
@@ -118,21 +119,22 @@ it("does exact batch edits in one write and passes file bytes directly to image 
     const image = Buffer.from(createProtocolImage().data, "base64");
     await writeFile(join(cwd, "sample.png"), image);
     const result = await run(`
-      import { files, printText, printImage } from "@tau/core";
+      import { printText, printImage } from "@tau/core";
+      import * as files from "@tau/files";
       const { path } = await files.writeText("reports/test.md", "first\\nsecond\\n");
       try {
         await files.edit(path, [{ oldText: "first", newText: "changed" }, { oldText: "missing", newText: "new" }]);
       } catch (error) { printText(error.code); }
       printText(await files.readText(path));
       await files.edit(path, [{ oldText: "first", newText: "changed" }, { oldText: "changed", newText: "third" }]);
-      await files.edit(path, "second", "fourth");
+      await files.edit(path, [{ oldText: "second", newText: "fourth" }]);
       const bytes = await files.readBytes("sample.png");
       if (!(bytes instanceof Uint8Array)) throw new Error("Not bytes");
       await files.writeBytes("reports/sample.png", bytes.subarray());
       await printImage(bytes);
     `);
     expect(result.outcome).toBe("succeeded");
-    expect(output(result)).toContain("EDIT_NO_MATCH\nfirst\nsecond");
+    expect(output(result)).toContain("edit_no_match\nfirst\nsecond");
     expect(result.content.at(-1)?.type).toBe("image");
     expect(await readFile(join(cwd, "reports/test.md"), "utf8")).toBe("third\nfourth\n");
     expect(await readFile(join(cwd, "reports/sample.png"))).toEqual(image);
@@ -142,7 +144,8 @@ it("does exact batch edits in one write and passes file bytes directly to image 
 it("preserves foreground results, stops overflowing commands, and waits for either Bash job form", async () => {
   await withTool(["bash"], async (run, cwd) => {
     const result = await run(`
-      import { bash, printText } from "@tau/core";
+      import * as bash from "@tau/bash";
+      import { printText } from "@tau/core";
       const text = await bash.text("printf out; printf warn >&2");
       const failed = await bash.run("printf out; printf err >&2; exit 7");
       let exit, overflow;
@@ -165,11 +168,11 @@ it("preserves foreground results, stops overflowing commands, and waits for eith
     expect(data).toMatchObject({
       text: "out",
       failed: { stdout: "out", stderr: "err", exitCode: 7 },
-      exit: ["COMMAND_FAILED", 8],
-      overflow: "OUTPUT_LIMIT",
+      exit: ["command_failed", 8],
+      overflow: "output_limit",
       winner: 9,
       same: true,
-      timeout: "WAIT_TIMEOUT",
+      timeout: "wait_timeout",
       running: "running",
     });
     expect(data.failed).not.toHaveProperty("truncated");

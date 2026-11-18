@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { NotificationInbox } from "../dist/core/agent/notification_inbox.js";
-import { createAgentsCapability } from "../dist/core/code_mode/agents.js";
+import { createAgentsPackage } from "../dist/core/code_mode/agents.js";
 import { loadModelResolver } from "../dist/core/models/catalog.js";
 import { personas } from "../dist/core/personas.js";
 import { AgentTrace } from "../dist/core/subagents/trace.js";
@@ -39,7 +39,7 @@ function fixture(overrides = {}) {
     ...overrides,
     supervisor,
   };
-  return { options, supervisor, api: createAgentsCapability(options, "origin").api };
+  return { options, supervisor, api: createAgentsPackage(options, "origin").api };
 }
 
 describe("agents capability", () => {

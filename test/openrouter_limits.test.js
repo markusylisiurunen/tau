@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
 import { expect, it, vi } from "vitest";
-import { createModelsCapability } from "../dist/core/code_mode/models.js";
+import { createModelsPackage } from "../dist/core/code_mode/models.js";
 import {
   openRouterModels,
   requestOpenRouterChat,
@@ -265,7 +265,7 @@ it.skipIf(spawnSync("ffprobe", ["-version"]).status !== 0)(
     const bytes = makeWav(24 * 1024 * 1024);
     try {
       await writeFile(join(directory, "audio.wav"), bytes);
-      const capability = createModelsCapability(
+      const capability = createModelsPackage(
         backend,
         { apiKeys: { openrouter: "test-key" } },
         fetchImpl,

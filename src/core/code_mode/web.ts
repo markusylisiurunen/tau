@@ -3,7 +3,7 @@ import { type ApiKeysConfig, getExaApiKey } from "../config/index.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
 import { discoverAgentContent } from "../tools/web_discovery.js";
 import { formatZodError } from "../utils/zod.js";
-import type { CodeModeCapability } from "./capability.js";
+import { type CodeModePackage, definePackage, method } from "./package.js";
 
 const EXA_API_BASE_URL = "https://api.exa.ai";
 const EXA_MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
@@ -178,71 +178,23 @@ export function createExaClient(apiKey: string, fetchImpl: typeof fetch = fetch)
   };
 }
 
-function requireString(value: unknown, name: string): string {
-  const parsed = nonEmptyStringSchema.safeParse(value);
-  if (!parsed.success) {
-    throw new Error(`${name} must be a non-empty string`);
-  }
-  return parsed.data;
-}
-
-function parseMethodOptions<T>(
-  value: unknown,
-  schema: z.ZodType<T>,
-  method: "search" | "fetch",
-): T {
-  const parsed = schema.safeParse(value ?? {});
-  if (!parsed.success) {
-    throw new Error(`Invalid @tau/web ${method} options: ${formatZodError(parsed.error)}`);
-  }
-  return parsed.data;
-}
-
-function normalizeSearchArguments(args: unknown): [string, Record<string, unknown>] {
-  if (!Array.isArray(args) || args.length < 1 || args.length > 2) {
-    throw new Error("@tau/web search expects query and optional options");
-  }
-  const query = requireString(args[0], "@tau/web search query");
-  const options = parseMethodOptions(args[1], searchOptionsSchema, "search");
-
-  return [
-    query,
-    {
-      type: "auto",
-      ...(options.objective ? { objective: options.objective } : {}),
-      ...(options.numResults !== undefined ? { numResults: options.numResults } : {}),
-      ...(options.includeDomains ? { includeDomains: options.includeDomains } : {}),
-      ...(options.excludeDomains ? { excludeDomains: options.excludeDomains } : {}),
-      ...(options.startPublishedDate ? { startPublishedDate: options.startPublishedDate } : {}),
-      ...(options.endPublishedDate ? { endPublishedDate: options.endPublishedDate } : {}),
-      ...(options.category ? { category: options.category } : {}),
-      ...(options.userLocation ? { userLocation: options.userLocation } : {}),
-      contents: {
-        highlights: { dynamic: true },
-        ...(options.maxAgeHours !== undefined ? { maxAgeHours: options.maxAgeHours } : {}),
-      },
+function searchRequest(options: z.output<typeof searchOptionsSchema>): Record<string, unknown> {
+  const { maxAgeHours, ...filters } = options;
+  return {
+    type: "auto",
+    ...filters,
+    contents: {
+      highlights: { dynamic: true },
+      ...(maxAgeHours !== undefined ? { maxAgeHours } : {}),
     },
-  ];
+  };
 }
 
-function normalizeFetchArguments(args: unknown): [string[], Record<string, unknown>] {
-  if (!Array.isArray(args) || args.length < 1 || args.length > 2) {
-    throw new Error("@tau/web fetch expects urls and optional options");
-  }
-  const parsedUrls = fetchUrlsSchema.safeParse(args[0]);
-  if (!parsedUrls.success) {
-    throw new Error(`Invalid @tau/web fetch urls: ${formatZodError(parsedUrls.error)}`);
-  }
-  const options = parseMethodOptions(args[1], fetchOptionsSchema, "fetch");
-  return [
-    parsedUrls.data,
-    {
-      ...(options.text === undefined && options.highlights === undefined
-        ? { highlights: true }
-        : {}),
-      ...options,
-    },
-  ];
+function fetchRequest(options: z.output<typeof fetchOptionsSchema>): Record<string, unknown> {
+  return {
+    ...(options.text === undefined && options.highlights === undefined ? { highlights: true } : {}),
+    ...options,
+  };
 }
 
 type ExaResult = {
@@ -353,59 +305,33 @@ function normalizeResponse(value: unknown): {
   };
 }
 
-async function handleWebRequest(
-  method: "discover" | "search" | "fetch",
-  args: unknown[],
-  exa: ExaClient | undefined,
-  deps: WebToolDeps,
-  backend: ToolExecutionBackend,
-  signal: AbortSignal,
-): Promise<unknown> {
-  switch (method) {
-    case "discover": {
-      if (!Array.isArray(args) || args.length !== 1) {
-        throw new Error("@tau/web discover expects one URL");
-      }
-      return await deps.discover(backend, requireString(args[0], "@tau/web discover url"), signal);
-    }
-    case "search": {
-      if (!exa) throw new Error("Web search and fetch are not configured.");
-      const [query, options] = normalizeSearchArguments(args);
-      return normalizeResponse(await exa.search(query, options, signal));
-    }
-    case "fetch": {
-      if (!exa) throw new Error("Web search and fetch are not configured.");
-      const [urls, options] = normalizeFetchArguments(args);
-      return normalizeResponse(await exa.getContents(urls, options, signal));
-    }
-    default:
-      throw new Error(`unsupported web method '${method}'`);
-  }
-}
-
 const defaultDeps: WebToolDeps = { createExaClient, discover: discoverAgentContent };
 
-export function createWebCapability(
+export function createWebPackage(
   backend: ToolExecutionBackend,
   config: ApiKeysConfig,
   deps: WebToolDeps = defaultDeps,
-): CodeModeCapability {
+): CodeModePackage {
   let exa: ExaClient | undefined;
   const client = () => {
     const apiKey = getExaApiKey(config);
     if (apiKey && !exa) exa = deps.createExaClient(apiKey);
+    if (!exa) throw new Error("Web search and fetch are not configured.");
     return exa;
   };
-  return {
-    name: "web",
-    description,
-    api: {
-      discover: (args, context) =>
-        handleWebRequest("discover", args, undefined, deps, backend, context.signal),
-      search: (args, context) =>
-        handleWebRequest("search", args, client(), deps, backend, context.signal),
-      fetch: (args, context) =>
-        handleWebRequest("fetch", args, client(), deps, backend, context.signal),
-    },
-  };
+  return definePackage("web", description, {
+    search: method(
+      z.tuple([nonEmptyStringSchema, searchOptionsSchema.optional()]),
+      async ([query, options], { signal }) =>
+        normalizeResponse(await client().search(query, searchRequest(options ?? {}), signal)),
+    ),
+    fetch: method(
+      z.tuple([fetchUrlsSchema, fetchOptionsSchema.optional()]),
+      async ([urls, options], { signal }) =>
+        normalizeResponse(await client().getContents(urls, fetchRequest(options ?? {}), signal)),
+    ),
+    discover: method(z.tuple([nonEmptyStringSchema]), ([url], { signal }) =>
+      deps.discover(backend, url, signal),
+    ),
+  });
 }

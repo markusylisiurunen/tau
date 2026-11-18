@@ -4,9 +4,8 @@ import { join } from "node:path";
 import sharp from "sharp";
 import { describe, expect, it, vi } from "vitest";
 import { runTauCodeMode } from "../dist/code_mode/runtime.js";
-import { createBashCapability } from "../dist/core/code_mode/bash.js";
-import { createModelsCapability } from "../dist/core/code_mode/models.js";
-import { bindCodeModeSdk } from "../dist/core/code_mode/sdk.js";
+import { createBashPackage } from "../dist/core/code_mode/bash.js";
+import { createModelsPackage } from "../dist/core/code_mode/models.js";
 import { requestOpenRouterChat } from "../dist/core/models/openrouter.js";
 import { BashJobRegistry } from "../dist/core/tools/bash_jobs.js";
 import { ToolCatalog } from "../dist/core/tools/catalog.js";
@@ -99,20 +98,20 @@ describe("code composition", () => {
 
   it("forwards bounded foreground Bash timeouts and rejects invalid ones before launch", async () => {
     const runBash = vi.fn(async () => ({}));
-    const capability = createBashCapability({ runBash }, process.cwd(), new BashJobRegistry());
-    await capability.api.run(["true"], context());
+    const pkg = createBashPackage({ runBash }, process.cwd(), new BashJobRegistry());
+    await pkg.api.run(["true"], context());
     expect(runBash).toHaveBeenLastCalledWith(
       "true",
       expect.objectContaining({ timeoutMs: 60_000 }),
     );
-    await capability.api.run(["true", { timeout: 3_600_000 }], context());
+    await pkg.api.run(["true", { timeout: 3_600_000 }], context());
     expect(runBash).toHaveBeenLastCalledWith(
       "true",
       expect.objectContaining({ timeoutMs: 3_600_000 }),
     );
     runBash.mockClear();
     for (const timeout of [0, -1, "60000", null, Infinity]) {
-      await expect(capability.api.run(["true", { timeout }], context())).rejects.toThrow();
+      await expect(pkg.api.run(["true", { timeout }], context())).rejects.toThrow();
     }
     expect(runBash).not.toHaveBeenCalled();
   });
@@ -138,7 +137,7 @@ describe("code composition", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it("exposes only selected capabilities inside the sandbox", async () => {
+  it("exposes only selected packages inside the sandbox", async () => {
     const backend = createLocalToolExecutionBackend();
     const jobs = new BashJobRegistry();
     const history = { search: vi.fn(async () => ({ sessions: [{ sessionId: "past" }] })) };
@@ -175,8 +174,8 @@ describe("code composition", () => {
     async ({ stdin }) => {
       const backend = createLocalToolExecutionBackend();
       const run = vi.spyOn(backend, "runBash");
-      const capability = createBashCapability(backend, process.cwd(), new BashJobRegistry());
-      const result = await capability.api.run(["cat", { stdin, timeout: 5000 }], context());
+      const pkg = createBashPackage(backend, process.cwd(), new BashJobRegistry());
+      const result = await pkg.api.run(["cat", { stdin, timeout: 5000 }], context());
       expect(result).toMatchObject({
         stdout: stdin,
         stderr: "",
@@ -195,19 +194,19 @@ describe("code composition", () => {
     const runBash = vi.fn(async () => ({}));
     const jobs = new BashJobRegistry();
     const start = vi.spyOn(jobs, "start");
-    const capability = createBashCapability({ runBash }, process.cwd(), jobs);
+    const pkg = createBashPackage({ runBash }, process.cwd(), jobs);
     for (const stdin of [
       null,
       123,
       "x".repeat(SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES + 1),
       "é".repeat(SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES / 2 + 1),
     ]) {
-      await expect(capability.api.run(["cat", { stdin }], context())).rejects.toThrow();
+      await expect(pkg.api.run(["cat", { stdin }], context())).rejects.toThrow();
     }
-    await expect(capability.api.start(["cat", { stdin: "data" }], context())).rejects.toThrow();
+    await expect(pkg.api.start(["cat", { stdin: "data" }], context())).rejects.toThrow();
     expect(runBash).not.toHaveBeenCalled();
     expect(start).not.toHaveBeenCalled();
-    await capability.api.run(
+    await pkg.api.run(
       ["cat", { stdin: "é".repeat(SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES / 2) }],
       context(),
     );
@@ -246,7 +245,7 @@ describe("code composition", () => {
     try {
       const started = await execute(
         registry.get("code"),
-        'import { bash, printText } from "@tau/core"; const job = await bash.start("server"); printText(job.id);',
+        'import * as bash from "@tau/bash"; import { printText } from "@tau/core"; const job = await bash.start("server"); printText(job.id);',
       );
       expect(started.outcome).toBe("succeeded");
       const id = text(started);
@@ -279,24 +278,18 @@ describe("code composition", () => {
     const reply = chatReply();
     reply.choices[0].message.content = '{"person":"Ada"}';
     const fetchImpl = vi.fn(async () => Response.json(reply));
-    const sdk = bindCodeModeSdk([
-      createModelsCapability({}, { apiKeys: { openrouter: "secret" } }, fetchImpl),
-    ]);
     const result = await runTauCodeMode({
-      name: "tau",
-      documentation: sdk.documentation,
-      modules: {
-        packages: sdk.packages,
-        cwd: process.cwd(),
-        readSource: () => {
-          throw new Error("Unexpected module");
-        },
-      },
+      packages: [createModelsPackage({}, { apiKeys: { openrouter: "secret" } }, fetchImpl)],
+      timeoutMs: 60_000,
       code: `import * as models from "@tau/models"; import { printText } from "@tau/core"; const result = await models.chat("Extract Ada", { model: "openai/gpt-6-luna", schema: ${JSON.stringify(schema)} }); printText(result.answer.person); printText(JSON.stringify(result.usage));`,
     });
     expect(result.status).toBe("succeeded");
     expect(text(result.result).split("\n")[0]).toBe("Ada");
-    expect(JSON.parse(text(result.result).split("\n")[1])).toEqual(reply.usage);
+    expect(JSON.parse(text(result.result).split("\n")[1])).toEqual({
+      inputTokens: 5,
+      outputTokens: 7,
+      cost: 0.02,
+    });
     expect(fetchImpl).toHaveBeenCalledOnce();
     expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toMatchObject({
       response_format: {
@@ -326,12 +319,8 @@ describe("code composition", () => {
         usage: { input_tokens: 180, output_tokens: 0 },
       };
       const fetchImpl = vi.fn(async () => Response.json(reply));
-      const capability = createModelsCapability(
-        backend,
-        { apiKeys: { openrouter: "secret" } },
-        fetchImpl,
-      );
-      const result = await capability.api.decisions(
+      const pkg = createModelsPackage(backend, { apiKeys: { openrouter: "secret" } }, fetchImpl);
+      const result = await pkg.api.decisions(
         [
           "Compare the two images.",
           {
@@ -399,11 +388,7 @@ describe("code composition", () => {
       usage: { input_tokens: 100, output_tokens: 0 },
     };
     const fetchImpl = vi.fn(async () => Response.json(reply));
-    const capability = createModelsCapability(
-      backend,
-      { apiKeys: { openrouter: "secret" } },
-      fetchImpl,
-    );
+    const pkg = createModelsPackage(backend, { apiKeys: { openrouter: "secret" } }, fetchImpl);
     const input = {
       model: reply.model,
       questions,
@@ -412,9 +397,7 @@ describe("code composition", () => {
         { type: "audio", path: "clip.wav" },
       ],
     };
-    expect((await capability.api.decisions(["Inspect", input], context())).answers).toEqual(
-      reply.answers,
-    );
+    expect((await pkg.api.decisions(["Inspect", input], context())).answers).toEqual(reply.answers);
     expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({
       model: reply.model,
       questions,
@@ -433,7 +416,7 @@ describe("code composition", () => {
   it("rejects unsupported, ambiguous, invalid, and excessive decision images before file access or inference", async () => {
     const backend = { readFileBinary: vi.fn() };
     const fetchImpl = vi.fn();
-    const capability = createModelsCapability(backend, {}, fetchImpl);
+    const pkg = createModelsPackage(backend, {}, fetchImpl);
     const image = createProtocolImage();
     const inline = { type: "image", bytes: new Uint8Array(Buffer.from(image.data, "base64")) };
     const input = {
@@ -450,11 +433,11 @@ describe("code composition", () => {
       [{ type: "video", path: "missing.mp4" }],
     ]) {
       await expect(
-        capability.api.decisions(["Compare", { ...input, attachments }], context()),
+        pkg.api.decisions(["Compare", { ...input, attachments }], context()),
       ).rejects.toThrow();
     }
     await expect(
-      capability.api.decisions(
+      pkg.api.decisions(
         [
           "Compare",
           {
@@ -480,9 +463,9 @@ describe("code composition", () => {
       }),
     };
     const fetchImpl = vi.fn();
-    const capability = createModelsCapability(backend, {}, fetchImpl);
+    const pkg = createModelsPackage(backend, {}, fetchImpl);
     await expect(
-      capability.api.decisions(
+      pkg.api.decisions(
         [
           "Inspect",
           {
@@ -504,11 +487,7 @@ describe("code composition", () => {
       readFileBinary: vi.fn(async () => ({ content: Buffer.from(image.data, "base64") })),
     };
     const fetchImpl = vi.fn(async () => Response.json(chatReply()));
-    const capability = createModelsCapability(
-      backend,
-      { apiKeys: { openrouter: "secret" } },
-      fetchImpl,
-    );
+    const pkg = createModelsPackage(backend, { apiKeys: { openrouter: "secret" } }, fetchImpl);
     const attachments = [
       { type: "image", path: "file.png", data: image.data, mimeType: image.mimeType },
       { type: "image", data: image.data, mimeType: "image/jpeg" },
@@ -516,7 +495,7 @@ describe("code composition", () => {
     ];
     for (const attachment of attachments) {
       await expect(
-        capability.api.chat(
+        pkg.api.chat(
           [
             [{ role: "user", content: [{ type: "text", text: "Describe" }, attachment] }],
             { model: "openai/gpt-6-luna" },
@@ -559,17 +538,13 @@ describe("code composition", () => {
       });
     const fetchImpl = vi.fn(async () => Response.json(chatReply()));
     const controller = new AbortController();
-    const capability = createModelsCapability(
-      backend,
-      { apiKeys: { openrouter: "secret" } },
-      fetchImpl,
-    );
+    const pkg = createModelsPackage(backend, { apiKeys: { openrouter: "secret" } }, fetchImpl);
     try {
       await writeFile(
         join(directory, "image.png"),
         Buffer.from(createProtocolImage().data, "base64"),
       );
-      await capability.api.chat(
+      await pkg.api.chat(
         [
           [
             {
@@ -599,7 +574,7 @@ describe("code composition", () => {
       wav.write("data", 36);
       wav.writeUInt32LE(2, 40);
       await writeFile(join(directory, "audio.wav"), wav);
-      const probing = capability.api
+      const probing = pkg.api
         .chat(
           [
             [
@@ -647,19 +622,9 @@ describe("code composition", () => {
           }),
         );
       });
-      const sdk = bindCodeModeSdk([
-        createModelsCapability({}, { apiKeys: { openrouter: "secret" } }, fetchImpl),
-      ]);
       const running = runTauCodeMode({
-        name: "tau",
-        documentation: sdk.documentation,
-        modules: {
-          packages: sdk.packages,
-          cwd: process.cwd(),
-          readSource: () => {
-            throw new Error("Unexpected module");
-          },
-        },
+        packages: [createModelsPackage({}, { apiKeys: { openrouter: "secret" } }, fetchImpl)],
+        timeoutMs: 60_000,
         signal: controller.signal,
         code:
           operation === "chat"

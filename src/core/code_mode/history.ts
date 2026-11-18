@@ -1,7 +1,6 @@
 import { z } from "zod";
 import type { HistoryQuery } from "../history/types.js";
-import { formatZodError } from "../utils/zod.js";
-import type { CodeModeCapability } from "./capability.js";
+import { type CodeModePackage, definePackage, method } from "./package.js";
 
 const description = [
   "Search and read saved conversation transcripts across repositories and machines. It is read-only.",
@@ -53,41 +52,15 @@ const readInputSchema = z
   })
   .strict();
 
-async function handleHistoryRequest(
-  method: "search" | "read",
-  args: unknown[],
-  history: HistoryQuery,
-  signal: AbortSignal,
-): Promise<unknown> {
-  if (method === "search") {
-    const parsed = z.tuple([searchInputSchema.optional()]).safeParse(args);
-    if (!parsed.success) {
-      throw new Error(`Invalid @tau/history.search options: ${formatZodError(parsed.error)}`);
-    }
-    return await history.search(parsed.data[0] ?? searchInputSchema.parse({}), signal);
-  }
-  if (method === "read") {
-    const parsed = z
-      .tuple([z.string().trim().min(1).max(256), readInputSchema.optional()])
-      .safeParse(args);
-    if (!parsed.success) {
-      throw new Error(`Invalid @tau/history.read options: ${formatZodError(parsed.error)}`);
-    }
-    return await history.read(
-      { ...(parsed.data[1] ?? readInputSchema.parse({})), sessionId: parsed.data[0] },
-      signal,
-    );
-  }
-  throw new Error(`unsupported history method '${method}'`);
-}
-
-export function createHistoryCapability(history: HistoryQuery): CodeModeCapability {
-  return {
-    name: "history",
-    description,
-    api: {
-      search: (args, context) => handleHistoryRequest("search", args, history, context.signal),
-      read: (args, context) => handleHistoryRequest("read", args, history, context.signal),
-    },
-  };
+export function createHistoryPackage(history: HistoryQuery): CodeModePackage {
+  return definePackage("history", description, {
+    search: method(z.tuple([searchInputSchema.optional()]), ([options], { signal }) =>
+      history.search(options ?? searchInputSchema.parse({}), signal),
+    ),
+    read: method(
+      z.tuple([z.string().trim().min(1).max(256), readInputSchema.optional()]),
+      ([sessionId, options], { signal }) =>
+        history.read({ ...(options ?? readInputSchema.parse({})), sessionId }, signal),
+    ),
+  });
 }

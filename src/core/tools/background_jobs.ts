@@ -141,7 +141,7 @@ export function createJobToolDefinitions(
       description:
         kind === "bash"
           ? "Stop a Bash job and its process group, escalating to forced termination if needed. Waits until the job has stopped and returns its final record."
-          : "Stop a code job and its in-flight capability calls. Bash jobs the program started keep running. Waits until the code job has stopped and returns its final record.",
+          : "Stop a code job and its in-flight package calls. Bash jobs the program started keep running. Waits until the code job has stopped and returns its final record.",
       parameters: Type.Object(
         { id, includeOutput, maxOutputTokens },
         { additionalProperties: false },

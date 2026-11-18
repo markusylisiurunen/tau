@@ -1,6 +1,6 @@
 // Binary paths travel separately from the JSON value so arbitrary JSON objects
 // cannot be mistaken for byte arrays.
-export function encodeModuleValue(value: unknown, omitUndefined: boolean): string {
+export function encodeBridgeValue(value: unknown, omitUndefined: boolean): string {
   const paths = new WeakMap<object, string[]>();
   const binary: string[][] = [];
   let root = true;
@@ -29,7 +29,7 @@ export function encodeModuleValue(value: unknown, omitUndefined: boolean): strin
   return `[${json},${JSON.stringify(binary)}]`;
 }
 
-export function decodeModuleValue(encoded: string): unknown {
+export function decodeBridgeValue(encoded: string): unknown {
   const envelope = JSON.parse(encoded);
   for (const path of envelope[1]) {
     let parent = envelope;

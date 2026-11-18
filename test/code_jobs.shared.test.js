@@ -23,6 +23,15 @@ const text = (result) =>
     .filter((part) => part.type === "text")
     .map((part) => part.text)
     .join("\n");
+const startJob = (jobs, { backend, source, api = { unused: () => null }, code }) =>
+  jobs.start({
+    source,
+    backend,
+    run: {
+      program: { code, sourceName: "inline code", cwd: "/workspace" },
+      packages: [{ name: "test", documentation: "# test", api }],
+    },
+  });
 const call = (tool, args, value = signal()) =>
   tool.execute({ id: "call", name: tool.schema.name, arguments: args }, context(value));
 
@@ -93,7 +102,7 @@ it.each([false, true])(
       "/remote/lib/helpers.js":
         'import { suffix } from "./shared.js"; await Promise.resolve(); export const format = value => value + suffix;',
       "/remote/lib/shared.js":
-        'import { bash } from "@tau/core"; export const suffix = ":" + typeof process + ":" + typeof require + ":" + typeof fetch + ":" + typeof bash.run;',
+        'import * as bash from "@tau/bash"; export const suffix = ":" + typeof process + ":" + typeof require + ":" + typeof fetch + ":" + typeof bash.run;',
     };
     vi.spyOn(backend, "readFileBinary").mockImplementation(async (path) => ({
       content: Buffer.from(files[path]),
@@ -128,44 +137,32 @@ it.each([false, true])(
   },
 );
 
-it("keeps live output and capability ownership after launch, and cancels waits independently", async () => {
+it("keeps live output and package call ownership after launch, and cancels waits independently", async () => {
   const jobs = new CodeJobRegistry();
   const backend = createLocalToolExecutionBackend();
-  const turn = new AbortController();
   let entered;
   const ready = new Promise((resolve) => {
     entered = resolve;
   });
   let requestSignal;
-  const id = jobs.start({
+  const id = startJob(jobs, {
     backend,
-    cwd: "/workspace",
     source: "workflow.js",
-    signal: turn.signal,
-    program: {
-      sourceName: "inline code",
-      cwd: "/workspace",
-      name: "tau",
-      documentation: "test",
-      code: 'import { printText, pause } from "@tau/core"; printText("progress"); await pause(); printText("unexpected");',
-      packages: {
-        "@tau/core": {
-          pause: async (_args, context) => {
-            requestSignal = context.signal;
-            entered();
-            await new Promise((_, reject) =>
-              context.signal.addEventListener("abort", () => reject(context.signal.reason), {
-                once: true,
-              }),
-            );
-            return null;
-          },
-        },
+    api: {
+      pause: async (_args, context) => {
+        requestSignal = context.signal;
+        entered();
+        await new Promise((_, reject) =>
+          context.signal.addEventListener("abort", () => reject(context.signal.reason), {
+            once: true,
+          }),
+        );
+        return null;
       },
     },
+    code: 'import { printText } from "@tau/core"; import { pause } from "test"; printText("progress"); await pause(); printText("unexpected");',
   });
   try {
-    turn.abort();
     await ready;
     expect(requestSignal.aborted).toBe(false);
     const snapshot = await jobs.inspect([id]);
@@ -209,19 +206,11 @@ it("retains ordered images, failure output and a log independent of the shared r
     ).toString("base64"),
   };
   const ids = [0, 1].map(() =>
-    jobs.start({
+    startJob(jobs, {
       backend,
-      cwd: "/workspace",
       source: "inline code",
-      signal: signal(),
-      program: {
-        sourceName: "inline code",
-        cwd: "/workspace",
-        name: "tau",
-        documentation: "test",
-        packages: { "@tau/core": { getImage: () => image } },
-        code: 'import { printText, printImage, getImage } from "@tau/core"; printText("start " + "x".repeat(100000)); await printImage(await getImage()); printText("end"); throw new Error("diagnostic");',
-      },
+      api: { getImage: () => image },
+      code: 'import { printText, printImage } from "@tau/core"; import { getImage } from "test"; printText("start " + "x".repeat(100000)); await printImage(await getImage()); printText("end"); throw new Error("diagnostic");',
     }),
   );
   try {
@@ -262,19 +251,11 @@ it("retains ordered images, failure output and a log independent of the shared r
 it("bounds capture independently of inspection budgets and reports lost text", async () => {
   const jobs = new CodeJobRegistry();
   const backend = createLocalToolExecutionBackend();
-  const id = jobs.start({
+  const id = startJob(jobs, {
     backend,
-    cwd: "/workspace",
     source: "inline code",
-    signal: signal(),
-    program: {
-      sourceName: "inline code",
-      cwd: "/workspace",
-      name: "tau",
-      documentation: "test",
-      packages: { "@tau/core": { unused: () => null } },
-      code: 'import { printText } from "@tau/core"; printText("oldest" + "x".repeat(2 * 1024 * 1024) + "latest");',
-    },
+    api: { unused: () => null },
+    code: 'import { printText } from "@tau/core"; printText("oldest" + "x".repeat(2 * 1024 * 1024) + "latest");',
   });
   try {
     await jobs.waitForIdle();
@@ -302,19 +283,11 @@ it("bounds images in combined inspections without discarding retained job images
     ).toString("base64"),
   };
   const ids = [0, 1].map(() =>
-    jobs.start({
+    startJob(jobs, {
       backend,
-      cwd: "/workspace",
       source: "inline code",
-      signal: signal(),
-      program: {
-        sourceName: "inline code",
-        cwd: "/workspace",
-        name: "tau",
-        documentation: "test",
-        packages: { "@tau/core": { getImage: () => image } },
-        code: "import { printImage, getImage } from '@tau/core'; const image = await getImage(); for (let i = 0; i < 9; i++) await printImage(image);",
-      },
+      api: { getImage: () => image },
+      code: "import { printImage } from '@tau/core'; import { getImage } from 'test'; const image = await getImage(); for (let i = 0; i < 9; i++) await printImage(image);",
     }),
   );
   try {
@@ -387,27 +360,17 @@ it.each([false, true])(
         return { path };
       }),
     };
-    const id = jobs.start({
+    const id = startJob(jobs, {
       backend,
-      cwd: "/workspace",
       source: "workflow.js",
-      signal: signal(),
-      program: {
-        sourceName: "inline code",
-        cwd: "/workspace",
-        name: "tau",
-        documentation: "test",
-        packages: {
-          "@tau/core": {
-            pause: async () => {
-              paused.resolve();
-              await resume.promise;
-              return null;
-            },
-          },
+      api: {
+        pause: async () => {
+          paused.resolve();
+          await resume.promise;
+          return null;
         },
-        code: `import { printText, pause } from "@tau/core"; printText("START"); await pause(); ${fail ? 'throw new Error("FINAL DIAGNOSTIC");' : 'printText("FINAL RESULT");'}`,
       },
+      code: `import { printText } from "@tau/core"; import { pause } from "test"; printText("START"); await pause(); ${fail ? 'throw new Error("FINAL DIAGNOSTIC");' : 'printText("FINAL RESULT");'}`,
     });
     try {
       await paused.promise;
@@ -451,27 +414,17 @@ it("releases discarded agents only after their code and subsequently launched Ba
       return { exitCode: 0, aborted: false, closeSignal: null, truncated: false };
     }),
   };
-  jobs.codeJobs.start({
+  startJob(jobs.codeJobs, {
     backend,
-    cwd: "/workspace",
     source: "inline code",
-    signal: signal(),
-    program: {
-      sourceName: "inline code",
-      cwd: "/workspace",
-      name: "tau",
-      documentation: "test",
-      code: "import { start } from '@tau/core'; await start();",
-      packages: {
-        "@tau/core": {
-          start: async () => {
-            ready.resolve();
-            await resume.promise;
-            return jobs.bashJobs.start(backend, "work", "/workspace", signal());
-          },
-        },
+    api: {
+      start: async () => {
+        ready.resolve();
+        await resume.promise;
+        return jobs.bashJobs.start(backend, "work", "/workspace", signal());
       },
     },
+    code: "import { start } from 'test'; await start();",
   });
   try {
     await ready.promise;

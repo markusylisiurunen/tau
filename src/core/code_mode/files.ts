@@ -72,9 +72,9 @@ export function createFilesPackage(
       },
     ),
   };
-  for (const [name, tool] of denied) {
+  for (const [name] of denied) {
     methods[name as keyof typeof REQUIRED_TOOLS] = method(z.tuple([]).rest(z.unknown()), () => {
-      throw codeModeError("not_permitted", `${name} needs the ${tool} tool, which is not enabled`);
+      throw codeModeError("not_permitted", `${name} is not permitted in this session`);
     });
   }
   const unavailable = denied.length

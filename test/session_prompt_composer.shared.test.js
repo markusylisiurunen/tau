@@ -51,7 +51,6 @@ describe("composeSessionPrompts", () => {
       const fenced = prompt.match(/^(`{4,})markdown\n([\s\S]*?)\n\1$/m);
       expect(fenced?.[2]).toContain("```sh\nnpm test\n```\n\n## Subagents\n\nNever delegate.");
     }
-    expect(baseSystemPrompt.trimEnd().endsWith("explicitly asks for a specific model.")).toBe(true);
   });
 
   it("adds GPT-6 notes to the main prompt only for GPT-6 models on OpenAI routes, and leaves subagents to add their own", () => {

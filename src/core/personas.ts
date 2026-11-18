@@ -130,7 +130,7 @@ const PERSONA_SPECS: PersonaSpec[] = [
     provider: "google",
     modelId: "gemini-4-neon",
     catalogOnly: true,
-    allowedReasoningLevels: ["medium"],
+    allowedReasoningLevels: ["low", "medium", "high"],
     settings: { reasoning: "medium" },
   },
   {

@@ -16,6 +16,7 @@ import {
   buildToolRunPresentation,
   TOOL_UI_FACET_VERSION,
 } from "../dist/core/tools/presentation.js";
+import { buildProjectContextBlock } from "../dist/core/utils/context_builder.js";
 import { SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS } from "../dist/core/utils/speech_to_text.js";
 import {
   formatTauUserText,
@@ -957,9 +958,11 @@ describe("SessionChatController", () => {
     ];
     session.snapshotValue.messages.find(
       (entry) => entry.message.role === "system",
-    ).message.content = paths
-      .map((path) => `<file path="${path}">\ninstructions\n</file>`)
-      .join("\n");
+    ).message.content = buildProjectContextBlock({
+      agentsFiles: paths,
+      childAgentsFiles: [],
+      readFile: () => "instructions",
+    });
     session.snapshotValue.catalog.skills = ["zulu", "alpha", "bravo"].map((name) => ({
       name,
       description: name,

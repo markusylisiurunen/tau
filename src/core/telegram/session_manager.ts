@@ -225,8 +225,15 @@ const NANOSECONDS_PER_MILLISECOND = 1_000_000n;
 const PROVISION_SCRIPT_PATH = ".tau/scripts/provision";
 const MAX_PROVISION_DIAGNOSTIC_CHARS = 2_000;
 const TURN_RECOVERY_POLL_INTERVAL_MS = 1_000;
-const DEFAULT_TELEGRAM_SYSTEM_MESSAGE =
-  "This user message came from Telegram, and your assistant messages will be sent back to the Telegram chat. Adapt your communication style to this context. Answer straightforward requests directly. For work that involves tools or multiple steps, send a brief acknowledgement before starting and concise progress updates at meaningful points, since the user cannot see tool activity.";
+export const DEFAULT_TELEGRAM_SYSTEM_MESSAGE = [
+  'This message came from Telegram. For this turn, these notes replace the terminal defaults under "Where your replies appear". Each message you write, including updates between tool calls, is sent to the chat as its own Telegram message and may be read aloud. The user cannot see your tool calls.',
+  "",
+  "- Answer simple requests directly. For work that takes several steps, send a short acknowledgement first, then an update when something important happens.",
+  "- Write for a phone screen, with short paragraphs and little Markdown structure.",
+  "- Leave out file paths, line numbers, and other source locations. Give one only when the user asks where something is, or when opening the code is the useful next step, such as in a review. Then link a few descriptive words to a web page for it, such as a GitHub permalink to a pushed commit. A local path cannot be opened from Telegram, so without a web link, name the file in words.",
+  "- Writing a path in a message does not deliver the file. To give the user a file, send it with a Telegram file tool.",
+  "- `@name` is a Telegram username, not a file reference.",
+].join("\n");
 
 const ACTIVE_STATES: Set<TelegramSessionState> = new Set([
   "queued",

@@ -4,6 +4,7 @@ import type { AgentEvent } from "../agent/events.js";
 import { NativeHistoryAdapter } from "../history/agent_history_recorder.js";
 import type { HistoryRecordSink } from "../history/recorder.js";
 import { resolveAgentModel } from "../runtime/agent_model.js";
+import { formatModelPromptNotes } from "../runtime/model_prompt_notes.js";
 import { createAutoCompactionArchiver } from "../session/auto_compaction_archive.js";
 import type { AgentJobs } from "../tools/agent_jobs.js";
 import { ToolCatalog } from "../tools/catalog.js";
@@ -89,7 +90,9 @@ export class NativeSubagentRuntime implements SubagentRuntime {
           buildSubagentSystemPrompt(config.systemPrompt, {
             sessionIds: options.sessionIds,
             historyEnabled: config.tools.includes("history"),
-          }) + (formatSubagentsForPrompt(persona) ?? ""),
+          }) +
+          (formatSubagentsForPrompt(persona) ?? "") +
+          formatAppendedModelNotes(config.model),
         tools: ToolCatalog.createSubagentRegistry(
           config.tools,
           options.backend,
@@ -351,4 +354,9 @@ export class NativeSubagentRuntime implements SubagentRuntime {
       },
     });
   }
+}
+
+function formatAppendedModelNotes(model: Parameters<typeof formatModelPromptNotes>[0]): string {
+  const notes = formatModelPromptNotes(model);
+  return notes ? `\n\n${notes}` : "";
 }

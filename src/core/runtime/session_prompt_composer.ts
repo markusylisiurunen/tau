@@ -2,6 +2,7 @@ import { formatSubagentsForPrompt } from "../subagents/registry.js";
 import { TOOL_NAME_AGENTS } from "../tools/tool_names.js";
 import type { Persona } from "../types.js";
 import { buildBaseSystemPrompt, buildEnvironmentTag } from "../utils/context.js";
+import { formatModelPromptNotes } from "./model_prompt_notes.js";
 export type ComposeSessionPromptsArgs = {
   persona: Persona;
   sessionId?: string;
@@ -39,8 +40,10 @@ export function composeSessionPrompts(args: ComposeSessionPromptsArgs): SessionP
   const baseSystemPrompt = buildBaseSystemPrompt({
     ...promptContext,
     subagentsBlock: formatSubagentsForPrompt(args.persona),
+    modelNotes: formatModelPromptNotes(args.persona.model),
   });
 
+  // A subagent may run on another model, so it adds the notes for its own model itself.
   const subagentSystemPrompt = args.persona.tools.includes(TOOL_NAME_AGENTS)
     ? buildBaseSystemPrompt(promptContext)
     : undefined;

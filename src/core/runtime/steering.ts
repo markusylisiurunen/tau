@@ -1,7 +1,7 @@
 import { formatTauUserText, type TauUserMetadata } from "../utils/user_metadata.js";
 
 const STEERING_GUIDANCE =
-  "The user sent the following message(s) while you were already working. Treat them as steering for the current task: incorporate them immediately, adjust your plan if needed, and do not continue down the previous path if this changes the requested direction.";
+  "The user sent this while you were working. Treat it as steering for the current task. Take it into account right away, and change course if it changes what the user wants.";
 
 export function formatSteeringUserMessage(
   messages: string[],

@@ -102,7 +102,7 @@ export function createJobToolDefinitions(
   const includeOutput = Type.Optional(
     Type.Boolean({
       description:
-        "Include captured output; defaults to true. Set false to return only job metadata. Error details are part of the output, so they are omitted too.",
+        "Include captured output. Defaults to true. Set false to return only job metadata. Error details are part of the output, so they are omitted too.",
     }),
   );
   const maxOutputTokens = Type.Optional(
@@ -117,13 +117,13 @@ export function createJobToolDefinitions(
   return [
     {
       name: `list_${kind}_jobs`,
-      description: `List your ${label} jobs and their status, without output. Up to 64 records are retained; older completed jobs are evicted when needed.`,
+      description: `List your ${label} jobs and their status, without output. Tau keeps up to 64 records and drops older completed jobs when it needs room.`,
       parameters: Type.Object({}, { additionalProperties: false }),
       parser: z.object({}).strict(),
     },
     {
       name: `read_${kind}_job`,
-      description: `Read a ${label} job's current status and captured output without waiting. Long output is shortened to its beginning and end. After the job finishes, the result reports a text log with all retained text; read that file instead of rerunning the job.`,
+      description: `Read a ${label} job's current status and captured output without waiting. Long output is shortened to its beginning and end. After the job finishes, the result names a text log with all retained output. Read that file instead of running the job again.`,
       parameters: Type.Object(
         { id, includeOutput, maxOutputTokens },
         { additionalProperties: false },
@@ -156,7 +156,7 @@ export function createJobToolDefinitions(
     },
     {
       name: `wait_for_${kind}_jobs`,
-      description: `Wait until any requested ${label} job finishes. Returns after 60 seconds by default, at most 5 minutes. Timeout and interruption cancel only the wait, not jobs. Completed results remain readable.`,
+      description: `Wait until any requested ${label} job finishes. Returns after 60 seconds by default, and after at most 5 minutes. A timeout or interruption ends only the wait, and the jobs keep running. Completed results remain readable.`,
       parameters: Type.Object(
         {
           includeOutput,
@@ -166,7 +166,7 @@ export function createJobToolDefinitions(
             Type.Integer({
               minimum: 1,
               maximum: JOB_WAIT_MAX_MS,
-              description: "Wait timeout in milliseconds; defaults to 60000.",
+              description: "Wait timeout in milliseconds. Defaults to 60000.",
             }),
           ),
         },

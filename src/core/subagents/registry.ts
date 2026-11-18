@@ -120,15 +120,15 @@ export function formatSubagentsForPrompt(persona: Persona): string | undefined {
   return [
     "",
     "",
-    "### Subagents",
+    "## Subagents",
     "",
-    "You can start general-purpose background subagents to work on independent tasks. Start them only when the user or active instructions explicitly request delegation; do not infer authorization from generic task overlap.",
+    "You can start general-purpose subagents that work on independent tasks in the background. Start them only when the user or active instructions explicitly ask for delegation, because related work alone is no such request.",
     "",
-    'Start and manage subagents with `tau.agents` in the `code` tool, and read its reference with `tau.docs("agents")` first. It can send a subagent queued or steering input, interrupt it, and read selected parts of its conversation. Use the `wait_for_agents` tool when you want to wait for subagents yourself instead of from a program.',
+    'Start and manage subagents with `tau.agents` in the `code` tool, and read its reference with `tau.docs("agents")` first. It can send a subagent queued or steering input, interrupt it, and read selected parts of its conversation. To wait for subagents yourself instead of from a program, use the `wait_for_agents` tool.',
     "",
-    `Inherited model: \`${inherited}\``,
-    `Allowed model overrides: ${launchModelsText}`,
+    `- Inherited model: \`${inherited}\``,
+    `- Allowed model overrides: ${launchModelsText}`,
     "",
-    "Omit the model override unless the user explicitly requests a specific model.",
+    "Omit the model override unless the user explicitly asks for a specific model.",
   ].join("\n");
 }

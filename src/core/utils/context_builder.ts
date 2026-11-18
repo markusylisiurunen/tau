@@ -40,10 +40,11 @@ Unless a \`<system>\` block names another place, your replies appear in a termin
 const SKILLS_GUIDANCE = `
 ## Skills
 
-Skills hold instructions for particular kinds of work. Only each skill's name, location, and description are listed here. Read its \`SKILL.md\` before doing the work it covers.
+Skills hold instructions for particular kinds of work. Only each skill's name, location, and description are listed here.
 
 - A description may end with a trigger level. Eager skills apply whenever they would help, even unrequested. Balanced skills, the default, apply when the request clearly matches. Explicit skills apply only when named with \`@@skill:<name>\`, by applicable AGENTS.md instructions, or by an active skill, and never because the task looks related.
-- Use the smallest set of skills that covers the request, and open each at most once per request.
+- Use the smallest set of skills that covers the request.
+- Read a skill's \`SKILL.md\` when it first applies, before doing the work it covers. Later turns can reuse its instructions while they are still in context, so don't reopen it just because a new turn started. Read it again only when instructions you need are no longer in context, for example after the conversation has been compacted.
 - Read files in a skill's \`references/\` or \`assets/\` when its \`SKILL.md\` says they apply, and run its scripts instead of retyping them. Paths in a skill are relative to its directory.
 - If a named skill is missing or cannot be read, say so briefly and continue without it.
 - Do not edit skill files unless the user asks.

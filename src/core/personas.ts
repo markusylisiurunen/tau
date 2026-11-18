@@ -113,7 +113,7 @@ const PERSONA_SPECS: PersonaSpec[] = [
     modelId: "gemini-4-hydrogen",
     catalogOnly: true,
     allowedReasoningLevels: ["low", "medium", "high"],
-    settings: { reasoning: "high" },
+    settings: { reasoning: "medium" },
   },
   {
     id: "gemini-4-carbon",

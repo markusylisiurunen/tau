@@ -32,6 +32,7 @@ import {
 } from "../core/tools/presentation.js";
 import { TOOL_NAME_BASH } from "../core/tools/tool_names.js";
 import { REASONING_LEVELS, type ReasoningEffort } from "../core/types.js";
+import { listProjectInstructionFiles } from "../core/utils/context_builder.js";
 import { formatAdaptiveNumber, formatCwd, formatTokenWindow } from "../core/utils/format.js";
 import { extractAssistantText } from "../core/utils/messages.js";
 import {
@@ -2978,15 +2979,7 @@ export class SessionChatController {
       return [];
     }
 
-    const files = new Set<string>();
-    const regex = /^<file path="([^"]+)">$/gm;
-    for (const match of systemPrompt.matchAll(regex)) {
-      const path = unescapeXmlAttribute(match[1] ?? "");
-      if (path) {
-        files.add(path);
-      }
-    }
-    return [...files];
+    return [...new Set(listProjectInstructionFiles(systemPrompt).filter(Boolean))];
   }
 
   private async exportLastAssistantResponse(): Promise<void> {
@@ -3526,15 +3519,6 @@ function formatAutoCompactionRetainedText(result: {
     return `retained current turn suffix, ${count} ${messageLabel}`;
   }
   return `retained ${count} recent ${messageLabel}`;
-}
-
-function unescapeXmlAttribute(value: string): string {
-  return value
-    .replaceAll("&quot;", '"')
-    .replaceAll("&apos;", "'")
-    .replaceAll("&lt;", "<")
-    .replaceAll("&gt;", ">")
-    .replaceAll("&amp;", "&");
 }
 
 function isCoreMessage(

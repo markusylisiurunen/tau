@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createScopedTelegramSessionManager,
   createTelegramSessionManager,
+  DEFAULT_TELEGRAM_SYSTEM_MESSAGE,
 } from "../dist/core/telegram/session_manager.js";
 import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
 import {
@@ -14,9 +15,6 @@ import {
 import { SESSION_PROTOCOL_VERSION } from "../dist/protocol/session_protocol.js";
 import { TauSessionProtocolResponseError } from "../dist/transport/errors.js";
 import { createProtocolSnapshot } from "./helpers/session_protocol_fixtures.js";
-
-const DEFAULT_TELEGRAM_SYSTEM_MESSAGE =
-  "This user message came from Telegram, and your assistant messages will be sent back to the Telegram chat. Adapt your communication style to this context. Answer straightforward requests directly. For work that involves tools or multiple steps, send a brief acknowledgement before starting and concise progress updates at meaningful points, since the user cannot see tool activity.";
 
 function telegramUserText(text, ...configuredSystemMessages) {
   const configuredText =

@@ -17,18 +17,14 @@ import {
 import { TOOL_NAME_EDIT } from "./tool_names.js";
 
 const EDIT_DESCRIPTION = [
-  "Edit a file by replacing exact text matches.",
-  "Finds and replaces exactly one occurrence of oldText with newText.",
-  "Fails if the file doesn't exist, if oldText is not found, or if multiple matches exist.",
+  "Edit a file by replacing exact text. oldText must match exactly one place in the current file, including whitespace and newlines. Otherwise the call fails and the file is unchanged.",
+  "Read the lines you are changing first, for example with `sed -n '40,80p' <file>`, so oldText matches the current content. Several edits in one response apply in order, so each one sees the result of the edits before it. Use write when you are replacing most of a file.",
 ].join(" ");
 
 const EDIT_PATH_DESCRIPTION = "Single-line absolute or relative path to the file to edit.";
-const EDIT_OLD_TEXT_DESCRIPTION = [
-  "The exact text to find and replace, including whitespace and newlines.",
-  "Must match exactly one occurrence.",
-  "If multiple matches are found, you should re-attempt with a more specific oldText.",
-].join(" ");
-const EDIT_NEW_TEXT_DESCRIPTION = "The text to replace oldText with.";
+const EDIT_OLD_TEXT_DESCRIPTION =
+  "The exact text to replace, including whitespace and newlines. It must match exactly one place in the file. If it matches several, include more surrounding text.";
+const EDIT_NEW_TEXT_DESCRIPTION = "The text that replaces oldText.";
 
 export const EDIT_TOOL: Tool = {
   name: TOOL_NAME_EDIT,

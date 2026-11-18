@@ -11,11 +11,10 @@ const EXA_MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 
 const description = [
   "Search the web, discover agent-friendly resources, and retrieve page content.",
-  "Use tau.web only when the task requires open-web search or webpage extraction and no more direct or structured source can answer it.",
-  "Before using tau.web, prefer local files and repository data, purpose-built CLIs, first-party APIs and SDKs, and direct structured endpoints.",
-  "A URL alone does not justify using tau.web.",
-  "For any GitHub URL, prefer gh for pull requests, issues, releases, repository metadata, and authenticated GitHub access; prefer git for source, diffs, status, and history available from a repository checkout.",
-  "Use tau.web only if those options cannot provide the needed information or the user explicitly asks to search the open web or inspect a webpage as a webpage.",
+  "Use it when the task needs open-web search or page extraction and no more direct source can answer, such as local files and repository data, purpose-built CLIs, first-party APIs and SDKs, or structured endpoints.",
+  "A URL alone is no reason to use tau.web.",
+  "For a GitHub URL, use gh for pull requests, issues, releases, repository metadata, and authenticated access, and use git for source, diffs, status, and history in a checkout.",
+  "Use tau.web for these only when those tools cannot provide what you need, or when the user explicitly asks to search the open web or inspect the page itself.",
 ].join(" ");
 
 type ExaClient = {

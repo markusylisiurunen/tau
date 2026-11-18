@@ -5,7 +5,7 @@ import { formatZodError } from "../utils/zod.js";
 import type { CodeModeCapability } from "./capability.js";
 
 const description = [
-  "Search and read saved conversation transcripts across repositories and machines; tau.history is read-only.",
+  "Search and read saved conversation transcripts across repositories and machines. It is read-only.",
   "Use tau.history only when the user or active instructions explicitly ask to reference, search, or read historical transcripts, not merely because prior sessions might be relevant.",
 ].join(" ");
 

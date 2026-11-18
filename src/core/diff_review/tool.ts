@@ -6,9 +6,9 @@ import { formatZodError } from "../utils/zod.js";
 import { type DiffReviewSnapshotSource, formatDiffReviewScope } from "./snapshot.js";
 
 const DIFF_REVIEW_DESCRIPTION = [
-  "Launch an interactive diff review tool for the user and wait for the user to return review feedback.",
-  "Use this tool only when the user explicitly asks you to open, run, or start a diff review.",
-  "Do not use it for ordinary diff inspection; use shell/file tools only for inspection instead.",
+  "Open an interactive diff review for the user and wait until they return their feedback.",
+  "Use it only when the user explicitly asks you to open, run, or start a diff review, because it waits on the user.",
+  "To inspect a diff yourself, use shell and file tools.",
 ].join(" ");
 
 const DIFF_REVIEW_SOURCE_DESCRIPTION =

@@ -81,27 +81,24 @@ export function getBashOutputPolicy(args: {
 export const BASH_DEFAULT_TIMEOUT_MS = 60_000;
 
 const BASH_DESCRIPTION = [
-  "Execute a command in a fresh non-interactive login Bash in the current working directory and return its output.",
-  "Choose the mode that avoids unnecessary waiting. Use background: true when it lets you make useful independent progress, for example inspecting code while a test suite runs. If you would only wait for the command to finish, use foreground mode with an appropriate timeout. Runtime alone does not determine the mode.",
-  "Also use background: true to keep a service running or preserve execution across turns or interruptions. Launching several independent jobs and then waiting for them is valid concurrency. Use background mode instead of tmux or shell &. Returns a job ID right away. Use the Bash job tools to read, wait for, or stop it. Jobs survive turns and interruptions, but job IDs and logs are not recovered after a session restart. If a previously returned job ID is unknown, do not assume the command never ran or is no longer running; check current process and output state before restarting it.",
-  "Interactive commands are not supported (no TTY/stdin); commands that prompt or open editors will hang or fail.",
-].join(" ");
+  "Run a command in a fresh non-interactive login Bash shell in the current working directory and return its output. There is no terminal or stdin, so commands that prompt for input or open an editor hang or fail.",
+  "Run a command in the foreground, with a timeout that fits it, when you would only wait for it to finish. Use background: true when you can make useful progress while it runs, for example reading code while a test suite runs, and to keep a service running or let work continue across turns and interruptions. Starting several independent background jobs and then waiting for them runs them in parallel. Use background mode instead of tmux or shell &. A background run returns a job ID right away, and the Bash job tools read, wait for, or stop the job. Jobs survive turns and interruptions, but their IDs and logs are lost when the session restarts. If a job ID you were given is unknown, the command may still have run or still be running, so check the process and output state before you start it again.",
+  "Search file contents with `rg` and find files with `fd` when they are installed, because they are fast and skip ignored files. Otherwise use `grep` and `find`.",
+  "For scratch files, use `mktemp` or `mktemp -d`. Other agents may run at the same time, so fixed names such as `/tmp/out.txt` can collide.",
+  "The worktree may hold other people's uncommitted work. Run `git reset --hard`, `git checkout -- <path>`, `git restore`, `git clean`, `git stash`, force pushes, rebases of shared branches, and commands with `--no-verify` only when the user asked for that operation or a step their request clearly implies. Use non-interactive Git commands.",
+].join("\n\n");
 
-const BASH_COMMAND_DESCRIPTION = "The Bash command to execute.";
+const BASH_COMMAND_DESCRIPTION = "The Bash command to run.";
 
 const BASH_WORKING_DIRECTORY_DESCRIPTION =
-  "Single-line working directory for the command. If omitted, uses the current working directory. Prefer this over `cd` in the command.";
+  "Single-line working directory for the command. Defaults to the current working directory. Use this instead of `cd` in the command.";
 
 const BASH_TIMEOUT_DESCRIPTION =
-  "Timeout in milliseconds for foreground commands only; cannot be combined with background: true. If omitted, defaults to 60 seconds. Use a longer timeout for known slow operations like builds or large clones.";
+  "Timeout in milliseconds for a foreground command. Defaults to 60 seconds. Give known slow operations, such as builds or large clones, a longer timeout. Cannot be combined with background: true.";
 
 const BASH_MAX_OUTPUT_TOKENS_DESCRIPTION = [
-  "Optional maximum number of output tokens to return to the model. Foreground only; for background jobs, set maxOutputTokens when reading or waiting for the job.",
-  `Defaults to ${BASH_MODEL_DEFAULT_MAX_TOKENS} tokens if unset. Most commands should leave this unset. Usually it is better to run a more scoped command than to request more output. Do not set it speculatively or just in case. Only set it when you genuinely need more output, such as after a truncated result or when the user explicitly asks for more detail.`,
-  `When more output is truly needed, set a value between ${BASH_MODEL_DEFAULT_MAX_TOKENS} and ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS}.`,
-  `Only exceed ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS} when the user explicitly requests more output, up to ${BASH_MAX_OUTPUT_TOKENS}.`,
-  `User requests are checked by the system, so do not exceed ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS} autonomously.`,
-  `If unset and output exceeds the default ${BASH_MODEL_DEFAULT_MAX_TOKENS} tokens, the tool returns a ${BASH_MODEL_DEFAULT_PREVIEW_TOKENS}-token preview with a gating notice.`,
+  `Maximum output tokens to return, for foreground commands only. Background jobs take this setting when you read or wait for them. Defaults to ${BASH_MODEL_DEFAULT_MAX_TOKENS}. Longer output returns a ${BASH_MODEL_DEFAULT_PREVIEW_TOKENS}-token preview with a notice and saves the full output to a file.`,
+  `A narrower command is usually better than more output. Set this only after a truncated result or when the user asks for more output, to a value between ${BASH_MODEL_DEFAULT_MAX_TOKENS} and ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS}. Go above ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS}, up to ${BASH_MAX_OUTPUT_TOKENS}, only when the user explicitly asks for more output.`,
 ].join(" ");
 
 export const BASH_TOOL: Tool = {
@@ -112,7 +109,7 @@ export const BASH_TOOL: Tool = {
       background: Type.Optional(
         Type.Boolean({
           description:
-            "Run as a background job when useful independent work can proceed while it runs, for a persistent service, or for execution across turns or interruptions. If you would only wait for completion, omit or use false. Cannot be combined with timeout or maxOutputTokens.",
+            "Run as a background job and return its ID right away. Use it when you can make progress while the command runs, for a service that keeps running, or for work that continues across turns. Cannot be combined with timeout or maxOutputTokens.",
         }),
       ),
       command: Type.String({
@@ -151,7 +148,7 @@ export interface BashTruncationInfo {
 
 function formatBashOutputFileHint(args: { path?: string }): string {
   if (!args.path) return "";
-  return ` Full output saved to ${args.path}. To see more output, either read the file or re-run with a higher maxOutputTokens. If reading the file, be mindful of its size.`;
+  return ` The full output is saved to ${args.path}. Read the parts you need from it with a narrow command such as rg, sed, or tail.`;
 }
 
 export async function prepareBashOutput(
@@ -226,7 +223,7 @@ export function formatBashToolResultText(args: {
   if (gated) {
     const preview = model.content;
     const totalTokenEstimate = bytesToTokens(model.totalBytes);
-    const gateNote = `\n\n[Output gated: This command already ran and any side effects have persisted. Full output estimate: ~${totalTokenEstimate} tokens.${formatBashOutputFileHint({ path: fullOutputPath })} If you need more output from this truncated result, either read the saved file or re-run with maxOutputTokens set to ${BASH_MODEL_DEFAULT_MAX_TOKENS}-${BASH_MODEL_MAX_AUTONOMOUS_TOKENS}. Only exceed ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS} when the user explicitly requests more output, up to ${BASH_MAX_OUTPUT_TOKENS}. User requests are checked by the system, so do not exceed ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS} autonomously.]`;
+    const gateNote = `\n\n[Output gated: the command already ran, and any side effects remain. Full output estimate: ~${totalTokenEstimate} tokens.${formatBashOutputFileHint({ path: fullOutputPath })} If you need more of it and the command is safe to repeat, run it again with maxOutputTokens between ${BASH_MODEL_DEFAULT_MAX_TOKENS} and ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS}. Go above ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS}, up to ${BASH_MAX_OUTPUT_TOKENS}, only when the user explicitly asks for more output.]`;
     const resultText = `${preview}${gateNote}`;
     return exitCode !== null && exitCode !== 0
       ? appendBashNotice(resultText, `Command failed with exit code ${exitCode}.`)

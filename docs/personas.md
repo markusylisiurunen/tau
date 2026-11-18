@@ -1,10 +1,10 @@
 # Personas
 
-A persona defines how the agent works: model, base system prompt, default reasoning, and tools. Tau ships chat and coder personas for its supported models, and `tau --help` lists what is available. GPT models have variants for the API and for a ChatGPT subscription. A built-in persona appears only when its model is in the catalog. The default is `sonnet-5.5-coder`.
+A persona defines how the agent works: model, base system prompt, default reasoning, and tools. Tau ships chat and coder personas for its supported models: chat personas are general assistants for any kind of task, and coder personas are for software development. `tau --help` lists what is available. GPT models have variants for the API and for a ChatGPT subscription. A built-in persona appears only when its model is in the catalog. The default is `sonnet-5.5-coder`.
 
 ## Writing a persona
 
-A persona is a Markdown file whose body is the system prompt. For example, `.tau/personas/release-coder.md`:
+A persona is a Markdown file whose body starts the system prompt. Tau follows it with its own instructions, which every persona gets: how hidden `<system>` blocks work, the boundaries on irreversible actions, how updates and the final reply reach the user, and the terminal reply format. Skills, the environment, `AGENTS.md` files, and subagent settings come after that. For example, `.tau/personas/release-coder.md`:
 
 ```markdown
 ---

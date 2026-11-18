@@ -3186,7 +3186,7 @@ describe("LocalSessionHost", () => {
       expect(leafRuntime.spec.systemPrompt).toContain("directory-context:/repo/leaf:end");
       expect(leafRuntime.spec.systemPrompt).not.toContain("directory-context:/repo/parent:end");
       expect(leafRuntime.spec.systemPrompt).not.toContain("directory-context:/repo:end");
-      expect(leafRuntime.spec.systemPrompt.split("<environment>")).toHaveLength(2);
+      expect(leafRuntime.spec.systemPrompt.split("## Environment")).toHaveLength(2);
       for (const [runtime, sessionIds] of [
         [parentRuntime, [session.sessionId, parent.id]],
         [leafRuntime, [session.sessionId, parent.id, leaf.id]],

@@ -53,7 +53,7 @@ Each agent can have 64 job records, and each job keeps the last 24 MiB of output
 
 `write` creates or replaces a whole file. `edit` replaces one exact piece of text, which must match exactly once. Neither reads files, so the agent reads with Bash. Relative paths start from the working directory, and absolute paths work wherever the OS allows.
 
-`view_image` accepts JPEG, PNG, and WebP files up to 50 MiB and shrinks large images. The agent uses it only when you ask.
+`view_image` accepts JPEG, PNG, and WebP files up to 50 MiB and shrinks large images. The agent uses it when it needs to see an image.
 
 ## Command-line tools
 

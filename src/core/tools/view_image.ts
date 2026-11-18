@@ -20,10 +20,8 @@ import {
 } from "./registry.js";
 import { TOOL_NAME_VIEW_IMAGE } from "./tool_names.js";
 
-const VIEW_IMAGE_DESCRIPTION = [
-  "View an image file and return it to the model.",
-  "Only use this tool when the user explicitly requests viewing or analyzing an image.",
-].join(" ");
+const VIEW_IMAGE_DESCRIPTION =
+  "Look at a local image file, such as a screenshot, photo, chart, or diagram. Use it when you need to see the image to answer or to check your work. Supports JPEG, PNG, and WebP, and scales large images down.";
 
 const VIEW_IMAGE_PATH_DESCRIPTION = "Single-line path to the image file to view.";
 

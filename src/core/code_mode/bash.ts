@@ -47,7 +47,7 @@ export function createBashCapability(
   return {
     name: "bash",
     description:
-      "Run shell commands and manage background jobs. Prefer the direct bash tool for straightforward shell work; use tau.bash when composing with other capabilities or processing command results in JavaScript.",
+      "Run shell commands and manage background jobs from a program. The bash tool is simpler for plain shell work, so use tau.bash when a command's result feeds other capabilities or JavaScript processing.",
     documentation: `# tau.bash
 
 Run foreground shell commands and manage persistent background jobs.

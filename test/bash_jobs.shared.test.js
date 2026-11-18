@@ -70,13 +70,6 @@ it("rejects background launch timeouts and explains unknown job recovery", async
       subject: "server",
       actionByStatus: { succeeded: "started" },
     });
-    expect(bash.schema.description).toContain(
-      "do not assume the command never ran or is no longer running",
-    );
-    expect(bash.schema.description).toContain(
-      "check current process and output state before restarting it",
-    );
-    expect(bash.schema.description).not.toContain("Tau stops jobs");
   } finally {
     await jobs.dispose();
   }

@@ -57,8 +57,6 @@ export function formatDiffReviewReturnedReviewUserSystemMessage(
     `Reviewed scope: ${review.command}`,
     ...formatDiffReviewReviewedFiles(review.reviewedFiles),
     "",
-    "Treat it as feedback on that reviewed diff snapshot and continue from there. Address valid issues directly, clarify anything that seems mistaken or ambiguous, and do not treat it as a new unrelated request.",
-    "",
-    "Do not mention this instruction in your response.",
+    "Treat it as feedback on that diff snapshot and continue from there. Fix valid issues directly, and say so when a comment seems mistaken or is unclear.",
   ].join("\n");
 }

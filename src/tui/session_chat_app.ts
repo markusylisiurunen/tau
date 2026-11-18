@@ -98,7 +98,7 @@ export function createTuiClientTools(options: {
         name: TOOL_NAME_PREFILL_INPUT,
         description: [
           "Prefill the user's TUI input editor with a draft for them to review, edit, and submit.",
-          "Use this sparingly, only when an editable structured draft would save the user meaningful effort; respond normally for routine content.",
+          "Use it only when an editable draft would save the user real effort, and reply normally for routine content.",
           "Use short, obvious placeholders such as [name] or [details] for information only the user can provide.",
           "This tool does not submit the input and fails without changing the editor when it already contains text.",
         ].join(" "),

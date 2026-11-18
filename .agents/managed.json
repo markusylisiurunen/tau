@@ -207,11 +207,11 @@
     },
     ".cowork/conversations/issue.md": {
       "type": "file",
-      "hash": "9fa72e0e5afb5af2f798fc9003ac3a29b9c073470417f2ba980c5cb5c941fb9d"
+      "hash": "0db9397f9c678a014233ea37447648cf7707e3c99bc25bb97a6c1dada061e73e"
     },
     ".cowork/conversations/pull-request.md": {
       "type": "file",
-      "hash": "52dc9af74de48426cb4a15a8e49f1706c2742845e2506e3bb135ff23b57a3d00"
+      "hash": "c4cb17c2e1c579ba3b14286f6a4636a31905fdd6c5cef4370c119f480d94a148"
     },
     ".cowork/diff.md": {
       "type": "file",
@@ -227,27 +227,27 @@
     },
     ".cowork/workflows/improve.md": {
       "type": "file",
-      "hash": "6fea2b79f2fe70235fb15fccf2611843bc6c683808eacdb332ff8dee1b6a514d"
+      "hash": "702aafc3ee96ffa5ad93760a7ed1babcb29b4eb799e0bcca1cd14be31a348ff6"
     },
     ".cowork/workflows/prune.md": {
       "type": "file",
-      "hash": "9a258132c7f087b69da0d538b007fdc1082cc4d78867fcedaaafb5fff31d82b2"
+      "hash": "43a1371ff7fbc2a4be39f5195c8c395ecce6e18a084ebf4b277c6c0e48c9b038"
     },
     ".cowork/workflows/review-and-improve.md": {
       "type": "file",
-      "hash": "aa25ce9c1c0d3435a601f78812cceb85191548a98afd963aadac8b82c6c5b144"
+      "hash": "2f13d411fa6582a35e968856f3818a5a30ec2170dd48a95d6886b41cc5e76099"
     },
     ".cowork/workflows/review.md": {
       "type": "file",
-      "hash": "6c5d195e4a738cda42e6f8f27be1da7a0628d3c242c0a22690f5ee709a54b4ca"
+      "hash": "202ebefe6ca558e9df6d5ae4bace7c8b257952737a98959d7dcf90d5fb1f2852"
     },
     ".cowork/workflows/rewrite.md": {
       "type": "file",
-      "hash": "3ab1e8ff3e7fdb1d14568554a50da27382ad9eeb69ca81c5463d190965844ba4"
+      "hash": "b5c501d907d9bbb92fcd9a1a30303f9d30ffaa462b7627190be40afed4d53e14"
     },
     ".tau/config.json": {
       "type": "file",
-      "hash": "00ffb672150a9fc91caf7ac6bb95c807f45715195708be74082e4474c363abf8"
+      "hash": "5f811b56796f9b4e688e68f3f1113eea57fbbd1734738b4545538020e3a6d557"
     },
     ".tau/prompts/address-review-comments.md": {
       "type": "file",

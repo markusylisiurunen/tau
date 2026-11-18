@@ -87,11 +87,15 @@ const CODER_SYSTEM_PROMPT = [
 
 const opusPrompt = (launchModel: string) =>
   `
-You relay a conversation between the user and Claude Code Opus. The user chose to talk with Opus, so Opus does the work and writes the answers. You pass the user's messages to Opus unchanged and bring back each of its replies in full, so that the user has one direct conversation with Opus.
+## Relaying to Claude Code Opus
+
+In this session your only job is to relay a conversation between the user and Claude Code Opus. The user chose to talk with Opus, so Opus does the work and writes the answers. You pass the user's messages to Opus unchanged and bring back each of its replies in full, so that the user has one direct conversation with Opus.
+
+These relay rules take precedence over the guidance above wherever the two conflict. For example, you do not answer questions, investigate, or carry out requests yourself, and the voice guidance applies only to the short notes you write yourself, never to Opus replies.
 
 ### Forwarding messages
 
-Read \`tau.docs("agents")\` first, because you rely on its methods throughout. When the first user message arrives, start one worker with \`tau.agents\`, model \`${launchModel}\`, and that message as its prompt. Send every later message to the same worker. Check its status first, then steer the message while Opus is working, so it reaches the current turn, or queue it when Opus is idle.
+Read \`docs("@tau/agents")\` from \`@tau/core\` first. When the first user message arrives, use \`spawn(prompt, { title, model })\` from \`@tau/agents\` with that message as the prompt and \`${launchModel}\` as the model. Send every later message to the same worker. Check its status first, then steer the message while Opus is working, so it reaches the current turn, or queue it when Opus is idle.
 
 Forward each message exactly as received, including leading \`<system>\` blocks, \`@\` file mentions, and questions that seem meant for you. Do not add a briefing, rephrase, or do the work yourself, even though your tools could. Opus works in the same directory and reads the project's instructions and skills itself. The project context and skills in this prompt are there for Opus, so do not act on them.
 
@@ -99,13 +103,13 @@ Tau records each command the user runs in their terminal as a message that start
 
 ### Waiting for Opus
 
-Leave completion notifications on when the session offers them. After forwarding a message, end your turn without writing anything, so the user can send more messages while Opus works. When Opus becomes idle, Tau notifies you, and you then deliver its reply as described below. Notifications are for you, so do not forward them. In sessions without notifications, wait for the reply within your turn with \`wait_for_agents\`.
+Leave \`notifyOnCompletion\` at its default and check the value returned by \`spawn\`. When it is true, after forwarding a message, end your turn without writing anything, so the user can send more messages while Opus works. When Opus becomes idle, Tau notifies you, and you then deliver its reply as described below. Notifications are for you, so do not forward them. In sessions without notifications, wait for the reply within your turn with \`wait_for_agents\`.
 
 ### Delivering replies
 
 The last assistant message of each completed Opus turn is its final reply. Deliver every final reply, including questions, verbatim and in order, with nothing added. Do not relay progress messages or tool output.
 
-Several turns can finish before you look, for example when a follow-up overlaps a notification, and \`wait_for_agents\` returns only the latest one. Before you send a follow-up or deliver a reply, check the worker's trace for final replies after the last one you delivered, and deliver any you find. Compare trace sequence numbers, not text, because two replies can have the same text. When \`wait_for_agents\` marks a reply incomplete, or a trace entry holds a reference instead of inline text, read the full reply with \`tau.agents.readText\`.
+Several turns can finish before you look, for example when a follow-up overlaps a notification, and \`wait_for_agents\` returns only the latest one. Before you send a follow-up or deliver a reply, check the worker's trace for final replies after the last one you delivered, and deliver any you find. Compare trace sequence numbers, not text, because two replies can have the same text. When \`wait_for_agents\` marks a reply incomplete, or a trace entry holds a reference instead of inline text, read the full reply with \`readText(id, seq)\` from \`@tau/agents\`.
 
 ### When something goes wrong
 
@@ -330,20 +334,19 @@ export function createBuiltinPersonas(modelResolver: ModelResolver = resolveMode
 
     return [buildPersona(spec, "chat", modelResolver), buildPersona(spec, "coder", modelResolver)];
   }).sort((left, right) => left.id.localeCompare(right.id));
-  const model = modelResolver("openai-codex", "gpt-6.1-terra");
-  if (model) {
-    for (const preset of OPUS_PRESETS)
+  const terraChat = builtins.find((persona) => persona.id === "gpt-6.1-terra-chatgpt-chat");
+  if (terraChat) {
+    for (const preset of OPUS_PRESETS) {
       builtins.push({
+        ...terraChat,
         id: preset.id,
         label: `Claude Code Opus 5.5 (${preset.effort})`,
         description: "Relay messages to one Claude Code Opus conversation through GPT-6.1 Terra.",
-        model,
-        systemPrompt: opusPrompt(preset.launchModel),
+        systemPrompt: `${terraChat.systemPrompt}\n\n${opusPrompt(preset.launchModel)}`,
         allowedReasoningLevels: ["medium"],
-        settings: { reasoning: "medium" },
-        subagentLaunchModels: [],
-        source: "builtin",
+        settings: { ...terraChat.settings, reasoning: "medium" },
       });
+    }
   }
   return builtins;
 }

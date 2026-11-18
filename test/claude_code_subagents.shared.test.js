@@ -121,7 +121,7 @@ describe("Claude Code launch models", () => {
       systemPrompt: { type: "preset", preset: "claude_code" },
     });
     const relayOptions = claudeCodeOptions(
-      { cwd: "/target", model: "claude-opus-5-5", effort: "medium", tools: ["bash"], relay: true },
+      { prompt: "task", cwd: "/target", model: "claude-opus-5-5", effort: "medium", relay: true },
       "/bin/claude",
     );
     expect(relayOptions.systemPrompt.append).toContain("<system>");

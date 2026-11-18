@@ -116,18 +116,17 @@ export function createCodeToolDefinition(options: {
   const schema: Tool = {
     name: TOOL_NAME_CODE,
     description: [
-      "Run a JavaScript program using enabled Tau capabilities, either inline or from a saved .js file. Use it to chain dependent calls, combine independent work, or process results before printing a concise answer.",
-      `Available packages: @tau/core${metadata
-        .filter(({ name }) => name !== "bash")
-        .map(({ name }) => `, @tau/${name}`)
-        .join("")}.`,
-      ...metadata
-        .filter(({ name }) => name !== "bash")
-        .map(({ name, description }) => `@tau/${name}: ${description}`),
-      `@tau/core provides input, output, truncation, and docs${allowed.has("bash") ? ", plus Bash commands and jobs" : ""}${Object.keys(files).length ? ", plus permitted file operations" : ""}.`,
-      'Read the general guide and @tau/core reference with `import { docs, printText } from "@tau/core"; printText(await docs());`. Use `docs("@tau/web")` for an enabled package or `docs("examples")` for recipes. Load only the pages you need and reuse any already visible in the conversation.',
-      "Programs use static imports and top-level await. Only printed output is returned. Side effects are not rolled back, and programs are not retried automatically.",
-      "Use background: true only when you can make useful progress while the program runs. If you would only wait for it to finish, run it in the foreground with a timeout that fits. A background launch returns a job ID right away, and the code job tools read, wait for, or stop the job. Jobs keep running across turns and interruptions, but are lost when the session restarts.",
+      "Run a JavaScript program that imports Tau packages, either inline or from a saved .js file. Use it to pass results between dependent calls, run independent work in parallel, or reduce large results before printing a short answer. A direct tool call is simpler when a program adds nothing.",
+      [
+        "Available packages:",
+        `- @tau/core: input, printText, printImage, truncate, and docs${allowed.has("bash") ? ", plus bash for commands and background jobs" : ""}${Object.keys(files).length ? ", plus files for permitted file operations" : ""}.`,
+        ...metadata
+          .filter(({ name }) => name !== "bash")
+          .map(({ name, description }) => `- @tau/${name}: ${description}`),
+      ].join("\n"),
+      'Before you first use a package, read its reference unless it is already in the conversation. Load references in a program of their own: `import { docs, printText } from "@tau/core"; printText(await docs());` prints the general guide and the @tau/core reference. Pass a package name, such as `docs("@tau/web")`, for that package, or `docs("examples")` for recipes. Load only the pages you need.',
+      "Programs use static imports, from @tau/* packages or relative .js files, and top-level await. Only printed output comes back. Side effects are not rolled back, and programs are not retried automatically.",
+      "Use background: true only when you can make useful progress while the program runs. Otherwise run it in the foreground with a timeout that fits. A background launch returns a job ID right away, and the code job tools read, wait for, or stop the job. Jobs keep running across turns and interruptions, but are lost when the session restarts.",
     ].join("\n\n"),
     parameters: Type.Object(
       {
@@ -149,7 +148,7 @@ export function createCodeToolDefinition(options: {
         file: Type.Optional(
           Type.String({
             description:
-              "Path to a saved .js program, absolute or relative to the current working directory. Use static relative imports for local .js helpers. Each saved source file can be at most 1 MiB. The program runs with the same capabilities and limits as inline code. Supply exactly one of code or file.",
+              "Path to a saved .js program, absolute or relative to the current working directory. It runs like inline code, and each source file can be at most 1 MiB. Supply exactly one of code or file.",
           }),
         ),
         input: Type.Optional(

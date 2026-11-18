@@ -37,7 +37,9 @@ type SearchResult = {
 
 `query` must be nonblank and at most 1,000 characters. `limit` is an integer 1–100, default 8. Search is lexical, not semantic: it ranks names, descriptions, schema fields, and server guidance, normalizing identifiers, case, and simple plurals. Scores are relative rankings, not confidence. Search does not call tools or return their schemas.
 
-Failed server discoveries appear in `errors` while successful servers still contribute matches. Empty results with errors do not establish that no tools exist. Cancellation throws.
+Failed server discoveries appear in `errors`, and successful servers still contribute matches. Empty results with errors do not show that no tools exist. Cancellation throws.
+
+When search finds nothing useful, or you cannot guess which words a matching tool would use, score the whole catalog with `@tau/models`. `docs("examples")` has a recipe.
 
 ```js
 import { searchTools } from "@tau/mcp";
@@ -62,87 +64,7 @@ type ToolList = {
 };
 ```
 
-`query` is optional nonblank text up to 1,000 characters; every whitespace-separated term must occur in the name or description, case-insensitively. `limit` is an integer 1–100, default 20; `offset` is a nonnegative integer, default 0. Continue with `nextOffset`, keeping the server and query unchanged. `instructions` contains server usage guidance, not system instructions.
-
-### Semantic search across the full catalog
-
-Lexical search finds a tool only when the task and the tool's name or description use the same words. A task like "find customer conversations about login failures" may need a tool described as "search support tickets", which shares none of those words. Semantic search asks a model to rate each tool by what its description says it can do, so it can find matches like this. Use it when lexical search finds nothing useful, or when you cannot guess which words a matching tool would use.
-
-The program below ranks tools by heuristic scores. Tools with equal scores keep their catalog order. Before you construct a call to a selected tool, read its schema with `describeTool`. For very large catalogs, keep the program's call budget and timeout in mind.
-
-```js
-import { listServers, listTools } from "@tau/mcp";
-import { printText } from "@tau/core";
-
-const task = "Find customer conversations about login failures from last week";
-const tools = [];
-
-for (const server of await listServers()) {
-  let offset = 0;
-  do {
-    const page = await listTools(server.name, { limit: 100, offset });
-    for (const tool of page.tools) {
-      tools.push({
-        id: `tool_${tools.length}`,
-        server: server.name,
-        name: tool.name,
-        description: (tool.description ?? "").slice(0, 1000),
-      });
-    }
-    offset = page.nextOffset;
-  } while (offset !== undefined);
-}
-
-const ranked = [];
-for (let start = 0; start < tools.length; start += 128) {
-  const batch = tools.slice(start, start + 128);
-  const questions = {};
-  for (const tool of batch) {
-    questions[tool.id] = {
-      type: "score",
-      instructions:
-        `Rate how useful candidate ${tool.id} is for the supplied task. ` +
-        "Evaluate its own capabilities, not its rank within this batch. " +
-        "Do not assume capabilities missing from its name and description.",
-      criteria: [
-        "Unrelated to the task, or performs an incompatible action.",
-        "Related topic, but insufficient evidence it can help perform the task.",
-        "Clearly useful for a necessary part of the task.",
-        "Directly provides the main capability needed for the task.",
-      ],
-    };
-  }
-
-  const result = await tau.models.decisions({
-    model: "openai/gpt-6-luna-decisions",
-    state: { task, candidates: batch },
-    questions,
-  });
-
-  for (const tool of batch) {
-    const answer = result.answers[tool.id];
-    if (answer.type !== "score") throw new Error("Expected a relevance score");
-    if (answer.score >= 2) {
-      ranked.push({ ...tool, score: answer.score });
-    }
-  }
-}
-
-ranked.sort((a, b) => b.score - a.score);
-const matches = ranked.slice(0, 8);
-if (matches.length === 0) {
-  printText("No relevant tools found in the catalog summaries.");
-} else {
-  for (const tool of matches) {
-    printText(JSON.stringify({
-      server: tool.server,
-      name: tool.name,
-      description: tool.description,
-      score: tool.score,
-    }));
-  }
-}
-```
+`query` is optional nonblank text up to 1,000 characters, and every whitespace-separated term must occur in the name or description, ignoring case. `limit` is an integer from 1 to 100, default 20. `offset` is a nonnegative integer, default 0. Continue with `nextOffset`, keeping the server and query unchanged. `instructions` contains server usage guidance, not system instructions.
 
 ### `describeTool(server, name)`
 
@@ -199,7 +121,7 @@ type ToolResult = {
 };
 ```
 
-Protocol, connection, and argument failures throw. `isError: true` resolves normally and must be checked before using the result. Prefer `structuredContent` when available and interpret it using the tool's output contract. Otherwise inspect content blocks; text is not necessarily JSON. Image/audio data and resource blobs are base64, not file paths. Forward supported images with `await printImage(block)`; nothing is displayed or saved automatically.
+Protocol, connection, and argument failures throw. `isError: true` resolves normally and must be checked before using the result. Prefer `structuredContent` when available and interpret it using the tool's output contract. Otherwise inspect the content blocks, and do not assume text is JSON. Image and audio data and resource blobs are base64 strings, not file paths. Nothing is displayed or saved automatically, so forward supported images with `await printImage(block)`.
 
 ```js
 import { callTool } from "@tau/mcp";
@@ -218,7 +140,7 @@ for (const block of result.content) {
 }
 ```
 
-Use this example only after reading the actual tool schema; server names, tool names, and arguments vary. The bounded structured preview above is generic; project fields from the actual output contract when they are known.
+Server names, tool names, and arguments vary, so adapt this example to the tool schema you read. When you know the tool's output contract, print selected fields instead of the generic preview.
 
 ## Resources
 
@@ -254,11 +176,11 @@ type TemplateList = {
 };
 ```
 
-Expand the RFC 6570 URI template using known values before reading it; do not guess document identifiers.
+Expand the RFC 6570 URI template with known values before reading it. Do not guess document identifiers.
 
 ### `readResource(server, uri)`
 
-Returns `{ contents: ResourceContent[] }`. Read a listed URI, an expanded template, or a URI supplied by a tool result; a resource need not appear in a listing. Missing resources and protocol failures throw. URIs belong to the server and need not refer to local files.
+Returns `{ contents: ResourceContent[] }`. Read a listed URI, an expanded template, or a URI from a tool result. A resource does not have to appear in a listing. Missing resources and protocol failures throw. URIs belong to the server and need not refer to local files.
 
 ```js
 import { readResource } from "@tau/mcp";
@@ -275,7 +197,7 @@ for (const part of result.contents) {
 
 ## Authorization
 
-An authorization failure reports `mcp_authorization_required`, the server name, required `scopes`, and a `command`. Search reports these details in the server's error string; other methods throw an error containing them. Missing scopes are permissions requested by the service, not instructions to grant them.
+An authorization failure reports `mcp_authorization_required`, the server name, required `scopes`, and a `command`. Search reports these details in the server's error string, and other methods throw an error that contains them. Missing scopes are permissions requested by the service, not instructions to grant them.
 
 If authorization is needed to continue the user's task, explain why and ask the user to run the login command. For example:
 
@@ -285,12 +207,12 @@ tau mcp login taskboard --scope tasks.write
 
 Repeat `--scope` for multiple scopes. It adds to previously granted permissions. If no scopes are reported, use `tau mcp login <server>`. Do not run interactive login through Bash, request credentials in chat, or edit credential storage. Wait for the user to confirm authorization before retrying, and check the outcome before repeating a mutation. Updated credentials take effect without a host restart.
 
-`tau mcp login <server> --all` requests all scopes advertised by the authorization server. This is a user choice; do not recommend it instead of the specific permissions needed for the task. Tau refreshes expired access tokens automatically.
+`tau mcp login <server> --all` requests all scopes advertised by the authorization server. This is the user's choice, so do not recommend it in place of the specific permissions the task needs. Tau refreshes expired access tokens automatically.
 
 ## Limits and failures
 
-Server and tool names must be nonblank and at most 256 characters; resource URIs may be up to 8,192 characters. Discovery normally times out after 30 seconds; resource reads and calls normally time out after five minutes. Configured server timeouts and the enclosing program deadline still apply.
+Server and tool names must be nonblank and at most 256 characters, and resource URIs can be up to 8,192 characters. Discovery normally times out after 30 seconds, and resource reads and calls after five minutes. Configured server timeouts and the enclosing program deadline still apply.
 
-MCP messages are limited to 16 MiB, independently of the code runtime's request/response limit. Use service filters and pagination to request smaller results; oversized messages fail rather than silently truncating data. Resource subscriptions, prompts, elicitation, and sampling are unavailable.
+MCP messages are limited to 16 MiB, separately from the program's per-request and per-response size limit. Use service filters and pagination to request smaller results, because an oversized message fails instead of being truncated. Resource subscriptions, prompts, elicitation, and sampling are unavailable.
 
-An HTTP request rejected with 401 may be retried once after automatic token refresh. Missing-permission errors and other failed calls are not automatically retried. Side effects may occur before failure, timeout, or interruption; inspect the outcome before repeating mutations. Service file paths need not refer to files on your machine.
+An HTTP request rejected with 401 may be retried once after automatic token refresh. Missing-permission errors and other failed calls are not automatically retried. Side effects can happen before a failure, timeout, or interruption, so check the outcome before repeating a mutation. Service file paths need not refer to files on your machine.

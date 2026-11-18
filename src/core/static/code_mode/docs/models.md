@@ -1,16 +1,20 @@
 # @tau/models
 
-Use standalone model calls for focused analysis, extraction, or typed judgments. Calls are stateless and see only the inputs you supply. Tau handles routing.
+Use standalone model calls for focused analysis, extraction, or typed judgments. Each call is stateless and sees only the inputs you pass.
 
-`list()` returns `{ chat, decisions }`. Each list contains model IDs, supported `inputs`, `reasoning` settings, and a short description of the model's role. Select an explicit ID from the appropriate list. Listing does not run inference.
+`list()` returns `{ chat, decisions }`, the models available to each function, with their IDs, supported `inputs`, `reasoning` settings, and a short description of each model's role. Listing runs no model, and every call needs an explicit model ID from the matching list.
 
 ## Chat
 
 ```js
-import { chat } from "@tau/models";
+import { chat, list } from "@tau/models";
+
+const { chat: models } = await list();
+const model = models.find(({ inputs }) => inputs.includes("text"));
+if (!model) throw new Error("No text model available");
 
 const result = await chat("What does HTTP 304 mean?", {
-  model: "google/gemini-3.8-flash",
+  model: model.id,
 });
 ```
 
@@ -24,16 +28,25 @@ type Media = { type: "image" | "audio" | "video" } & (
 type Part = { type: "text"; text: string } | Media;
 ```
 
-Paths resolve from the working directory and avoid transferring large payloads through the program. Tau detects the media format and rejects inputs the selected model cannot handle. Assistant content is a string.
+Paths resolve from the working directory. Prefer them for large media, because bytes pass through the program. Tau detects the media format and rejects media the selected model cannot handle. Assistant content is a string.
 
-The result has `{ status, answer, usage? }`. Read `answer` when `status` is `"complete"`. The answer is a string unless you supply a JSON Schema as `schema`. With a schema, Tau requests structured output and parses the answer as JSON. Invalid JSON throws. Tau trusts inference to enforce the schema. `"incomplete"` and `"refused"` return `answer: null`. Request failures throw and are not retried automatically.
+The result is `{ status, answer, usage? }`. `status` is `"complete"`, `"incomplete"`, or `"refused"`, and `answer` is `null` unless the call completed. The answer is a string, or with a JSON Schema in `schema`, the parsed JSON value. Tau requests structured output but does not check the value against the schema, and invalid JSON throws. Request failures throw and are not retried.
 
 ## Decisions
 
-`decisions(state, { model, questions, attachments? })` asks several named questions about the same supplied state. `state` is text, a JSON object, or a JSON array. Attachments use the same media types as chat. Each question has `type` and `instructions`, plus `criteria` for choice and score questions:
+`decisions(state, { model, questions, attachments? })` asks several named questions about the same state. `state` is text, a JSON object, or a JSON array. Attachments use the same media types as chat. Each question has `type` and `instructions`, plus `criteria` for choice and score questions:
 
-- `noul`: A binary evaluation. The answer's `noul` field is the probability (0 to 1) that the condition holds. Optional criteria describe `true` and `false`.
-- `choice`: Select one named category. Pass a map from category names to criteria. The answer's `choice` field gives the selected name.
-- `score`: Rate against an ordered array of criteria. The answer's `score` field is a position on that scale, starting at 0 and potentially fractional.
+- `noul`: a yes-or-no judgment. The answer's `noul` field is the probability, from 0 to 1, that the condition holds. Optional criteria describe `true` and `false`.
+- `choice`: one named category. Pass a map from category names to criteria. The answer's `choice` field is the selected name.
+- `score`: a rating against an ordered array of criteria. The answer's `score` field is a position on that scale, starting at 0, and can be fractional.
 
-The result is `{ answers, usage? }`. Answers are keyed by question name. Missing or invalid answers throw. Inspect the returned usage when the script needs to account for model calls.
+The result is `{ answers, usage? }`, with answers keyed by question name. Each answer's `type` matches its question, so check `type` before reading its field:
+
+```ts
+type Answer =
+  | { type: "noul"; noul: number }
+  | { type: "choice"; choice: string; confidence?: number }
+  | { type: "score"; score: number; confidence?: number };
+```
+
+Missing or invalid answers throw.

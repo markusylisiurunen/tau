@@ -141,7 +141,7 @@ For an identified session, substitute its full session ID:
 import { read } from "@tau/history";
 import { printText, truncate } from "@tau/core";
 
-const page = await read({ sessionId: "selected-session-id", limit: 25 });
+const page = await read("selected-session-id", { limit: 25 });
 for (const entry of page.entries) {
   if (entry.type === "tool") {
     printText(`[tool ${entry.name} ${entry.outcome} id=${entry.id}]`);

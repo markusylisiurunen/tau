@@ -23,7 +23,7 @@ This is the manual for the Tau version it ships with, for people and agents who 
 ## Extend what the agent can do
 
 - [Tools](tools.md): built-in tools, background jobs, and command-line tools.
-- [Code mode](code-mode.md): programs that combine tools in one call, with examples.
+- [Code mode](code-mode.md): programs that combine tools in one call, and saved programs for skills.
 - [MCP](mcp.md): connect MCP servers.
 - [Subagents](subagents.md): background workers, including Claude Code.
 - [Client tools](client-tools.md): tools that run in the attached client.

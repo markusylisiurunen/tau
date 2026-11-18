@@ -1,14 +1,12 @@
 # Code Mode and @tau/core
 
-Use `code` to pass data between calls, run independent work in parallel, or reduce a large result before returning it to the conversation. A standalone tool call is simpler when a program adds nothing.
-
 ## Running programs
 
-Pass inline JavaScript in `code` or a saved `.js` program in `file`. Use static imports from an enabled `@tau/*` package or from a relative `.js` file. Relative paths resolve from the importing file, or from the current working directory for inline code. Top-level `await` works in both forms. Node, npm, and dynamic imports are unavailable. A program can load at most 64 source files, 1 MiB per saved file and 8 MiB in total.
+Pass inline JavaScript in `code` or the path of a saved `.js` program in `file`. Programs use static imports from enabled `@tau/*` packages and from relative `.js` files. A relative path resolves from the importing file, or from the working directory for inline code. Top-level `await` works. Node built-ins, npm packages, and dynamic imports are unavailable. A program can load at most 64 source files, each saved file up to 1 MiB and 8 MiB in total.
 
-Each call starts a fresh program. Return values are ignored. Use `printText` or `await printImage` to send results to the conversation. The tool's `maxOutputTokens` limits printed text, separately from API capture limits. A program may make at most 4,096 API requests, 32 concurrently. Each request or response must fit within 64 MiB on the bridge, so use service filters, pagination, or file paths for large payloads.
+Each call starts a fresh program, so values from earlier calls are gone. Return values are ignored, and only what you print comes back. `maxOutputTokens` on the tool call limits printed text. A program can make at most 4,096 API calls, 32 at a time. The arguments and result of each call must fit within 64 MiB, so request less with filters, pagination, or file paths when a result could be large.
 
-Foreground calls time out after five minutes by default. `timeout` on the tool call changes the deadline, up to an hour. Cancelling a program cancels its active requests, but does not undo completed side effects. A program launched with `background: true` has no overall deadline; inspect it with the code job tools. The background launch accepts neither `timeout` nor `maxOutputTokens`.
+Foreground calls time out after five minutes unless the tool call sets `timeout` in milliseconds, up to an hour. Cancelling or timing out a program cancels its active calls, but completed side effects stay. A program launched with `background: true` has no overall deadline and accepts neither `timeout` nor `maxOutputTokens`. Inspect it with the code job tools.
 
 ## Input, output, and docs
 
@@ -18,36 +16,36 @@ import { input, printText, truncate } from "@tau/core";
 printText(truncate(input.message, { maxChars: 2_000 }));
 ```
 
-- `input` is the JSON value supplied to the tool, or `null` if omitted.
-- `printText(text)` accepts a string. Print selected fields and the IDs needed for follow-up.
-- `await printImage(bytes)` accepts a `Uint8Array` containing JPEG, PNG, or WebP data. Tau detects the format and prepares the image for the model. You can also pass a tool's `{ data, mimeType }` image block with base64 `data`. A program can print up to 16 images. Printed text and awaited images retain their order.
-- `truncate(text, { maxChars, keep? })` or `truncate(text, { maxLines, keep? })` returns a string. Specify exactly one positive integer limit. `keep` is `"head"`, `"tail"`, or `"both"` (default). The `…` marker is outside the budget and takes its own line in line mode. Text that fits is unchanged.
-- `await docs()` returns this page. Pass an enabled package name, such as `"@tau/web"`, for its reference, or `"examples"` for recipes. Reuse references already in context.
+- `input` is the JSON value passed to the tool, or `null` if none was passed.
+- `printText(text)` accepts only a string. Print the fields you need and the IDs you will use in follow-up calls.
+- `await printImage(image)` accepts a `Uint8Array` of JPEG, PNG, or WebP data, or an image block `{ data, mimeType }` with base64 `data`, as MCP tools return. A program can print up to 16 images. Printed text and images keep their order.
+- `truncate(text, { maxChars, keep? })` or `truncate(text, { maxLines, keep? })` shortens a string to one positive integer limit. `keep` is `"head"`, `"tail"`, or `"both"` (the default). The `…` marker does not count toward the limit, and in line mode it takes its own line. Text that fits is returned unchanged.
+- `await docs()` returns this page. `docs("@tau/web")` returns the reference for an enabled package, and `docs("examples")` returns recipes.
 
 ## Bash
 
-Import `bash` from `@tau/core` when Bash is available. Each command runs in a fresh noninteractive Bash login shell. Pass input data through `stdin` instead of interpolating it into the command.
+`bash` is available when Bash is enabled. Each command runs in a fresh noninteractive Bash login shell. Pass data through `stdin` instead of interpolating it into the command.
 
 | Function | Result |
 | --- | --- |
-| `bash.text(command, options?)` | Untrimmed stdout on success. Nonzero exits, timeouts, and interrupted commands throw. Exit errors include `exitCode` and a short diagnostic. |
-| `bash.run(command, options?)` | `{ exitCode, stdout, stderr, output, timedOut, aborted, closeSignal }`. Exit status and termination are data. `output` interleaves chunks as Tau receives them. For a single pipe use Bash redirection (`2>&1`). |
-| `bash.start(command, { workingDirectory }?)` | `{ id }` for a background job. The job can outlive the program. |
-| `bash.list()` / `bash.read(id)` | Job metadata for all retained jobs, or one job with its combined log tail. |
-| `bash.wait(idOrIds, { timeout }?)` | Returns one finished job. An array waits for any listed job to finish. A timeout throws `WAIT_TIMEOUT` and leaves the jobs running. The wait defaults to 60 seconds and accepts up to five minutes. |
+| `bash.text(command, options?)` | Untrimmed stdout. A nonzero exit, timeout, or interruption throws, and exit errors include `exitCode` and a short diagnostic. |
+| `bash.run(command, options?)` | `{ exitCode, stdout, stderr, output, timedOut, aborted, closeSignal }`, so failures are data. `output` interleaves stdout and stderr in the order Tau received them. Use `2>&1` to send both streams through one pipe. |
+| `bash.start(command, { workingDirectory }?)` | `{ id }` of a background job, which can outlive the program. |
+| `bash.list()` / `bash.read(id)` | Metadata for all retained jobs, or one job with the tail of its combined log. |
+| `bash.wait(idOrIds, { timeout }?)` | Waits for any listed job to finish and returns one finished job. Waits 60 seconds by default and at most five minutes. A timeout throws `WAIT_TIMEOUT` and leaves the jobs running. |
 | `bash.stop(id)` | Stops the job's process group and returns its final state. |
 
-For `run` and `text`, options are `workingDirectory`, `stdin` (UTF-8 text), and `timeout` in milliseconds (60 seconds by default). Above 24 MiB across stdout and stderr, Tau stops the process group and throws `OUTPUT_LIMIT`. Redirect large artifacts to a file. Background jobs instead keep up to 24 MiB of combined log tail and report truncation without stopping the command. Inspect job `status` (`running`, `succeeded`, `failed`, or `stopped`), and `exitCode` or `error` when present.
+`run` and `text` accept `workingDirectory`, `stdin` (UTF-8 text), and `timeout` in milliseconds (60 seconds by default). If stdout and stderr together exceed 24 MiB, Tau stops the command and throws `OUTPUT_LIMIT`, so redirect large output to a file. Background jobs keep running and retain the last 24 MiB of their combined log. Check `truncated` to see whether earlier output was dropped. A job's `status` is `running`, `succeeded`, `failed`, or `stopped`, with `exitCode` or `error` when present.
 
 ## Files
 
-Import `files` from `@tau/core`. Reads require Bash permission; writes and edits require their respective tool permissions. Paths resolve as in the standalone tools. These are whole-file operations with a 16 MiB limit. Use Bash to process larger files in place.
+`files` holds the operations your tools permit: reads with Bash, writes with `write`, and `edit` with `edit`. Paths resolve as in the standalone tools. Each operation handles a whole file of up to 16 MiB. Process larger files with Bash.
 
 | Function | Result |
 | --- | --- |
-| `files.readText(path)` | Complete UTF-8 string. Invalid UTF-8 throws. |
-| `files.readBytes(path)` | Complete `Uint8Array`. |
-| `files.writeText(path, text)` / `files.writeBytes(path, bytes)` | Create or replace a file and create missing parent directories. Returns `{ path, bytes }`. |
-| `files.edit(path, oldText, newText)` / `files.edit(path, replacements)` | Apply exact replacements and return `{ path, replacements }`, with the number applied. A batch is an array of `{ oldText, newText }` objects. |
+| `files.readText(path)` | The file as a string. Invalid UTF-8 throws. |
+| `files.readBytes(path)` | The file as a `Uint8Array`. |
+| `files.writeText(path, text)` / `files.writeBytes(path, bytes)` | Creates or replaces the file, with any missing parent directories. Returns `{ path, bytes }`. |
+| `files.edit(path, oldText, newText)` / `files.edit(path, replacements)` | Applies exact replacements, given as an array of `{ oldText, newText }` for a batch. Returns `{ path, replacements }` with the number applied. |
 
-Each edit must match exactly once, including whitespace. A batch applies in order to the same file and writes only after every replacement matches. Separate calls commit independently. File and argument failures throw.
+Failures throw, such as a missing file or an `oldText` that does not match exactly once, including whitespace. A batch applies in order and writes the file only if every replacement matches. Separate calls commit independently.

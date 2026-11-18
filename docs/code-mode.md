@@ -1,8 +1,8 @@
 # Code mode
 
-The `code` tool runs a JavaScript program that can combine Tau capabilities. The agent can run independent operations in parallel, pass results between calls, and print only the evidence needed for its answer.
+The `code` tool runs a JavaScript program that combines Tau capabilities in one call. The agent uses it to pass results between calls, run independent work in parallel, and print only what its answer needs.
 
-Programs can run inline or from a saved `.js` file. They import enabled packages such as `@tau/core`, `@tau/web`, or `@tau/models` and can share code through relative imports. They have no direct file, network, credential, or process access. The persona determines which capabilities are available.
+Programs import the packages the persona enables, such as `@tau/core`, `@tau/web`, or `@tau/models`. [Tools](tools.md#tool-names) lists which `tools` entry enables each package. Programs have no file, network, credential, or process access of their own, only what those packages provide.
 
 ```js
 import { bash, printText } from "@tau/core";
@@ -11,4 +11,31 @@ const status = await bash.text("git status --short");
 printText(status || "Working tree is clean.");
 ```
 
-The `code` tool description explains how to load its built-in guide, package references, and examples. Most users never need to read them. They are useful when authoring a saved program or reviewing one the agent wrote.
+The agent loads the reference for each package when it needs it, so you do not need to learn the APIs to use Tau. To read them yourself, for example when writing or reviewing a saved program, ask the agent to print `docs()` from `@tau/core`, a package reference such as `docs("@tau/web")`, or `docs("examples")`.
+
+## Saved programs
+
+A skill can ship a reviewed program, which the agent runs with `file` in place of inline code and a JSON `input` of up to 16 KiB. Programs share code through relative `.js` imports:
+
+```js
+// .agents/skills/audit/audit.js
+import { input, printText } from "@tau/core";
+import { report } from "./lib/report.js";
+
+printText(report(input.project, input.limit));
+```
+
+```js
+code({
+  file: ".agents/skills/audit/audit.js",
+  input: { project: "checkout", limit: 100 },
+});
+```
+
+## Background programs
+
+With `background: true`, `code` returns a job ID right away and the program has no overall deadline. The code job tools work like the [Bash job tools](tools.md#background-jobs). Stopping a program does not stop the Bash jobs or subagents it started.
+
+## Your own APIs
+
+An SDK program or client tool command can give the model its own API in the same sandbox. See [client tools](client-tools.md#code-mode-tools).

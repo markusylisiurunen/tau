@@ -29,7 +29,7 @@ The default mention is `@markustherobot`, although the service can configure a d
 
 Which workflows exist depends on the repository. Centrally managed repositories have `/implement` on issues, and `/review`, `/improve`, `/review-and-improve`, `/prune`, `/explain`, and `/rewrite` on PRs.
 
-Ordinary messages may follow the mention on the same line. Commands must be the only token on their line after the mention; guidance starts on a later line, optionally after a blank line. Bare keywords are ordinary conversation. An unknown command, or a workflow used on the wrong kind of resource, fails with a short diagnostic.
+Ordinary messages may follow the mention on the same line. Commands must be the only token on their line after the mention; guidance starts on a later line, optionally after a blank line. Bare keywords are ordinary conversation. A command fails with a short diagnostic when its workflow is missing or invalid, targets the other kind of resource, or does not list `command` in its `triggers`.
 
 The agent receives the request with the leading mention and recognized command removed and surrounding whitespace trimmed. Internal formatting stays unchanged. Workflow runs without guidance use “Run the selected workflow. No additional instructions were provided.” The original comment ID and URL remain available separately.
 

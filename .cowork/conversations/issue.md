@@ -1,5 +1,5 @@
 ---
-persona: gpt-6.2-astra-chatgpt-coder
+persona: gpt-6.2-sol-chatgpt-coder
 reasoning: medium
 ---
 

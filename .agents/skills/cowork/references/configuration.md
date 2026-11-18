@@ -11,11 +11,11 @@ Cowork provides the triggers, sessions, and workspaces. The repository decides w
   scripts/                        workspace hooks
 ```
 
-Every file is UTF-8, at most 32 KiB, and starts with YAML frontmatter. Unknown frontmatter fields are invalid. A missing file turns its feature off for the repository: a tagged issue or PR comment fails with a short diagnostic, and hosted diffs do not start.
+Every Markdown definition is UTF-8, at most 32 KiB, and starts with YAML frontmatter on its first line. Unknown frontmatter fields are invalid, and conversation and workflow files need a non-empty body. A missing file turns its feature off for the repository: a tagged issue or PR comment fails with a short diagnostic, and hosted diffs do not start.
 
 ## Session settings
 
-Every file requires `persona` and `reasoning`. Use an exact available Tau persona ID without a reasoning suffix. Cowork accepts `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max` as reasoning values. Choose one that is supported by the selected persona and provider.
+Every Markdown definition requires `persona` and `reasoning`. Use an exact persona ID supported by the running Tau Serve host, without a reasoning suffix. A definition can pass Cowork’s checks and still fail at session setup if Tau does not provide the persona. Cowork accepts `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max` as reasoning values. Choose one that is supported by the selected persona and provider.
 
 Cowork reads session settings only when it creates a session, so existing persistent conversations keep their settings through configuration changes and service restarts. To adopt changed settings, restart the conversation or start a fresh hosted diff.
 
@@ -51,7 +51,7 @@ With the file present, Cowork hosts a diff for every eligible PR head, and `/dif
 
 ## Workflows
 
-Each `workflows/<name>.md` defines one workflow. The name must start with a lowercase letter and contain only lowercase letters, digits, or hyphens, up to 64 characters. `diff` and `restart` are reserved. The body is the complete task: the agent's final response is not posted, so the body must ask for any commits, pushes, description updates, reviews, or comments it wants. Cowork wraps it with its GitHub identity and writing rules, the issue or PR, the trigger, and the triggering comment. For example:
+Each `workflows/<name>.md` defines one workflow. The name must start with a lowercase letter and contain only lowercase letters, digits, or hyphens, up to 64 characters. `diff` and `restart` are reserved. Cowork ignores files whose names break these rules. The body is the complete task: the agent's final response is not posted, so the body must ask for any commits, pushes, description updates, reviews, or comments it wants. Cowork wraps it with its GitHub identity and writing rules, the issue or PR, the trigger, and the triggering comment. For example:
 
 ```markdown
 ---
@@ -78,9 +78,15 @@ Check that the changelog covers every user-visible change in this pull request. 
 - `pull_request.ready`: the PR first becomes ready for review, either opened as a non-draft or marked ready for the first time. It fires once per PR.
 - `pull_request.updated`: the head of a ready PR changes, or the PR is marked ready again after being a draft.
 
-The event triggers follow the draft, `<!-- cowork:skip-auto -->`, and PR-author rules. For event runs, the wrapper gives the base and head commits, and the previous head after a push.
+List each trigger once. Issue workflows must use exactly `[command]`, repository workflows must omit `triggers`, and only repository workflows may set `schedule` and `timezone`.
+
+Event triggers fire only for non-draft PRs without the `<!-- cowork:skip-auto -->` marker whose author is in Cowork's user allowlist or is the Cowork bot account itself. For event runs, the wrapper gives the base and head commits, and the previous head after a push.
 
 Every run gets a fresh session and workspace and has its own queue for each issue or PR, so different workflows can run on the same PR at once. Do not start two workflows that push to the same branch in parallel. A queued event run is replaced by a newer event run of the same workflow on the same PR. Command runs are never replaced. Definitions are read from the default branch when a run starts.
+
+A run remembers nothing from earlier runs. A workflow that maintains one piece of output across runs, such as an explanation comment rewritten after each push, must find its earlier output on GitHub itself, for example through a hidden marker in the comment.
+
+How Cowork reports a broken definition depends on the trigger. A command fails with a short diagnostic comment. For PR events, Cowork skips an invalid workflow file and still runs the other matching workflows. An invalid schedule disables only that schedule. In both of these cases, the problem appears only in the service logs, so a broken event or scheduled workflow stops running without any message on GitHub. Check these files carefully before merging them.
 
 Cowork treats the end of an agent turn as the end of the run. It therefore creates new sessions with Tau notifications turned off, so a subagent that finishes does not wake the main agent or start a new turn. When a conversation or workflow delegates work, it must have the agent wait for its subagents and finish within the same turn. Work still running when the turn ends is not reported by that run.
 

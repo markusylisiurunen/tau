@@ -1,5 +1,5 @@
 {
-  "defaultPersona": "gpt-6.2-astra-chatgpt-coder:medium",
+  "defaultPersona": "gpt-6.2-sol-chatgpt-coder:medium",
   "subagents": {
     "launchModels": [
       "anthropic/claude-opus-5-5:high",

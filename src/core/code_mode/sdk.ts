@@ -11,11 +11,11 @@ export function bindCodeModeSdk(capabilities: CodeModeCapability[]): {
     throw new Error("duplicate or reserved code-mode capability");
   return {
     documentation: [
-      "## Tau capabilities",
+      "## Capability references",
       "",
-      ...capabilities.map(({ name, description }) => `- tau.${name}: ${description}`),
+      `Enabled capabilities: ${capabilities.map(({ name }) => `tau.${name}`).join(", ")}. The code tool description says what each one is for.`,
       "",
-      'Before using a capability, read its documentation in a separate call: printText(await tau.docs("bash")). Reuse documentation already visible in the conversation. Do not guess signatures. tau.docs(name) accepts exactly one enabled capability name and returns its complete API reference.',
+      'Read a capability\'s reference before you use it, for example with printText(await tau.docs("bash")), in a documentation-only call before the program that uses it. You can print several references, and this guide, in the same call. Reuse references already visible in the conversation, and do not guess signatures. tau.docs(name) accepts exactly one enabled capability name and returns its complete API reference.',
       `
 ## Foreground and background programs
 
@@ -27,24 +27,15 @@ A program launched with \`background: true\` runs as a code job and has no overa
 
 Pass \`file\` to run a saved .js program in place of inline \`code\`. Any program can run library files first by naming them in \`// @preload ./lib/helpers.js\` lines among its opening comments. Relative paths resolve from the directory of the file that declares them, or from the current working directory for inline code. Each file runs once, after its own preloads, in the same sandbox with the same input and capabilities, and all files share the program's limits. Top-level declarations stay private to each file, so a library shares helpers through \`globalThis\`, as in \`globalThis.helpers ??= {}; helpers.format = (value) => String(value);\`. Circular preloads fail, and a file that throws stops the files after it.
 
-## Composing programs
+## Writing programs
 
-Use a program when keeping intermediate data in JavaScript makes the task clearer: pass one call's result into another, combine independent evidence, or reduce a large response to the relevant facts. A single direct tool call is fine when composition adds nothing. Only enabled capabilities are callable, and their use restrictions still apply inside a program.
+Use a program when keeping intermediate data in JavaScript helps: passing one call's result into another, combining independent evidence, or reducing a large response to the relevant facts. A direct tool call is fine when a program adds nothing. Only enabled capabilities are callable, and their use restrictions still apply inside a program.
 
-Plan around dependencies. Await a result before using it; run independent calls concurrently only when every result is needed, with a small explicit bound below the runtime's concurrency limit. Use service filters and pagination to bound inputs before processing them. For paginated work, print continuation values and resume in another program before exhausting its call or output budget. Keep reusable logic in small functions and avoid elaborate frameworks for one-shot work.
+Many calls resolve even when the work failed. A command can exit nonzero or be truncated, a page can fail to load inside a successful search, and a model can refuse. Check those fields before you pass a result on, stop dependent work when required input is incomplete, and report what is missing instead of treating a failure as empty data.
 
-Check results before passing them onward: command exit and truncation fields, per-item retrieval errors, and model completion or refusal status can indicate failure even when the call itself resolves. Stop dependent work when required input is incomplete. For independent work, catch errors per item only when partial results are useful, and report what is missing rather than silently treating failures as empty data.
+Run independent calls concurrently only when you need every result, with a small explicit bound below the concurrency limit. For paginated work, print the continuation values and resume in another program before the call or output budget runs out. Side effects and external charges are not rolled back, so after a failure or interruption, check what completed and redo only what is needed.
 
-Print a concise result with evidence, identifiers, and any limitations needed for the next decision. Intermediate values stay in the program unless printed. Side effects and external charges are not rolled back. After failure or interruption, inspect what completed and retry only the necessary work, not the whole program blindly.
-
-For web documentation research (requires web and Bash), search for the official site if needed, then discover its relevant page or root. Retrieve advertised Markdown or llms.txt and relevant Markdown pages with curl, using the Accept: text/markdown header for content negotiation. Do not pass these resources to tau.web.fetch. Prefer them over search highlights; use extraction for ordinary pages when no suitable representation exists or extraction is preferable.
-
-
-### Examples for adaptation
-
-These illustrate possibilities, not required workflows. Use only capabilities available for the task, read their references first, and adapt inputs, model choices, and result checks to the actual request.
-
-Chain shell output into focused inference (requires Bash and models):
+For example, chain shell output into a model call and check both results (requires bash and models):
 
 \`\`\`js
 const run = await tau.bash.run({ command: "git diff --stat" });
@@ -57,43 +48,6 @@ const result = await tau.models.chat({
 if (result.finish_reason !== "stop" || result.refusal || !result.answer)
   throw new Error("model did not produce a complete answer");
 printText(result.answer);
-\`\`\`
-
-Combine a bounded set of independent searches and deduplicate evidence (requires web and a task that calls for web search):
-
-\`\`\`js
-const queries = ["CSS nesting browser support", "CSS nesting known limitations"];
-const responses = await Promise.all(
-  queries.map(query => tau.web.search(query, { numResults: 3 })),
-);
-const unique = new Map();
-for (const response of responses) {
-  for (const status of response.statuses) {
-    if (status.status !== "success") printText("Retrieval failed: " + status.id);
-  }
-  for (const result of response.results) unique.set(result.url, result);
-}
-for (const result of unique.values()) printText(result.title + "\\n" + result.url);
-\`\`\`
-
-Keep useful independent results when one operation fails (requires Bash):
-
-\`\`\`js
-const commands = ["git status --short", "git diff --stat"];
-const results = await Promise.allSettled(
-  commands.map(command => tau.bash.run({ command })),
-);
-for (const [index, result] of results.entries()) {
-  printText(commands[index]);
-  if (result.status === "rejected") {
-    printText("Command unavailable: " + String(result.reason));
-  } else {
-    const run = result.value;
-    if (run.exitCode !== 0 || run.truncated || run.timedOut || run.aborted)
-      printText("Incomplete command result; do not treat it as full evidence.");
-    printText(truncateLines(run.output, { maxLines: 30 }));
-  }
-}
 \`\`\`
 `,
     ].join("\n"),

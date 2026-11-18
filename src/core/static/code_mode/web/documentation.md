@@ -14,7 +14,7 @@ type WebApi = {
 
 ## `tau.web.discover(url)`
 
-Discover agent-friendly representations before extracting a supplied page or an official documentation result. Advertised Markdown and `llms.txt` URLs are direct HTTP resources, not inputs for `tau.web.fetch`. For content-negotiated Markdown, retrieval uses the original URL with `Accept: text/markdown`.
+Discover agent-friendly representations before extracting a supplied page or an official documentation result. Advertised Markdown and `llms.txt` URLs are direct HTTP resources, not inputs for `tau.web.fetch`. Retrieve them with `curl` through Bash, and for content-negotiated Markdown, request the original URL with the `Accept: text/markdown` header. Prefer these representations over search highlights, and use `tau.web.fetch` for ordinary pages that have none.
 
 `url` must be HTTP(S), at most 2,048 characters and 20 path segments. Discovery checks Markdown content negotiation at the original URL, same-origin `.md` and `/index.md` paths, and `/llms.txt` at every path prefix.
 

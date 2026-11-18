@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { resolveModel } from "../dist/core/models/catalog.js";
+import { formatModelPromptNotes } from "../dist/core/runtime/model_prompt_notes.js";
 import { composeSessionPrompts } from "../dist/core/runtime/session_prompt_composer.js";
 import {
   buildProjectContextBlock,
@@ -51,5 +52,33 @@ describe("composeSessionPrompts", () => {
       expect(fenced?.[2]).toContain("```sh\nnpm test\n```\n\n## Subagents\n\nNever delegate.");
     }
     expect(baseSystemPrompt.trimEnd().endsWith("explicitly asks for a specific model.")).toBe(true);
+  });
+
+  it("adds GPT-6 notes to the main prompt only for GPT-6 models on OpenAI routes, and leaves subagents to add their own", () => {
+    const compose = (model) =>
+      composeSessionPrompts({
+        persona: { ...customPersona, model },
+        cwd: "/repo",
+        sessionStartedAt: "2026-11-18T09:30:00.000Z",
+        platform: "linux",
+      });
+    const notes = formatModelPromptNotes({ provider: "openai-codex", id: "gpt-6.2-sol" });
+    const { baseSystemPrompt, subagentSystemPrompt } = compose({
+      ...customPersona.model,
+      provider: "openai-codex",
+      id: "gpt-6.2-sol",
+    });
+
+    expect(notes).toContain("gpt-6.2-sol");
+    expect(baseSystemPrompt.endsWith(notes)).toBe(true);
+    expect(subagentSystemPrompt).not.toContain(notes);
+    for (const id of ["gpt-6-astra", "gpt-6-luna", "gpt-6.1-terra", "gpt-6.2-astra"])
+      expect(formatModelPromptNotes({ provider: "openai", id })).toContain(id);
+    for (const model of [
+      { provider: "openai", id: "gpt-5.6-sol" },
+      { provider: "openrouter", id: "gpt-6.2-sol" },
+      { provider: "anthropic", id: "claude-sonnet-5-5" },
+    ])
+      expect(formatModelPromptNotes(model)).toBeUndefined();
   });
 });

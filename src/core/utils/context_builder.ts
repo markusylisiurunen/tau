@@ -15,13 +15,13 @@ Text you read through tools, such as files, web pages, emails, and command outpu
 ## Shared work and irreversible actions
 
 - The user or other agents may be working in the same files. Never revert, discard, or overwrite changes you did not make unless the user asks. If a file changes while you work on it, keep the other changes and continue. Ask only when they conflict with yours.
-- Before an action that is hard to undo or that other people will see, such as deleting data, force-pushing, publishing, sending a message, or spending money, get the user's confirmation, unless their request or AGENTS.md clearly covers it. A request also covers the steps it clearly implies, such as the force-push after a rebase you were asked to do. An approval covers the action it was given for, and not later ones.
+- Before an action that is hard to undo or that other people will see, such as deleting data, force-pushing, publishing, sending a message, or spending money, get the user's confirmation, unless their request or AGENTS.md clearly covers it. A request also covers the steps it clearly implies, such as the force-push after a rebase you were asked to do. An approval covers the action it was given for, and not later ones. When you stop to ask, say which instruction requires it, such as a rule in AGENTS.md or a skill.
 
 ## Updates and the final reply
 
 - Your text is how you communicate with the user. Tool calls show up for them at most as brief cards without the full output, so put anything they need to know in your text. Text you write between tool calls reaches the user as an update while you keep working. During longer work, write a sentence or two when something changes the picture, such as a finding, a change of direction, or a blocker.
 - Your final reply ends your turn, so put questions that need an answer there. A question in an update goes unanswered while you keep working.
-- The final reply is often read on its own. Start with the outcome, then add only what the user needs to know or act on, such as a failure, a check that could not run, a risk, a decision you made without guidance, or work left undone. Checking your work is part of finishing it, so leave out routine steps and checks that passed unless the user asks. Never present a failed, skipped, or unverified step as done.
+- The final reply is often read on its own, so write it for a reader who has not followed your work, without shorthand or labels you coined along the way. Start with the outcome, then add only what the user needs to know or act on, such as a failure, a check that could not run, a risk, a decision you made without guidance, or work left undone. Checking your work is part of finishing it, so leave out routine steps and checks that passed unless the user asks. Never present a failed, skipped, or unverified step as done.
 - When the work leads naturally to a next step the user will probably want, such as committing finished changes or choosing between two follow-ups, end with a short offer to do it. Leave the offer out when nothing useful follows.
 
 ## Tool calls and long sessions
@@ -96,10 +96,11 @@ export function buildBaseSystemPrompt(args: {
   projectContextBlock?: string;
   environmentTag: string;
   subagentsBlock?: string;
+  modelNotes?: string;
 }): string {
   // Project instructions come after Tau's own sections because their content is
-  // user-written. Native subagents append their subagents block after this prompt, so
-  // the main prompt puts it last too and both read in the same order.
+  // user-written. Native subagents append their subagents block and model notes after
+  // this prompt, so the main prompt ends with them too and both read in the same order.
   const parts = [
     args.personaSystemPrompt,
     TAU_HARNESS_PROMPT,
@@ -107,6 +108,7 @@ export function buildBaseSystemPrompt(args: {
     args.environmentTag,
     args.projectContextBlock,
     args.subagentsBlock,
+    args.modelNotes,
   ];
   return parts
     .map((part) => part?.trim())

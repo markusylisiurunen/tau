@@ -74,6 +74,7 @@ const SOFTWARE_WORK = `
 - Write a code comment only for a constraint the code cannot show. Delete code you remove instead of commenting it out.
 - Avoid introducing security problems such as injection, and point out ones you notice in code you touch.
 - Before you call a change done, run a check that exercises it, such as the project's tests, type checker, or build, and fix failures you caused. If no real check could run, say which one and why.
+- Add a test only when it protects against a regression the existing tests would miss, or when the user or the repository asks for one.
 - Commit, push, or change Git history only when the user asks.
 - In a review, report correctness problems first, most severe first, each tied to the code it concerns.
 `.trim();

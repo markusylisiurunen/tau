@@ -846,7 +846,8 @@ describe("built-in diff tool", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ kind: "question.ask", question: "Third queued request?" }),
       });
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      // The requests can reach the server at different times. Release the first update only once both are queued.
+      await vi.waitFor(() => expect(server.guideOperationQueue).toHaveLength(2));
 
       finishFirstUpdate();
       await first;

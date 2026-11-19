@@ -18,6 +18,7 @@ Tau loads this file into every session in the repository, so each line costs con
 Tau has not reached v1, so it changes contracts freely to keep them clean. Breaking callers is the normal way to make a change here: change the contract where it is owned and update every caller in the same change, instead of keeping the old shape alive beside the new one. Agents preserve compatibility by instinct, and here that instinct leaves behind code nobody needs.
 
 - Do not add fallback branches, aliases, dual readers, legacy unions, migrations, or shims unless the user asks.
+- Local development and test state is disposable. When it becomes incompatible, developers reset it from the current schema and fixtures. Do not add migrations or upgrade steps solely to preserve old local state. Shared migrations can still initialize a fresh database, as they do for `history:dev`.
 - Make a field required when every caller can provide it. Use optional fields only when absence is a real domain state, and test how consumers handle it. Keep types narrow so invalid states cannot be represented.
 - When required data cannot be produced, fail at the owning boundary instead of silently leaving it out.
 
@@ -231,6 +232,7 @@ These do not belong in the docs:
 - Anything readers get from `--help`, `/help`, tool descriptions, the Code Mode reference, or exported types.
 - General developer knowledge, and setup steps owned by other products.
 - Instructions for the agent, feature history, change narratives ("added", "no longer"), and security advice beyond `docs/security.md`.
+- Rollout steps for one change, such as when to run its migration. They belong in the pull request or release. A procedure readers repeat across releases, such as upgrading the history service, belongs in the manual.
 - Unrelated undocumented behavior, unless someone asks.
 
 Form:

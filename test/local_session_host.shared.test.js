@@ -4877,7 +4877,6 @@ describe("LocalSessionHost", () => {
         run: {
           program: {
             code: 'import { printText } from "@tau/core"; import { wait } from "test"; printText("ready"); await wait();',
-            sourceName: "inline code",
             cwd: process.cwd(),
           },
           packages: [

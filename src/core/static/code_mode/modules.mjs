@@ -43,10 +43,16 @@ export async function compileModules({ code, cwd, entryPath, packages, readSourc
         builder.onLoad({ filter: /.*/, namespace: "tau-entry" }, () => ({
           contents: `import ${JSON.stringify(entry)};`,
         }));
-        builder.onLoad({ filter: /.*/, namespace: "tau-package" }, ({ path }) => ({
-          contents: `const exports = __tauPackages[${JSON.stringify(path)}];\n` +
-            Object.keys(packages[path]).map((name) => `export const ${name} = exports.${name};`).join("\n"),
-        }));
+        // Export names may be reserved words such as `delete`, so bind each export to a
+        // generated local name. Export names never collide with local bindings.
+        builder.onLoad({ filter: /.*/, namespace: "tau-package" }, ({ path }) => {
+          const names = Object.keys(packages[path]);
+          return {
+            contents: `const p = __tauPackages[${JSON.stringify(path)}];\n` +
+              names.map((name, index) => `const m${index} = p[${JSON.stringify(name)}];`).join("\n") +
+              `\nexport { ${names.map((name, index) => `m${index} as ${name}`).join(", ")} };`,
+          };
+        });
         builder.onLoad({ filter: /.*/, namespace: "tau-source" }, async ({ path }) => {
           if (++files > MAX_FILES) throw new Error(`Program exceeds ${MAX_FILES} source files`);
           const contents = path === entry ? code : await loadSource(path);

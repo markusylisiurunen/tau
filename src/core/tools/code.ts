@@ -122,6 +122,8 @@ export function createCodeToolDefinition(options: {
       ...packages,
       ...(agents ? [createAgentsPackage(agents, origin)] : []),
     ],
+    // Bash is the permission to read files, so loading program sources needs it too.
+    readFiles: allowed.has("bash"),
   });
 }
 
@@ -135,11 +137,21 @@ export function createCodeTool(options: {
   codeJobs: CodeJobRegistry;
   summaries: ReadonlyArray<{ name: string; description: string }>;
   packagesFor(origin: string): CodeModePackage[];
+  /** Whether programs may come from saved files and import relative files. */
+  readFiles: boolean;
 }): AgentTool {
+  const fileParameter = {
+    file: Type.Optional(
+      Type.String({
+        description:
+          "Path to a saved .js program, absolute or relative to the current working directory. It runs like inline code, and each source file can be at most 1 MiB. Supply exactly one of code or file.",
+      }),
+    ),
+  };
   const schema: Tool = {
     name: TOOL_NAME_CODE,
     description: [
-      "Run a JavaScript program that imports Tau packages, either inline or from a saved .js file. Use it to pass results between dependent calls, run independent work in parallel, or reduce large results before printing a short answer. A direct tool call is simpler when a program adds nothing.",
+      `Run a JavaScript program that imports Tau packages${options.readFiles ? ", either inline or from a saved .js file" : ""}. Use it to pass results between dependent calls, run independent work in parallel, or reduce large results before printing a short answer. A direct tool call is simpler when a program adds nothing.`,
       `${describeTauCodeModePackages(options.summaries)} \`docs("examples")\` returns recipes that combine packages.`,
       "Only printed output comes back. Side effects are not rolled back, and programs are not retried automatically.",
     ].join("\n\n"),
@@ -160,12 +172,7 @@ export function createCodeTool(options: {
             maximum: TAU_CODE_MODE_MAX_OUTPUT_TOKENS,
           }),
         ),
-        file: Type.Optional(
-          Type.String({
-            description:
-              "Path to a saved .js program, absolute or relative to the current working directory. It runs like inline code, and each source file can be at most 1 MiB. Supply exactly one of code or file.",
-          }),
-        ),
+        ...(options.readFiles ? fileParameter : {}),
         input: Type.Optional(
           Type.Unknown({
             description:
@@ -180,8 +187,7 @@ export function createCodeTool(options: {
         ),
         code: Type.Optional(
           Type.String({
-            description:
-              "JavaScript source. Supply exactly one of code or file. Print relevant text with printText and forward images with awaited printImage, both from @tau/core.",
+            description: `JavaScript source.${options.readFiles ? " Supply exactly one of code or file." : ""} Print relevant text with printText and forward images with awaited printImage, both from @tau/core.`,
           }),
         ),
       },
@@ -207,9 +213,14 @@ export function createCodeTool(options: {
         );
       }
       const args = parsed.data;
+      if ("file" in args && !options.readFiles) {
+        const reason = "This session cannot run saved programs. Pass the program as code.";
+        return executeTool(context, presentCodeProgramBlocked(call, args.file, reason, "blocked"));
+      }
       const subject = "file" in args ? args.file : args.code;
       const source = "file" in args ? args.file : "inline code";
       let run: CodeProgramRun;
+      let jobId: string | undefined;
       try {
         context.signal.throwIfAborted();
         const program = await loadCodeProgram({
@@ -223,15 +234,17 @@ export function createCodeTool(options: {
           program,
           packages: options.packagesFor(context.assistantMessageId),
           input: args.input,
+          readFiles: options.readFiles,
         };
+        if (args.background)
+          jobId = options.codeJobs.start({ source, backend: options.backend, run });
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
         const outcome = context.signal.aborted ? "cancelled" : "failed";
         return executeTool(context, presentCodeProgramBlocked(call, subject, reason, outcome));
       }
-      if (args.background) {
-        const id = options.codeJobs.start({ source, backend: options.backend, run });
-        const text = `Started background code job ${id} from ${JSON.stringify(source)} in ${JSON.stringify(options.cwd)}. Use read_code_job to check progress or wait_for_code_jobs to wait for completion.`;
+      if (jobId !== undefined) {
+        const text = `Started background code job ${jobId} from ${JSON.stringify(source)} in ${JSON.stringify(options.cwd)}. Use read_code_job to check progress or wait_for_code_jobs to wait for completion.`;
         return executeTool(context, () => ({
           ...createTextToolOutcome(text, "succeeded"),
           uiEvent: {

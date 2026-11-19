@@ -103,6 +103,7 @@ describe("edit tool", () => {
     ["target", "missing"],
     ["target", "  target  "],
     ["target\ntarget", "target"],
+    ["banana", "ana"],
   ])("rejects inexact or ambiguous matches without writing (%#)", async (content, oldText) => {
     const fx = setupFixture();
     try {

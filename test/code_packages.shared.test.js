@@ -26,7 +26,7 @@ async function withTool(allowedTools, test) {
   });
   const run = (code, options = {}) =>
     tool.execute(
-      { id: "call", name: "code", arguments: { code, ...options } },
+      { id: "call", name: "code", arguments: code === undefined ? options : { code, ...options } },
       {
         agentId: "agent",
         assistantMessageId: "message",
@@ -80,7 +80,14 @@ it("loads only enabled packages and does not expose the Code Mode globals", asyn
       "unknown_page",
     ]);
     await expect(readFile(join(cwd, "denied.txt"))).rejects.toMatchObject({ code: "ENOENT" });
+    // Without Bash, programs cannot read local sources.
+    await writeFile(
+      join(cwd, "helper.js"),
+      'import { printText } from "@tau/core"; printText("ran");',
+    );
+    expect((await run(undefined, { file: "helper.js" })).outcome).toBe("blocked");
     for (const code of [
+      'import "./helper.js";',
       'import { search } from "@tau/web"; await search("books");',
       'import { run } from "@tau/bash"; await run("true");',
       'import "node:fs";',
@@ -121,13 +128,17 @@ it("does exact batch edits in one write and passes file bytes directly to image 
   await withTool(["bash", "edit", "write"], async (run, cwd) => {
     const image = Buffer.from(createProtocolImage().data, "base64");
     await writeFile(join(cwd, "sample.png"), image);
+    await writeFile(join(cwd, "large.txt"), Buffer.alloc(16 * 1024 * 1024 + 1));
     const result = await run(`
       import { printText, printImage } from "@tau/core";
       import * as files from "@tau/files";
+      try { await files.readText("large.txt"); } catch (error) { printText(error.code); }
       const { path } = await files.writeText("reports/test.md", "first\\nsecond\\n");
       try {
         await files.edit(path, [{ oldText: "first", newText: "changed" }, { oldText: "missing", newText: "new" }]);
       } catch (error) { printText(error.code); }
+      const tooMany = Array.from({ length: 129 }, () => ({ oldText: "first", newText: "first" }));
+      try { await files.edit(path, tooMany); } catch (error) { printText(error.code); }
       printText(await files.readText(path));
       await files.edit(path, [{ oldText: "first", newText: "changed" }, { oldText: "changed", newText: "third" }]);
       await files.edit(path, [{ oldText: "second", newText: "fourth" }]);
@@ -137,7 +148,9 @@ it("does exact batch edits in one write and passes file bytes directly to image 
       await printImage(bytes);
     `);
     expect(result.outcome).toBe("succeeded");
-    expect(output(result)).toContain("edit_no_match\nfirst\nsecond");
+    expect(output(result)).toContain(
+      "file_too_large\nedit_no_match\ninvalid_arguments\nfirst\nsecond",
+    );
     expect(result.content.at(-1)?.type).toBe("image");
     expect(await readFile(join(cwd, "reports/test.md"), "utf8")).toBe("third\nfourth\n");
     expect(await readFile(join(cwd, "reports/sample.png"))).toEqual(image);

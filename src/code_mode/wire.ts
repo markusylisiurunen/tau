@@ -7,9 +7,11 @@ export function encodeBridgeValue(value: unknown, omitUndefined: boolean): strin
   const json = JSON.stringify(value, function (key, item: unknown) {
     const path = root ? [] : [...(paths.get(this) ?? []), key];
     root = false;
-    if (item instanceof Uint8Array) {
+    // Check the original value, because a Buffer's toJSON runs before the replacer sees it.
+    const raw: unknown = this[key];
+    if (raw instanceof Uint8Array) {
       binary.push(path);
-      return Buffer.from(item).toString("base64");
+      return Buffer.from(raw.buffer, raw.byteOffset, raw.byteLength).toString("base64");
     }
     if (item === undefined && omitUndefined && !Array.isArray(this) && path.length > 0) {
       return undefined;

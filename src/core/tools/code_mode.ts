@@ -21,11 +21,13 @@ export type CodeProgramRun = {
   program: CodeProgram;
   packages: TauCodeModePackage[];
   input?: TauCodeModeJsonValue;
+  /** Whether relative imports may read local files, which requires Bash permission. */
+  readFiles: boolean;
 };
 
 export function runCodeProgram(
   backend: ToolExecutionBackend,
-  { program, packages, input }: CodeProgramRun,
+  { program, packages, input, readFiles }: CodeProgramRun,
   options: {
     signal: AbortSignal;
     timeoutMs: number | null;
@@ -38,12 +40,13 @@ export function runCodeProgram(
     packages,
     pages: { examples: readPage("examples") },
     code: program.code,
-    sourceName: program.sourceName,
-    sources: {
-      cwd: program.cwd,
-      entryPath: program.entryPath,
-      read: (path, signal) => readCodeModule(backend, path, signal),
-    },
+    sources: readFiles
+      ? {
+          cwd: program.cwd,
+          entryPath: program.entryPath,
+          read: (path, signal) => readCodeModule(backend, path, signal),
+        }
+      : undefined,
     input,
     maxOutputTokens: options.maxOutputTokens,
     signal: options.signal,

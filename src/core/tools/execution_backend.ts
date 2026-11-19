@@ -70,13 +70,21 @@ export type ListDirResult = {
 
 export class ToolExecutionBackendError extends Error {
   constructor(
-    readonly code: "not-found",
+    readonly code: "not-found" | "too-large",
     message: string,
     options?: ErrorOptions,
   ) {
     super(message, options);
     this.name = "ToolExecutionBackendError";
   }
+}
+
+/** The error every backend throws when a read exceeds its `maxBytes`. */
+export function fileTooLargeError(maxBytes: number, bytes: number): ToolExecutionBackendError {
+  return new ToolExecutionBackendError(
+    "too-large",
+    `file exceeds maximum size of ${formatBytes(maxBytes)} (got ${formatBytes(bytes)}).`,
+  );
 }
 
 export function isToolExecutionBackendError(
@@ -230,15 +238,16 @@ export function createLocalToolExecutionBackend(
         if (!stats.isFile()) {
           throw new Error("path is not a file.");
         }
-        const bytes = stats.size;
         const maxBytes = options.maxBytes;
-        if (maxBytes !== undefined && bytes > maxBytes) {
-          throw new Error(
-            `file exceeds maximum size of ${formatBytes(maxBytes)} (got ${formatBytes(bytes)}).`,
-          );
+        if (maxBytes !== undefined && stats.size > maxBytes) {
+          throw fileTooLargeError(maxBytes, stats.size);
         }
         const content = readFileSync(resolvedPath);
-        return { path: resolvedPath, content, bytes };
+        // The file can grow between stat and read.
+        if (maxBytes !== undefined && content.byteLength > maxBytes) {
+          throw fileTooLargeError(maxBytes, content.byteLength);
+        }
+        return { path: resolvedPath, content, bytes: content.byteLength };
       } catch (error) {
         throw normalizeToolExecutionBackendError(error);
       }

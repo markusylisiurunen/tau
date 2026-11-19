@@ -203,6 +203,26 @@ describe("public code-mode runtime", () => {
     ).rejects.toThrow("linear.invalid returned a non-JSON value");
   });
 
+  it("returns nested Node buffers to programs as bytes", async () => {
+    const result = await executeTauCodeMode({
+      ...createDefinition({
+        api: { bytes: async () => ({ file: { data: Buffer.from([1, 2]) } }) },
+      }),
+      code: 'import { printText } from "@tau/core"; import { bytes } from "linear"; const { file } = await bytes(); printText(`${file.data instanceof Uint8Array}:${[...file.data]}`);',
+    });
+    expect(getTextContent(result)).toContain("true:1,2");
+  });
+
+  it("imports packages whose method names are reserved words or internal names", async () => {
+    const result = await executeTauCodeMode({
+      ...createDefinition({
+        api: { delete: async () => "d", exports: async () => "e", p: async () => "p" },
+      }),
+      code: 'import { printText } from "@tau/core"; import * as linear from "linear"; import { exports, p } from "linear"; printText(`${await linear.delete()}${await exports()}${await p()}`);',
+    });
+    expect(getTextContent(result)).toContain("dep");
+  });
+
   it("preserves structured capability error codes inside the sandbox", async () => {
     const result = await executeTauCodeMode({
       ...createDefinition({

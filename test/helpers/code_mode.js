@@ -8,5 +8,6 @@ export function createPackageTool(backend, pkg) {
     codeJobs: new CodeJobRegistry(),
     summaries: [pkg],
     packagesFor: () => [pkg],
+    readFiles: true,
   });
 }

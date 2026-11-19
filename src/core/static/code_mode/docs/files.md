@@ -24,7 +24,7 @@ type Written = { path: string; bytes: number }; // the resolved path
 type Edit = { oldText: string; newText: string };
 ```
 
-Writes create missing parent directories and replace existing files. `edit` applies its edits in order: each `oldText` must match exactly once, including whitespace, in the text left by the edits before it. The file is written only if every edit applies, and separate calls commit independently. Each operation handles one whole file of up to 16 MiB, so process larger files with Bash.
+Writes create missing parent directories and replace existing files. `edit` applies up to 128 edits in order: each `oldText` must match exactly once, including whitespace, in the text left by the edits before it. The file is written only if every edit applies, and separate calls commit independently. Each operation handles one whole file of up to 16 MiB, so process larger files with Bash.
 
 ## Errors
 

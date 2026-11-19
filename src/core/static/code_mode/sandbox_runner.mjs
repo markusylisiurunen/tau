@@ -12,7 +12,6 @@ if (
   typeof workerData !== "object" ||
   workerData === null ||
   typeof workerData.code !== "string" ||
-  (workerData.sourceName !== undefined && typeof workerData.sourceName !== "string") ||
   typeof workerData.cwd !== "string" ||
   (workerData.entryPath !== undefined && typeof workerData.entryPath !== "string") ||
   !Number.isSafeInteger(workerData.sourceMethodId) ||
@@ -224,10 +223,7 @@ try {
   const execute = compartment.evaluate("(async (__tauPackages) => {\n\"use strict\";\n" + program + "\n})");
   await execute(packages);
 } catch (error) {
-  writeOutput(
-    (workerData.sourceName ? workerData.sourceName + ": " : "") +
-      (error instanceof Error ? error.stack || error.message : String(error)),
-  );
+  writeOutput(error instanceof Error ? error.stack || error.message : String(error));
   process.exitCode = 1;
 } finally {
   flushOutput(true);

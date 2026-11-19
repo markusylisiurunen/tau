@@ -12,7 +12,7 @@ A tool runs with the permissions of the machine behind it, and nothing limits it
 
 | Name in `tools` | Gives the agent |
 | --- | --- |
-| `bash` | `bash`, its job tools, `@tau/bash`, and reads in `@tau/files` |
+| `bash` | `bash`, its job tools, `@tau/bash`, reads in `@tau/files`, and saved programs with their `.js` imports |
 | `write`, `edit` | File tools and the matching `@tau/files` operations |
 | `view_image` | Shows an image to the model |
 | `web` | `@tau/web`: search, fetch, and discovery (search and fetch need an Exa key) |

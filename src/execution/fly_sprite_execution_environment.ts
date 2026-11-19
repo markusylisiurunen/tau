@@ -5,11 +5,11 @@ import {
   applyBashEnvironment,
   type BashExecutionResult,
   DEFAULT_COMMAND_CAPTURE_BYTES,
+  fileTooLargeError,
   type ListDirEntry,
   normalizeToolExecutionBackendError,
   type ToolExecutionBackend,
 } from "../core/tools/execution_backend.js";
-import { formatBytes } from "../core/utils/truncate.js";
 import type {
   SessionProtocolExecutionEnvironmentInput,
   SessionProtocolExecutionEnvironmentSnapshot,
@@ -173,14 +173,10 @@ export function createFlySpriteToolExecutionBackend(options: {
           timeoutMs: HELPER_COMMAND_TIMEOUT_MS,
           maxBytes: readOptions.maxBytes,
         });
-        const content = Buffer.from(result.contentBase64, "base64");
-        const bytes = result.bytes;
-        if (readOptions.maxBytes !== undefined && bytes > readOptions.maxBytes) {
-          throw new Error(
-            `file exceeds maximum size of ${formatBytes(readOptions.maxBytes)} (got ${formatBytes(bytes)}).`,
-          );
+        if ("tooLarge" in result) {
+          throw fileTooLargeError(readOptions.maxBytes ?? result.bytes, result.bytes);
         }
-        return { path, content, bytes };
+        return { path, content: Buffer.from(result.contentBase64, "base64"), bytes: result.bytes };
       } catch (error) {
         throw normalizeToolExecutionBackendError(error);
       }
@@ -260,10 +256,7 @@ type FlySpriteWorkerResultByMethod = {
   readFile: {
     content: string;
   };
-  readFileBinary: {
-    contentBase64: string;
-    bytes: number;
-  };
+  readFileBinary: { contentBase64: string; bytes: number } | { tooLarge: true; bytes: number };
   writeFile: {
     path: string;
     bytes: number;
@@ -677,15 +670,13 @@ async function handleLine(line) {
     if (request.method === "readFileBinary") {
       const stats = await fs.promises.stat(request.path);
       if (request.maxBytes !== undefined && stats.size > request.maxBytes) {
-        throw new Error(
-          "file exceeds maximum size of " + request.maxBytes + " bytes (got " + stats.size + " bytes).",
-        );
+        respond(request.id, { tooLarge: true, bytes: stats.size });
+        return;
       }
       const content = await fs.promises.readFile(request.path);
       if (request.maxBytes !== undefined && content.byteLength > request.maxBytes) {
-        throw new Error(
-          "file exceeds maximum size of " + request.maxBytes + " bytes (got " + content.byteLength + " bytes).",
-        );
+        respond(request.id, { tooLarge: true, bytes: content.byteLength });
+        return;
       }
       respond(request.id, {
         contentBase64: content.toString("base64"),

@@ -28,7 +28,7 @@ const startJob = (jobs, { backend, source, api = { unused: () => null }, code })
     source,
     backend,
     run: {
-      program: { code, sourceName: "inline code", cwd: "/workspace" },
+      program: { code, cwd: "/workspace" },
       packages: [{ name: "test", documentation: "# test", api }],
     },
   });

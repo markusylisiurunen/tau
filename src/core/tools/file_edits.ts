@@ -13,11 +13,12 @@ export function replaceExactText(content: string, oldText: string, newText: stri
       { code: "edit_no_match" },
     );
   }
+  // Overlapping occurrences count too, so `ana` in `banana` is ambiguous.
   let count = 1;
-  let index = content.indexOf(oldText, first + oldText.length);
+  let index = content.indexOf(oldText, first + 1);
   while (index !== -1) {
     count++;
-    index = content.indexOf(oldText, index + oldText.length);
+    index = content.indexOf(oldText, index + 1);
   }
   if (count > 1) {
     throw Object.assign(

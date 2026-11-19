@@ -134,7 +134,6 @@ export type RunTauCodeModeOptions = {
   /** Further `docs(page)` pages that are not packages, such as recipes. */
   pages?: Record<string, string>;
   code: string;
-  sourceName?: string;
   sources?: CodeModeSources;
   input?: TauCodeModeJsonValue;
   maxOutputTokens?: number;
@@ -308,7 +307,6 @@ export async function runTauCodeMode(
       sandboxRunnerUrl,
       workerData: {
         code: options.code,
-        sourceName: options.sourceName,
         cwd: sources?.cwd ?? "/",
         entryPath: sources?.entryPath,
         sourceMethodId,

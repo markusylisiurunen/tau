@@ -428,9 +428,9 @@ describe("Fly Sprite execution environment", () => {
     const backend = createFlySpriteToolExecutionBackend({ sprite, cwd: root });
 
     try {
-      await expect(backend.readFileBinary(path, { maxBytes: 8 })).rejects.toThrow(
-        "file exceeds maximum size of 8 bytes (got 16 bytes)",
-      );
+      await expect(backend.readFileBinary(path, { maxBytes: 8 })).rejects.toMatchObject({
+        code: "too-large",
+      });
     } finally {
       await backend.dispose();
       await rm(root, { recursive: true, force: true });

@@ -3,7 +3,7 @@ import type { ToolExecutionBackend } from "./execution_backend.js";
 
 const MAX_FILE_BYTES = 1024 * 1024;
 
-export type CodeProgram = { code: string; sourceName: string; cwd: string; entryPath?: string };
+export type CodeProgram = { code: string; cwd: string; entryPath?: string };
 
 export async function readCodeModule(
   backend: ToolExecutionBackend,
@@ -28,7 +28,7 @@ export async function loadCodeProgram(options: {
     const entryPath = resolve(cwd, source.file);
     const code = await readCodeModule(backend, entryPath, signal);
     if (!code.trim()) throw new Error("Program source must not be empty");
-    return { code, sourceName: entryPath, cwd, entryPath };
+    return { code, cwd, entryPath };
   }
-  return { code: source.code, sourceName: "inline code", cwd };
+  return { code: source.code, cwd };
 }

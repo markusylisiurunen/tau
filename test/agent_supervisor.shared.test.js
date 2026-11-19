@@ -16,6 +16,7 @@ import { ToolCatalog } from "../dist/core/tools/catalog.js";
 import { CodeJobRegistry } from "../dist/core/tools/code_jobs.js";
 import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
 import { ClientToolBroker } from "../dist/host/client_tool_broker.js";
+import { MemorySessionStore } from "../dist/store/memory_session_store.js";
 
 function createAssistant(text, options = {}) {
   const model = personas[0].model;
@@ -58,6 +59,7 @@ function createSpawnOptions(overrides = {}) {
     launchEpoch: 0,
     runtimeConfig: {
       kind: "native",
+      delegationPolicy: { subagentLaunchModels: personas[0].subagentLaunchModels },
       systemPrompt: "child system",
       autoCompactThresholdTokens: 80000,
       description: "child",
@@ -89,6 +91,7 @@ describe("AgentSupervisor", () => {
   it("notifies every subscribed direct-child idle transition independently of waits", async () => {
     const completions = [];
     const supervisor = new AgentSupervisor({
+      store: new MemorySessionStore().workers("main"),
       mainAgentId: "main",
       onEvent: () => {},
       onCompletion: (state) => completions.push(state),
@@ -139,6 +142,7 @@ describe("AgentSupervisor", () => {
   it("opens native history only after runtime construction succeeds", () => {
     const openHistory = vi.fn();
     const supervisor = new AgentSupervisor({
+      store: new MemorySessionStore().workers("main"),
       mainAgentId: "main",
       onEvent: () => {},
       openHistory,
@@ -158,6 +162,7 @@ describe("AgentSupervisor", () => {
 
   it("binds the parent's MCP manager without resolving servers from the child workspace", async () => {
     const supervisor = new AgentSupervisor({
+      store: new MemorySessionStore().workers("main"),
       mainAgentId: "main",
       onEvent: () => {},
     });
@@ -215,6 +220,7 @@ describe("AgentSupervisor", () => {
     });
     registration.attachSession("parent-session");
     const supervisor = new AgentSupervisor({
+      store: new MemorySessionStore().workers("main"),
       onCompletion: () => {},
       mainAgentId: "main",
       onEvent: () => {},
@@ -269,7 +275,7 @@ describe("AgentSupervisor", () => {
       await supervisor.waitForAgents([child.id]);
       expect(supervisor.getSnapshot(child.id).run.status).toBe("succeeded");
       expect(
-        supervisor.sendInput({ mode: "queue", id: child.id, prompt: "follow up" }).status,
+        (await supervisor.sendInput({ mode: "queue", id: child.id, prompt: "follow up" })).status,
       ).toBe("working");
       await supervisor.waitForAgents([child.id]);
       expect(supervisor.getSnapshot(child.id).run.status).toBe("succeeded");
@@ -288,6 +294,7 @@ describe("AgentSupervisor", () => {
       releaseSpawn = resolve;
     });
     const supervisor = new AgentSupervisor({
+      store: new MemorySessionStore().workers("main"),
       mainAgentId: "main",
       onEvent: async (event) => {
         if (event.type === "subagent_spawned") {
@@ -320,6 +327,7 @@ describe("AgentSupervisor", () => {
     });
     const events = [];
     const supervisor = new AgentSupervisor({
+      store: new MemorySessionStore().workers("main"),
       mainAgentId: "main",
       onEvent: async (event) => {
         events.push(event);
@@ -353,6 +361,7 @@ describe("AgentSupervisor", () => {
       releaseSubmit = resolve;
     });
     const supervisor = new AgentSupervisor({
+      store: new MemorySessionStore().workers("main"),
       mainAgentId: "main",
       onEvent: async () => {},
       recordUsage: () => {},
@@ -385,6 +394,7 @@ describe("AgentSupervisor", () => {
     });
     let finishedEventSeen = false;
     const supervisor = new AgentSupervisor({
+      store: new MemorySessionStore().workers("main"),
       mainAgentId: "main",
       onEvent: async (event) => {
         if (event.type === "subagent_finished") {
@@ -422,6 +432,7 @@ describe("AgentSupervisor", () => {
       releaseProgress = resolve;
     });
     const supervisor = new AgentSupervisor({
+      store: new MemorySessionStore().workers("main"),
       mainAgentId: "main",
       recordUsage: () => {},
       onEvent: async (event) => {
@@ -453,6 +464,7 @@ describe("AgentSupervisor", () => {
 it("isolates main and sibling jobs while retaining child jobs across follow-ups", async () => {
   const jobs = new AgentJobRegistry();
   const supervisor = new AgentSupervisor({
+    store: new MemorySessionStore().workers("main"),
     mainAgentId: "main",
     onEvent: () => {},
   });
@@ -543,7 +555,8 @@ it("isolates main and sibling jobs while retaining child jobs across follow-ups"
         }
         if (owner === 1) {
           expect(
-            supervisor.sendInput({ mode: "queue", id: children[0], prompt: "follow up" }).status,
+            (await supervisor.sendInput({ mode: "queue", id: children[0], prompt: "follow up" }))
+              .status,
           ).toBe("working");
           await supervisor.waitForAgents([children[0]]);
           expect(
@@ -579,6 +592,7 @@ describe("worker conversation scheduling", () => {
       release = resolve;
     });
     const supervisor = new AgentSupervisor({
+      store: new MemorySessionStore().workers("main"),
       mainAgentId: "main",
       onEvent: () => {},
       recordUsage: () => {},
@@ -615,6 +629,7 @@ describe("worker conversation scheduling", () => {
       release = resolve;
     });
     const supervisor = new AgentSupervisor({
+      store: new MemorySessionStore().workers("main"),
       mainAgentId: "main",
       onEvent: () => {},
       recordUsage: () => {},
@@ -641,6 +656,7 @@ describe("worker conversation scheduling", () => {
 
   it("does not return an earlier turn's answer when a follow-up has no text", async () => {
     const supervisor = new AgentSupervisor({
+      store: new MemorySessionStore().workers("main"),
       mainAgentId: "main",
       onEvent: () => {},
       recordUsage: () => {},
@@ -670,6 +686,7 @@ describe("worker conversation scheduling", () => {
       release = resolve;
     });
     const supervisor = new AgentSupervisor({
+      store: new MemorySessionStore().workers("main"),
       mainAgentId: "main",
       onEvent: () => {},
       recordUsage: () => {},
@@ -703,6 +720,7 @@ it("keeps background orchestration attribution and cancels only its wait", async
     release = resolve;
   });
   const supervisor = new AgentSupervisor({
+    store: new MemorySessionStore().workers("main"),
     onCompletion: () => {},
     mainAgentId: "main",
     onEvent: () => {},
@@ -769,6 +787,7 @@ it("keeps background orchestration attribution and cancels only its wait", async
 describe("nested supervision", () => {
   function pool() {
     const supervisor = new AgentSupervisor({
+      store: new MemorySessionStore().workers("main"),
       mainAgentId: "main",
       onEvent: () => {},
       recordUsage: () => {},
@@ -945,9 +964,9 @@ describe("nested supervision", () => {
       );
       release();
       await Promise.all(supervisor.list().map(({ id }) => supervisor.waitForAgents([id])));
-      expect(supervisor.sendInput({ id: idle.id, mode: "queue", prompt: "more" }).status).toBe(
-        "working",
-      );
+      expect(
+        (await supervisor.sendInput({ id: idle.id, mode: "queue", prompt: "more" })).status,
+      ).toBe("working");
     } finally {
       release();
       supervisor.reset();

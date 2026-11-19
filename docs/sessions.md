@@ -45,16 +45,16 @@ Background [Bash and code jobs](tools.md) belong to the agent that started them 
 
 ## What survives
 
-| Event | Saved session | Pending messages | Running work and subagents |
+| Event | Saved session | Pending messages | Running work |
 | --- | --- | --- | --- |
 | Client detaches from `tau serve` | Kept | Kept | Continue |
 | TUI restarts, host keeps running | Kept | Kept | Continue |
 | Local TUI exits | Saved | Lost | Interrupted |
 | Host restarts | Recovered | Lost | Stopped, session returns idle |
 
-After a restart, unfinished turns are marked as aborted and subagents are gone. Conversation, persona, reasoning, cost, and the execution environment are restored. The host can list and recover a session only if it can reconnect its environment. A missing directory or Sprite connection makes recovery fail, so restore it and try again.
+After a restart, unfinished turns are marked as aborted. Conversation, persona, reasoning, cost, [subagents](subagents.md#lifetime), and the execution environment are restored. The host can list and recover a session only if it can reconnect its environment. A missing directory or Sprite connection makes recovery fail, so restore it and try again.
 
-Once the last client detaches and work has finished, the host unloads the session from memory and its subagents are gone. The session stays saved. Newer Tau versions open sessions saved by older ones, but older versions cannot read newer sessions, so do not downgrade a host.
+Once the last client detaches and work has finished, the host unloads the session from memory. The session and its subagents stay saved. Newer Tau versions open sessions saved by older ones, but older versions cannot read newer sessions, so do not downgrade a host.
 
 ## Reopen a saved session
 

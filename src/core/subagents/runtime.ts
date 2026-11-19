@@ -8,6 +8,7 @@ import type { CoreDeps } from "../runtime/deps.js";
 import type { AgentJobRegistry } from "../tools/agent_jobs.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
 import type { AgentSupervisor } from "./agent_supervisor.js";
+import type { WorkerRuntimeState } from "./checkpoint.js";
 import { ClaudeCodeRuntime } from "./claude_code_runtime.js";
 import type { SubagentRuntimeEvent } from "./events.js";
 import { NativeSubagentRuntime } from "./native_subagent_runtime.js";
@@ -24,6 +25,7 @@ export type SubagentRuntimeSettlement = {
 };
 
 export interface SubagentRuntime {
+  checkpoint(): WorkerRuntimeState;
   readonly model: SubagentStateSnapshot["model"];
   readonly contextWindow: number;
   readonly pendingSteering: number;
@@ -36,6 +38,7 @@ export interface SubagentRuntime {
 
 export type SubagentRuntimeOptions = {
   id: string;
+  checkpoint: () => Promise<void>;
   sessionIds: string[];
   supervisor: AgentSupervisor;
   /** Whether this worker may start workers of its own. */
@@ -53,13 +56,26 @@ export type SubagentRuntimeOptions = {
 };
 
 export function createSubagentRuntime(
-  config: SubagentRuntimeConfig,
+  launch:
+    | WorkerRuntimeState
+    | {
+        kind: "native";
+        config: Extract<SubagentRuntimeConfig, { kind: "native" }>;
+        context?: undefined;
+      }
+    | {
+        kind: "claude-code";
+        config: Extract<SubagentRuntimeConfig, { kind: "claude-code" }>;
+        context?: undefined;
+      },
   options: SubagentRuntimeOptions,
 ): SubagentRuntime {
-  return config.kind === "native"
-    ? new NativeSubagentRuntime(config, options)
+  return launch.kind === "native"
+    ? new NativeSubagentRuntime(launch.config, options, launch.context)
     : new ClaudeCodeRuntime({
-        config,
+        config: launch.config,
+        restored: launch.context,
+        checkpoint: options.checkpoint,
         history: options.openHistory?.(),
         backend: options.backend,
         onEvent: options.onEvent,

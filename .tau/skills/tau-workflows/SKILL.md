@@ -9,7 +9,7 @@ Run a script as a background code job, with its absolute path as `file` and its 
 
 The output is a timestamped log, with each step's duration, cost, running total, and key results such as finding titles, followed by any warnings and the final result. It is normally enough. Each step's prompt and results are also saved in the run folder printed at the start. Read them only when the output is not enough, or to continue after a failure, because rerunning a script starts from the beginning. The log and agent IDs do not survive a Tau restart.
 
-The workflows need Tau's agents, bash, and models capabilities, and the history workflows also need history. Each script fixes the models it uses, and the workflows that work on committed changes share theirs by role in `scripts/lib/review.js`. The subagent launch allowlist must include them. A failed model call fails the step, and no other model is tried.
+The workflows start subagents and call models, so they fail when your instructions list either as unavailable. Each script fixes the models it uses, and the workflows that work on committed changes share theirs by role in `scripts/lib/review.js`. The subagent launch allowlist must include them. A failed model call fails the step, and no other model is tried.
 
 ## Search past sessions
 

@@ -1,6 +1,3 @@
-// @preload ./lib/workflow.js
-// @preload ./lib/review.js
-//
 // Rewrite text in the working tree so it serves its readers. Text means
 // anything written for a reader, wherever it lives, such as documentation,
 // agent instructions, prompts in code, or interface copy.
@@ -18,7 +15,8 @@
 // is the first part of the rewrite itself. The working tree must start clean,
 // so the readers can see the rewrite as the working-tree diff.
 
-const {
+import { input } from "@tau/core";
+import {
   preflightModels,
   startRun,
   responseFormat,
@@ -27,15 +25,15 @@ const {
   tokens,
   log,
   ensure,
-} = workflow;
-const {
+} from "./lib/workflow.js";
+import {
   MODELS,
   readInputs,
   repositoryRoot,
   ensureHead,
   ensureCleanTree,
   formatBlocks,
-} = review;
+} from "./lib/review.js";
 
 const MAX_TARGET_TOKENS = 4096;
 

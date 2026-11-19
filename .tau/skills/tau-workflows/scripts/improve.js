@@ -1,6 +1,3 @@
-// @preload ./lib/workflow.js
-// @preload ./lib/review.js
-//
 // Improve the design of a committed change based on independent reviews.
 //
 // 1. A classifier writes a context brief and chooses one or two design reviews.
@@ -10,7 +7,8 @@
 //
 // Only the final agent edits files, and the working tree must start clean.
 
-const {
+import { input } from "@tau/core";
+import {
   preflightModels,
   startRun,
   responseFormat,
@@ -18,8 +16,8 @@ const {
   log,
   oneLine,
   ensure,
-} = workflow;
-const {
+} from "./lib/workflow.js";
+import {
   MODELS,
   readInputs,
   repositoryRoot,
@@ -27,7 +25,7 @@ const {
   ensureCleanTree,
   diffOverview,
   formatBlocks,
-} = review;
+} from "./lib/review.js";
 
 const PLAN = {
   schema: object({

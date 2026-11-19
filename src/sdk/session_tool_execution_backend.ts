@@ -1,9 +1,10 @@
 import { basename } from "node:path";
 import type { CoreDeps } from "../core/runtime/deps.js";
-import type {
-  BashExecutionOptions,
-  ListDirEntry,
-  ToolExecutionBackend,
+import {
+  type BashExecutionOptions,
+  fileTooLargeError,
+  type ListDirEntry,
+  type ToolExecutionBackend,
 } from "../core/tools/execution_backend.js";
 import type { SpawnCaptureResult } from "../core/utils/spawn_capture.js";
 import { SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES } from "../protocol/session_protocol.js";
@@ -63,17 +64,21 @@ export function createSdkToolExecutionBackend(options: {
     },
 
     async readFileBinary(path, readOptions = {}) {
+      const maxBytes = readOptions.maxBytes ?? MAX_FILE_BYTES;
       const result = await runNodeHelper(
         runNodeScript,
         READ_FILE_BINARY_SCRIPT,
-        [path, String(readOptions.maxBytes ?? MAX_FILE_BYTES)],
+        [path, String(maxBytes)],
         {
           cwd,
           timeoutMs: HELPER_TIMEOUT_MS,
           maxCaptureBytes: MAX_FILE_READ_CAPTURE_BYTES,
         },
       );
-      const parsed = JSON.parse(result) as { contentBase64: string; bytes: number };
+      const parsed = JSON.parse(result) as
+        | { contentBase64: string; bytes: number }
+        | { tooLarge: true; bytes: number };
+      if ("tooLarge" in parsed) throw fileTooLargeError(maxBytes, parsed.bytes);
       return {
         path,
         content: Buffer.from(parsed.contentBase64, "base64"),
@@ -190,9 +195,14 @@ const maxBytes = Number(process.argv[2]);
 const stats = fs.statSync(path);
 if (!stats.isFile()) throw new Error("path is not a file");
 if (stats.size > maxBytes) {
-  throw new Error(\`file exceeds maximum size of \${maxBytes} bytes (got \${stats.size} bytes)\`);
+  process.stdout.write(JSON.stringify({ tooLarge: true, bytes: stats.size }));
+  process.exit(0);
 }
 const content = fs.readFileSync(path);
+if (content.byteLength > maxBytes) {
+  process.stdout.write(JSON.stringify({ tooLarge: true, bytes: content.byteLength }));
+  process.exit(0);
+}
 process.stdout.write(JSON.stringify({
   contentBase64: content.toString("base64"),
   bytes: content.byteLength,

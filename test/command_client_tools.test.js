@@ -142,7 +142,7 @@ describe("command client tools", () => {
       }),
     ]);
     const code =
-      'printText("1"); for (let i = 0; i < 16; i++) await printImage(await screenshots.take()); printText("2")';
+      'import { printImage, printText } from "@tau/core"; import { take } from "screenshots"; printText("1"); for (let i = 0; i < 16; i++) await printImage(await take()); printText("2")';
     const result = await executeClientTool(tool, { code }, createContext());
     expect(result).toEqual({
       content: [{ type: "text", text: "1" }, ...Array(16).fill(block), { type: "text", text: "2" }],

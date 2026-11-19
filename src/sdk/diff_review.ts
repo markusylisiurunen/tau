@@ -93,7 +93,6 @@ export async function startTauSdkDiffReview(
   const ephemeral = await options.session.createEphemeralContext({
     workingDirectory: snapshot.cwd,
     instructions: buildDiffReviewInstructions(snapshot),
-    tools: ["bash", "view_image"],
   });
   const bridge = new DiffReviewBridge({
     snapshot,

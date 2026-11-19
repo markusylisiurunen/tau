@@ -1,44 +1,30 @@
-import { TAU_CODE_MODE_DEFAULT_MAX_OUTPUT_TOKENS } from "../../dist/code_mode/runtime.js";
-import { bindCodeModeSdk } from "../../dist/core/code_mode/sdk.js";
-import { executeCodeModeTool, executeInternalCodeMode } from "../../dist/core/tools/code_mode.js";
+import { unavailable } from "../../dist/core/agent/capabilities.js";
+import { NotificationInbox } from "../../dist/core/agent/notification_inbox.js";
+import { McpManager } from "../../dist/core/mcp/manager.js";
+import { createCodeTool } from "../../dist/core/tools/code.js";
+import { CodeJobRegistry } from "../../dist/core/tools/code_jobs.js";
 
-export function createCapabilityTool(backend, capability, { timeoutMs = 60_000 } = {}) {
-  const sdk = bindCodeModeSdk([capability]);
-  const implementation = {
-    schema: { name: "code", description: capability.description, parameters: { type: "object" } },
-    parseArguments(raw) {
-      const code = raw?.code ?? "";
-      const valid =
-        typeof code === "string" && code.trim() && Object.keys(raw).every((key) => key === "code");
-      return valid
-        ? {
-            ok: true,
-            code,
-            subject: code,
-            timeoutMs,
-            maxOutputTokens: TAU_CODE_MODE_DEFAULT_MAX_OUTPUT_TOKENS,
-          }
-        : { ok: false, error: "invalid code arguments", code, subject: "(invalid code)" };
-    },
-    execute: ({ code, context, timeoutMs, maxOutputTokens }) =>
-      executeInternalCodeMode({
-        name: "tau",
-        ...sdk,
-        code,
-        maxOutputTokens,
-        backend,
-        signal: context.signal,
-        timeoutMs,
-      }),
-  };
+export function createPackageTool(backend, pkg) {
+  return createCodeTool({
+    backend,
+    cwd: process.cwd(),
+    codeJobs: new CodeJobRegistry(),
+    summaries: [pkg],
+    packagesFor: () => [pkg],
+  });
+}
+
+/** The `createCodeToolDefinition` options every test needs, for an agent without optional capabilities. */
+export function codeToolDefaults() {
   return {
-    schema: implementation.schema,
-    execute: (call, context) =>
-      executeCodeModeTool(
-        implementation,
-        call,
-        context,
-        implementation.parseArguments(call.arguments),
-      ),
+    history: {},
+    mcp: new McpManager(),
+    notifications: new NotificationInbox(),
+    capabilities: {
+      delegation: unavailable("test"),
+      completionNotifications: unavailable("test"),
+      web: unavailable("test"),
+      models: unavailable("test"),
+    },
   };
 }

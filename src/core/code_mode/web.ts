@@ -1,21 +1,15 @@
-import { readFileSync } from "node:fs";
 import { z } from "zod";
+import { type Availability, requireCapability } from "../agent/capabilities.js";
 import { type ApiKeysConfig, getExaApiKey } from "../config/index.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
 import { discoverAgentContent } from "../tools/web_discovery.js";
 import { formatZodError } from "../utils/zod.js";
-import type { CodeModeCapability } from "./capability.js";
+import { type CodeModePackage, definePackage, method } from "./package.js";
 
 const EXA_API_BASE_URL = "https://api.exa.ai";
 const EXA_MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 
-const description = [
-  "Search the web, discover agent-friendly resources, and retrieve page content.",
-  "Use it when the task needs open-web search or page extraction and no more direct source can answer, such as local files and repository data, purpose-built CLIs, first-party APIs and SDKs, or structured endpoints.",
-  "A URL alone is no reason to use tau.web.",
-  "For a GitHub URL, use gh for pull requests, issues, releases, repository metadata, and authenticated access, and use git for source, diffs, status, and history in a checkout.",
-  "Use tau.web for these only when those tools cannot provide what you need, or when the user explicitly asks to search the open web or inspect the page itself.",
-].join(" ");
+const description = "Search the web, extract page content, and find Markdown versions of pages.";
 
 type ExaClient = {
   search(query: string, options: Record<string, unknown>, signal: AbortSignal): Promise<unknown>;
@@ -81,36 +75,31 @@ const fetchUrlsSchema = z.union([
   fetchUrlSchema.transform((url) => [url]),
   z.array(fetchUrlSchema).min(1).max(100),
 ]);
-const fetchOptionsSchema = z
-  .object({
-    mode: z.enum(["highlights", "text"]).default("highlights"),
-    query: nonEmptyStringSchema.optional(),
-    maxCharacters: z.number().int().min(1).max(10_000).optional(),
-    maxAgeHours: maxAgeHoursSchema.optional(),
-    subpages: z.number().int().min(0).max(100).optional(),
-    subpageTarget: subpageTargetSchema.optional(),
-    links: z.number().int().min(0).max(1_000).optional(),
-  })
-  .strict()
-  .superRefine((options, context) => {
-    if (options.mode === "text" && options.query !== undefined) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["query"],
-        message: "is only supported in highlights mode",
-      });
-    }
-  });
+const maxCharacters = z.number().int().min(1).max(10_000);
+const fetchOptionsSchema = z.strictObject({
+  text: z
+    .union([z.boolean(), z.strictObject({ maxCharacters: maxCharacters.optional() })])
+    .optional(),
+  highlights: z
+    .union([
+      z.boolean(),
+      z.strictObject({
+        maxCharacters: maxCharacters.optional(),
+        query: nonEmptyStringSchema.optional(),
+      }),
+    ])
+    .optional(),
+  maxAgeHours: maxAgeHoursSchema.optional(),
+  subpages: z.number().int().min(0).max(100).optional(),
+  subpageTarget: subpageTargetSchema.optional(),
+  extras: z.strictObject({ links: z.number().int().min(0).max(1_000).optional() }).optional(),
+});
 
-const documentation = readFileSync(
-  new URL("../static/code_mode/web/documentation.md", import.meta.url),
-  "utf8",
-);
 async function readExaResponse(response: Response): Promise<string> {
   const contentLength = response.headers.get("content-length");
   if (contentLength !== null && Number(contentLength) > EXA_MAX_RESPONSE_BYTES) {
     await response.body?.cancel().catch(() => {});
-    throw new Error("Exa response exceeded the 16 MiB limit");
+    throw new Error("Web response exceeded the 16 MiB limit");
   }
   if (!response.body) return "";
 
@@ -123,7 +112,7 @@ async function readExaResponse(response: Response): Promise<string> {
     bytes += value.byteLength;
     if (bytes > EXA_MAX_RESPONSE_BYTES) {
       await reader.cancel().catch(() => {});
-      throw new Error("Exa response exceeded the 16 MiB limit");
+      throw new Error("Web response exceeded the 16 MiB limit");
     }
     chunks.push(Buffer.from(value));
   }
@@ -155,7 +144,7 @@ async function requestExa(
       payload = JSON.parse(responseText);
     } catch {
       if (response.ok) {
-        throw new Error("Exa returned a non-JSON response");
+        throw new Error("Web service returned a non-JSON response");
       }
     }
   }
@@ -167,10 +156,10 @@ async function requestExa(
     const detail = [error?.error, error?.message]
       .filter((value): value is string => typeof value === "string" && Boolean(value.trim()))
       .join(". ");
-    throw new Error(detail || `Exa request failed with HTTP ${response.status}`);
+    throw new Error(detail || `Web request failed with HTTP ${response.status}`);
   }
   if (payload === undefined) {
-    throw new Error("Exa returned an empty response");
+    throw new Error("Web service returned an empty response");
   }
   return payload;
 }
@@ -184,93 +173,27 @@ export function createExaClient(apiKey: string, fetchImpl: typeof fetch = fetch)
   };
 }
 
-function requireString(value: unknown, name: string): string {
-  const parsed = nonEmptyStringSchema.safeParse(value);
-  if (!parsed.success) {
-    throw new Error(`${name} must be a non-empty string`);
-  }
-  return parsed.data;
-}
-
-function parseMethodOptions<T>(
-  value: unknown,
-  schema: z.ZodType<T>,
-  method: "search" | "fetch",
-): T {
-  const parsed = schema.safeParse(value ?? {});
-  if (!parsed.success) {
-    throw new Error(`Invalid tau.web.${method} options: ${formatZodError(parsed.error)}`);
-  }
-  return parsed.data;
-}
-
-function normalizeSearchArguments(args: unknown): [string, Record<string, unknown>] {
-  if (!Array.isArray(args) || args.length < 1 || args.length > 2) {
-    throw new Error("tau.web.search expects query and optional options");
-  }
-  const query = requireString(args[0], "tau.web.search query");
-  const options = parseMethodOptions(args[1], searchOptionsSchema, "search");
-
-  return [
-    query,
-    {
-      type: "auto",
-      ...(options.objective ? { objective: options.objective } : {}),
-      ...(options.numResults !== undefined ? { numResults: options.numResults } : {}),
-      ...(options.includeDomains ? { includeDomains: options.includeDomains } : {}),
-      ...(options.excludeDomains ? { excludeDomains: options.excludeDomains } : {}),
-      ...(options.startPublishedDate ? { startPublishedDate: options.startPublishedDate } : {}),
-      ...(options.endPublishedDate ? { endPublishedDate: options.endPublishedDate } : {}),
-      ...(options.category ? { category: options.category } : {}),
-      ...(options.userLocation ? { userLocation: options.userLocation } : {}),
-      contents: {
-        highlights: { dynamic: true },
-        ...(options.maxAgeHours !== undefined ? { maxAgeHours: options.maxAgeHours } : {}),
-      },
+function searchRequest(options: z.output<typeof searchOptionsSchema>): Record<string, unknown> {
+  const { maxAgeHours, ...filters } = options;
+  return {
+    type: "auto",
+    ...filters,
+    contents: {
+      highlights: { dynamic: true },
+      ...(maxAgeHours !== undefined ? { maxAgeHours } : {}),
     },
-  ];
+  };
 }
 
-function normalizeFetchArguments(args: unknown): [string[], Record<string, unknown>] {
-  if (!Array.isArray(args) || args.length < 1 || args.length > 2) {
-    throw new Error("tau.web.fetch expects urls and optional options");
-  }
-  const parsedUrls = fetchUrlsSchema.safeParse(args[0]);
-  if (!parsedUrls.success) {
-    throw new Error(`Invalid tau.web.fetch urls: ${formatZodError(parsedUrls.error)}`);
-  }
-  const options = parseMethodOptions(args[1], fetchOptionsSchema, "fetch");
-  const contentOptions =
-    options.mode === "text"
-      ? {
-          text:
-            options.maxCharacters === undefined ? true : { maxCharacters: options.maxCharacters },
-        }
-      : {
-          highlights:
-            options.query === undefined && options.maxCharacters === undefined
-              ? true
-              : {
-                  ...(options.query ? { query: options.query } : {}),
-                  ...(options.maxCharacters !== undefined
-                    ? { maxCharacters: options.maxCharacters }
-                    : {}),
-                },
-        };
-
-  return [
-    parsedUrls.data,
-    {
-      ...contentOptions,
-      ...(options.maxAgeHours !== undefined ? { maxAgeHours: options.maxAgeHours } : {}),
-      ...(options.subpages !== undefined ? { subpages: options.subpages } : {}),
-      ...(options.subpageTarget ? { subpageTarget: options.subpageTarget } : {}),
-      ...(options.links !== undefined ? { extras: { links: options.links } } : {}),
-    },
-  ];
+function fetchRequest(options: z.output<typeof fetchOptionsSchema>): Record<string, unknown> {
+  return {
+    ...(options.text === undefined && options.highlights === undefined ? { highlights: true } : {}),
+    ...options,
+  };
 }
 
 type ExaResult = {
+  id?: string;
   title: string;
   url: string;
   publishedDate?: string;
@@ -284,6 +207,7 @@ type ExaResult = {
 const exaResultSchema: z.ZodType<ExaResult> = z.lazy(() =>
   z
     .object({
+      id: z.string().optional(),
       title: z.string(),
       url: z.string(),
       publishedDate: z.string().optional(),
@@ -348,6 +272,7 @@ function normalizeStatus(status: ExaStatus): Record<string, unknown> {
 
 function normalizeResult(result: ExaResult): Record<string, unknown> {
   return {
+    ...(result.id !== undefined ? { id: result.id } : {}),
     title: result.title,
     url: result.url,
     ...(result.publishedDate !== undefined ? { publishedDate: result.publishedDate } : {}),
@@ -355,7 +280,7 @@ function normalizeResult(result: ExaResult): Record<string, unknown> {
     ...(result.text !== undefined ? { text: result.text } : {}),
     ...(result.highlights !== undefined ? { highlights: result.highlights } : {}),
     ...(result.subpages !== undefined ? { subpages: result.subpages.map(normalizeResult) } : {}),
-    ...(result.extras?.links !== undefined ? { links: result.extras.links } : {}),
+    ...(result.extras?.links !== undefined ? { extras: { links: result.extras.links } } : {}),
   };
 }
 
@@ -366,7 +291,7 @@ function normalizeResponse(value: unknown): {
 } {
   const parsed = exaResponseSchema.safeParse(value);
   if (!parsed.success) {
-    throw new Error(`Invalid Exa response: ${formatZodError(parsed.error)}`);
+    throw new Error(`Invalid web response: ${formatZodError(parsed.error)}`);
   }
   return {
     results: parsed.data.results.map(normalizeResult),
@@ -375,60 +300,34 @@ function normalizeResponse(value: unknown): {
   };
 }
 
-async function handleWebRequest(
-  method: "discover" | "search" | "fetch",
-  args: unknown[],
-  exa: ExaClient | undefined,
-  deps: WebToolDeps,
-  backend: ToolExecutionBackend,
-  signal: AbortSignal,
-): Promise<unknown> {
-  switch (method) {
-    case "discover": {
-      if (!Array.isArray(args) || args.length !== 1) {
-        throw new Error("tau.web.discover expects one URL");
-      }
-      return await deps.discover(backend, requireString(args[0], "tau.web.discover url"), signal);
-    }
-    case "search": {
-      if (!exa) throw new Error("Missing Exa API key.");
-      const [query, options] = normalizeSearchArguments(args);
-      return normalizeResponse(await exa.search(query, options, signal));
-    }
-    case "fetch": {
-      if (!exa) throw new Error("Missing Exa API key.");
-      const [urls, options] = normalizeFetchArguments(args);
-      return normalizeResponse(await exa.getContents(urls, options, signal));
-    }
-    default:
-      throw new Error(`unsupported web method '${method}'`);
-  }
-}
-
 const defaultDeps: WebToolDeps = { createExaClient, discover: discoverAgentContent };
 
-export function createWebCapability(
+export function createWebPackage(
   backend: ToolExecutionBackend,
   config: ApiKeysConfig,
+  web: Availability,
   deps: WebToolDeps = defaultDeps,
-): CodeModeCapability {
+): CodeModePackage {
   let exa: ExaClient | undefined;
   const client = () => {
-    const apiKey = getExaApiKey(config);
-    if (apiKey && !exa) exa = deps.createExaClient(apiKey);
+    requireCapability(web, "Web search and fetch");
+    // Web availability comes from the same config, so the key is present here.
+    exa ??= deps.createExaClient(getExaApiKey(config)!);
     return exa;
   };
-  return {
-    name: "web",
-    description,
-    documentation,
-    api: {
-      discover: (args, context) =>
-        handleWebRequest("discover", args, undefined, deps, backend, context.signal),
-      search: (args, context) =>
-        handleWebRequest("search", args, client(), deps, backend, context.signal),
-      fetch: (args, context) =>
-        handleWebRequest("fetch", args, client(), deps, backend, context.signal),
-    },
-  };
+  return definePackage("web", description, {
+    search: method(
+      z.tuple([nonEmptyStringSchema, searchOptionsSchema.optional()]),
+      async ([query, options], { signal }) =>
+        normalizeResponse(await client().search(query, searchRequest(options ?? {}), signal)),
+    ),
+    fetch: method(
+      z.tuple([fetchUrlsSchema, fetchOptionsSchema.optional()]),
+      async ([urls, options], { signal }) =>
+        normalizeResponse(await client().getContents(urls, fetchRequest(options ?? {}), signal)),
+    ),
+    discover: method(z.tuple([nonEmptyStringSchema]), ([url], { signal }) =>
+      deps.discover(backend, url, signal),
+    ),
+  });
 }

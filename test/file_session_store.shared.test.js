@@ -192,7 +192,7 @@ describe("FileSessionStore", () => {
     });
   });
 
-  it("migrates retired worker selections without changing conversation messages", async () => {
+  it("drops stored persona tool selections without changing conversation messages", async () => {
     await withTempStore(async (store, directory) => {
       const snapshot = createSnapshot("session-1", "retained conversation");
       snapshot.catalog.personas[0].tools = [
@@ -207,7 +207,7 @@ describe("FileSessionStore", () => {
         JSON.stringify({ format: STORED_SESSION_DOCUMENT_FORMAT, version: 12, snapshot }),
       );
       const loaded = await store.loadSession("session-1");
-      expect(loaded.catalog.personas[0].tools).toEqual(["bash", "agents"]);
+      expect(loaded.catalog.personas[0]).not.toHaveProperty("tools");
       expect(loaded.messages).toEqual(snapshot.messages);
     });
   });

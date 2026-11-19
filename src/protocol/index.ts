@@ -20,7 +20,6 @@ export type {
   SessionProtocolDeltaMessage,
   SessionProtocolDraftAssistantMessage,
   SessionProtocolEphemeralAgentThreadUpdateEvent,
-  SessionProtocolEphemeralAgentTool,
   SessionProtocolEphemeralCloseParams,
   SessionProtocolEphemeralCloseResult,
   SessionProtocolEphemeralCreateParams,

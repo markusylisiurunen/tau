@@ -12,6 +12,7 @@ import {
   type RewindResult,
   type SteeringSubmission,
 } from "../agent/agent_runtime.js";
+import { type AgentCapabilities, mainAgentCapabilities } from "../agent/capabilities.js";
 import type { AgentEventSink } from "../agent/events.js";
 import { NotificationInbox } from "../agent/notification_inbox.js";
 import type { SessionRuntimeSettings } from "../config/index.js";
@@ -63,7 +64,7 @@ export type CreateChatRuntimeOptions = {
   subagentEventSink: (event: SubagentEvent) => void | Promise<void>;
   history: HistoryQuery;
   openSubagentHistory: OpenSubagentHistory;
-  mcp?: McpManager;
+  mcp: McpManager;
   recordUsage?: UsageRecorder;
   initialPromptComposition?: SessionPromptComposition;
   config: SessionRuntimeSettings;
@@ -92,8 +93,8 @@ export class ChatRuntime {
   private resolvedModel: ResolvedAgentModel;
   private readonly clientTools?: CreateChatRuntimeOptions["clientTools"];
   private readonly resolveSubagentPrompt?: ResolveSubagentPrompt;
-  private readonly historyQuery: HistoryQuery;
-  private readonly mcp?: McpManager;
+  readonly historyQuery: HistoryQuery;
+  readonly mcp: McpManager;
   private latestPromptComposition: SessionPromptComposition;
 
   static create(options: CreateChatRuntimeOptions): ChatRuntime {
@@ -101,6 +102,10 @@ export class ChatRuntime {
       options.initialPromptComposition ??
       composeSessionPrompts({
         persona: options.persona,
+        capabilities: mainAgentCapabilities({
+          notifications: options.notifications,
+          config: options.config,
+        }),
         sessionId: options.sessionId,
         cwd: options.promptContext.cwd,
         repoRoot: options.promptContext.repoRoot,
@@ -109,6 +114,7 @@ export class ChatRuntime {
         platform: options.promptContext.platform,
         skillsBlock: options.promptContext.skillsBlock,
         projectContextBlock: options.promptContext.projectContextBlock,
+        mcpServers: options.mcp.listServers(),
       });
     return new ChatRuntime(options, promptComposition);
   }
@@ -389,7 +395,8 @@ export class ChatRuntime {
       subagentSystemPrompt: composition.subagentSystemPrompt,
       modelResolver: this.currentModelResolver,
       supervisor: this.supervisor,
-      ...(this.notifications ? { notifications: this.notifications } : {}),
+      notifications: this.notifications ?? new NotificationInbox(),
+      capabilities: this.capabilities,
       jobs: this.jobs,
       ...this.backgroundJobs,
       history: this.historyQuery,
@@ -399,9 +406,17 @@ export class ChatRuntime {
     });
   }
 
+  private get capabilities(): AgentCapabilities {
+    return mainAgentCapabilities({
+      notifications: this.notifications !== undefined,
+      config: this.config,
+    });
+  }
+
   private composePromptSet(): SessionPromptComposition {
     return composeSessionPrompts({
       persona: this.currentPersona,
+      capabilities: this.capabilities,
       sessionId: this.sessionIdValue,
       cwd: this.promptContext.cwd,
       repoRoot: this.promptContext.repoRoot,
@@ -410,6 +425,7 @@ export class ChatRuntime {
       platform: this.promptContext.platform,
       skillsBlock: this.promptContext.skillsBlock,
       projectContextBlock: this.promptContext.projectContextBlock,
+      mcpServers: this.mcp.listServers(),
     });
   }
 }

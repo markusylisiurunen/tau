@@ -4,6 +4,7 @@ import { isSupportedImageType, prepareImageForModel } from "../core/utils/model_
 export const CODE_MODE_MAX_IMAGE_PIXELS = 40_000_000;
 
 export async function prepareCodeModeImage(value: unknown): Promise<ImageContent> {
+  if (value instanceof Uint8Array) return prepareImage(Buffer.from(value));
   if (
     typeof value !== "object" ||
     value === null ||
@@ -23,18 +24,25 @@ export async function prepareCodeModeImage(value: unknown): Promise<ImageContent
   if (!value.data || content.toString("base64") !== value.data) {
     throw new Error("printImage() requires valid, padded base64 data.");
   }
+  return prepareImage(content, value.mimeType);
+}
+
+async function prepareImage(content: Buffer, claimedMimeType?: string): Promise<ImageContent> {
   const [{ fileTypeFromBuffer }, { default: sharp }] = await Promise.all([
     import("file-type"),
     import("sharp"),
   ]);
   const detected = await fileTypeFromBuffer(content);
-  if (detected?.mime !== value.mimeType) {
+  if (!detected || !isSupportedImageType(detected.mime)) {
+    throw new Error("printImage() supports JPEG, PNG, and WebP.");
+  }
+  if (claimedMimeType && detected.mime !== claimedMimeType) {
     throw new Error("printImage() MIME type does not match the image data.");
   }
   await sharp(content, { limitInputPixels: CODE_MODE_MAX_IMAGE_PIXELS })
     .resize({ width: 1, height: 1, fit: "inside" })
     .raw()
     .toBuffer();
-  const prepared = await prepareImageForModel(content, value.mimeType, sharp);
+  const prepared = await prepareImageForModel(content, detected.mime, sharp);
   return { type: "image", data: prepared.content.toString("base64"), mimeType: prepared.mimeType };
 }

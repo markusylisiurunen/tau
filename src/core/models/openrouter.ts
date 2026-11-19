@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { ApiKeysConfig } from "../config/index.js";
-import { getApiKeyForProvider } from "../config/schema.js";
+import { getOpenRouterApiKey } from "../config/schema.js";
 import { parseMediaJson, readMediaResponse } from "../utils/media_validation.js";
 import { withOpenRouterBudget } from "./openrouter_budget.js";
 import {
@@ -27,13 +27,16 @@ export type OpenRouterRequestOptions = {
   fetchImpl?: typeof fetch;
 };
 
+type ChatMessage =
+  | { role: "assistant"; content: string }
+  | { role: "user"; content: Array<{ type: "text"; text: string } | OpenRouterAttachment> };
+
 export type OpenRouterChatInput = {
   model: string;
-  prompt: string;
   system?: string;
   reasoning?: string;
   schema?: Record<string, unknown>;
-  attachments: OpenRouterAttachment[];
+  messages: ChatMessage[];
 };
 
 export type OpenRouterDecisionsInput = {
@@ -158,6 +161,14 @@ const chatResponse = z.object({
   ]),
 });
 
+/** Thrown when no OpenRouter key is configured, which callers can report as unavailable. */
+export class OpenRouterMissingKeyError extends Error {
+  constructor() {
+    super("configure OPENROUTER_API_KEY or global apiKeys.openrouter on this machine");
+    this.name = "OpenRouterMissingKeyError";
+  }
+}
+
 function requestFailure(status: number): Error {
   const kind =
     status === 401
@@ -182,11 +193,8 @@ async function requestOpenRouter(
   const payload = JSON.stringify(body);
   if (Buffer.byteLength(payload) > OPENROUTER_REQUEST_BYTES)
     throw new Error("encoded request exceeds 512 MiB; reduce text or attachments");
-  const key =
-    (options.env ?? process.env).OPENROUTER_API_KEY?.trim() ||
-    getApiKeyForProvider(options.config, "openrouter");
-  if (!key)
-    throw new Error("configure OPENROUTER_API_KEY or global apiKeys.openrouter on this machine");
+  const key = getOpenRouterApiKey(options.config, options.env);
+  if (!key) throw new OpenRouterMissingKeyError();
   if (!/^[\x21-\x7e]+$/.test(key))
     throw new Error("OpenRouter API key must contain only printable ASCII without whitespace");
   const response = await (options.fetchImpl ?? fetch)(
@@ -252,28 +260,45 @@ export async function requestOpenRouterChat(
   const spec = resolveOpenRouterModel("chat", input.model);
   if (input.reasoning !== undefined && !spec.reasoning.includes(input.reasoning))
     throw new Error("unsupported reasoning effort");
-  if (input.attachments.some((attachment) => !spec.inputs.includes(attachment.kind)))
+  const turns = input.messages;
+  const attachments = turns.flatMap((turn) =>
+    turn.role === "user"
+      ? turn.content.filter((part): part is OpenRouterAttachment => "kind" in part)
+      : [],
+  );
+  if (attachments.some((attachment) => !spec.inputs.includes(attachment.kind))) {
     throw new Error("unsupported attachment modality for the selected model");
-  for (const value of [input.prompt, ...(input.system === undefined ? [] : [input.system])]) {
-    if (!value.trim()) throw new Error("prompt and system must be nonblank");
+  }
+  const text = turns.flatMap((turn) =>
+    turn.role === "assistant"
+      ? [turn.content]
+      : turn.content.flatMap((part) => ("text" in part ? [part.text] : [])),
+  );
+  if (text.some((value) => !value.trim()) || (input.system !== undefined && !input.system.trim())) {
+    throw new Error("message text and system must be nonblank");
   }
   const textBytes =
-    Buffer.byteLength(input.prompt) +
+    text.reduce((total, value) => total + Buffer.byteLength(value), 0) +
     Buffer.byteLength(input.system ?? "") +
     (input.schema === undefined ? 0 : Buffer.byteLength(JSON.stringify(input.schema)));
   if (textBytes > OPENROUTER_TEXT_BYTES) throw new Error("combined model text exceeds 20 MiB");
-  return await withOpenRouterBudget(input.attachments, textBytes, options.signal, async () => {
-    const media = await prepareOpenRouterAttachments(
-      input.attachments,
-      options.mediaAdapter,
-      options.signal,
-    );
+  return await withOpenRouterBudget(attachments, textBytes, options.signal, async () => {
+    const media = (
+      await prepareOpenRouterAttachments(attachments, options.mediaAdapter, options.signal)
+    ).values();
     const messages: Array<
-      | { role: "system"; content: string }
+      | { role: "system" | "assistant"; content: string }
       | { role: "user"; content: Array<{ type: "text"; text: string } | OpenRouterMediaPart> }
     > = [];
     if (input.system !== undefined) messages.push({ role: "system", content: input.system });
-    messages.push({ role: "user", content: [{ type: "text", text: input.prompt }, ...media] });
+    for (const turn of turns) {
+      if (turn.role === "assistant") messages.push(turn);
+      else
+        messages.push({
+          role: "user",
+          content: turn.content.map((part) => ("kind" in part ? media.next().value! : part)),
+        });
+    }
     const result = chatResponse.safeParse(
       await requestOpenRouter(
         "chat",

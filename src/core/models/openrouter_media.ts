@@ -9,7 +9,7 @@ export const OPENROUTER_MEDIA_BYTES = 256 * 1024 * 1024;
 export const OPENROUTER_RESPONSE_BYTES = 32 * 1024 * 1024;
 export type OpenRouterAttachment = { kind: "image" | "audio" | "video" } & (
   | { path: string; data?: never; mimeType?: never }
-  | { data: string; mimeType: string; path?: never }
+  | { data: string; mimeType?: string; path?: never }
 );
 export type OpenRouterMediaPart =
   | { type: "image_url"; image_url: { url: string } }

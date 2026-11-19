@@ -3,21 +3,26 @@ import { Type } from "typebox";
 import { z } from "zod";
 import {
   CODE_MODE_MAX_OUTPUT_TOKENS_DESCRIPTION,
+  describeTauCodeModePackages,
   TAU_CODE_MODE_DEFAULT_MAX_OUTPUT_TOKENS,
   TAU_CODE_MODE_MAX_OUTPUT_TOKENS,
 } from "../../code_mode/runtime.js";
+import type { AgentCapabilities } from "../agent/capabilities.js";
+import type { NotificationInbox } from "../agent/notification_inbox.js";
 import {
-  type AgentsCapabilityOptions,
-  agentsCapabilityMetadata,
-  createAgentsCapability,
+  type AgentsPackageOptions,
+  agentsPackageDescription,
+  createAgentsPackage,
+  createUnavailableAgentsPackage,
 } from "../code_mode/agents.js";
-import { createBashCapability } from "../code_mode/bash.js";
-import type { CodeModeCapability } from "../code_mode/capability.js";
-import { createHistoryCapability } from "../code_mode/history.js";
-import { createMcpCapability } from "../code_mode/mcp.js";
-import { createModelsCapability } from "../code_mode/models.js";
-import { bindCodeModeSdk } from "../code_mode/sdk.js";
-import { createWebCapability } from "../code_mode/web.js";
+import { createBashPackage } from "../code_mode/bash.js";
+import { createFilesPackage } from "../code_mode/files.js";
+import { createHistoryPackage } from "../code_mode/history.js";
+import { createMcpPackage } from "../code_mode/mcp.js";
+import { createModelsPackage } from "../code_mode/models.js";
+import { createNotificationsPackage } from "../code_mode/notifications.js";
+import type { CodeModePackage } from "../code_mode/package.js";
+import { createWebPackage } from "../code_mode/web.js";
 import type { SessionRuntimeSettings } from "../config/index.js";
 import type { HistoryQuery } from "../history/types.js";
 import type { McpManager } from "../mcp/manager.js";
@@ -25,11 +30,12 @@ import { formatZodError } from "../utils/zod.js";
 import type { BashJobRegistry } from "./bash_jobs.js";
 import type { CodeJobRegistry } from "./code_jobs.js";
 import {
-  type CodeModeToolImplementation,
-  executeCodeModeTool,
-  executeInternalCodeMode,
+  type CodeProgramRun,
+  presentCodeProgramBlocked,
+  presentCodeProgramResult,
+  runCodeProgram,
 } from "./code_mode.js";
-import { loadCodeProgram } from "./code_preloads.js";
+import { loadCodeProgram } from "./code_modules.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import { buildToolRunPresentation } from "./presentation.js";
 import { type AgentTool, createTextToolOutcome, executeTool } from "./registry.js";
@@ -77,46 +83,61 @@ function getCodeSubject(raw: unknown): string {
   return "(invalid code)";
 }
 
+/** The `code` tool with every Tau package. Capabilities decide which calls succeed. */
 export function createCodeToolDefinition(options: {
   backend: ToolExecutionBackend;
   cwd: string;
-  allowedTools: readonly string[];
   config: SessionRuntimeSettings;
   bashJobs: BashJobRegistry;
   codeJobs: CodeJobRegistry;
-  history?: HistoryQuery;
-  mcp?: McpManager;
-  agents?: AgentsCapabilityOptions;
-}): AgentTool | undefined {
-  const allowed = new Set(options.allowedTools);
-  const capabilities: CodeModeCapability[] = [];
-  if (allowed.has("bash"))
-    capabilities.push(createBashCapability(options.backend, options.cwd, options.bashJobs));
-  if (allowed.has("web")) capabilities.push(createWebCapability(options.backend, options.config));
-  if (allowed.has("history")) {
-    if (!options.history) throw new Error("history query is required when history is enabled");
-    capabilities.push(createHistoryCapability(options.history));
-  }
-  if (allowed.has("mcp") && options.mcp?.available)
-    capabilities.push(createMcpCapability(options.mcp));
-  if (allowed.has("models"))
-    capabilities.push(createModelsCapability(options.backend, options.config));
-  const metadata = [...capabilities, ...(options.agents ? [agentsCapabilityMetadata] : [])];
-  if (!metadata.length) return undefined;
-  const sdkFor = (origin: string) =>
-    bindCodeModeSdk([
-      ...capabilities,
-      ...(options.agents ? [createAgentsCapability(options.agents, origin)] : []),
-    ]);
+  history: HistoryQuery;
+  mcp: McpManager;
+  notifications: NotificationInbox;
+  capabilities: AgentCapabilities;
+  agents?: AgentsPackageOptions;
+}): AgentTool {
+  const { capabilities } = options;
+  const packages: CodeModePackage[] = [
+    createBashPackage(options.backend, options.cwd, options.bashJobs),
+    createFilesPackage(options.backend),
+    createWebPackage(options.backend, options.config, capabilities.web),
+    createModelsPackage(options.backend, options.config, capabilities.models),
+    createHistoryPackage(options.history),
+    createMcpPackage(options.mcp),
+    createNotificationsPackage(options.notifications),
+  ];
+  const agents = options.agents;
+  return createCodeTool({
+    backend: options.backend,
+    cwd: options.cwd,
+    codeJobs: options.codeJobs,
+    summaries: [...packages, { name: "@tau/agents", description: agentsPackageDescription }],
+    packagesFor: (origin) => [
+      ...packages,
+      agents
+        ? createAgentsPackage(agents, capabilities, origin)
+        : createUnavailableAgentsPackage(capabilities.delegation),
+    ],
+  });
+}
+
+/**
+ * The `code` tool over a fixed set of packages. `packagesFor` receives the assistant message
+ * that launches a program, because `@tau/agents` records it as the origin of new workers.
+ */
+export function createCodeTool(options: {
+  backend: ToolExecutionBackend;
+  cwd: string;
+  codeJobs: CodeJobRegistry;
+  summaries: ReadonlyArray<{ name: string; description: string }>;
+  packagesFor(origin: string): CodeModePackage[];
+}): AgentTool {
   const schema: Tool = {
     name: TOOL_NAME_CODE,
     description: [
-      "Run a JavaScript program using enabled Tau capabilities, either inline or from a saved .js file. Use it to chain dependent calls, combine independent work, or process results before printing a concise answer.",
-      `Available capabilities: ${metadata.map((capability) => capability.name).join(", ")}.`,
-      ...metadata.map((capability) => `tau.${capability.name}: ${capability.description}`),
-      'Before your first program, run a documentation-only program that prints the runtime guide and the reference of each capability you plan to use, such as `printText(docs); printText(await tau.docs("web"))`. Skip what is already visible in the conversation. Read a newly needed capability\'s reference the same way before using it, and do not guess API signatures.',
-      "Use printText(string) and await printImage({ data, mimeType }) for output. printText rejects objects and arrays, so select the relevant fields and format them as concise plain text. Use JSON.stringify only on selected data when the JSON structure matters. Return values are ignored. Programs have request and output limits, and foreground programs also have a deadline. Side effects are not rolled back, and programs are not retried automatically.",
-      "Use background: true only when you can make useful progress while the program runs. If you would only wait for it to finish, run it in the foreground with a timeout that fits. A background launch returns a job ID right away, and the code job tools read, wait for, or stop the job. Jobs keep running across turns and interruptions, but are lost when the session restarts.",
+      "Run a JavaScript program that imports Tau packages, either inline or from a saved .js file. Use it to pass results between dependent calls, run independent work in parallel, or reduce large results before printing a short answer. A direct tool call is simpler when a program adds nothing.",
+      `${describeTauCodeModePackages(options.summaries)} \`docs("examples")\` returns recipes that combine packages.`,
+      "Only printed output comes back. Side effects are not rolled back, and programs are not retried automatically.",
     ].join("\n\n"),
     parameters: Type.Object(
       {
@@ -138,47 +159,30 @@ export function createCodeToolDefinition(options: {
         file: Type.Optional(
           Type.String({
             description:
-              "Path to a saved .js program, absolute or relative to the current working directory. The file and any files it names with // @preload are read when the call starts. Each file can be at most 1 MiB. The program runs with the same capabilities and limits as inline code. Supply exactly one of code or file.",
+              "Path to a saved .js program, absolute or relative to the current working directory. It runs like inline code, and each source file can be at most 1 MiB. Supply exactly one of code or file.",
           }),
         ),
         input: Type.Optional(
           Type.Unknown({
             description:
-              "JSON value available to the program as the global input. Defaults to null. At most 16 KiB when serialized as JSON.",
+              "JSON value available as the input export of @tau/core. Defaults to null. At most 16 KiB when serialized as JSON.",
           }),
         ),
         background: Type.Optional(
           Type.Boolean({
             description:
-              "Run as a background job and return its ID immediately. The job has no overall deadline. Cannot be combined with timeout or maxOutputTokens. Set the output budget when reading or waiting for the job.",
+              "Run as a background job and return its ID immediately. Use it only when you can make useful progress while the program runs. The job has no overall deadline and keeps running across turns and interruptions, but is lost when the session restarts. Read, wait for, or stop it with the code job tools, and set the output budget there. Cannot be combined with timeout or maxOutputTokens.",
           }),
         ),
         code: Type.Optional(
           Type.String({
             description:
-              "JavaScript source. Supply exactly one of code or file. Print relevant text with printText and forward images with awaited printImage.",
+              "JavaScript source. Supply exactly one of code or file. Print relevant text with printText and forward images with awaited printImage, both from @tau/core.",
           }),
         ),
       },
       { additionalProperties: false },
     ),
-  };
-  const implementation: CodeModeToolImplementation = {
-    schema,
-    execute: async ({ code, sourceName, preloads, input, maxOutputTokens, timeoutMs, context }) => {
-      return await executeInternalCodeMode({
-        name: "tau",
-        ...sdkFor(context.assistantMessageId),
-        code,
-        sourceName,
-        preloads,
-        input,
-        maxOutputTokens,
-        backend: options.backend,
-        signal: context.signal,
-        timeoutMs,
-      });
-    },
   };
   return {
     schema,
@@ -191,15 +195,18 @@ export function createCodeToolDefinition(options: {
     }),
     execute: async (call, context) => {
       const parsed = argsSchema.safeParse(call.arguments);
-      if (!parsed.success)
-        return executeCodeModeTool(implementation, call, context, {
-          ok: false,
-          error: formatZodError(parsed.error),
-          subject: getCodeSubject(call.arguments),
-        });
+      if (!parsed.success) {
+        const reason = `Invalid arguments: ${formatZodError(parsed.error)}`;
+        return executeTool(
+          context,
+          presentCodeProgramBlocked(call, getCodeSubject(call.arguments), reason, "blocked"),
+        );
+      }
       const args = parsed.data;
       const subject = "file" in args ? args.file : args.code;
       const source = "file" in args ? args.file : "inline code";
+      let run: CodeProgramRun;
+      let jobId: string | undefined;
       try {
         context.signal.throwIfAborted();
         const program = await loadCodeProgram({
@@ -209,63 +216,65 @@ export function createCodeToolDefinition(options: {
           signal: context.signal,
         });
         context.signal.throwIfAborted();
-        if (args.background) {
-          const id = options.codeJobs.start({
-            source,
-            cwd: options.cwd,
-            backend: options.backend,
-            signal: context.signal,
-            program: {
-              name: "tau",
-              ...sdkFor(context.assistantMessageId),
-              ...program,
-              input: args.input,
-            },
-          });
-          const text = `Started background code job ${id} from ${JSON.stringify(source)} in ${JSON.stringify(options.cwd)}. Use read_code_job to check progress or wait_for_code_jobs to wait for completion.`;
-          return executeTool(context, () => ({
-            ...createTextToolOutcome(text, "succeeded"),
-            uiEvent: {
-              type: "code_mode_finished",
-              toolCallId: call.id,
-              toolName: TOOL_NAME_CODE,
-              status: "success",
-              presentation: buildToolRunPresentation({
-                toolName: TOOL_NAME_CODE,
-                operation: "background",
-                subject,
-                details: [{ text }],
-                actionOverrides: { succeeded: "started" },
-              }),
-            },
-          }));
-        }
-        return executeCodeModeTool(implementation, call, context, {
-          ok: true,
-          ...program,
+        run = {
+          program,
+          packages: options.packagesFor(context.assistantMessageId),
           input: args.input,
-          subject,
-          timeoutMs: args.timeout ?? CODE_DEFAULT_TIMEOUT_MS,
-          maxOutputTokens: args.maxOutputTokens ?? TAU_CODE_MODE_DEFAULT_MAX_OUTPUT_TOKENS,
-        });
+        };
+        if (args.background)
+          jobId = options.codeJobs.start({ source, backend: options.backend, run });
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
+        const outcome = context.signal.aborted ? "cancelled" : "failed";
+        return executeTool(context, presentCodeProgramBlocked(call, subject, reason, outcome));
+      }
+      if (jobId !== undefined) {
+        const text = `Started background code job ${jobId} from ${JSON.stringify(source)} in ${JSON.stringify(options.cwd)}. Use read_code_job to check progress or wait_for_code_jobs to wait for completion.`;
         return executeTool(context, () => ({
-          ...createTextToolOutcome(reason, context.signal.aborted ? "cancelled" : "failed"),
+          ...createTextToolOutcome(text, "succeeded"),
           uiEvent: {
-            type: "code_mode_blocked",
+            type: "code_mode_finished",
             toolCallId: call.id,
             toolName: TOOL_NAME_CODE,
-            reason,
+            status: "success",
             presentation: buildToolRunPresentation({
               toolName: TOOL_NAME_CODE,
-              operation: "code",
+              operation: "background",
               subject,
-              details: [{ text: reason }],
+              details: [{ text }],
+              actionOverrides: { succeeded: "started" },
             }),
           },
         }));
       }
+      const timeoutMs = args.timeout ?? CODE_DEFAULT_TIMEOUT_MS;
+      return executeTool(
+        context,
+        async () => {
+          try {
+            const runtime = await runCodeProgram(options.backend, run, {
+              signal: context.signal,
+              timeoutMs,
+              maxOutputTokens: args.maxOutputTokens ?? TAU_CODE_MODE_DEFAULT_MAX_OUTPUT_TOKENS,
+              persistTruncatedOutput: true,
+            });
+            return presentCodeProgramResult(call, subject, timeoutMs, runtime);
+          } catch (error) {
+            const reason = `Could not execute program: ${error instanceof Error ? error.message : String(error)}`;
+            return presentCodeProgramBlocked(call, subject, reason, "failed");
+          }
+        },
+        {
+          type: "code_mode_started",
+          toolCallId: call.id,
+          toolName: TOOL_NAME_CODE,
+          presentation: buildToolRunPresentation({
+            toolName: TOOL_NAME_CODE,
+            operation: TOOL_NAME_CODE,
+            subject,
+          }),
+        },
+      );
     },
   };
 }

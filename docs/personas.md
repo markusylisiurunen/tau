@@ -1,6 +1,6 @@
 # Personas
 
-A persona defines how the agent works: model, base system prompt, default reasoning, and tools. Tau ships chat and coder personas for its supported models: chat personas are general assistants for any kind of task, and coder personas are for software development. `tau --help` lists what is available. GPT models have variants for the API and for a ChatGPT subscription. A built-in persona appears only when its model is in the catalog. The default is `sonnet-5.5-coder`.
+A persona defines how the agent works: model, base system prompt, and default reasoning. Every persona has the same [tools](tools.md). Tau ships chat and coder personas for its supported models: chat personas are general assistants for any kind of task, and coder personas are for software development. `tau --help` lists what is available. GPT models have variants for the API and for a ChatGPT subscription. A built-in persona appears only when its model is in the catalog. The default is `sonnet-5.5-coder`.
 
 ## Writing a persona
 
@@ -14,7 +14,6 @@ description: Prepares and verifies repository releases.
 provider: anthropic
 model: claude-opus-5-5
 reasoning: high
-tools: [bash, write, edit, web, history]
 ---
 
 Work as a release engineer. Check the repository's release policy before changing anything.
@@ -32,26 +31,13 @@ type Frontmatter = {
   reasoning?: Reasoning; // default effort
   allowedReasoningLevels?: Reasoning[]; // what Shift+Tab cycles through
   serviceTier?: "priority" | "flex"; // openai and openai-codex only
-  tools?: ToolName[]; // default: all of them
   autoCompactThresholdTokens?: number; // at least 50000
   subagentAutoCompactThresholdTokens?: Record<string, number>; // keyed by "<provider>/<model>"
 };
 
 type Reasoning =
   "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
-type ToolName =
-  | "bash"
-  | "write"
-  | "edit"
-  | "view_image"
-  | "web"
-  | "history"
-  | "mcp"
-  | "models"
-  | "agents";
 ```
-
-A `tools` list replaces the defaults, and `tools: []` turns all of them off. `tau_docs` and client tools are always unaffected. See [tools](tools.md).
 
 An invalid persona is skipped with a warning.
 

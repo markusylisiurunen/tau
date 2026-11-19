@@ -1,12 +1,13 @@
 import {
+  buildTauCodeModeToolDescription,
   CODE_MODE_MAX_OUTPUT_TOKENS_DESCRIPTION,
-  describeCodeModeDeadline,
   executeTauCodeMode,
   parseCodeModeArguments,
   TAU_CODE_MODE_MAX_OUTPUT_TOKENS,
   type TauCodeModeDefinition,
   validateTauCodeModeDefinition,
 } from "../code_mode/runtime.js";
+import type { TauClientToolPresentation } from "./client_tool_presentation.js";
 import { truncateTauClientToolText } from "./client_tool_presentation.js";
 import type { TauSdkClientTool } from "./types.js";
 
@@ -24,15 +25,17 @@ export function createTauCodeModeClientTool(
     ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
     ...(options.persistOutput === undefined ? {} : { persistOutput: options.persistOutput }),
   };
-  validateTauCodeModeDefinition(definition);
-  if (!options.description.trim()) {
-    throw new Error("code-mode client tool description must not be empty");
-  }
+  const handlers = createTauCodeModeHandlers(definition);
+  const description = buildTauCodeModeToolDescription({
+    name: options.name,
+    description: options.description,
+    timeoutMs: options.timeoutMs,
+  });
 
   return {
     schema: {
       name: options.name,
-      description: `${options.description}\n\n${describeCodeModeDeadline(options.timeoutMs)}`,
+      description,
       parameters: {
         type: "object",
         properties: {
@@ -45,7 +48,7 @@ export function createTauCodeModeClientTool(
           code: {
             type: "string",
             description:
-              "JavaScript source to execute. Use printText(text) for text and await printImage(block) to return images.",
+              "JavaScript source to execute. Print text with printText and forward images with awaited printImage, both from @tau/core.",
           },
         },
         required: ["code"],
@@ -53,6 +56,17 @@ export function createTauCodeModeClientTool(
       },
       ...(options.timeoutMs === undefined ? {} : { executionTimeoutMs: options.timeoutMs }),
     },
+    ...handlers,
+  };
+}
+
+/** Runs programs for a code-mode client tool, whether the SDK or a command hosts it. */
+export function createTauCodeModeHandlers(definition: TauCodeModeDefinition): {
+  describe(args: unknown): TauClientToolPresentation;
+  execute: TauSdkClientTool["execute"];
+} {
+  validateTauCodeModeDefinition(definition);
+  return {
     describe: (args) => createCodeModePresentation(parseCodeModeArguments(args).code),
     execute: async (args, context) => {
       const { code, maxOutputTokens } = parseCodeModeArguments(args);

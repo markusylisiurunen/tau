@@ -844,6 +844,15 @@ function getTrimmedEnvValue(key: string, env?: NodeJS.ProcessEnv): string | unde
   return trimmed || undefined;
 }
 
+export function getOpenRouterApiKey(
+  config: ApiKeysConfig,
+  env?: NodeJS.ProcessEnv,
+): string | undefined {
+  return (
+    getTrimmedEnvValue("OPENROUTER_API_KEY", env) ?? getApiKeyForProvider(config, "openrouter")
+  );
+}
+
 export function getExaApiKey(config: ApiKeysConfig, env?: NodeJS.ProcessEnv): string | undefined {
   const envKey = getTrimmedEnvValue("EXA_API_KEY", env);
   if (envKey) {

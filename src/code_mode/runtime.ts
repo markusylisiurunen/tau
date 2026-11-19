@@ -1,16 +1,17 @@
+import { readFileSync } from "node:fs";
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import {
   CODE_MODE_MAX_BRIDGE_PAYLOAD_BYTES,
-  CODE_MODE_MAX_BRIDGE_REQUESTS,
-  CODE_MODE_MAX_CONCURRENT_BRIDGE_REQUESTS,
   executeCodeModeWorker,
 } from "../core/tools/code_mode_worker.js";
 import { bytesToTokens } from "../core/utils/token.js";
 import { formatBytes, truncateForTokens } from "../core/utils/truncate.js";
 import { SESSION_PROTOCOL_MAX_CLIENT_TOOL_IMAGES } from "../protocol/session_protocol.js";
 import type { TauSdkClientToolExecutionEnvironment } from "../sdk/types.js";
-import { CODE_MODE_MAX_IMAGE_PIXELS, prepareCodeModeImage } from "./images.js";
+import { codeModeError } from "./errors.js";
+import { prepareCodeModeImage } from "./images.js";
 import { CodeModeOutput } from "./output.js";
+import { decodeBridgeValue, encodeBridgeValue } from "./wire.js";
 
 export const TAU_CODE_MODE_DEFAULT_TIMEOUT_MS = 60_000;
 export const TAU_CODE_MODE_DEFAULT_MAX_OUTPUT_TOKENS = 8_192;
@@ -18,18 +19,13 @@ export const TAU_CODE_MODE_MAX_OUTPUT_TOKENS = 65_536;
 export const CODE_MODE_MAX_OUTPUT_TOKENS_DESCRIPTION =
   "Maximum estimated output tokens to return. Defaults to 8192. Printing selected results usually works better than raising this. Set it only when you need more output, to a value between 8192 and 16384. Go above 16384, up to 65536, only when the user explicitly asks for more output. Output over the limit is cut from the middle. Its side effects have already happened, so read saved output instead of running a program with side effects again.";
 
+const CORE_PACKAGE = "@tau/core";
 const sandboxRunnerUrl = new URL("../core/static/code_mode/sandbox_runner.mjs", import.meta.url);
-const javascriptIdentifierPattern = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
-const reservedNames = new Set([
-  ...Object.getOwnPropertyNames(globalThis),
-  "docs",
-  "input",
-  "printText",
-  "printImage",
-  "truncate",
-  "truncateLines",
-]);
+const coreDocumentationUrl = new URL("../core/static/code_mode/docs/core.md", import.meta.url);
+const toolPackageNamePattern = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
+const exportNamePattern = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 const unsafeApiKeys = new Set(["__proto__", "constructor", "prototype"]);
+let coreDocumentation: string | undefined;
 
 export type TauCodeModeJsonValue =
   | null
@@ -60,6 +56,13 @@ export type TauCodeModeApi = {
   [key: string]: TauCodeModeApi | TauCodeModeHandler;
 };
 
+/** A module that programs import by name. Its documentation is what `docs(name)` returns. */
+export type TauCodeModePackage = {
+  name: string;
+  documentation: string;
+  api: TauCodeModeApi;
+};
+
 export type TauCodeModeExecutionStatus = "succeeded" | "failed" | "timed-out" | "cancelled";
 
 type TauCodeModeProjection = {
@@ -74,15 +77,12 @@ type TauCodeModeProjection = {
   maxTokens: number;
 };
 
-type TauCodeModeExecutionCapture = {
-  output: string;
-  stdout: string;
-  stderr: string;
-  exitCode: number | null;
-  truncated: boolean;
+/** How the program ended. Its output arrives through `onOutput` while it runs. */
+export type CodeModeWorkerResult = {
+  exitCode: number | null; // null after a timeout or cancellation
+  truncated: boolean; // output beyond the capture limit was dropped
   timedOut: boolean;
   aborted: boolean;
-  closeSignal: string | null;
 };
 
 export type TauCodeModePersistOutput = (
@@ -95,6 +95,7 @@ export type TauCodeModePersistOutput = (
   context: TauCodeModeHandlerContext,
 ) => Promise<{ path: string } | undefined>;
 
+/** A code-mode tool whose programs import `api` from the module `name`, next to `@tau/core`. */
 export type TauCodeModeDefinition = {
   name: string;
   documentation: string;
@@ -102,8 +103,6 @@ export type TauCodeModeDefinition = {
   timeoutMs?: number;
   persistOutput?: TauCodeModePersistOutput;
 };
-
-export type TauCodeModeSource = { code: string; sourceName: string };
 
 export type ExecuteTauCodeModeOptions = TauCodeModeDefinition & {
   code: string;
@@ -120,43 +119,78 @@ export type TauCodeModeResult = {
 export type BuildTauCodeModeToolDescriptionOptions = {
   name: string;
   description: string;
+  timeoutMs?: number;
+};
+
+/** Where relative `.js` imports load from. Without it, programs cannot import local files. */
+export type CodeModeSources = {
+  cwd: string;
+  entryPath?: string;
+  read(path: string, signal: AbortSignal): Promise<string>;
+};
+
+export type RunTauCodeModeOptions = {
+  packages: TauCodeModePackage[];
+  /** Further `docs(page)` pages that are not packages, such as recipes. */
+  pages?: Record<string, string>;
+  code: string;
+  sources?: CodeModeSources;
+  input?: TauCodeModeJsonValue;
+  maxOutputTokens?: number;
+  /** `null` runs without a deadline. */
+  timeoutMs: number | null;
+  signal?: AbortSignal;
+  invocation?: TauCodeModeInvocation | null;
+  executionEnvironment?: TauSdkClientToolExecutionEnvironment | null;
+  persistOutput?: TauCodeModePersistOutput;
+  output?: CodeModeOutput;
 };
 
 type RegisteredMethod = {
   id: number;
-  apiName: string;
+  label: string;
   path: string[];
   handler: TauCodeModeHandler;
-};
-
-type RegisteredApi = {
-  name: string;
-  methods: RegisteredMethod[];
 };
 
 export type TauCodeModeRuntimeResult = {
   result: TauCodeModeResult;
   status: TauCodeModeExecutionStatus;
-  execution: TauCodeModeExecutionCapture;
+  execution: CodeModeWorkerResult;
   durationMs: number;
   projection: TauCodeModeProjection;
   persistedPath?: string;
 };
 
+/** Lists the importable packages and tells the model how to read their references. */
+export function describeTauCodeModePackages(
+  packages: ReadonlyArray<{ name: string; description: string }>,
+): string {
+  const example = packages[0]?.name ?? CORE_PACKAGE;
+  return [
+    [
+      "Available packages:",
+      `- ${CORE_PACKAGE}: Read program input, print text and images, truncate long text, and load package references.`,
+      ...packages.map(({ name, description }) => `- ${name}: ${description}`),
+    ].join("\n"),
+    `Before you first use a package, read its reference unless it is already in the conversation. Load references in a program of their own: \`import { docs, printText } from "${CORE_PACKAGE}"; printText(await docs());\` prints the general guide and the ${CORE_PACKAGE} reference, and \`docs(${JSON.stringify(example)})\` returns the reference of that package. Load only the pages you need.`,
+  ].join("\n\n");
+}
+
 export function buildTauCodeModeToolDescription({
   name,
   description,
+  timeoutMs,
 }: BuildTauCodeModeToolDescriptionOptions): string {
-  validateName(name);
-  const trimmedDescription = description.trim();
-  if (!trimmedDescription) throw new Error("code-mode tool description must not be empty");
+  validateToolPackageName(name);
+  const trimmed = description.trim();
+  if (!trimmed) throw new Error("code-mode tool description must not be empty");
   return [
-    trimmedDescription,
-    "When this tool is useful, first check whether its documentation is already visible in the conversation context.",
-    "If it is not, your first call must be a documentation-only program that does nothing except print docs with printText(docs).",
-    `Read the returned documentation before writing a later tool call that uses ${name}.`,
-    "Once the documentation is visible, use the API normally without reloading it, and do not guess API signatures.",
-  ].join(" ");
+    trimmed,
+    "Run a JavaScript program that imports this tool's API. Programs use static imports and top-level await, and only printed output comes back.",
+    describeTauCodeModePackages([{ name, description: "the API of this tool." }]),
+    describeCodeModeDeadline(timeoutMs),
+  ].join("\n\n");
 }
 
 export function describeCodeModeDeadline(timeoutMs = TAU_CODE_MODE_DEFAULT_TIMEOUT_MS): string {
@@ -164,18 +198,25 @@ export function describeCodeModeDeadline(timeoutMs = TAU_CODE_MODE_DEFAULT_TIMEO
 }
 
 export function validateTauCodeModeDefinition(definition: TauCodeModeDefinition): void {
-  validateName(definition.name);
-  if (!definition.documentation.trim()) {
-    throw new Error("code-mode documentation must not be empty");
-  }
+  validateToolPackageName(definition.name);
   validateTimeout(definition.timeoutMs);
-  registerMethods(definition.api, definition.name);
+  validatePackage(definitionPackage(definition));
 }
 
 export async function executeTauCodeMode(
   options: ExecuteTauCodeModeOptions,
 ): Promise<TauCodeModeResult> {
-  const runtime = await runTauCodeMode(options);
+  validateTauCodeModeDefinition(options);
+  const runtime = await runTauCodeMode({
+    packages: [definitionPackage(options)],
+    code: options.code,
+    maxOutputTokens: options.maxOutputTokens,
+    timeoutMs: options.timeoutMs ?? TAU_CODE_MODE_DEFAULT_TIMEOUT_MS,
+    signal: options.signal,
+    invocation: options.invocation,
+    executionEnvironment: options.executionEnvironment,
+    persistOutput: options.persistOutput,
+  });
   if (runtime.status === "succeeded") return runtime.result;
   throw new Error(
     runtime.result.content
@@ -186,36 +227,37 @@ export async function executeTauCodeMode(
 }
 
 export async function runTauCodeMode(
-  options: Omit<ExecuteTauCodeModeOptions, "timeoutMs"> & {
-    sourceName?: string;
-    preloads?: TauCodeModeSource[];
-    timeoutMs?: number | null;
-    input?: TauCodeModeJsonValue;
-    output?: CodeModeOutput;
-  },
+  options: RunTauCodeModeOptions,
 ): Promise<TauCodeModeRuntimeResult> {
-  validateName(options.name);
   if (typeof options.code !== "string" || !options.code.trim()) {
     throw new Error("code-mode source must be a non-empty string");
   }
-  if (!options.documentation.trim()) {
-    throw new Error("code-mode documentation must not be empty");
-  }
   validateTimeout(options.timeoutMs);
   validateMaxOutputTokens(options.maxOutputTokens);
+  const pages = new Map<string, string>([[CORE_PACKAGE, readCoreDocumentation()]]);
+  for (const pkg of options.packages) {
+    validatePackage(pkg);
+    if (pages.has(pkg.name)) throw new Error(`code-mode package '${pkg.name}' is defined twice`);
+    pages.set(pkg.name, pkg.documentation);
+  }
+  for (const [name, page] of Object.entries(options.pages ?? {})) {
+    if (pages.has(name)) throw new Error(`code-mode page '${name}' is defined twice`);
+    pages.set(name, page);
+  }
 
-  const apiMethods = registerMethods(options.api, options.name);
-  const apis: RegisteredApi[] = [{ name: options.name, methods: apiMethods }];
-  const methods = apis.flatMap((api) => api.methods);
   const orderedOutput = options.output ?? new CodeModeOutput();
   let imageCount = 0;
-  const imageMethodId = methods.length;
-  methods.push({
-    id: imageMethodId,
-    apiName: "printImage",
-    path: [],
-    handler: async (args, context) => {
-      if (args.length !== 1) throw new Error("printImage() expects exactly one image block.");
+  const core: TauCodeModeApi = {
+    docs: ([page = CORE_PACKAGE]) => {
+      const documentation = typeof page === "string" ? pages.get(page) : undefined;
+      if (documentation !== undefined) return documentation;
+      throw codeModeError(
+        "unknown_page",
+        `Unknown docs page ${JSON.stringify(page)}. Available pages: ${[...pages.keys()].join(", ")}`,
+      );
+    },
+    printImage: async (args, context) => {
+      if (args.length !== 1) throw new Error("printImage() expects exactly one image.");
       if (imageCount >= SESSION_PROTOCOL_MAX_CLIENT_TOOL_IMAGES) {
         throw new Error(
           `printImage() allows at most ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_IMAGES} images per program.`,
@@ -225,38 +267,51 @@ export async function runTauCodeMode(
       const slot = orderedOutput.reserveImage();
       try {
         context.signal.throwIfAborted();
-        const prepared = await prepareCodeModeImage(args[0]);
+        slot.value = await prepareCodeModeImage(args[0]);
         context.signal.throwIfAborted();
-        slot.value = prepared;
         return null;
       } catch (error) {
         imageCount -= 1;
         throw error;
       }
     },
+  };
+  const packages = [{ name: CORE_PACKAGE, api: core }, ...options.packages];
+  const methods: RegisteredMethod[] = [];
+  const apis = packages.map(({ name, api }) => {
+    const registered = registerMethods(api, name, methods.length);
+    methods.push(...registered);
+    return { name, methods: registered.map(({ id, path }) => ({ id, path })) };
   });
-  const timeoutMs =
-    options.timeoutMs === undefined ? TAU_CODE_MODE_DEFAULT_TIMEOUT_MS : options.timeoutMs;
+  const sources = options.sources;
+  const sourceMethodId = methods.length;
+  methods.push({
+    id: sourceMethodId,
+    label: "module loader",
+    path: [],
+    handler: ([path], context) => {
+      if (!sources) throw new Error("This tool cannot import local files");
+      if (typeof path !== "string") throw new Error("Invalid module path");
+      return sources.read(path, context.signal);
+    },
+  });
+
+  const timeoutMs = options.timeoutMs;
   const invocation = options.invocation ?? null;
   const executionEnvironment = options.executionEnvironment ?? null;
   const signal = options.signal ?? new AbortController().signal;
-  const docs = buildRuntimeDocumentation(options.name, options.documentation);
   const startedAt = Date.now();
-  let execution: TauCodeModeExecutionCapture;
+  let execution: CodeModeWorkerResult;
   try {
     execution = await executeCodeModeWorker({
       sandboxRunnerUrl,
       workerData: {
         code: options.code,
-        sourceName: options.sourceName,
-        preloads: options.preloads ?? [],
+        cwd: sources?.cwd ?? "/",
+        entryPath: sources?.entryPath,
+        sourceMethodId,
         inputJson: JSON.stringify(options.input ?? null),
-        docs,
-        imageMethodId,
-        apis: apis.map((api) => ({
-          name: api.name,
-          methods: api.methods.map(({ id, path }) => ({ id, path })),
-        })),
+        apis,
       },
       signal,
       timeoutMs,
@@ -267,29 +322,19 @@ export async function runTauCodeMode(
       handleRequest: async (request, requestSignal) => {
         const method = methods[request.methodId];
         if (!method) throw new Error("unsupported code-mode API method");
-        const args = parseBridgeArguments(request.argsJson, method.apiName, method.path);
+        const args = parseBridgeArguments(request.argsJson, method);
         const value = await method.handler(args, {
           signal: requestSignal,
           invocation,
           executionEnvironment,
         });
-        return serializeBridgeResult(value, method.apiName, method.path);
+        return serializeBridgeResult(value, method);
       },
     });
   } catch (error) {
     const message = error instanceof Error ? error.stack || error.message : String(error);
-    const output = `${message}\n`;
-    orderedOutput.appendText(output);
-    execution = {
-      output: orderedOutput.text,
-      stdout: "",
-      stderr: output,
-      exitCode: 1,
-      truncated: false,
-      timedOut: false,
-      aborted: false,
-      closeSignal: null,
-    };
+    orderedOutput.appendText(`${message}\n`);
+    execution = { exitCode: 1, truncated: false, timedOut: false, aborted: false };
   }
   const durationMs = Math.max(0, Date.now() - startedAt);
   const status = getExecutionStatus(execution);
@@ -340,18 +385,31 @@ export async function runTauCodeMode(
   };
 }
 
-function validateName(name: string): void {
-  let isIdentifier = javascriptIdentifierPattern.test(name);
-  if (isIdentifier) {
-    try {
-      Function(`"use strict"; let ${name};`);
-    } catch {
-      isIdentifier = false;
-    }
+function definitionPackage(definition: TauCodeModeDefinition): TauCodeModePackage {
+  return { name: definition.name, documentation: definition.documentation, api: definition.api };
+}
+
+function readCoreDocumentation(): string {
+  coreDocumentation ??= readFileSync(coreDocumentationUrl, "utf8");
+  return coreDocumentation;
+}
+
+function validateToolPackageName(name: string): void {
+  if (!toolPackageNamePattern.test(name)) {
+    throw new Error(
+      `code-mode name '${name}' must start with a letter and contain only letters, digits, '_', or '-'`,
+    );
   }
-  if (!isIdentifier || reservedNames.has(name)) {
-    throw new Error(`code-mode name '${name}' must be a non-reserved JavaScript identifier`);
+}
+
+function validatePackage(pkg: TauCodeModePackage): void {
+  if (!pkg.name || pkg.name === CORE_PACKAGE || pkg.name.startsWith(".")) {
+    throw new Error(`code-mode package name '${pkg.name}' is reserved`);
   }
+  if (!pkg.documentation.trim()) {
+    throw new Error(`code-mode package '${pkg.name}' needs documentation`);
+  }
+  registerMethods(pkg.api, pkg.name, 0);
 }
 
 function validateTimeout(timeoutMs: number | null | undefined): void {
@@ -397,25 +455,30 @@ export function parseCodeModeArguments(value: unknown): {
   return { code: args.code, maxOutputTokens: args.maxOutputTokens as number | undefined };
 }
 
-function registerMethods(api: TauCodeModeApi, apiName: string, firstId = 0): RegisteredMethod[] {
+// Top-level keys become a package's named exports, and nested objects become frozen namespaces.
+function registerMethods(api: TauCodeModeApi, name: string, firstId: number): RegisteredMethod[] {
   const methods: RegisteredMethod[] = [];
   const visit = (value: TauCodeModeApi, path: string[]): void => {
     if (!isPlainObject(value)) {
-      throw new Error(
-        `code-mode API '${formatPath(path)}' must be a plain object with function leaves`,
-      );
+      throw new Error(`code-mode API '${formatPath(name, path)}' must be a plain object`);
     }
     const entries = Object.entries(value);
     if (entries.length === 0) {
-      throw new Error(`code-mode API '${formatPath(path)}' must not be empty`);
+      throw new Error(`code-mode API '${formatPath(name, path)}' must not be empty`);
     }
     for (const [key, child] of entries) {
       const childPath = [...path, key];
-      if (!key || unsafeApiKeys.has(key)) {
-        throw new Error(`code-mode API key '${formatPath(childPath)}' is not allowed`);
+      const valid = path.length === 0 ? exportNamePattern.test(key) : key.length > 0;
+      if (!valid || unsafeApiKeys.has(key)) {
+        throw new Error(`code-mode API key '${formatPath(name, childPath)}' is not allowed`);
       }
       if (typeof child === "function") {
-        methods.push({ id: firstId + methods.length, apiName, path: childPath, handler: child });
+        methods.push({
+          id: firstId + methods.length,
+          label: formatPath(name, childPath),
+          path: childPath,
+          handler: child,
+        });
       } else {
         visit(child, childPath);
       }
@@ -431,109 +494,43 @@ function isPlainObject(value: unknown): value is TauCodeModeApi {
   return prototype === Object.prototype || prototype === null;
 }
 
-function formatPath(path: string[]): string {
-  return path.length > 0 ? path.join(".") : "<root>";
+function formatPath(name: string, path: string[]): string {
+  return path.length > 0 ? `${name}.${path.join(".")}` : name;
 }
 
-function parseBridgeArguments(argsJson: string, name: string, path: string[]): unknown[] {
-  const method = `${name}.${formatPath(path)}`;
+function parseBridgeArguments(argsJson: string, method: RegisteredMethod): unknown[] {
   if (Buffer.byteLength(argsJson, "utf8") > CODE_MODE_MAX_BRIDGE_PAYLOAD_BYTES) {
     throw new Error(
-      `${method} arguments exceeded the ${formatBytes(CODE_MODE_MAX_BRIDGE_PAYLOAD_BYTES)} bridge payload limit; use attachment paths instead of inline media`,
+      `${method.label} arguments exceeded the ${formatBytes(CODE_MODE_MAX_BRIDGE_PAYLOAD_BYTES)} bridge payload limit; use file paths instead of inline media`,
     );
   }
   let args: unknown;
   try {
-    args = JSON.parse(argsJson);
+    args = decodeBridgeValue(argsJson);
   } catch {
-    throw new Error(`invalid ${method} arguments`);
+    throw new Error(`invalid ${method.label} arguments`);
   }
-  if (!Array.isArray(args)) {
-    throw new Error(`invalid ${method} arguments`);
-  }
+  if (!Array.isArray(args)) throw new Error(`invalid ${method.label} arguments`);
   return args;
 }
 
-function serializeBridgeResult(value: unknown, name: string, path: string[]): string {
-  let json: string | undefined;
+function serializeBridgeResult(value: unknown, method: RegisteredMethod): string {
+  let json: string;
   try {
-    json = JSON.stringify(value, (_key, nested) => {
-      if (
-        nested === undefined ||
-        typeof nested === "function" ||
-        typeof nested === "symbol" ||
-        typeof nested === "bigint" ||
-        (typeof nested === "number" && !Number.isFinite(nested))
-      ) {
-        throw new TypeError("Code-mode API results must be JSON-serializable values");
-      }
-      return nested;
-    });
+    json = encodeBridgeValue(value, false);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    throw new Error(`${name}.${formatPath(path)} returned a non-JSON value: ${detail}`);
-  }
-  if (json === undefined) {
-    throw new Error(`${name}.${formatPath(path)} returned a non-JSON value`);
+    throw new Error(`${method.label} returned a non-JSON value: ${detail}`);
   }
   if (Buffer.byteLength(json, "utf8") > CODE_MODE_MAX_BRIDGE_PAYLOAD_BYTES) {
     throw new Error(
-      `${name}.${formatPath(path)} result exceeded the ${formatBytes(CODE_MODE_MAX_BRIDGE_PAYLOAD_BYTES)} bridge payload limit`,
+      `${method.label} result exceeded the ${formatBytes(CODE_MODE_MAX_BRIDGE_PAYLOAD_BYTES)} bridge payload limit`,
     );
   }
   return json;
 }
 
-function buildRuntimeDocumentation(name: string, documentation: string): string {
-  return [
-    "# Code-mode runtime",
-    "",
-    "## Available globals",
-    "",
-    `- \`${name}\`: the explicitly exposed API documented below.`,
-    "- `input`: the JSON value supplied with the program, or `null` when none was supplied.",
-    "- `printText(text)`: emits a string to the model.",
-    "- `await printImage(block)`: emits a validated base64 image to the model.",
-    "- `truncate(text, { maxChars, position? })`: bounds Unicode characters, including an omission marker.",
-    "- `truncateLines(text, { maxLines, position? })`: bounds lines, including an omission marker.",
-    "- `Date`: standard date handling with live current-time access.",
-    "- `Math`: standard math operations, including `Math.random()`.",
-    "",
-    "For `truncate` and `truncateLines`, `position` is `middle` (the default), `start` (keep the start), or `end` (keep the end). Limits must be positive integers.",
-    "",
-    "Top-level `await` is supported. Methods on the exposed API return promises, so await them before using their results. TypeScript blocks in capability references describe signatures and data shapes. Write programs in JavaScript.",
-    "Each tool call starts a fresh program. Variables do not persist between calls, so supply the values you need again. The program's return value is ignored. Only printed text and explicitly forwarded images come back.",
-    "Generated code has no direct filesystem, process, environment, network, credential, import, timer, or fetch access. Use explicitly exposed capabilities.",
-    "",
-    "## API limits",
-    "",
-    `Each API request and response must be JSON-serializable and fit within ${formatBytes(CODE_MODE_MAX_BRIDGE_PAYLOAD_BYTES)}. Request smaller results with service filters or pagination when available, because filtering a response after it arrives cannot avoid this limit.`,
-    "Undefined object properties are omitted from API arguments. Undefined arguments and array entries remain invalid.",
-    `A program may make at most ${CODE_MODE_MAX_BRIDGE_REQUESTS} API calls, with at most ${CODE_MODE_MAX_CONCURRENT_BRIDGE_REQUESTS} unresolved calls concurrently. Exceeding these limits fails the program.`,
-    "The tool that runs a program can give it an overall deadline. The deadline covers the whole program, including time spent waiting for API calls. When it passes, the program stops, unresolved API calls are cancelled, and text printed so far is returned with a timeout notice. Actions already taken are not undone.",
-    "",
-    "## Output",
-    "",
-    "Printed output enters the conversation, within the tool's `maxOutputTokens` budget, and text over the budget is cut from the middle. `printText` accepts only strings, and objects and arrays throw a TypeError. Select the fields you need and print them as concise plain text, because labels and lines use fewer tokens than JSON envelopes. Keep identifiers needed for follow-up actions. For example:",
-    "",
-    "```js",
-    'printText(items.map(item => item.id + ": " + item.title).join("\\n"));',
-    "```",
-    "",
-    "Use `JSON.stringify` on selected fields only when the structure itself matters.",
-    "",
-    "## Images",
-    "",
-    'Use `await printImage({ type: "image", data, mimeType })` to forward a base64-encoded image block returned by any API. Images are never forwarded automatically. Never print base64 data as text.',
-    "Await each call so validation and preparation finish before the program exits. Invalid blocks reject and can be caught. No files are created.",
-    `Supported MIME types are image/jpeg, image/png, and image/webp. Each image block, including its base64 data, must fit within ${formatBytes(CODE_MODE_MAX_BRIDGE_PAYLOAD_BYTES)}, and source images cannot exceed ${CODE_MODE_MAX_IMAGE_PIXELS / 1_000_000} megapixels. At most ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_IMAGES} images can be forwarded per program. Images are validated against their actual bytes and resized or re-encoded to fit the model's image limits.`,
-    "Printed text and images are returned as ordered content blocks. Adjacent text writes form one text block, and each awaited image stays between the text printed before and after it. Text truncation keeps images in their original positions. Complete the program successfully to ensure all outputs are returned.",
-    "",
-    documentation.trim(),
-  ].join("\n");
-}
-
-function getExecutionStatus(execution: TauCodeModeExecutionCapture): TauCodeModeExecutionStatus {
+function getExecutionStatus(execution: CodeModeWorkerResult): TauCodeModeExecutionStatus {
   if (execution.aborted) return "cancelled";
   if (execution.timedOut) return "timed-out";
   return execution.exitCode === 0 ? "succeeded" : "failed";
@@ -541,7 +538,7 @@ function getExecutionStatus(execution: TauCodeModeExecutionCapture): TauCodeMode
 
 function appendTerminationNote(
   output: string,
-  execution: TauCodeModeExecutionCapture,
+  execution: CodeModeWorkerResult,
   timeoutMs: number | null,
 ): string {
   let notice: string | undefined;
@@ -549,8 +546,6 @@ function appendTerminationNote(
     notice = `Program timed out after ${timeoutMs}ms.`;
   } else if (execution.aborted) {
     notice = "Program was cancelled.";
-  } else if (execution.closeSignal) {
-    notice = `Program was terminated by signal ${execution.closeSignal}.`;
   }
   if (!notice) return output;
   if (!output) return `${notice}\n`;
@@ -558,7 +553,7 @@ function appendTerminationNote(
 }
 
 function formatResultContent(args: {
-  execution: TauCodeModeExecutionCapture;
+  execution: CodeModeWorkerResult;
   projection: TauCodeModeProjection;
   persistedPath?: string;
   status: TauCodeModeExecutionStatus;

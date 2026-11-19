@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { createExaClient, createWebCapability } from "../dist/core/code_mode/web.js";
+import { unavailable } from "../dist/core/agent/capabilities.js";
+import { createExaClient, createWebPackage } from "../dist/core/code_mode/web.js";
 import { discoverAgentContent } from "../dist/core/tools/web_discovery.js";
-import { createCapabilityTool } from "./helpers/code_mode.js";
+import { createPackageTool } from "./helpers/code_mode.js";
 
 function createExecutionResult(output, exitCode = 0) {
   return {
@@ -36,7 +37,8 @@ function createDeps(client) {
 }
 
 function createWebTool(backend, deps, config = { apiKeys: { exa: "exa-key" } }) {
-  return createCapabilityTool(backend, createWebCapability(backend, config, deps));
+  const web = config.apiKeys?.exa ? { available: true } : unavailable("no Exa API key");
+  return createPackageTool(backend, createWebPackage(backend, config, web, deps));
 }
 
 async function runTool(tool, arguments_, signal = new AbortController().signal) {
@@ -208,12 +210,13 @@ describe("Exa web code-mode tool", () => {
     const tool = createWebTool(backend, deps);
     const { dispatch, result } = await runTool(tool, {
       code: [
+        `import * as web from "@tau/web"; import { printText } from "@tau/core";`,
         'printText([typeof process,  typeof fetch,  typeof require,  typeof _requestWeb].join(" "));',
         'printText([typeof Date.now(),  Number.isFinite(new Date().getTime()),  Math.random() >= 0 && Math.random() < 1].join(" "));',
         "const DerivedDate = new Date().constructor;",
         'printText([DerivedDate === Date,  Object.getPrototypeOf(new Date()) === Date.prototype,  typeof DerivedDate(),  new DerivedDate() instanceof Date,  Object.isFrozen(Date),  Object.isFrozen(Date.prototype)].join(" "));',
         "try { printText.constructor('return process')(); } catch { printText('escape blocked'); }",
-        "return 'ignored';",
+        "const ignored = 'ignored';",
       ].join("\n"),
     });
 
@@ -263,9 +266,10 @@ describe("Exa web code-mode tool", () => {
     const tool = createWebTool(backend, createDeps(client));
     const { result } = await runTool(tool, {
       code: [
-        "const search = await tau.web.search('tau', { objective: ' Find official Tau documentation ', numResults: 2, userLocation: 'fi' });",
+        `import * as web from "@tau/web"; import { printText } from "@tau/core";`,
+        "const search = await web.search('tau', { objective: ' Find official Tau documentation ', numResults: 2, userLocation: 'fi' });",
         "printText(search.results[0].title);",
-        "const text = await tau.web.fetch(['https://example.com'], { mode: 'text', maxCharacters: 123, links: 2 });",
+        "const text = await web.fetch(['https://example.com'], { text: { maxCharacters: 123 }, extras: { links: 2 } });",
         "printText(text.results[0].title);",
         "printText(JSON.stringify(text.results[0]));",
       ].join("\n"),
@@ -319,7 +323,9 @@ describe("Exa web code-mode tool", () => {
       createExaClient: (apiKey) => createExaClient(apiKey, oversized),
       discover: discoverAgentContent,
     });
-    const { result } = await runTool(tool, { code: "await tau.web.search('tau')" });
+    const { result } = await runTool(tool, {
+      code: "import * as web from '@tau/web'; await web.search('tau')",
+    });
 
     expect(result.toolResult.outcome).toBe("failed");
     expect(getToolText(result)).toContain("16 MiB");
@@ -328,10 +334,12 @@ describe("Exa web code-mode tool", () => {
   it("fails when the provider returns an invalid response", async () => {
     const backend = createBackend();
     const tool = createWebTool(backend, createDeps({ search: vi.fn(async () => ({})) }));
-    const { result } = await runTool(tool, { code: "await tau.web.search('tau')" });
+    const { result } = await runTool(tool, {
+      code: "import * as web from '@tau/web'; await web.search('tau')",
+    });
 
     expect(result.toolResult.outcome).toBe("failed");
-    expect(getToolText(result)).toContain("Invalid Exa response");
+    expect(getToolText(result)).toContain("Invalid web response");
   });
 
   it("supports keyless discovery without constructing a provider client", async () => {
@@ -340,7 +348,8 @@ describe("Exa web code-mode tool", () => {
     const tool = createWebTool(backend, deps, {});
     const { result } = await runTool(tool, {
       code: [
-        "const discovery = await tau.web.discover('https://example.com/docs');",
+        `import * as web from "@tau/web"; import { printText } from "@tau/core";`,
+        "const discovery = await web.discover('https://example.com/docs');",
         "printText(discovery.markdown[0].url);",
       ].join("\n"),
     });
@@ -360,15 +369,17 @@ describe("Exa web code-mode tool", () => {
     const deps = createDeps({});
     const unsupportedTool = createWebTool(backend, deps);
     const unsupported = await runTool(unsupportedTool, {
-      code: "await tau.web.search('tau', { stream: true })",
+      code: "import * as web from '@tau/web'; await web.search('tau', { stream: true })",
     });
     expect(unsupported.result.toolResult.outcome).toBe("failed");
     expect(getToolText(unsupported.result)).toContain('Unrecognized key: "stream"');
 
     const missingKeyTool = createWebTool(backend, deps, {});
-    const missingKey = await runTool(missingKeyTool, { code: "await tau.web.search('tau')" });
+    const missingKey = await runTool(missingKeyTool, {
+      code: "import * as web from '@tau/web'; await web.search('tau')",
+    });
     expect(missingKey.result.toolResult.outcome).toBe("failed");
-    expect(getToolText(missingKey.result)).toContain("Missing Exa API key.");
+    expect(deps.createExaClient).not.toHaveBeenCalled();
   });
 
   it("enforces provider request bounds", async () => {
@@ -380,20 +391,20 @@ describe("Exa web code-mode tool", () => {
     const tool = createWebTool(backend, createDeps(client));
     const { result } = await runTool(tool, {
       code: [
+        `import * as web from "@tau/web"; import { printText } from "@tau/core";`,
         "const calls = [",
-        "  () => tau.web.search('tau', { maxAgeHours: 721 }),",
-        "  () => tau.web.fetch(Array.from({ length: 101 }, (_, index) => 'https://example.com/' + index)),",
-        "  () => tau.web.fetch('https://example.com', { maxCharacters: 10001, maxAgeHours: 721, subpages: 101, subpageTarget: Array(101).fill('docs'), links: 1001 }),",
+        "  () => web.search('tau', { maxAgeHours: 721 }),",
+        "  () => web.fetch(Array.from({ length: 101 }, (_, index) => 'https://example.com/' + index)),",
+        "  () => web.fetch('https://example.com', { text: { maxCharacters: 10001 }, maxAgeHours: 721, subpages: 101, subpageTarget: Array(101).fill('docs'), extras: { links: 1001 } }),",
         "];",
         "for (const call of calls) {",
-        "  try { await call(); } catch (error) { printText(error.message); }",
+        "  try { await call(); } catch (error) { printText(error.code + ' ' + error.message); }",
         "}",
       ].join("\n"),
     });
 
     expect(result.toolResult.outcome).toBe("succeeded");
-    expect(getToolText(result)).toContain("Invalid tau.web.search options");
-    expect(getToolText(result)).toContain("Invalid tau.web.fetch urls");
+    expect(getToolText(result).match(/invalid_arguments/g)).toHaveLength(3);
     expect(getToolText(result)).toContain("maxCharacters");
     expect(getToolText(result)).toContain("maxAgeHours");
     expect(getToolText(result)).toContain("subpages");
@@ -428,7 +439,11 @@ describe("Exa web code-mode tool", () => {
     const backend = createBackend();
     const tool = createWebTool(backend, createDeps(client));
     const controller = new AbortController();
-    const run = runTool(tool, { code: "await tau.web.search('tau')" }, controller.signal);
+    const run = runTool(
+      tool,
+      { code: "import * as web from '@tau/web'; await web.search('tau')" },
+      controller.signal,
+    );
 
     await providerStarted;
     controller.abort();

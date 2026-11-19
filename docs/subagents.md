@@ -4,15 +4,11 @@ Subagents are background workers that the host supervises. Each has its own task
 
 An agent starts subagents only when you or active instructions ask for delegation, in ordinary language. Tau checks that a launch is valid, but the agent itself decides whether delegation was requested.
 
-## Turning them on and off
-
-The `agents` tool enables subagents, and built-in personas have it. A persona with a `tools` list that lacks `agents` cannot start or manage them, and there is no other switch. See [personas](personas.md).
-
 ## What a subagent gets
 
 A native subagent works like a main agent of the same persona in its working directory, with the same prompt, skills, and project instructions. It sees none of the parent's conversation, so the launch prompt must contain what it needs.
 
-It inherits its parent's model, settings, and tools, and it has `tau_docs`. It never gets client tools. With another `workingDirectory`, it uses the `AGENTS.md` files and skills of that directory.
+It inherits its parent's model and settings, has the same tools as every agent, and never gets client tools. With another `workingDirectory`, it uses the `AGENTS.md` files and skills of that directory.
 
 ## Levels and limits
 
@@ -49,24 +45,15 @@ A subagent without an override uses its parent's compaction threshold. With an o
 
 ## Managing subagents
 
-Agents use `tau.agents` inside [`code`](code-mode.md), and the `wait_for_agents` tool. They read the full reference with `await tau.docs("agents")`.
+Agents use `@tau/agents` inside [`code`](code-mode.md), and the `wait_for_agents` tool. With the package they start, steer, interrupt, and wait for subagents and read what they said and did. They read the reference with `docs("@tau/agents")` from `@tau/core`.
 
 ```js
-const { id } = await tau.agents.spawn({
-  title: "review authentication",
-  prompt:
-    "Review the session expiry checks in src/auth and report any problems.",
+import { spawn } from "@tau/agents";
+
+const { id } = await spawn("Review the session expiry checks in src/auth.", {
+  title: "Review authentication",
 });
 ```
-
-| Method | Purpose |
-| --- | --- |
-| `spawn({ title, prompt, model?, workingDirectory? })` | Start a subagent. |
-| `list()`, `read({ id })` | See state and usage. |
-| `sendInput({ id, message, mode })` | Add input, with `mode` set to `queue` or `steer`. |
-| `interrupt({ id, wait?, scope? })` | Stop a turn and drop pending input. `scope: "subtree"` includes descendants. |
-| `waitUntilIdle({ id })` | Wait inside a program. |
-| `trace({ id, ... })`, `readText(...)`, `readContent(...)` | Read what the subagent said and did. |
 
 `wait_for_agents` returns as soon as one requested subagent is idle, with its last response. A `completed` status means the turn ended normally, so the parent still has to read the answer to know whether the task succeeded.
 
@@ -105,7 +92,7 @@ Tau checks for a subscription login before sending a task and has no API fallbac
 These workers differ from native subagents:
 
 - They use Claude Code's own prompt, instructions, skills, compaction, and MCP configuration from the execution environment.
-- Tau tools map to Claude Code tools: `bash` gives Bash, Read, Glob, and Grep, and `view_image` gives Read, Glob, and Grep. `write`, `edit`, and `web` map to Write, Edit, and WebSearch with WebFetch.
+- They get Claude Code's Bash, Read, Glob, Grep, Write, Edit, WebSearch, WebFetch, and Skill tools.
 - They run with permission checks bypassed and the Claude Code sandbox disabled, so review the local Claude settings first.
 - They cannot start subagents or use Tau's `code` capabilities, `tau_docs`, or MCP connections. Hooks and automatic memory are off.
 - A follow-up resumes the same Claude session while the parent session is alive.

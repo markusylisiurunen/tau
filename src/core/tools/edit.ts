@@ -5,6 +5,7 @@ import { buildLineDiff } from "../utils/line_diff.js";
 import { formatZodError } from "../utils/zod.js";
 import type { ToolActivity } from "./activity.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
+import { replaceExactText } from "./file_edits.js";
 import { buildToolRunPresentation, type ToolCardLine } from "./presentation.js";
 import {
   type AgentTool,
@@ -75,19 +76,6 @@ function parseEditArgs(
 function getEditSubject(raw: unknown): string {
   const parsedArgs = parseEditArgs(raw);
   return parsedArgs.ok ? parsedArgs.data.path : "(invalid arguments)";
-}
-
-function countOccurrences(content: string, search: string): number {
-  if (!search) return 0;
-  let count = 0;
-  let pos = 0;
-  let index = content.indexOf(search, pos);
-  while (index !== -1) {
-    count++;
-    pos = index + search.length;
-    index = content.indexOf(search, pos);
-  }
-  return count;
 }
 
 function formatSignedDelta(value: number, unit: string): string {
@@ -175,28 +163,12 @@ export function createEditToolDefinition(backend: ToolExecutionBackend): AgentTo
           return blocked(`Could not read file: ${errorMessage}`, "failed");
         }
 
-        const matchCount = countOccurrences(content, oldText);
-
-        if (matchCount === 0) {
-          const noMatchMessage =
-            "No exact match for oldText was found in the file. Read the file first to see its current content.";
-          const trimmedOld = oldText.trim();
-          const hasWhitespaceOnlyMismatch =
-            trimmedOld !== oldText && countOccurrences(content, trimmedOld) > 0;
-          return blocked(
-            hasWhitespaceOnlyMismatch
-              ? `${noMatchMessage} Hint: Found matches when ignoring leading/trailing whitespace.`
-              : noMatchMessage,
-          );
+        let newContent: string;
+        try {
+          newContent = replaceExactText(content, oldText, newText);
+        } catch (error) {
+          return blocked(error instanceof Error ? error.message : String(error));
         }
-
-        if (matchCount > 1) {
-          return blocked(
-            `Found ${matchCount} matches for oldText, but exactly 1 is required. Make oldText more specific to match only one location.`,
-          );
-        }
-
-        const newContent = content.replace(oldText, () => newText);
 
         try {
           await backend.writeFile(path, newContent);

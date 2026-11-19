@@ -6,14 +6,21 @@ import {
   type AgentState,
   createAgentSpec,
 } from "../core/agent/agent_runtime.js";
+import {
+  type AgentCapabilities,
+  unavailable,
+  workerCapabilities,
+} from "../core/agent/capabilities.js";
 import type { AgentEvent } from "../core/agent/events.js";
+import { NotificationInbox } from "../core/agent/notification_inbox.js";
 import type { SessionRuntimeSettings } from "../core/config/index.js";
 import { loadSkillsFromToolBackend } from "../core/config/runtime_config_snapshot.js";
+import type { HistoryQuery } from "../core/history/types.js";
+import type { McpManager } from "../core/mcp/manager.js";
 import { resolveAgentModel } from "../core/runtime/agent_model.js";
 import { createDefaultCoreDeps } from "../core/runtime/deps.js";
 import { composeSessionPrompts } from "../core/runtime/session_prompt_composer.js";
 import { createAutoCompactionArchiver } from "../core/session/auto_compaction_archive.js";
-import type { SubagentToolName } from "../core/subagents/types.js";
 import type { AgentJobRegistry, AgentJobs } from "../core/tools/agent_jobs.js";
 import { ToolCatalog } from "../core/tools/catalog.js";
 import { ToolRegistry } from "../core/tools/registry.js";
@@ -70,7 +77,8 @@ export type HostedEphemeralAgentSessionOptions = {
   includeAgentContext: boolean;
   executionEnvironment: ExecutionEnvironment;
   instructions: string;
-  tools: SubagentToolName[];
+  history: HistoryQuery;
+  mcp: McpManager;
   reasoning: ReasoningEffort;
   emitUpdate: (
     threadId: string,
@@ -106,6 +114,7 @@ export class HostedEphemeralAgentSession {
     const promptContext = promptBootstrap.promptContext;
     const composition = composeSessionPrompts({
       persona: options.persona,
+      capabilities: ephemeralCapabilities(options.config),
       sessionId: options.sessionId,
       cwd: promptContext.cwd,
       repoRoot: promptContext.repoRoot,
@@ -114,12 +123,13 @@ export class HostedEphemeralAgentSession {
       platform: promptContext.platform,
       skillsBlock: promptContext.skillsBlock,
       projectContextBlock: promptContext.projectContextBlock,
+      mcpServers: options.mcp.listServers(),
     });
     const systemPrompt = [composition.baseSystemPrompt, options.instructions].join("\n\n");
     const spec = createAgentSpec({
       autoCompactThresholdTokens: options.persona.autoCompactThresholdTokens ?? null,
       ...resolveAgentModel(
-        createEphemeralPersona(options.persona, systemPrompt, options.tools, options.reasoning),
+        createEphemeralPersona(options.persona, systemPrompt, options.reasoning),
         options.config,
         { includeModelNotice: false, deps: createDefaultCoreDeps() },
       ),
@@ -203,14 +213,17 @@ export class HostedEphemeralAgentSession {
       jobs,
       spec: {
         ...spec,
-        tools: ToolCatalog.createSubagentRegistry(
-          this.options.tools,
-          this.options.executionEnvironment.getToolExecutionBackend(),
-          this.options.cwd,
-          this.options.config,
-          jobs.bashJobs,
-          jobs.codeJobs,
-        ),
+        tools: ToolCatalog.createSubagentRegistry({
+          backend: this.options.executionEnvironment.getToolExecutionBackend(),
+          cwd: this.options.cwd,
+          config: this.options.config,
+          bashJobs: jobs.bashJobs,
+          codeJobs: jobs.codeJobs,
+          history: this.options.history,
+          mcp: this.options.mcp,
+          notifications: new NotificationInbox(),
+          capabilities: ephemeralCapabilities(this.options.config),
+        }),
       },
       deps: createDefaultCoreDeps(),
       backend: this.options.executionEnvironment.getToolExecutionBackend(),
@@ -379,10 +392,17 @@ class EphemeralAgentThread {
   }
 }
 
+/** Side contexts such as diff review answer their client directly and cannot delegate. */
+function ephemeralCapabilities(config: SessionRuntimeSettings): AgentCapabilities {
+  return workerCapabilities({
+    delegation: unavailable("this context cannot start subagents"),
+    config,
+  });
+}
+
 function createEphemeralPersona(
   persona: Persona,
   systemPrompt: string,
-  tools: SubagentToolName[],
   reasoning: ReasoningEffort,
 ): Persona {
   return {
@@ -393,6 +413,5 @@ function createEphemeralPersona(
     systemPrompt,
     settings: { ...persona.settings, reasoning },
     subagentLaunchModels: [],
-    tools,
   };
 }

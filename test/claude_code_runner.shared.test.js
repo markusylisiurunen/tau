@@ -128,7 +128,6 @@ function createRuntimeOptions(directory, events) {
       model,
       kind: "claude-code",
       effort: "medium",
-      tools: ["bash"],
       workingDirectory: directory,
     },
     onEvent: async (event) => {
@@ -329,7 +328,9 @@ describe("bundled Claude Agent SDK runner", () => {
       expect(sent.args).toContain("--setting-sources=user,project,local");
       expect(sent.args).not.toContain("--strict-mcp-config");
       expect(sent.args.some((arg) => arg.startsWith("--mcp-config"))).toBe(false);
-      expect(sent.args).toContain("--tools=Read,Glob,Grep,Bash,Skill");
+      expect(sent.args).toContain(
+        "--tools=Read,Glob,Grep,Bash,Write,Edit,WebSearch,WebFetch,Skill",
+      );
       expect(sent.initialization).not.toHaveProperty("skills");
       expect(sent.cwd).toBe(realpathSync(directory));
       const activities = events

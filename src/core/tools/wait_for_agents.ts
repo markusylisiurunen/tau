@@ -21,7 +21,7 @@ import { TOOL_NAME_WAIT_FOR_AGENTS } from "./tool_names.js";
 const WAIT_FOR_AGENTS_DESCRIPTION = [
   "Wait until at least one of the requested subagents is idle, then return the state of every requested subagent.",
   "For an idle subagent, the result also contains the last assistant message from its latest turn. A subagent that is not idle gets state only.",
-  "response_seq is that message's trace seq: read more retained text with tau.agents.readText({ id, seq }) in code, and tool evidence with tau.agents.trace.",
+  "response_seq is that message's trace seq: read more retained text with readText(id, seq) from @tau/agents in code, and tool evidence with trace(id).",
   "response_complete is false when the text was shortened to fit the output budget or is no longer fully available.",
   "response_partial is true when the turn failed or was interrupted, so the message may not be a final answer.",
   "response: none means the latest turn produced no assistant message.",
@@ -92,7 +92,12 @@ function getWaitForAgentsSubject(raw: unknown): string {
   return parsedArgs.ok ? formatAgentIdsSubject(parsedArgs.data.ids) : "(invalid arguments)";
 }
 
-export function createWaitForAgentsToolDefinition(supervisor: ScopedAgentSupervisor): AgentTool {
+/** Always registered; without delegation every call is blocked with the reason. */
+export function createWaitForAgentsToolDefinition(
+  delegation:
+    | { available: true; supervisor: ScopedAgentSupervisor }
+    | { available: false; reason: string },
+): AgentTool {
   return {
     schema: WAIT_FOR_AGENTS_TOOL,
     describe: (toolCall) => {
@@ -130,6 +135,11 @@ export function createWaitForAgentsToolDefinition(supervisor: ScopedAgentSupervi
         return executeTool(context, () => blocked(`Invalid arguments: ${parsedArgs.error}`));
       }
 
+      if (!delegation.available) {
+        const reason = `Starting and managing subagents is unavailable: ${delegation.reason}.`;
+        return executeTool(context, () => blocked(reason));
+      }
+      const supervisor = delegation.supervisor;
       ids = [...new Set(parsedArgs.data.ids)];
       const dedupedTarget = formatAgentIdsSubject(ids);
 

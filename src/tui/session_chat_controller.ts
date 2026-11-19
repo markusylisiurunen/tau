@@ -3127,7 +3127,6 @@ export class SessionChatController {
     const ephemeral = await session.createEphemeralContext({
       workingDirectory: snapshot.cwd,
       instructions: buildDiffReviewInstructions(snapshot),
-      tools: ["bash", "view_image"],
     });
     const bridge = new DiffReviewBridge({
       snapshot,

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
+import { McpManager } from "../dist/core/mcp/manager.js";
 import { resolveModel } from "../dist/core/models/catalog.js";
 import { personas } from "../dist/core/personas.js";
 import { ChatRuntime } from "../dist/core/runtime/chat_runtime.js";
@@ -55,6 +56,7 @@ function createRuntime(overrides = {}) {
         throw new Error("missing history session");
       },
     },
+    mcp: new McpManager(),
     config: {},
     ...overrides,
   });
@@ -78,7 +80,9 @@ describe("ChatRuntime", () => {
         {
           id: "spawn",
           name: "code",
-          arguments: { code: 'await tau.agents.spawn({ title: "child", prompt: "work" });' },
+          arguments: {
+            code: 'import * as agents from "@tau/agents"; await agents.spawn("work", { title: "child" });',
+          },
         },
         {
           signal: new AbortController().signal,

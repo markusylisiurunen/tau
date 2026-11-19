@@ -85,10 +85,9 @@ export class AgentTrace {
     const selected = matching.slice(-(options.limit ?? 20));
     return {
       entries: structuredClone(selected.map(({ entry }) => entry)),
-      nextCursor:
-        matching.length > selected.length
-          ? this.encode({ query, before: selected[0]!.entry.seq })
-          : null,
+      ...(matching.length > selected.length
+        ? { nextCursor: this.encode({ query, before: selected[0]!.entry.seq }) }
+        : {}),
       historyEvicted: this.evicted,
     };
   }
@@ -130,7 +129,9 @@ export class AgentTrace {
     }
     return {
       blocks: [result],
-      nextCursor: index < blocks.length ? this.encode({ ref: options.ref, index, offset }) : null,
+      ...(index < blocks.length
+        ? { nextCursor: this.encode({ ref: options.ref, index, offset }) }
+        : {}),
     };
   }
 

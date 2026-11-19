@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { McpClient, McpConnectionClosedError } from "@earendil-works/pi-mcp";
 import { describe, expect, it, vi } from "vitest";
-import { createMcpCapability } from "../dist/core/code_mode/mcp.js";
+import { createMcpPackage } from "../dist/core/code_mode/mcp.js";
 import { McpManager } from "../dist/core/mcp/manager.js";
-import { createCapabilityTool } from "./helpers/code_mode.js";
+import { createPackageTool } from "./helpers/code_mode.js";
 import { createProtocolImage } from "./helpers/session_protocol_fixtures.js";
 
 const fixture = fileURLToPath(new URL("./fixtures/mcp_server.js", import.meta.url));
@@ -56,7 +56,7 @@ function assertExited(pid) {
 describe("MCP search", () => {
   it("searches through the capability API and observes catalog invalidation", async () => {
     const client = manager();
-    const api = createMcpCapability(client).api;
+    const api = createMcpPackage(client).api;
     const context = { signal: signal() };
     try {
       expect(await api.searchTools(["messages"], context)).toMatchObject({
@@ -389,11 +389,11 @@ describe("MCP code-mode tool", () => {
   it("forwards MCP screenshots as real image content without files or base64 previews", async () => {
     const client = manager();
     const executionBackend = backend();
-    const tool = createCapabilityTool(executionBackend, createMcpCapability(client));
+    const tool = createPackageTool(executionBackend, createMcpPackage(client));
     try {
       const result = await runTool(
         tool,
-        'const result = await tau.mcp.callTool("test", "screenshot", {}); printText("1"); await printImage(result.content[0]); printText("2")',
+        'import * as mcp from "@tau/mcp"; import { printText, printImage } from "@tau/core"; const result = await mcp.callTool("test", "screenshot", {}); printText("1"); await printImage(result.content[0]); printText("2")',
       );
       expect(result.outcome).toBe("succeeded");
       expect(result.content).toEqual([
@@ -411,7 +411,7 @@ describe("MCP code-mode tool", () => {
 
   it("discovers paginated resources and templates and reads explicit text and image context", async () => {
     const client = manager();
-    const api = createMcpCapability(client).api;
+    const api = createMcpPackage(client).api;
     const context = { signal: signal() };
     try {
       expect(await api.listResources(["test", { limit: 1 }], context)).toMatchObject({
@@ -469,7 +469,7 @@ describe("MCP code-mode tool", () => {
         client.readResource("test", "docs://oversized", signal()),
       ).rejects.toBeInstanceOf(McpConnectionClosedError);
       expect((await pending).error).toBeInstanceOf(McpConnectionClosedError);
-      const api = createMcpCapability(client).api;
+      const api = createMcpPackage(client).api;
       const result = await api.readResource(["test", "docs://schema"], { signal: signal() });
       expect(result.contents[0].text).toBe("resource context");
       const second = await echo(client);
@@ -484,10 +484,10 @@ describe("MCP code-mode tool", () => {
     const client = manager();
     const controller = new AbortController();
     try {
-      const tool = createCapabilityTool(backend(), createMcpCapability(client));
+      const tool = createPackageTool(backend(), createMcpPackage(client));
       const run = runTool(
         tool,
-        'await tau.mcp.readResource("test", "docs://slow")',
+        'import * as mcp from "@tau/mcp"; await mcp.readResource("test", "docs://slow")',
         controller.signal,
       );
       await vi.waitFor(async () => expect((await echo(client)).structuredContent.pending).toBe(1));
@@ -507,7 +507,7 @@ describe("MCP code-mode tool", () => {
 
   it("returns service errors as data and rejects invalid capability calls before dispatch", async () => {
     const client = manager();
-    const api = createMcpCapability(client).api;
+    const api = createMcpPackage(client).api;
     const context = { signal: signal() };
     try {
       expect(await api.callTool(["test", "fail", {}], context)).toMatchObject({ isError: true });

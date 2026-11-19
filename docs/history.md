@@ -14,7 +14,7 @@ Each [subagent](subagents.md) gets its own child session, which stays after a re
 
 ## Agent access
 
-A persona with `history` in `tools` has the read-only `tau.history` API in [`code`](code-mode.md). It can see every recorded session, so the agent uses it only when you or active instructions ask for past transcripts. Ask directly:
+The agent has the read-only `@tau/history` API in [`code`](code-mode.md). It can see every recorded session, so the agent uses it only when you or active instructions ask for past transcripts. Ask directly:
 
 ```text
 Search history for the session where we chose the retry policy, and summarize the decision.
@@ -56,7 +56,7 @@ To browse, open the service's address and sign in with username `tau` and the vi
 
 ## How replication behaves
 
-Each host writes to local SQLite first and sends changes to the service in the background. An outage does not affect sessions, and pending changes are sent later. With a remote target, `tau.history` searches and reads use the service only, and do not fall back to local results. `tau.history.read` can ask for local data with `source: "local"`.
+Each host writes to local SQLite first and sends changes to the service in the background. An outage does not affect sessions, and pending changes are sent later. With a remote target, `@tau/history` searches and reads use the service only, and do not fall back to local results. `read` from `@tau/history` can ask for local data with `source: "local"`.
 
 Entries over 1 MiB are shortened in the remote copy, and summaries can lag behind transcripts.
 

@@ -253,11 +253,9 @@ export type SessionProtocolRewindParams = SessionProtocolSessionIdParams & {
 export type SessionProtocolInterruptSubagentParams = SessionProtocolSessionIdParams & {
   subagentId: string;
 };
-export type SessionProtocolEphemeralAgentTool = "bash" | "write" | "edit" | "view_image" | "web";
 export type SessionProtocolEphemeralCreateParams = SessionProtocolSessionIdParams & {
   workingDirectory?: string;
   instructions: string;
-  tools: SessionProtocolEphemeralAgentTool[];
   reasoning?: SessionProtocolReasoningEffort;
 };
 export type SessionProtocolEphemeralSubmitParams = SessionProtocolSessionIdParams & {
@@ -882,7 +880,6 @@ export type SessionProtocolPersonaSnapshot = {
   description?: string;
   allowedReasoningLevels?: SessionProtocolReasoningEffort[];
   subagentLaunchModels: string[];
-  tools?: string[];
   source: "builtin" | "user" | "project";
 };
 
@@ -1913,20 +1910,11 @@ const sessionProtocolInterruptSubagentParamsSchema = z
   })
   .strip();
 
-const sessionProtocolEphemeralAgentToolSchema = z.enum([
-  "bash",
-  "write",
-  "edit",
-  "view_image",
-  "web",
-]);
-
 const sessionProtocolEphemeralCreateParamsSchema = z
   .object({
     workingDirectory: nonEmptyStringSchema.optional(),
     sessionId: nonEmptyStringSchema,
     instructions: nonEmptyStringSchema,
-    tools: z.array(sessionProtocolEphemeralAgentToolSchema),
     reasoning: sessionProtocolReasoningEffortSchema.optional(),
   })
   .strip();
@@ -2167,7 +2155,6 @@ const sessionProtocolPersonaSnapshotSchema = z
     description: z.string().optional(),
     allowedReasoningLevels: z.array(sessionProtocolReasoningEffortSchema).optional(),
     subagentLaunchModels: z.array(nonEmptyStringSchema),
-    tools: z.array(nonEmptyStringSchema).optional(),
     source: z.enum(["builtin", "user", "project"]),
   })
   .strip();
@@ -5262,11 +5249,9 @@ function validateEphemeralCreateParams(
         ? "session.ephemeral.create params.sessionId must be a non-empty string"
         : hasIssue(parsed.error, ["instructions"])
           ? "session.ephemeral.create params.instructions must be a non-empty string"
-          : hasIssue(parsed.error, ["tools"])
-            ? "session.ephemeral.create params.tools are invalid"
-            : hasIssue(parsed.error, ["reasoning"])
-              ? "session.ephemeral.create params.reasoning must be one of none, minimal, low, medium, high, xhigh, or max when provided"
-              : `session.ephemeral.create params are invalid: ${formatZodError(parsed.error)}`;
+          : hasIssue(parsed.error, ["reasoning"])
+            ? "session.ephemeral.create params.reasoning must be one of none, minimal, low, medium, high, xhigh, or max when provided"
+            : `session.ephemeral.create params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 

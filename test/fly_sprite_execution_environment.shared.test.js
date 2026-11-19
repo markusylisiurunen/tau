@@ -1,6 +1,6 @@
 import { spawn as spawnChild } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -389,6 +389,30 @@ describe("Fly Sprite execution environment", () => {
     }
   });
 
+  it("terminates the Sprite process group on combined capture overflow when requested", async () => {
+    const root = await mkdtemp(join(tmpdir(), "tau-fly-capture-"));
+    const sprite = {
+      spawn(command, args, options) {
+        return spawnChild(command, args, { ...options, stdio: ["pipe", "pipe", "pipe"] });
+      },
+    };
+    const backend = createFlySpriteToolExecutionBackend({ sprite, cwd: root });
+    try {
+      const result = await backend.runBash(
+        "printf 12345; printf 67890 >&2; sleep 4; touch finished",
+        {
+          maxCaptureBytes: 8,
+          terminateOnCaptureLimit: true,
+        },
+      );
+      expect(result).toMatchObject({ truncated: true, exitCode: null });
+      await expect(readFile(join(root, "finished"))).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await backend.dispose();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("rejects oversized binary files in the Sprite before encoding them", async () => {
     const root = await mkdtemp(join(tmpdir(), "tau-fly-binary-limit-"));
     const path = join(root, "large.bin");
@@ -404,9 +428,9 @@ describe("Fly Sprite execution environment", () => {
     const backend = createFlySpriteToolExecutionBackend({ sprite, cwd: root });
 
     try {
-      await expect(backend.readFileBinary(path, { maxBytes: 8 })).rejects.toThrow(
-        "file exceeds maximum size of 8 bytes (got 16 bytes)",
-      );
+      await expect(backend.readFileBinary(path, { maxBytes: 8 })).rejects.toMatchObject({
+        code: "too-large",
+      });
     } finally {
       await backend.dispose();
       await rm(root, { recursive: true, force: true });

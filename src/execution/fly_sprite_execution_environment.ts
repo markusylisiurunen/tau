@@ -5,11 +5,11 @@ import {
   applyBashEnvironment,
   type BashExecutionResult,
   DEFAULT_COMMAND_CAPTURE_BYTES,
+  fileTooLargeError,
   type ListDirEntry,
   normalizeToolExecutionBackendError,
   type ToolExecutionBackend,
 } from "../core/tools/execution_backend.js";
-import { formatBytes } from "../core/utils/truncate.js";
 import type {
   SessionProtocolExecutionEnvironmentInput,
   SessionProtocolExecutionEnvironmentSnapshot,
@@ -139,6 +139,7 @@ export function createFlySpriteToolExecutionBackend(options: {
         timeoutMs: runOptions.timeoutMs,
         env: applyBashEnvironment(runOptions.env),
         maxCaptureBytes: runOptions.maxCaptureBytes,
+        terminateOnCaptureLimit: runOptions.terminateOnCaptureLimit,
         streamOutput: Boolean(runOptions.onOutput),
       },
       { signal: runOptions.signal, onStarted: runOptions.onStarted, onOutput: runOptions.onOutput },
@@ -172,14 +173,10 @@ export function createFlySpriteToolExecutionBackend(options: {
           timeoutMs: HELPER_COMMAND_TIMEOUT_MS,
           maxBytes: readOptions.maxBytes,
         });
-        const content = Buffer.from(result.contentBase64, "base64");
-        const bytes = result.bytes;
-        if (readOptions.maxBytes !== undefined && bytes > readOptions.maxBytes) {
-          throw new Error(
-            `file exceeds maximum size of ${formatBytes(readOptions.maxBytes)} (got ${formatBytes(bytes)}).`,
-          );
+        if ("tooLarge" in result) {
+          throw fileTooLargeError(readOptions.maxBytes ?? result.bytes, result.bytes);
         }
-        return { path, content, bytes };
+        return { path, content: Buffer.from(result.contentBase64, "base64"), bytes: result.bytes };
       } catch (error) {
         throw normalizeToolExecutionBackendError(error);
       }
@@ -219,6 +216,7 @@ export function createFlySpriteToolExecutionBackend(options: {
 type FlySpriteWorkerRequestByMethod = {
   exec: {
     streamOutput: boolean;
+    terminateOnCaptureLimit?: boolean;
     command: string;
     args?: string[];
     stdinBase64?: string;
@@ -258,10 +256,7 @@ type FlySpriteWorkerResultByMethod = {
   readFile: {
     content: string;
   };
-  readFileBinary: {
-    contentBase64: string;
-    bytes: number;
-  };
+  readFileBinary: { contentBase64: string; bytes: number } | { tooLarge: true; bytes: number };
   writeFile: {
     path: string;
     bytes: number;
@@ -659,6 +654,7 @@ async function handleLine(line) {
           maxCaptureBytes: request.maxCaptureBytes,
           stdinBase64: request.stdinBase64,
           streamOutput: request.streamOutput,
+          terminateOnCaptureLimit: request.terminateOnCaptureLimit,
         },
       );
       respond(request.id, result);
@@ -674,15 +670,13 @@ async function handleLine(line) {
     if (request.method === "readFileBinary") {
       const stats = await fs.promises.stat(request.path);
       if (request.maxBytes !== undefined && stats.size > request.maxBytes) {
-        throw new Error(
-          "file exceeds maximum size of " + request.maxBytes + " bytes (got " + stats.size + " bytes).",
-        );
+        respond(request.id, { tooLarge: true, bytes: stats.size });
+        return;
       }
       const content = await fs.promises.readFile(request.path);
       if (request.maxBytes !== undefined && content.byteLength > request.maxBytes) {
-        throw new Error(
-          "file exceeds maximum size of " + request.maxBytes + " bytes (got " + content.byteLength + " bytes).",
-        );
+        respond(request.id, { tooLarge: true, bytes: content.byteLength });
+        return;
       }
       respond(request.id, {
         contentBase64: content.toString("base64"),
@@ -725,6 +719,7 @@ function runCommand(id, command, args, options) {
     const stdoutChunks = [];
     const stderrChunks = [];
     let bytes = 0;
+    let totalBytes = 0;
     let stdoutBytes = 0;
     let stderrBytes = 0;
     let truncated = false;
@@ -769,6 +764,12 @@ function runCommand(id, command, args, options) {
 
     const append = (chunk, target) => {
       const buffer = Buffer.from(chunk);
+      totalBytes += buffer.byteLength;
+      if (totalBytes > maxCaptureBytes && options.terminateOnCaptureLimit) {
+        truncated = true;
+        cancel("limit");
+        return;
+      }
       if (options.streamOutput) {
         console.log(JSON.stringify({ id, event: "output", data: buffer.toString("base64") }));
       }

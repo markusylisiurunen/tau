@@ -18,7 +18,7 @@ const invocation = {
 function createDefinition(overrides = {}) {
   return {
     name: "linear",
-    documentation: "# Linear API\n\nUse `linear.issues.get(id)` to read an issue.",
+    documentation: "# linear\n\nUse `issues.get(id)` to read an issue.",
     api: {
       issues: {
         get: async ([id], context) => ({ id, invocation: context.invocation }),
@@ -46,7 +46,10 @@ describe("public code-mode runtime", () => {
       signal: new AbortController().signal,
       executionEnvironment: null,
     };
-    const args = { code: 'printText("x".repeat(60_000))', maxOutputTokens: 16_384 };
+    const args = {
+      code: 'import { printText } from "@tau/core"; printText("x".repeat(60_000))',
+      maxOutputTokens: 16_384,
+    };
     expect(getTextContent(await tool.execute(args, executionContext))).toBe("x".repeat(60_000));
     await expect(
       tool.execute({ ...args, maxOutputTokens: 65_537 }, executionContext),
@@ -56,7 +59,7 @@ describe("public code-mode runtime", () => {
   it.concurrent("executes a nested API through the JSON bridge", async () => {
     const result = await executeTauCodeMode({
       ...createDefinition(),
-      code: 'printText(JSON.stringify(await linear.issues.get("TAU-418")))',
+      code: 'import { printText } from "@tau/core"; import { issues } from "linear"; printText(JSON.stringify(await issues.get("TAU-418")))',
       invocation,
     });
 
@@ -71,7 +74,9 @@ describe("public code-mode runtime", () => {
     const result = await executeTauCodeMode({
       ...createDefinition({ api: { screenshot: async () => block } }),
       code: [
-        "const block = await linear.screenshot();",
+        'import { printImage, printText } from "@tau/core";',
+        'import { screenshot } from "linear";',
+        "const block = await screenshot();",
         'printText("頭".repeat(30_000));',
         "await printImage(block);",
         'printText("middle".repeat(30_000));',
@@ -94,17 +99,22 @@ describe("public code-mode runtime", () => {
     const ready = Promise.withResolvers();
     const controller = new AbortController();
     const running = runTauCodeMode({
-      ...createDefinition({
-        api: {
-          screenshot: async () => block,
-          ready: () => {
-            ready.resolve();
-            return null;
+      packages: [
+        {
+          name: "linear",
+          documentation: "# linear",
+          api: {
+            screenshot: async () => block,
+            ready: () => {
+              ready.resolve();
+              return null;
+            },
           },
         },
-      }),
+      ],
+      timeoutMs: null,
       signal: controller.signal,
-      code: 'printText("before"); await printImage(await linear.screenshot()); printText("after"); await linear.ready(); while (true) {}',
+      code: 'import { printImage, printText } from "@tau/core"; import * as linear from "linear"; printText("before"); await printImage(await linear.screenshot()); printText("after"); await linear.ready(); while (true) {}',
     });
     await ready.promise;
     controller.abort();
@@ -150,8 +160,10 @@ describe("public code-mode runtime", () => {
     const result = await executeTauCodeMode({
       ...createDefinition({ api: { screenshot: async () => block } }),
       code: [
+        'import { printImage, printText } from "@tau/core";',
+        'import { screenshot } from "linear";',
         'try { await printImage({ type: "image", data: "invalid", mimeType: "image/png" }); } catch { printText("rejected"); }',
-        "const block = await linear.screenshot();",
+        "const block = await screenshot();",
         "for (let i = 0; i < 16; i++) await printImage(block);",
         "try { await printImage(block); } catch (error) { printText(error.message); }",
       ].join("\n"),
@@ -161,19 +173,13 @@ describe("public code-mode runtime", () => {
     expect(getTextContent(result)).toContain("at most 16 images");
   });
 
-  it.concurrent("reserves the image helper name for the shared runtime", async () => {
-    await expect(
-      executeTauCodeMode({ ...createDefinition({ name: "printImage" }), code: "" }),
-    ).rejects.toThrow("non-reserved");
-  });
-
   it("rejects oversized bridge arguments before calling the handler", async () => {
     const echo = vi.fn(async ([value]) => value);
 
     await expect(
       executeTauCodeMode({
         ...createDefinition({ api: { echo } }),
-        code: 'await linear.echo("x".repeat(64 * 1024 * 1024))',
+        code: 'import { echo } from "linear"; await echo("x".repeat(64 * 1024 * 1024))',
       }),
     ).rejects.toThrow("bridge payload bytes");
     expect(echo).not.toHaveBeenCalled();
@@ -183,7 +189,7 @@ describe("public code-mode runtime", () => {
     await expect(
       executeTauCodeMode({
         ...createDefinition({ api: { large: async () => "x".repeat(64 * 1024 * 1024) } }),
-        code: "await linear.large()",
+        code: 'import { large } from "linear"; await large()',
       }),
     ).rejects.toThrow();
   });
@@ -192,9 +198,37 @@ describe("public code-mode runtime", () => {
     await expect(
       executeTauCodeMode({
         ...createDefinition({ api: { invalid: async () => undefined } }),
-        code: "printText(JSON.stringify(await linear.invalid()))",
+        code: 'import { printText } from "@tau/core"; import { invalid } from "linear"; printText(JSON.stringify(await invalid()))',
       }),
     ).rejects.toThrow("linear.invalid returned a non-JSON value");
+  });
+
+  it("returns nested byte arrays to programs as bytes without calling their toJSON", async () => {
+    // A Buffer's toJSON copies every byte into an array of numbers, so encoding must skip it.
+    class Bytes extends Uint8Array {
+      toJSON() {
+        throw new Error("toJSON must not run");
+      }
+    }
+    const result = await executeTauCodeMode({
+      ...createDefinition({
+        api: {
+          bytes: async () => ({ file: { data: Bytes.from([1, 2]) }, list: [Buffer.from([3])] }),
+        },
+      }),
+      code: 'import { printText } from "@tau/core"; import { bytes } from "linear"; const { file, list } = await bytes(); printText(String(file.data instanceof Uint8Array && list[0] instanceof Uint8Array) + ":" + [...file.data, ...list[0]]);',
+    });
+    expect(getTextContent(result)).toContain("true:1,2,3");
+  });
+
+  it("imports packages whose method names are reserved words or internal names", async () => {
+    const result = await executeTauCodeMode({
+      ...createDefinition({
+        api: { delete: async () => "d", exports: async () => "e", p: async () => "p" },
+      }),
+      code: 'import { printText } from "@tau/core"; import * as linear from "linear"; import { exports, p } from "linear"; printText((await linear.delete()) + (await exports()) + (await p()));',
+    });
+    expect(getTextContent(result)).toContain("dep");
   });
 
   it("preserves structured capability error codes inside the sandbox", async () => {
@@ -206,7 +240,7 @@ describe("public code-mode runtime", () => {
           },
         },
       }),
-      code: "try { await linear.fail(); } catch (error) { printText(error.code); }",
+      code: 'import { printText } from "@tau/core"; import { fail } from "linear"; try { await fail(); } catch (error) { printText(error.code); }',
     });
     expect(getTextContent(result)).toContain("expired_content");
   });
@@ -223,7 +257,7 @@ describe("public code-mode runtime", () => {
             },
           },
         }),
-        code: "await linear.fail()",
+        code: 'import { fail } from "linear"; await fail()',
         persistOutput,
       }),
     ).rejects.toThrow("integration unavailable");
@@ -258,7 +292,7 @@ describe("public code-mode runtime", () => {
           },
         },
       }),
-      code: "await linear.stuck()",
+      code: 'import { stuck } from "linear"; await stuck()',
       signal: controller.signal,
     });
 
@@ -288,7 +322,9 @@ describe("public code-mode runtime", () => {
 
     await expect(
       tool.execute(
-        { code: "printText(await linear.workspace.status())" },
+        {
+          code: 'import { printText } from "@tau/core"; import { workspace } from "linear"; printText(await workspace.status())',
+        },
         {
           ...invocation,
           signal: new AbortController().signal,
@@ -298,7 +334,8 @@ describe("public code-mode runtime", () => {
     ).resolves.toEqual({
       content: [{ type: "text", text: "clean" }],
       presentation: {
-        subject: "printText(await linear.workspace.status())",
+        subject:
+          'import { printText } from "@tau/core"; import { workspace } from "linear"; printText(await workspace.status())',
         subjectWrap: "character",
       },
     });
@@ -313,7 +350,7 @@ describe("public code-mode runtime", () => {
       '  name: "linear",',
       '  documentation: "# Linear API",',
       "  api: { echo: async ([value]) => value },",
-      '  code: "printText(JSON.stringify(await linear.echo(42)))",',
+      '  code: \'import { printText } from "@tau/core"; import { echo } from "linear"; printText(JSON.stringify(await echo(42)))\',',
       "});",
       "process.stdout.write(result.content[0].text);",
     ].join("\n");
@@ -462,8 +499,9 @@ function runCommandAndTerminate(script, request, streamName, marker) {
 it.each([4097])("enforces the total bridge budget at %s requests", async (count) => {
   const ping = vi.fn(() => null);
   const result = await runTauCodeMode({
-    ...createDefinition({ api: { ping } }),
-    code: `for (let i = 0; i < ${count}; i++) await linear.ping(); printText("done");`,
+    packages: [{ name: "linear", documentation: "# linear", api: { ping } }],
+    timeoutMs: 60_000,
+    code: `import { ping } from "linear"; for (let i = 0; i < ${count}; i++) await ping();`,
   });
   expect(result.status).toBe(count === 4096 ? "succeeded" : "failed");
   expect(ping).toHaveBeenCalledTimes(4096);
@@ -479,34 +517,42 @@ it.each([32, 33])("enforces the concurrent bridge budget at %s requests", async 
     return null;
   });
   const result = await runTauCodeMode({
-    ...createDefinition({ api: { ping } }),
-    code: `await Promise.all(Array.from({ length: ${count} }, () => linear.ping())); printText("done");`,
+    packages: [{ name: "linear", documentation: "# linear", api: { ping } }],
+    timeoutMs: 60_000,
+    code: `import { ping } from "linear"; await Promise.all(Array.from({ length: ${count} }, () => ping()));`,
   });
   expect(result.status).toBe(count === 32 ? "succeeded" : "failed");
   expect(ping.mock.calls.length).toBeLessThanOrEqual(32);
   if (count === 32) expect(ping).toHaveBeenCalledTimes(32);
 });
 
-it("includes preloads in the execution deadline and cancels their capability calls", async () => {
+it("includes imported module evaluation in the deadline and cancels its package calls", async () => {
   let requestSignal;
   const main = vi.fn();
   const result = await runTauCodeMode({
-    ...createDefinition({
-      api: {
-        pause: async (_args, context) => {
-          requestSignal = context.signal;
-          await new Promise((_, reject) =>
-            context.signal.addEventListener("abort", () => reject(context.signal.reason), {
-              once: true,
-            }),
-          );
+    packages: [
+      {
+        name: "test",
+        documentation: "# test",
+        api: {
+          pause: async (_args, context) => {
+            requestSignal = context.signal;
+            await new Promise((_, reject) =>
+              context.signal.addEventListener("abort", () => reject(context.signal.reason), {
+                once: true,
+              }),
+            );
+          },
+          main,
         },
-        main,
       },
-    }),
-    preloads: [{ sourceName: "slow.js", code: "await linear.pause();" }],
-    code: "await linear.main();",
-    timeoutMs: 1000,
+    ],
+    sources: {
+      cwd: "/workspace",
+      read: async () => 'import { pause } from "test"; await pause();',
+    },
+    code: 'import "./slow.js"; import { main } from "test"; await main();',
+    timeoutMs: 3000,
   });
   expect(result.status).toBe("timed-out");
   expect(requestSignal.aborted).toBe(true);

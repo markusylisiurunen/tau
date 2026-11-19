@@ -108,17 +108,22 @@ const client = await createTauSdkClient({
 
 The handler runs in your process, and `executionEnvironment.exec` runs on the session's machine. Return a string or `{ content, presentation? }`, or `{ ok: false, error }` for a handled failure. An optional `describe` function customizes the running tool card. See [client tools](client-tools.md).
 
-`createTauCodeModeClientTool` gives the model a [code mode](code-mode.md) sandbox for an API you define:
+`createTauCodeModeClientTool` gives the model a [code mode](code-mode.md) sandbox for an API you define. Programs import it from a module named after the tool:
 
 ```ts
 const tickets = createTauCodeModeClientTool({
   name: "tickets",
   description: "Read support tickets with JavaScript.",
-  documentation: "# Tickets API\n\nUse `tickets.get(id)` to read one ticket.",
+  documentation:
+    "# tickets\n\n`get(id: string): Promise<Ticket>` reads one ticket.",
   api: {
     get: async ([id], { signal }) => ticketClient.get(String(id), { signal }),
   },
 });
+// A program the model writes:
+// import { get } from "tickets";
+// import { printText } from "@tau/core";
+// printText((await get("T-42")).title);
 ```
 
 ## Host a diff review

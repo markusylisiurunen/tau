@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
 import { expect, it, vi } from "vitest";
-import { createModelsCapability } from "../dist/core/code_mode/models.js";
+import { AVAILABLE, mainAgentCapabilities } from "../dist/core/agent/capabilities.js";
+import { createModelsPackage } from "../dist/core/code_mode/models.js";
 import {
   openRouterModels,
   requestOpenRouterChat,
@@ -23,7 +24,8 @@ const reply = () =>
     model: "openai/gpt-6-luna",
     choices: [{ finish_reason: "stop", message: { role: "assistant", content: "ok" } }],
   });
-const chat = { model: "openai/gpt-6-luna", prompt: "Describe", attachments: [] };
+const message = (text, ...parts) => ({ role: "user", content: [{ type: "text", text }, ...parts] });
+const chat = { model: "openai/gpt-6-luna", messages: [message("Describe")] };
 function options() {
   return {
     config: { apiKeys: { openrouter: "test-key" } },
@@ -37,7 +39,7 @@ it("accepts combined chat text at 20 MiB and rejects an extra UTF-8 byte or sche
   const opts = options();
   const input = {
     ...chat,
-    prompt: "é".repeat(OPENROUTER_TEXT_BYTES / 4),
+    messages: [message("é".repeat(OPENROUTER_TEXT_BYTES / 4))],
     system: "a".repeat(OPENROUTER_TEXT_BYTES / 2),
   };
   await requestOpenRouterChat(input, opts);
@@ -49,7 +51,15 @@ it("accepts combined chat text at 20 MiB and rejects an extra UTF-8 byte or sche
   ]) {
     await expect(
       requestOpenRouterChat(
-        { ...oversized, attachments: [{ kind: "image", path: "missing" }] },
+        {
+          ...oversized,
+          messages: [
+            {
+              ...input.messages[0],
+              content: [...input.messages[0].content, { kind: "image", path: "missing" }],
+            },
+          ],
+        },
         opts,
       ),
     ).rejects.toThrow();
@@ -191,10 +201,11 @@ it("queues large requests before reads, cancels waiters, and releases reservatio
     await release.promise;
     throw new Error("read failed");
   });
+  const video = { kind: "video", path: "video" };
   const input = {
     ...chat,
     model: "google/gemini-3.8-flash",
-    attachments: [{ kind: "video", path: "video" }],
+    messages: [message("Describe", video)],
   };
   const running = requestOpenRouterChat(input, first);
   const failed = expect(running).rejects.toThrow();
@@ -210,9 +221,9 @@ it("queues large requests before reads, cancels waiters, and releases reservatio
   await cancelled;
   release.resolve();
   await failed;
-  await expect(
-    withOpenRouterBudget(input.attachments, 1, signal(), async () => "released"),
-  ).resolves.toBe("released");
+  await expect(withOpenRouterBudget([video], 1, signal(), async () => "released")).resolves.toBe(
+    "released",
+  );
   expect(first.fetchImpl).not.toHaveBeenCalled();
   expect(second.fetchImpl).not.toHaveBeenCalled();
 });
@@ -255,18 +266,24 @@ it.skipIf(spawnSync("ffprobe", ["-version"]).status !== 0)(
     const bytes = makeWav(24 * 1024 * 1024);
     try {
       await writeFile(join(directory, "audio.wav"), bytes);
-      const capability = createModelsCapability(
+      const capability = createModelsPackage(
         backend,
         { apiKeys: { openrouter: "test-key" } },
+        AVAILABLE,
         fetchImpl,
       );
       await capability.api.chat(
         [
-          {
-            model: "google/gemini-3.8-flash",
-            prompt: "Describe",
-            attachments: [{ type: "audio", path: "audio.wav" }],
-          },
+          [
+            {
+              role: "user",
+              content: [
+                { type: "text", text: "Describe" },
+                { type: "audio", path: "audio.wav" },
+              ],
+            },
+          ],
+          { model: "google/gemini-3.8-flash" },
         ],
         { signal: signal() },
       );
@@ -276,11 +293,16 @@ it.skipIf(spawnSync("ffprobe", ["-version"]).status !== 0)(
       const write = vi.spyOn(backend, "writeFileBinary");
       await capability.api.chat(
         [
-          {
-            model: "google/gemini-3.8-flash",
-            prompt: "Describe",
-            attachments: [{ type: "audio", data: bytes.toString("base64"), mimeType: "audio/wav" }],
-          },
+          [
+            {
+              role: "user",
+              content: [
+                { type: "text", text: "Describe" },
+                { type: "audio", bytes: new Uint8Array(bytes) },
+              ],
+            },
+          ],
+          { model: "google/gemini-3.8-flash" },
         ],
         { signal: signal() },
       );
@@ -339,19 +361,44 @@ it("bounds the complete serialized request including media and envelope overhead
       .toBuffer();
     const opts = options();
     opts.mediaAdapter.readFile.mockResolvedValue(bytes);
-    const input = { ...chat, prompt: "a", attachments: [{ kind: "image", path: "image" }] };
+    const input = { ...chat, messages: [message("a", { kind: "image", path: "image" })] };
     await request(input, opts);
     const overhead = Buffer.byteLength(opts.fetchImpl.mock.calls[0][1].body) - 1;
     opts.fetchImpl.mockClear();
-    input.prompt = "a".repeat(1024 - overhead);
+    input.messages[0].content[0].text = "a".repeat(1024 - overhead);
     await request(input, opts);
     expect(Buffer.byteLength(opts.fetchImpl.mock.calls[0][1].body)).toBe(1024);
     opts.fetchImpl.mockClear();
-    input.prompt += "a";
+    input.messages[0].content[0].text += "a";
     await expect(request(input, opts)).rejects.toThrow();
     expect(opts.fetchImpl).not.toHaveBeenCalled();
   } finally {
     vi.doUnmock("../dist/core/models/openrouter_media.js");
     vi.resetModules();
+  }
+});
+
+it.each([
+  { label: "a missing key", config: {}, status: undefined, code: "unavailable" },
+  // A rejected key is an ordinary request failure, never a missing key.
+  { label: "a rejected key", config: { apiKeys: { openrouter: "bad-key" } }, status: 401 },
+  { label: "a rejected request", config: { apiKeys: { openrouter: "test-key" } }, status: 502 },
+])("reports $label from @tau/models", async ({ config, status, code }) => {
+  vi.stubEnv("OPENROUTER_API_KEY", "");
+  try {
+    const fetchImpl = vi.fn(async () => new Response("{}", { status }));
+    const { models } = mainAgentCapabilities({ notifications: false, config });
+    const { api } = createModelsPackage({}, config, models, fetchImpl);
+    const error = await api
+      .chat(["Describe", { model: "openai/gpt-6-luna" }], { signal: signal() })
+      .then(
+        () => undefined,
+        (failure) => failure,
+      );
+    expect(error).toBeInstanceOf(Error);
+    expect(error.code).toBe(code);
+    expect(fetchImpl).toHaveBeenCalledTimes(status === undefined ? 0 : 1);
+  } finally {
+    vi.unstubAllEnvs();
   }
 });

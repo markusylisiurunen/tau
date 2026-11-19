@@ -109,7 +109,7 @@ describe("custom personas", () => {
       );
       writeFileSync(
         join(dir, "custom.md"),
-        "---\nid: custom\nprovider: anthropic\nmodel: claude-haiku-4-5\nallowedReasoningLevels: [low, high]\ntools: [bash]\n---\nmy own prompt",
+        "---\nid: custom\nprovider: anthropic\nmodel: claude-haiku-4-5\nallowedReasoningLevels: [low, high]\n---\nmy own prompt",
       );
       const { personas, errors } = await loadAllContentWithModelResolver(
         {},
@@ -120,7 +120,6 @@ describe("custom personas", () => {
       expect(personas.find((persona) => persona.id === "custom")).toMatchObject({
         systemPrompt: "my own prompt",
         settings: {},
-        tools: ["bash"],
         allowedReasoningLevels: ["low", "high"],
       });
     } finally {
@@ -219,38 +218,6 @@ describe("custom personas", () => {
       expect(custom.source).toBe("user");
       expect(custom).not.toHaveProperty("skills");
       expect(personas.some((persona) => persona.source === "builtin")).toBe(true);
-    } finally {
-      fx.cleanup();
-    }
-  });
-
-  it("disables subagents through an explicit persona tool selection", async () => {
-    const fx = setupFixture();
-
-    try {
-      mkdirSync(join(fx.home, ".config", "tau", "personas"), { recursive: true });
-      writeFileSync(
-        join(fx.home, ".config", "tau", "personas", "no-subagents.md"),
-        [
-          "---",
-          "id: no-subagents",
-          "provider: anthropic",
-          "model: claude-haiku-4-5",
-          "tools: [bash, edit]",
-          "---",
-          "work without background workers",
-        ].join("\n"),
-      );
-
-      const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
-      const { personas, errors } = await loadAllContentWithModelResolver(
-        { subagents: { launchModels: ["openai/gpt-6-luna:low"] } },
-        { deps, cwd: fx.cwd },
-      );
-      expect(errors).toEqual([]);
-      const persona = personas.find((entry) => entry.id === "no-subagents");
-      expect(persona.tools).toEqual(["bash", "edit"]);
-      expect(persona.tools).not.toContain("agents");
     } finally {
       fx.cleanup();
     }

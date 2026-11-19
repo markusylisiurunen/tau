@@ -26,7 +26,7 @@ An invalid value is skipped with a warning, so a value from a broader level may 
 
 ## A tool is missing
 
-Check the active persona's `tools` list, which replaces the defaults. Client tools come from an attached client, so check [client tools](client-tools.md) for those. MCP is unavailable in sessions on a remote execution environment. Missing credentials make a tool fail without removing it.
+Tau's own tools are always present, so a missing tool is a client tool: check [client tools](client-tools.md). MCP servers are unavailable in sessions on a remote execution environment, and missing credentials make a call fail.
 
 ## A credential is rejected
 

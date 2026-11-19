@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { AgentRuntime } from "../dist/core/agent/agent_runtime.js";
+import { McpManager } from "../dist/core/mcp/manager.js";
 import { personas } from "../dist/core/personas.js";
 import { AgentJobRegistry } from "../dist/core/tools/agent_jobs.js";
 import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
@@ -48,7 +49,7 @@ function createFailingStream(partialText, error) {
   };
 }
 
-async function createSession(recordUsage = vi.fn(), config = {}, reasoning = "medium", tools = []) {
+async function createSession(recordUsage = vi.fn(), config = {}, reasoning = "medium") {
   const backend = createLocalToolExecutionBackend();
   backend.runNodeScript = vi.fn(async () => ({
     exitCode: 0,
@@ -90,7 +91,8 @@ async function createSession(recordUsage = vi.fn(), config = {}, reasoning = "me
       includeAgentContext: false,
       executionEnvironment,
       instructions: "review the diff",
-      tools,
+      history: {},
+      mcp: new McpManager(),
       reasoning,
       emitUpdate,
       recordUsage,
@@ -221,7 +223,7 @@ describe("HostedEphemeralAgentSession", () => {
 });
 
 it("gives each ephemeral thread and fork its own jobs", async () => {
-  const { session, jobs, backend } = await createSession(undefined, {}, "medium", ["bash"]);
+  const { session, jobs, backend } = await createSession(undefined, {}, "medium");
   backend.runBash = vi.fn(
     (_command, options) =>
       new Promise((resolve) => {

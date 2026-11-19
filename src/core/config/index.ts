@@ -42,6 +42,7 @@ export {
   getHistoryApiKey,
   getMistralApiKey,
   getOpenAIApiKey,
+  getOpenRouterApiKey,
 } from "./schema.js";
 export type { ThemeAppearance, ThemeDefinition, ThemeVariantTokens } from "./theme_variants.js";
 export { resolveThemeTokensById, resolveThemeTokensForAppearance } from "./theme_variants.js";

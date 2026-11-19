@@ -1,6 +1,6 @@
 # MCP
 
-Tau connects to MCP servers defined in `config.json`. The agent reaches them through [`tau.mcp`](code-mode.md), and the persona needs `mcp` in its `tools`, which built-in personas have.
+Tau connects to MCP servers defined in `config.json`. The agent reaches them through [`@tau/mcp`](code-mode.md).
 
 ## Configure a server
 

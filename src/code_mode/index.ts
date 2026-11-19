@@ -21,11 +21,13 @@ export type {
   TauCodeModeHandlerContext,
   TauCodeModeInvocation,
   TauCodeModeJsonValue,
+  TauCodeModePackage,
   TauCodeModePersistOutput,
   TauCodeModeResult,
 } from "./runtime.js";
 export {
   buildTauCodeModeToolDescription,
+  describeTauCodeModePackages,
   executeTauCodeMode,
   TAU_CODE_MODE_DEFAULT_MAX_OUTPUT_TOKENS,
   TAU_CODE_MODE_DEFAULT_TIMEOUT_MS,

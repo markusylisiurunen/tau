@@ -220,7 +220,6 @@ export class ClaudeCodeRuntime implements SubagentRuntime {
       cwd: config.workingDirectory,
       model: config.model.id,
       effort: config.effort,
-      tools: config.tools,
       sessionId: this.sessionId,
     });
     const source = readFileSync(new URL("./claude_code_runner.mjs", import.meta.url), "utf8");

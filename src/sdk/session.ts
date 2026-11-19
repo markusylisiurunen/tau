@@ -515,12 +515,16 @@ class TauSdkClientImpl implements TauSdkClient {
   sendEphemeralCreate(
     sessionId: string,
     options: {
+      workingDirectory?: string;
       instructions: string;
       reasoning?: SessionProtocolReasoningEffort;
     },
   ): Promise<SessionProtocolResultByMethod["session.ephemeral.create"]> {
     return this.transport.request("session.ephemeral.create", {
       sessionId,
+      ...(options.workingDirectory !== undefined
+        ? { workingDirectory: options.workingDirectory }
+        : {}),
       instructions: options.instructions,
       ...(options.reasoning !== undefined ? { reasoning: options.reasoning } : {}),
     });

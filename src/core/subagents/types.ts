@@ -128,6 +128,7 @@ export type NativeSubagentConfig = {
 export type ClaudeCodeSubagentConfig = {
   kind: "claude-code";
   model: ClaudeCodeModel;
+  relay: boolean;
   effort: ClaudeCodeEffort;
   workingDirectory: string;
 };

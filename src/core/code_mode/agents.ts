@@ -11,6 +11,7 @@ import type { McpManager } from "../mcp/manager.js";
 import type { ModelResolver } from "../models/catalog.js";
 import { getEffectiveAutoCompactThresholdTokens } from "../session/auto_compaction_threshold.js";
 import type { AgentSupervisor } from "../subagents/agent_supervisor.js";
+import { opusPreset } from "../subagents/claude_code_models.js";
 import { AgentRequestError } from "../subagents/errors.js";
 import { parseSubagentLaunchModel } from "../subagents/launch_model.js";
 import {
@@ -39,7 +40,7 @@ export type AgentsPackageOptions = {
   resolveSubagentPrompt?: ResolveSubagentPrompt;
 };
 const id = z.string().min(1).max(256);
-const message = z
+const workerMessage = z
   .string()
   .trim()
   .min(1)
@@ -108,6 +109,12 @@ export function createAgentsPackage(
 ): CodeModePackage {
   const supervisor = options.supervisor.scope(options.callerId);
   const notifications = capabilities.completionNotifications;
+  const message = opusPreset(options.persona)
+    ? z
+        .string()
+        .max(256 * 1024)
+        .regex(/\S/)
+    : workerMessage;
   const parseAllowedLaunchModel = (model: string) => {
     const { launchModel, error } = parseSubagentLaunchModel(model, {
       resolveModel: options.modelResolver,

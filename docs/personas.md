@@ -2,6 +2,8 @@
 
 A persona defines how the agent works: model, base system prompt, and default reasoning. Every persona has the same [tools](tools.md). Tau ships chat and coder personas for its supported models: chat personas are general assistants for any kind of task, and coder personas are for software development. `tau --help` lists what is available. GPT models have variants for the API and for a ChatGPT subscription. A built-in persona appears only when its model is in the catalog. The default is `sonnet-5.5-coder`.
 
+The `claude-code-opus-5.5-low`, `claude-code-opus-5.5-medium`, and `claude-code-opus-5.5-high` personas let you talk with Claude Code Opus 5.5 at that reasoning effort. GPT-6.1 Terra, at medium effort, relays your messages to one Opus conversation and shows you only Opus’s final reply to each turn. To use one, [set up Claude Code](subagents.md#claude-code-subagents) and allow the matching `claude-code/claude-opus-5-5:<effort>` launch model. You can send more messages while Opus works, except in sessions without completion notifications, such as `tau run`, where the relay waits for each reply.
+
 ## Writing a persona
 
 A persona is a Markdown file whose body starts the system prompt. Tau follows it with its own instructions, which every persona gets: how hidden `<system>` blocks work, the boundaries on irreversible actions, how updates and the final reply reach the user, and the terminal reply format. Skills, the environment, `AGENTS.md` files, and subagent settings come after that. For example, `.tau/personas/release-coder.md`:

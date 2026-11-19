@@ -1,3 +1,5 @@
+import type { Persona } from "../types.js";
+
 export const CLAUDE_CODE_PROVIDER = "claude-code";
 
 export const CLAUDE_CODE_MODEL_IDS = [
@@ -15,4 +17,16 @@ export type ClaudeCodeEffort = "low" | "medium" | "high" | "xhigh" | "max";
 export function resolveClaudeCodeModel(id: string): ClaudeCodeModel | undefined {
   const modelId = CLAUDE_CODE_MODEL_IDS.find((candidate) => candidate === id);
   return modelId ? { provider: CLAUDE_CODE_PROVIDER, id: modelId } : undefined;
+}
+
+export const OPUS_PRESETS = (["low", "medium", "high"] as const).map((effort) => ({
+  id: `claude-code-opus-5.5-${effort}`,
+  effort,
+  launchModel: `claude-code/claude-opus-5-5:${effort}`,
+}));
+
+export function opusPreset(persona: Persona) {
+  return persona.source === "builtin"
+    ? OPUS_PRESETS.find((preset) => preset.id === persona.id)
+    : undefined;
 }

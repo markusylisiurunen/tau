@@ -1,4 +1,5 @@
 import type { Persona } from "../types.js";
+import { opusPreset } from "./claude_code_models.js";
 import type {
   ClaudeCodeSubagentConfig,
   NativeSubagentConfig,
@@ -31,6 +32,7 @@ export function resolveSubagentEffectiveSettings(args: {
       kind: "claude-code",
       model: args.launchModel.model,
       effort: args.launchModel.reasoning,
+      relay: opusPreset(args.persona)?.launchModel === args.launchModel.normalized,
     };
   }
   const settings = { ...args.persona.settings };
@@ -72,6 +74,8 @@ export function formatSubagentsForPrompt(persona: Persona): string {
     `- Inherited model: \`${inherited}\``,
     `- Allowed model overrides: ${launchModelsText}`,
     "",
-    "Omit the model override unless the user explicitly asks for a specific model.",
+    opusPreset(persona)
+      ? "Use the Claude Code model specified in your relay instructions."
+      : "Omit the model override unless the user explicitly asks for a specific model.",
   ].join("\n");
 }

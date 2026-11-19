@@ -1,5 +1,5 @@
 import { codeModeError } from "../../code_mode/errors.js";
-import { type ApiKeysConfig, getExaApiKey } from "../config/index.js";
+import { type ApiKeysConfig, getExaApiKey, getOpenRouterApiKey } from "../config/index.js";
 
 export type Availability = { available: true } | { available: false; reason: string };
 
@@ -15,6 +15,8 @@ export type AgentCapabilities = {
   completionNotifications: Availability;
   /** Web search and fetch through `@tau/web`. */
   web: Availability;
+  /** Model calls through `@tau/models`. */
+  models: Availability;
 };
 
 export const AVAILABLE: Availability = { available: true };
@@ -27,6 +29,12 @@ function webAvailability(config: ApiKeysConfig): Availability {
   return getExaApiKey(config) ? AVAILABLE : unavailable("no Exa API key is configured");
 }
 
+function modelsAvailability(config: ApiKeysConfig): Availability {
+  return getOpenRouterApiKey(config)
+    ? AVAILABLE
+    : unavailable("no OpenRouter API key is configured");
+}
+
 export function mainAgentCapabilities(options: {
   notifications: boolean;
   config: ApiKeysConfig;
@@ -37,6 +45,7 @@ export function mainAgentCapabilities(options: {
       ? AVAILABLE
       : unavailable("this session has completion notifications turned off"),
     web: webAvailability(options.config),
+    models: modelsAvailability(options.config),
   };
 }
 
@@ -49,6 +58,7 @@ export function workerCapabilities(options: {
     delegation: options.delegation,
     completionNotifications: unavailable("only the main agent is notified when subagents finish"),
     web: webAvailability(options.config),
+    models: modelsAvailability(options.config),
   };
 }
 
@@ -64,7 +74,7 @@ export function requireCapability(availability: Availability, what: string): voi
 /** Lists the capabilities this agent lacks, or nothing when it has them all. */
 export function formatCapabilitiesForPrompt(capabilities: AgentCapabilities): string | undefined {
   const lines: string[] = [];
-  const { delegation, completionNotifications, web } = capabilities;
+  const { delegation, completionNotifications, web, models } = capabilities;
   if (!delegation.available) {
     lines.push(
       `- Starting and managing subagents with \`@tau/agents\` and \`wait_for_agents\`: ${delegation.reason}.`,
@@ -76,6 +86,9 @@ export function formatCapabilitiesForPrompt(capabilities: AgentCapabilities): st
   }
   if (!web.available) {
     lines.push(`- Web search and fetch in \`@tau/web\`: ${web.reason}. \`discover\` still works.`);
+  }
+  if (!models.available) {
+    lines.push(`- Model calls in \`@tau/models\`: ${models.reason}. \`list\` still works.`);
   }
   if (!lines.length) return undefined;
   return [

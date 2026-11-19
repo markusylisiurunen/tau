@@ -101,7 +101,7 @@ export function createCodeToolDefinition(options: {
     createBashPackage(options.backend, options.cwd, options.bashJobs),
     createFilesPackage(options.backend),
     createWebPackage(options.backend, options.config, capabilities.web),
-    createModelsPackage(options.backend, options.config),
+    createModelsPackage(options.backend, options.config, capabilities.models),
     createHistoryPackage(options.history),
     createMcpPackage(options.mcp),
     createNotificationsPackage(options.notifications),

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
 import { expect, it, vi } from "vitest";
+import { AVAILABLE, mainAgentCapabilities } from "../dist/core/agent/capabilities.js";
 import { createModelsPackage } from "../dist/core/code_mode/models.js";
 import {
   openRouterModels,
@@ -268,6 +269,7 @@ it.skipIf(spawnSync("ffprobe", ["-version"]).status !== 0)(
       const capability = createModelsPackage(
         backend,
         { apiKeys: { openrouter: "test-key" } },
+        AVAILABLE,
         fetchImpl,
       );
       await capability.api.chat(
@@ -385,7 +387,8 @@ it.each([
   vi.stubEnv("OPENROUTER_API_KEY", "");
   try {
     const fetchImpl = vi.fn(async () => new Response("{}", { status }));
-    const { api } = createModelsPackage({}, config, fetchImpl);
+    const { models } = mainAgentCapabilities({ notifications: false, config });
+    const { api } = createModelsPackage({}, config, models, fetchImpl);
     const error = await api
       .chat(["Describe", { model: "openai/gpt-6-luna" }], { signal: signal() })
       .then(

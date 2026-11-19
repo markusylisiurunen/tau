@@ -7,6 +7,7 @@ Some capabilities can be unavailable to an agent, and its instructions say which
 - Starting subagents, for subagents at the depth limit and for side contexts such as diff review. See [subagents](subagents.md).
 - Completion notifications, for subagents and for sessions created with `notifications: false`.
 - Web search and fetch, without an Exa key.
+- Model calls in `@tau/models`, without an OpenRouter key.
 
 A call that needs a missing capability fails with an error instead of disappearing from the tool set.
 

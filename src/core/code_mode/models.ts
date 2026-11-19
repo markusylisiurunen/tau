@@ -1,9 +1,8 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { unavailableError } from "../agent/capabilities.js";
+import { type Availability, requireCapability } from "../agent/capabilities.js";
 import type { ApiKeysConfig } from "../config/index.js";
 import {
-  OpenRouterMissingKeyError,
   openRouterModels,
   requestOpenRouterChat,
   requestOpenRouterDecisions,
@@ -48,18 +47,10 @@ function providerAttachment(part: z.infer<typeof attachment>): OpenRouterAttachm
     : { kind: part.type, data: Buffer.from(part.bytes).toString("base64") };
 }
 
-async function infer<T>(request: Promise<T>): Promise<T> {
-  try {
-    return await request;
-  } catch (error) {
-    if (!(error instanceof OpenRouterMissingKeyError)) throw error;
-    throw unavailableError("Model inference", "no model service API key is configured");
-  }
-}
-
 export function createModelsPackage(
   backend: ToolExecutionBackend,
   config: ApiKeysConfig,
+  availability: Availability,
   fetchImpl?: typeof fetch,
 ): CodeModePackage {
   function mediaAdapter(signal: AbortSignal): OpenRouterMediaAdapter {
@@ -125,33 +116,32 @@ export function createModelsPackage(
         ),
       ),
       chat: method(z.tuple([chatInput, chatOptions]), async ([input, options], context) => {
+        requireCapability(availability, "Model inference");
         const turns =
           typeof input === "string" ? [{ role: "user" as const, content: input }] : input;
-        const result = await infer(
-          requestOpenRouterChat(
-            {
-              ...options,
-              messages: turns.map((turn) =>
-                turn.role === "assistant"
-                  ? turn
-                  : {
-                      role: "user",
-                      content:
-                        typeof turn.content === "string"
-                          ? [{ type: "text", text: turn.content }]
-                          : turn.content.map((part) =>
-                              part.type === "text" ? part : providerAttachment(part),
-                            ),
-                    },
-              ),
-            },
-            {
-              config,
-              signal: context.signal,
-              fetchImpl,
-              mediaAdapter: mediaAdapter(context.signal),
-            },
-          ),
+        const result = await requestOpenRouterChat(
+          {
+            ...options,
+            messages: turns.map((turn) =>
+              turn.role === "assistant"
+                ? turn
+                : {
+                    role: "user",
+                    content:
+                      typeof turn.content === "string"
+                        ? [{ type: "text", text: turn.content }]
+                        : turn.content.map((part) =>
+                            part.type === "text" ? part : providerAttachment(part),
+                          ),
+                  },
+            ),
+          },
+          {
+            config,
+            signal: context.signal,
+            fetchImpl,
+            mediaAdapter: mediaAdapter(context.signal),
+          },
         );
         const status =
           result.refusal || result.finish_reason === "content_filter"
@@ -175,20 +165,19 @@ export function createModelsPackage(
         };
       }),
       decisions: method(z.tuple([z.json(), decisionOptions]), async ([state, options], context) => {
-        const { answers, usage } = await infer(
-          requestOpenRouterDecisions(
-            {
-              model: options.model,
-              value: { state, questions: options.questions },
-              attachments: options.attachments.map(providerAttachment),
-            },
-            {
-              config,
-              signal: context.signal,
-              fetchImpl,
-              mediaAdapter: mediaAdapter(context.signal),
-            },
-          ),
+        requireCapability(availability, "Model inference");
+        const { answers, usage } = await requestOpenRouterDecisions(
+          {
+            model: options.model,
+            value: { state, questions: options.questions },
+            attachments: options.attachments.map(providerAttachment),
+          },
+          {
+            config,
+            signal: context.signal,
+            fetchImpl,
+            mediaAdapter: mediaAdapter(context.signal),
+          },
         );
         return {
           answers,

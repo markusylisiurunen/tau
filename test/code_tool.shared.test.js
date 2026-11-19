@@ -4,6 +4,7 @@ import { join } from "node:path";
 import sharp from "sharp";
 import { describe, expect, it, vi } from "vitest";
 import { runTauCodeMode } from "../dist/code_mode/runtime.js";
+import { AVAILABLE } from "../dist/core/agent/capabilities.js";
 import { createBashPackage } from "../dist/core/code_mode/bash.js";
 import { createModelsPackage } from "../dist/core/code_mode/models.js";
 import { requestOpenRouterChat } from "../dist/core/models/openrouter.js";
@@ -270,7 +271,9 @@ describe("code composition", () => {
     reply.choices[0].message.content = '{"person":"Ada"}';
     const fetchImpl = vi.fn(async () => Response.json(reply));
     const result = await runTauCodeMode({
-      packages: [createModelsPackage({}, { apiKeys: { openrouter: "secret" } }, fetchImpl)],
+      packages: [
+        createModelsPackage({}, { apiKeys: { openrouter: "secret" } }, AVAILABLE, fetchImpl),
+      ],
       timeoutMs: 60_000,
       code: `import * as models from "@tau/models"; import { printText } from "@tau/core"; const result = await models.chat("Extract Ada", { model: "openai/gpt-6-luna", schema: ${JSON.stringify(schema)} }); printText(result.answer.person); printText(JSON.stringify(result.usage));`,
     });
@@ -310,7 +313,12 @@ describe("code composition", () => {
         usage: { input_tokens: 180, output_tokens: 0 },
       };
       const fetchImpl = vi.fn(async () => Response.json(reply));
-      const pkg = createModelsPackage(backend, { apiKeys: { openrouter: "secret" } }, fetchImpl);
+      const pkg = createModelsPackage(
+        backend,
+        { apiKeys: { openrouter: "secret" } },
+        AVAILABLE,
+        fetchImpl,
+      );
       const result = await pkg.api.decisions(
         [
           "Compare the two images.",
@@ -379,7 +387,12 @@ describe("code composition", () => {
       usage: { input_tokens: 100, output_tokens: 0 },
     };
     const fetchImpl = vi.fn(async () => Response.json(reply));
-    const pkg = createModelsPackage(backend, { apiKeys: { openrouter: "secret" } }, fetchImpl);
+    const pkg = createModelsPackage(
+      backend,
+      { apiKeys: { openrouter: "secret" } },
+      AVAILABLE,
+      fetchImpl,
+    );
     const input = {
       model: reply.model,
       questions,
@@ -407,7 +420,7 @@ describe("code composition", () => {
   it("rejects unsupported, ambiguous, invalid, and excessive decision images before file access or inference", async () => {
     const backend = { readFileBinary: vi.fn() };
     const fetchImpl = vi.fn();
-    const pkg = createModelsPackage(backend, {}, fetchImpl);
+    const pkg = createModelsPackage(backend, {}, AVAILABLE, fetchImpl);
     const image = createProtocolImage();
     const inline = { type: "image", bytes: new Uint8Array(Buffer.from(image.data, "base64")) };
     const input = {
@@ -454,7 +467,7 @@ describe("code composition", () => {
       }),
     };
     const fetchImpl = vi.fn();
-    const pkg = createModelsPackage(backend, {}, fetchImpl);
+    const pkg = createModelsPackage(backend, {}, AVAILABLE, fetchImpl);
     await expect(
       pkg.api.decisions(
         [
@@ -478,7 +491,12 @@ describe("code composition", () => {
       readFileBinary: vi.fn(async () => ({ content: Buffer.from(image.data, "base64") })),
     };
     const fetchImpl = vi.fn(async () => Response.json(chatReply()));
-    const pkg = createModelsPackage(backend, { apiKeys: { openrouter: "secret" } }, fetchImpl);
+    const pkg = createModelsPackage(
+      backend,
+      { apiKeys: { openrouter: "secret" } },
+      AVAILABLE,
+      fetchImpl,
+    );
     const attachments = [
       { type: "image", path: "file.png", data: image.data, mimeType: image.mimeType },
       { type: "image", data: image.data, mimeType: "image/jpeg" },
@@ -529,7 +547,12 @@ describe("code composition", () => {
       });
     const fetchImpl = vi.fn(async () => Response.json(chatReply()));
     const controller = new AbortController();
-    const pkg = createModelsPackage(backend, { apiKeys: { openrouter: "secret" } }, fetchImpl);
+    const pkg = createModelsPackage(
+      backend,
+      { apiKeys: { openrouter: "secret" } },
+      AVAILABLE,
+      fetchImpl,
+    );
     try {
       await writeFile(
         join(directory, "image.png"),
@@ -614,7 +637,9 @@ describe("code composition", () => {
         );
       });
       const running = runTauCodeMode({
-        packages: [createModelsPackage({}, { apiKeys: { openrouter: "secret" } }, fetchImpl)],
+        packages: [
+          createModelsPackage({}, { apiKeys: { openrouter: "secret" } }, AVAILABLE, fetchImpl),
+        ],
         timeoutMs: 60_000,
         signal: controller.signal,
         code:

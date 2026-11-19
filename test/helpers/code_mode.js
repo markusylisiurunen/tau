@@ -24,6 +24,7 @@ export function codeToolDefaults() {
       delegation: unavailable("test"),
       completionNotifications: unavailable("test"),
       web: unavailable("test"),
+      models: unavailable("test"),
     },
   };
 }

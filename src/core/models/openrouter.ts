@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { ApiKeysConfig } from "../config/index.js";
-import { getApiKeyForProvider } from "../config/schema.js";
+import { getOpenRouterApiKey } from "../config/schema.js";
 import { parseMediaJson, readMediaResponse } from "../utils/media_validation.js";
 import { withOpenRouterBudget } from "./openrouter_budget.js";
 import {
@@ -193,9 +193,7 @@ async function requestOpenRouter(
   const payload = JSON.stringify(body);
   if (Buffer.byteLength(payload) > OPENROUTER_REQUEST_BYTES)
     throw new Error("encoded request exceeds 512 MiB; reduce text or attachments");
-  const key =
-    (options.env ?? process.env).OPENROUTER_API_KEY?.trim() ||
-    getApiKeyForProvider(options.config, "openrouter");
+  const key = getOpenRouterApiKey(options.config, options.env);
   if (!key) throw new OpenRouterMissingKeyError();
   if (!/^[\x21-\x7e]+$/.test(key))
     throw new Error("OpenRouter API key must contain only printable ASCII without whitespace");

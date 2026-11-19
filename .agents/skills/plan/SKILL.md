@@ -23,7 +23,7 @@ Choose one manageable decision area for each exchange. Group questions and recom
 
 This does not mean one question per message. Asking separately about every small choice makes progress tedious. Equally, do not bundle unrelated decisions, and do not ask about details whose answers depend on a direction that is still open.
 
-In each exchange, give the context needed to decide, your recommended approach and its main reason, and then the input you need. Include alternatives when their trade-offs matter. When only one question or decision needs the user's input, ask it in plain prose. When several do, present them as a numbered list, so the user can answer each one by its number. Keep the explanation in proportion to the decision. Do not repeat the full plan on every turn or end with a checklist of everything still unknown.
+In each exchange, explain what the choice changes in practice. Make your recommendation easy to spot and explain its main reason and trade-off. Include alternatives when their trade-offs matter, then ask for the input you need. When only one question or decision needs the user's input, ask it in plain prose. When several do, present them as a numbered list, so the user can answer each one by its number. Keep the explanation in proportion to the decision. Do not repeat the full plan on every turn or end with a checklist of everything still unknown.
 
 For example, when planning notifications, discuss their purpose and which events belong in the first version together. Recommend a scope and ask whether it serves the user's goal. Leave delivery settings and storage details until that direction is clear, unless a technical constraint changes the choice.
 
@@ -32,6 +32,8 @@ Adapt the pace to the user's replies:
 - When the conversation is becoming fragmented, combine closely related choices.
 - When there are too many separate points to answer, narrow the next exchange.
 - When new information changes an earlier decision, revisit it and explain why.
+
+If the user's reply clearly settles the current topic, go straight to the next decision that matters without asking them to confirm again. If they may still have feedback, for example because you've just revised the proposal or answered a question about it, stay on that topic. When useful, name the next topic as a short offer, such as "Want to look at retry behavior next?" Save the discussion of that topic for when the user is ready to move on.
 
 ## Decide what to ask and what to recommend
 

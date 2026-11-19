@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { AgentRuntime } from "../agent/agent_runtime.js";
+import { AVAILABLE, unavailable } from "../agent/capabilities.js";
 import type { AgentsPackageOptions } from "../code_mode/agents.js";
 import type { SessionRuntimeSettings } from "../config/index.js";
 import type { OpenSubagentHistory } from "../history/recorder.js";
@@ -73,6 +74,8 @@ async function raceWithAbort<T>(promise: Promise<T>, signal?: AbortSignal): Prom
   });
 }
 
+/** Workers at this depth cannot start workers of their own. */
+const MAX_DELEGATION_DEPTH = 2;
 export class AgentSupervisor {
   private readonly records = new Map<
     string,
@@ -135,12 +138,7 @@ export class AgentSupervisor {
     if (this.disposed) throw new AgentRequestError("operation_failed", "Agent pool is disposed");
     if (callerId === this.mainAgentId) return this.mainLaunchEpoch;
     const parent = this.requireRecord(callerId);
-    if (
-      parent.depth >= 2 ||
-      !parent.canDelegate ||
-      parent.subtreeStops > 0 ||
-      parent.run.interruptRequested
-    )
+    if (!parent.canDelegate || parent.subtreeStops > 0 || parent.run.interruptRequested)
       throw new AgentRequestError("operation_failed", "Agent cannot delegate");
     return parent.launchEpoch;
   }
@@ -193,7 +191,7 @@ export class AgentSupervisor {
     parentId: string;
     notifyOnCompletion: boolean;
     launchEpoch: number;
-    agents?: AgentsPackageOptions;
+    agents: AgentsPackageOptions;
     runtimeConfig: SubagentRuntimeConfig;
     prompt: string;
     title: string;
@@ -201,8 +199,8 @@ export class AgentSupervisor {
     config: SessionRuntimeSettings;
     backend: ToolExecutionBackend;
     jobs: AgentJobRegistry;
-    history?: HistoryQuery;
-    mcp?: McpManager;
+    history: HistoryQuery;
+    mcp: McpManager;
     personaId?: string;
   }): SubagentConversationState {
     if (options.notifyOnCompletion && options.parentId !== this.mainAgentId)
@@ -229,13 +227,11 @@ export class AgentSupervisor {
     }
 
     const id = randomUUID();
-    const runtimeConfig = {
-      ...options.runtimeConfig,
-      workingDirectory,
-      tools: options.runtimeConfig.tools.filter(
-        (tool) => tool !== "agents" || (depth < 2 && options.runtimeConfig.kind === "native"),
-      ),
-    };
+    const runtimeConfig = { ...options.runtimeConfig, workingDirectory };
+    const delegation =
+      depth < MAX_DELEGATION_DEPTH
+        ? AVAILABLE
+        : unavailable(`subagents at depth ${MAX_DELEGATION_DEPTH} cannot start their own`);
     const sessionIds: string[] = [id];
     let ancestorId = parentId;
     while (ancestorId !== this.mainAgentId) {
@@ -250,6 +246,7 @@ export class AgentSupervisor {
       id,
       sessionIds,
       supervisor: this,
+      delegation,
       agents: options.agents,
       deps: this.deps,
       openHistory: openHistory
@@ -265,7 +262,7 @@ export class AgentSupervisor {
       launchEpoch: 0,
       notifyOnCompletion: options.notifyOnCompletion,
       interruptedByMain: false,
-      canDelegate: runtimeConfig.kind === "native" && runtimeConfig.tools.includes("agents"),
+      canDelegate: runtimeConfig.kind === "native" && delegation.available,
       subtreeStops: 0,
       kind: "delegated",
       title: options.title,
@@ -373,6 +370,7 @@ export class AgentSupervisor {
       title: record.title,
       model: `${record.model.provider}/${record.model.id}:${record.model.reasoning}`,
       workingDirectory: record.workingDirectory,
+      notifyOnCompletion: record.notifyOnCompletion,
       ...(run.status === "running"
         ? { status: run.interruptRequested ? "stopping" : "working" }
         : run.status === "failed"

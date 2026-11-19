@@ -1,9 +1,10 @@
+import { type AgentCapabilities, formatCapabilitiesForPrompt } from "../agent/capabilities.js";
 import { formatSubagentsForPrompt } from "../subagents/registry.js";
-import { TOOL_NAME_AGENTS } from "../tools/tool_names.js";
 import type { Persona } from "../types.js";
 import { buildBaseSystemPrompt, buildEnvironmentTag } from "../utils/context.js";
 import { formatModelPromptNotes } from "./model_prompt_notes.js";
-export type ComposeSessionPromptsArgs = {
+
+type PromptSourceArgs = {
   persona: Persona;
   sessionId?: string;
   cwd: string;
@@ -15,13 +16,18 @@ export type ComposeSessionPromptsArgs = {
   projectContextBlock?: string;
 };
 
+export type ComposeSessionPromptsArgs = PromptSourceArgs & {
+  /** The capabilities of the agent the base prompt is for. Workers describe their own. */
+  capabilities: AgentCapabilities;
+};
+
 export type SessionPromptComposition = {
   environmentTag: string;
   baseSystemPrompt: string;
-  subagentSystemPrompt?: string;
+  subagentSystemPrompt: string;
 };
 
-export function composeSessionPrompts(args: ComposeSessionPromptsArgs): SessionPromptComposition {
+function promptContext(args: PromptSourceArgs) {
   const environmentTag = buildEnvironmentTag({
     sessionId: args.sessionId,
     cwd: args.cwd,
@@ -31,26 +37,34 @@ export function composeSessionPrompts(args: ComposeSessionPromptsArgs): SessionP
     platform: args.platform,
   });
 
-  const promptContext = {
+  return {
     personaSystemPrompt: args.persona.systemPrompt,
     skillsBlock: args.skillsBlock,
     projectContextBlock: args.projectContextBlock,
     environmentTag,
   };
+}
+
+/** The shared prompt a native worker builds on, without the main agent's own sections. */
+export function composeSubagentSystemPrompt(args: PromptSourceArgs): string {
+  return buildBaseSystemPrompt(promptContext(args));
+}
+
+export function composeSessionPrompts(args: ComposeSessionPromptsArgs): SessionPromptComposition {
+  const context = promptContext(args);
   const baseSystemPrompt = buildBaseSystemPrompt({
-    ...promptContext,
-    subagentsBlock: formatSubagentsForPrompt(args.persona),
+    ...context,
+    subagentsBlock: args.capabilities.delegation.available
+      ? formatSubagentsForPrompt(args.persona)
+      : undefined,
+    capabilitiesBlock: formatCapabilitiesForPrompt(args.capabilities),
     modelNotes: formatModelPromptNotes(args.persona.model),
   });
 
-  // A subagent may run on another model, so it adds the notes for its own model itself.
-  const subagentSystemPrompt = args.persona.tools.includes(TOOL_NAME_AGENTS)
-    ? buildBaseSystemPrompt(promptContext)
-    : undefined;
-
   return {
-    environmentTag,
+    environmentTag: context.environmentTag,
     baseSystemPrompt,
-    ...(subagentSystemPrompt !== undefined ? { subagentSystemPrompt } : {}),
+    // A subagent may run on another model, so it adds the notes for its own model itself.
+    subagentSystemPrompt: buildBaseSystemPrompt(context),
   };
 }

@@ -1,4 +1,5 @@
 import type { Tool } from "@earendil-works/pi-ai";
+import { mainAgentCapabilities } from "./agent/capabilities.js";
 import type { VirtualBundle } from "./config/index.js";
 import type { PromptTemplate } from "./prompts.js";
 import type { ChatRuntimePromptContext } from "./runtime/chat_runtime.js";
@@ -24,9 +25,6 @@ function formatPersona(p: Persona): string {
   if (p.settings.serviceTier) lines.push(`  serviceTier: ${p.settings.serviceTier}`);
   if (p.allowedReasoningLevels) {
     lines.push(`  allowedReasoningLevels: ${p.allowedReasoningLevels.join(", ")}`);
-  }
-  if (p.tools && p.tools.length > 0) {
-    lines.push(`  tools: ${p.tools.join(", ")}`);
   }
   return lines.join("\n");
 }
@@ -135,6 +133,10 @@ export function printDebugInfo(args: {
 
   const promptComposition = composeSessionPrompts({
     persona: selectedPersona,
+    capabilities: mainAgentCapabilities({
+      notifications: true,
+      config: virtualBundle?.config ?? {},
+    }),
     cwd: promptContext.cwd,
     repoRoot: promptContext.repoRoot,
     repository: promptContext.repository,
@@ -147,18 +149,10 @@ export function printDebugInfo(args: {
   console.log(`\n${promptComposition.baseSystemPrompt}`);
 
   // Sub-agents
-  section(`active sub-agents (${selectedPersona.tools.includes("agents") ? 1 : 0})`);
-  if (!selectedPersona.tools.includes("agents")) {
-    console.log("\n  (none)");
-  } else {
-    console.log("\n- subagent");
-    const effective = resolveSubagentEffectiveSettings({ persona: selectedPersona });
-    console.log(`  model: ${effective.model.provider}:${effective.model.id}`);
-    console.log(`  settings: ${JSON.stringify(effective.settings)}`);
-    if (effective.tools.length > 0) {
-      console.log(`  tools: ${effective.tools.join(", ")}`);
-    }
-  }
+  section("subagents");
+  const effective = resolveSubagentEffectiveSettings({ persona: selectedPersona });
+  console.log(`\n  model: ${effective.model.provider}:${effective.model.id}`);
+  console.log(`  settings: ${JSON.stringify(effective.settings)}`);
 
   // Tools
   const enabledTools = toolRegistry.getEnabledToolSchemas();

@@ -1,15 +1,4 @@
 import { type ModelResolver, resolveModel } from "./models/catalog.js";
-import {
-  TOOL_NAME_AGENTS,
-  TOOL_NAME_BASH,
-  TOOL_NAME_EDIT,
-  TOOL_NAME_HISTORY,
-  TOOL_NAME_MCP,
-  TOOL_NAME_MODELS,
-  TOOL_NAME_VIEW_IMAGE,
-  TOOL_NAME_WEB,
-  TOOL_NAME_WRITE,
-} from "./tools/tool_names.js";
 import type { Persona } from "./types.js";
 
 // The built-in personas share every section except the opening paragraph and the
@@ -279,18 +268,6 @@ const VARIANT_CONFIG: Record<Variant, { suffix: string; systemPrompt: string }> 
   coder: { suffix: "-coder", systemPrompt: CODER_SYSTEM_PROMPT },
 };
 
-const BASE_TOOLS: NonNullable<Persona["tools"]> = [
-  TOOL_NAME_BASH,
-  TOOL_NAME_WRITE,
-  TOOL_NAME_EDIT,
-  TOOL_NAME_VIEW_IMAGE,
-  TOOL_NAME_WEB,
-  TOOL_NAME_HISTORY,
-  TOOL_NAME_MCP,
-  TOOL_NAME_MODELS,
-];
-const SUBAGENT_TOOLS: NonNullable<Persona["tools"]> = [TOOL_NAME_AGENTS];
-
 function buildPersona(spec: PersonaSpec, variant: Variant, modelResolver: ModelResolver): Persona {
   const model = modelResolver(spec.provider, spec.modelId);
   if (!model) {
@@ -299,8 +276,6 @@ function buildPersona(spec: PersonaSpec, variant: Variant, modelResolver: ModelR
 
   const config = VARIANT_CONFIG[variant];
   const settings = structuredClone(spec.settings);
-
-  const tools = [...BASE_TOOLS, ...SUBAGENT_TOOLS];
 
   return {
     id: `${spec.id}${config.suffix}`,
@@ -311,7 +286,6 @@ function buildPersona(spec: PersonaSpec, variant: Variant, modelResolver: ModelR
     allowedReasoningLevels: spec.allowedReasoningLevels,
     settings,
     subagentLaunchModels: [],
-    tools,
     source: "builtin",
   };
 }

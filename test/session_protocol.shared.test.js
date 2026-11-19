@@ -735,7 +735,6 @@ describe("session_protocol", () => {
         {
           sessionId: "session-1",
           instructions: "review this",
-          tools: ["bash", "view_image"],
           reasoning: "xhigh",
         },
       ],
@@ -873,7 +872,6 @@ describe("session_protocol", () => {
         validateSessionProtocolParams("session.ephemeral.create", {
           sessionId: "session-1",
           instructions: "review this",
-          tools: ["bash"],
           workingDirectory,
         }),
       ).toMatchObject({
@@ -899,7 +897,6 @@ describe("session_protocol", () => {
       validateSessionProtocolParams("session.ephemeral.create", {
         sessionId: "session-1",
         instructions: "review this",
-        tools: [],
         reasoning: "extreme",
       }),
     ).toEqual({

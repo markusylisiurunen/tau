@@ -92,7 +92,12 @@ function getWaitForAgentsSubject(raw: unknown): string {
   return parsedArgs.ok ? formatAgentIdsSubject(parsedArgs.data.ids) : "(invalid arguments)";
 }
 
-export function createWaitForAgentsToolDefinition(supervisor: ScopedAgentSupervisor): AgentTool {
+/** Always registered; without delegation every call is blocked with the reason. */
+export function createWaitForAgentsToolDefinition(
+  delegation:
+    | { available: true; supervisor: ScopedAgentSupervisor }
+    | { available: false; reason: string },
+): AgentTool {
   return {
     schema: WAIT_FOR_AGENTS_TOOL,
     describe: (toolCall) => {
@@ -130,6 +135,11 @@ export function createWaitForAgentsToolDefinition(supervisor: ScopedAgentSupervi
         return executeTool(context, () => blocked(`Invalid arguments: ${parsedArgs.error}`));
       }
 
+      if (!delegation.available) {
+        const reason = `Starting and managing subagents is unavailable: ${delegation.reason}.`;
+        return executeTool(context, () => blocked(reason));
+      }
+      const supervisor = delegation.supervisor;
       ids = [...new Set(parsedArgs.data.ids)];
       const dedupedTarget = formatAgentIdsSubject(ids);
 

@@ -89,4 +89,4 @@ A call can succeed while single pages fail. Check each entry in `statuses` befor
 
 ## Errors
 
-Request-level failures throw without a `code`, including a missing web service key and responses over 16 MiB.
+`search` and `fetch` fail with `code: "unavailable"` when web search is unavailable to you. Other request-level failures, such as responses over 16 MiB, throw without a `code`.

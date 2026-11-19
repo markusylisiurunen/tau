@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
-import { NotificationInbox } from "../dist/core/agent/notification_inbox.js";
-import { createAgentsPackage } from "../dist/core/code_mode/agents.js";
+import {
+  mainAgentCapabilities,
+  unavailable,
+  workerCapabilities,
+} from "../dist/core/agent/capabilities.js";
+import {
+  createAgentsPackage,
+  createUnavailableAgentsPackage,
+} from "../dist/core/code_mode/agents.js";
 import { loadModelResolver } from "../dist/core/models/catalog.js";
 import { personas } from "../dist/core/personas.js";
 import { AgentTrace } from "../dist/core/subagents/trace.js";
@@ -24,8 +31,9 @@ function fixture(overrides = {}) {
     waitForAgents: vi.fn(async () => []),
     ...overrides.supervisor,
   };
+  const { capabilities = mainAgentCapabilities({ notifications: true, config: {} }), ...rest } =
+    overrides;
   const options = {
-    notifications: new NotificationInbox(),
     callerId: "main",
     backend: {},
     jobs: {},
@@ -34,28 +42,48 @@ function fixture(overrides = {}) {
     history: {},
     cwd: "/repo",
     subagentSystemPrompt: "child instructions",
-    persona: { ...personas[0], tools: ["bash", "agents"], subagentLaunchModels: [] },
+    persona: { ...personas[0], subagentLaunchModels: [] },
     modelResolver: loadModelResolver().resolveModel,
-    ...overrides,
+    ...rest,
     supervisor,
   };
-  return { options, supervisor, api: createAgentsPackage(options, "origin").api };
+  return { options, supervisor, api: createAgentsPackage(options, capabilities, "origin").api };
 }
 
 describe("agents capability", () => {
-  it("exposes subscriptions only to main and rejects worker options before spawning", async () => {
+  it("defaults completion notifications to the capability and rejects them without it", async () => {
     const main = fixture();
+    await main.api.spawn(["task", { title: "child" }], context());
+    expect(main.supervisor.spawn.mock.lastCall[0].notifyOnCompletion).toBe(true);
     await main.api.spawn(["task", { title: "child", notifyOnCompletion: false }], context());
     expect(main.supervisor.spawn.mock.lastCall[0].notifyOnCompletion).toBe(false);
     await main.api.setCompletionNotification(["worker", true], context());
     expect(main.supervisor.setCompletionNotification).toHaveBeenCalledWith("worker", true);
-    const worker = fixture({ callerId: "worker" });
-    expect(worker.api.setCompletionNotification).toBeUndefined();
+
+    const worker = fixture({
+      callerId: "worker",
+      capabilities: workerCapabilities({ delegation: { available: true }, config: {} }),
+    });
+    await worker.api.spawn(["task", { title: "child" }], context());
+    expect(worker.supervisor.spawn.mock.lastCall[0].notifyOnCompletion).toBe(false);
+    worker.supervisor.prepareSpawn.mockClear();
     await expect(
       worker.api.spawn(["task", { title: "child", notifyOnCompletion: true }], context()),
-    ).rejects.toMatchObject({ code: "invalid_arguments" });
+    ).rejects.toMatchObject({ code: "unavailable" });
+    await expect(
+      worker.api.setCompletionNotification(["worker", false], context()),
+    ).rejects.toMatchObject({ code: "unavailable" });
     expect(worker.supervisor.prepareSpawn).not.toHaveBeenCalled();
-    expect(worker.supervisor.spawn).not.toHaveBeenCalled();
+    expect(worker.supervisor.setCompletionNotification).not.toHaveBeenCalled();
+  });
+
+  it("keeps every export when delegation is unavailable and fails each call", async () => {
+    const { api } = createUnavailableAgentsPackage(unavailable("leaf"));
+    expect(Object.keys(api).sort()).toEqual(Object.keys(fixture().api).sort());
+    await expect(api.spawn(["task", { title: "child" }], context())).rejects.toMatchObject({
+      code: "unavailable",
+    });
+    await expect(api.list([], context())).rejects.toMatchObject({ code: "unavailable" });
   });
 
   it.each([undefined, "high"])(
@@ -122,7 +150,6 @@ describe("agents capability", () => {
           model: options.persona.model,
           systemPrompt: "child instructions",
           workingDirectory: "/repo",
-          tools: ["bash", "agents"],
         }),
       }),
     );
@@ -235,14 +262,17 @@ describe("agents capability", () => {
       { id: "busy", status: "working" },
     ].map((state) => ({ ...state, title: state.id, pending: { queue: 0, steer: 0 } }));
     const tool = createWaitForAgentsToolDefinition({
-      waitForAgents: async () => agents,
-      getSnapshot: (id) => ({
-        id,
-        title: id,
-        costTotal: 0,
-        run: { status: id === "busy" ? "running" : "succeeded", startedAt: 1, finishedAt: 2 },
-      }),
-      getLastResponse,
+      available: true,
+      supervisor: {
+        waitForAgents: async () => agents,
+        getSnapshot: (id) => ({
+          id,
+          title: id,
+          costTotal: 0,
+          run: { status: id === "busy" ? "running" : "succeeded", startedAt: 1, finishedAt: 2 },
+        }),
+        getLastResponse,
+      },
     });
     const emitActivity = vi.fn();
     const outcome = await tool.execute(

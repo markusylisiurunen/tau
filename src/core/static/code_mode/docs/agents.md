@@ -31,13 +31,13 @@ function readResponse(id: string): Promise<string>;
 function trace(id: string, options?: TraceOptions): Promise<TracePage>;
 function readText(id: string, seq: number): Promise<string>;
 function readContent(id: string, ref: string, options?: { cursor?: string }): Promise<ContentPage>;
-function setCompletionNotification(id: string, enabled: boolean): Promise<Worker>; // main agent only
+function setCompletionNotification(id: string, enabled: boolean): Promise<Worker>;
 
 type SpawnOptions = {
   title: string; // one line
   model?: string; // an allowed override from launchOptions()
   workingDirectory?: string; // defaults to yours
-  notifyOnCompletion?: boolean; // main agent only, default true
+  notifyOnCompletion?: boolean; // default: true when completion notifications are available to you, otherwise false
 };
 
 type Capacity = { running: number; limit: number }; // shared across the session, not reserved
@@ -49,6 +49,7 @@ type Worker = {
   title: string;
   model: string;
   workingDirectory: string;
+  notifyOnCompletion: boolean; // whether you are notified when it finishes
   pending: { queue: number; steer: number };
   usage: {
     input: number;
@@ -103,6 +104,8 @@ The prompt must carry all the context a worker needs. A worker inherits your mod
 
 `sendInput` with `"queue"` starts a separate turn after current work, and `"steer"` delivers the message during the current turn as soon as possible. Either starts a turn when the worker is idle. `interrupt` stops the turn and drops pending input, and by default waits until the worker has stopped. `scope: "subtree"` includes the worker's descendants. Background jobs that workers started keep running.
 
+Completion notifications tell you when a worker you started finishes, so you can end your turn and continue when it does. When your instructions list them as unavailable, wait for workers before you rely on their results. `notifyOnCompletion: true` and `setCompletionNotification` then fail with `unavailable`.
+
 `waitUntilIdle` returns once the worker has no active turn or pending input, also after a failed or interrupted turn. It does not wait for the worker's descendants or jobs, and cancelling the wait leaves the worker running.
 
 ## Responses and traces
@@ -119,3 +122,4 @@ The prompt must carry all the context a worker needs. A worker inherits your mod
 | `operation_failed` | The request cannot be done now, such as a full capacity, a stopping worker, a model you may not use, or a turn that did not complete. |
 | `expired_content` | The content is no longer available or not complete. |
 | `invalid_cursor` | The cursor does not belong to this query. |
+| `unavailable` | The call needs a capability you lack: starting and managing subagents, which every function needs, or completion notifications. |

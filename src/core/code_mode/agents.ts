@@ -1,6 +1,10 @@
 import { resolve } from "node:path";
 import { z } from "zod";
-import type { NotificationInbox } from "../agent/notification_inbox.js";
+import {
+  type AgentCapabilities,
+  type Availability,
+  requireCapability,
+} from "../agent/capabilities.js";
 import type { SessionRuntimeSettings } from "../config/index.js";
 import type { HistoryQuery } from "../history/types.js";
 import type { McpManager } from "../mcp/manager.js";
@@ -28,13 +32,11 @@ export type AgentsPackageOptions = {
   autoCompactThresholdTokens: number | null;
   config: SessionRuntimeSettings;
   modelResolver: ModelResolver;
-  subagentSystemPrompt: string | undefined;
+  subagentSystemPrompt: string;
   history: HistoryQuery;
-  mcp?: McpManager;
+  mcp: McpManager;
   cwd: string;
   resolveSubagentPrompt?: ResolveSubagentPrompt;
-  /** The main agent's inbox, absent when the session has notifications turned off. */
-  notifications?: NotificationInbox;
 };
 const id = z.string().min(1).max(256);
 const message = z
@@ -55,6 +57,7 @@ const spawnOptions = z.strictObject({
     .min(1)
     .regex(/^[^\r\n]+$/)
     .optional(),
+  notifyOnCompletion: z.boolean().optional(),
 });
 const traceOptions = z.strictObject({
   kinds: z
@@ -69,16 +72,42 @@ const traceOptions = z.strictObject({
 export const agentsPackageDescription =
   "Inspect allowed launch models and capacity, start delegated workers, send them queued or steering input, interrupt and wait for them, and read selected parts of their conversations. Access covers the workers you started and the workers they started. Follow the delegation policy in your instructions. Workers keep running when a program ends or is cancelled.";
 
+const AGENTS_FUNCTIONS = [
+  "launchOptions",
+  "spawn",
+  "list",
+  "read",
+  "sendInput",
+  "interrupt",
+  "waitUntilIdle",
+  "readResponse",
+  "trace",
+  "readContent",
+  "readText",
+  "setCompletionNotification",
+] as const;
+type AgentsMethods = Record<(typeof AGENTS_FUNCTIONS)[number], CodeModeMethod>;
+const DELEGATION = "Starting and managing subagents";
+const COMPLETION_NOTIFICATIONS = "Completion notifications";
+
+/** `@tau/agents` for an agent without delegation: the same exports, each failing with the reason. */
+export function createUnavailableAgentsPackage(delegation: Availability): CodeModePackage {
+  const methods = Object.fromEntries(
+    AGENTS_FUNCTIONS.map((name) => [
+      name,
+      method(z.tuple([]).rest(z.unknown()), () => requireCapability(delegation, DELEGATION)),
+    ]),
+  ) as AgentsMethods;
+  return definePackage("agents", agentsPackageDescription, methods);
+}
+
 export function createAgentsPackage(
   options: AgentsPackageOptions,
+  capabilities: AgentCapabilities,
   originHistoryEntryId: string,
 ): CodeModePackage {
   const supervisor = options.supervisor.scope(options.callerId);
-  const notifiesCaller =
-    options.callerId === options.supervisor.mainAgentId && options.notifications !== undefined;
-  const callerSpawnOptions = notifiesCaller
-    ? spawnOptions.extend({ notifyOnCompletion: z.boolean().default(true) })
-    : spawnOptions.transform((input) => ({ ...input, notifyOnCompletion: false }));
+  const notifications = capabilities.completionNotifications;
   const parseAllowedLaunchModel = (model: string) => {
     const { launchModel, error } = parseSubagentLaunchModel(model, {
       resolveModel: options.modelResolver,
@@ -90,7 +119,7 @@ export function createAgentsPackage(
       );
     return launchModel;
   };
-  const methods: Record<string, CodeModeMethod> = {
+  const methods: AgentsMethods = {
     launchOptions: method(z.tuple([]), () => {
       const choices = describeSubagentLaunchChoices(options.persona);
       return {
@@ -105,7 +134,8 @@ export function createAgentsPackage(
         capacity: supervisor.getCapacity(),
       };
     }),
-    spawn: method(z.tuple([message, callerSpawnOptions]), async ([prompt, input], context) => {
+    spawn: method(z.tuple([message, spawnOptions]), async ([prompt, input], context) => {
+      if (input.notifyOnCompletion) requireCapability(notifications, COMPLETION_NOTIFICATIONS);
       const launchEpoch = supervisor.prepareSpawn();
       const launchModel = input.model ? parseAllowedLaunchModel(input.model) : undefined;
       const settings = resolveSubagentEffectiveSettings({
@@ -140,7 +170,7 @@ export function createAgentsPackage(
       return supervisor.spawn({
         ...options,
         runtimeConfig,
-        notifyOnCompletion: input.notifyOnCompletion,
+        notifyOnCompletion: input.notifyOnCompletion ?? notifications.available,
         launchEpoch,
         agents: options,
         prompt,
@@ -206,12 +236,11 @@ export function createAgentsPackage(
         throw new AgentRequestError("expired_content", "The full trace text is unavailable");
       return result.text;
     }),
-  };
-  if (notifiesCaller) {
-    methods.setCompletionNotification = method(z.tuple([id, z.boolean()]), ([agentId, enabled]) => {
+    setCompletionNotification: method(z.tuple([id, z.boolean()]), ([agentId, enabled]) => {
+      requireCapability(notifications, COMPLETION_NOTIFICATIONS);
       supervisor.setCompletionNotification(agentId, enabled);
       return supervisor.read(agentId);
-    });
-  }
+    }),
+  };
   return definePackage("agents", agentsPackageDescription, methods);
 }

@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from "vitest";
 import { toSessionConfig } from "../dist/core/config/ownership.js";
 import { HistoryManager } from "../dist/core/history/history_manager.js";
 import { LocalHistoryStore } from "../dist/core/history/local_history_store.js";
+import { McpManager } from "../dist/core/mcp/manager.js";
 import { resolveModel } from "../dist/core/models/catalog.js";
 import { personas } from "../dist/core/personas.js";
 import { renderSubagentPrefixPrompt } from "../dist/core/static/index.js";
@@ -262,7 +263,6 @@ function expectedCatalogPersona(persona = personas[0]) {
       ? { allowedReasoningLevels: [...persona.allowedReasoningLevels] }
       : {}),
     subagentLaunchModels: [...(persona.subagentLaunchModels ?? [])],
-    ...(persona.tools ? { tools: [...persona.tools] } : {}),
     source: persona.source,
   };
 }
@@ -420,7 +420,8 @@ describe("HostedEphemeralAgentSession", () => {
       includeAgentContext: false,
       executionEnvironment: createTestExecutionEnvironment(),
       instructions: "review",
-      tools: [],
+      history: {},
+      mcp: new McpManager(),
       reasoning: "medium",
       emitUpdate: vi.fn(),
     });
@@ -784,9 +785,23 @@ describe("LocalSessionHost", () => {
     try {
       expect((await session.snapshot()).settings.notifications).toBe(false);
       expect(session.runtime.notifications).toBeUndefined();
-      expect(session.runtime.agent.spec.tools.get("code")?.schema.description ?? "").not.toContain(
-        "@tau/notifications",
+      const result = await session.runtime.agent.spec.tools.get("code").execute(
+        {
+          id: "subscribe",
+          name: "code",
+          arguments: {
+            code: 'import { spawn } from "@tau/agents"; import { printText } from "@tau/core"; try { await spawn("task", { title: "t", notifyOnCompletion: true }); } catch (error) { printText(error.code); }',
+          },
+        },
+        {
+          agentId: session.runtime.agent.agentIdValue,
+          turnId: "turn",
+          assistantMessageId: "message",
+          signal: new AbortController().signal,
+          emitActivity: async () => {},
+        },
       );
+      expect(result.content[0].text).toBe("unavailable");
     } finally {
       await recoveredHost.shutdown();
     }
@@ -1002,7 +1017,6 @@ describe("LocalSessionHost", () => {
         expect(snapshot.settings.autoCompactThresholdTokens).toBe(50000);
         const { contextId } = await session.createEphemeralContext({
           instructions: "independent",
-          tools: [],
         });
         const thread = await session.ephemeralAgentSessions.get(contextId).createThread("thread");
         expect(thread.runtime.spec.autoCompactThresholdTokens).toBeNull();
@@ -3176,10 +3190,8 @@ describe("LocalSessionHost", () => {
       });
       const parentRuntime = supervisor.records.get(parent.id).runtime.agent;
       const leafRuntime = supervisor.records.get(leaf.id).runtime.agent;
-      expect(parentRuntime.spec.tools.get("wait_for_agents")).toBeDefined();
-      expect(leafRuntime.spec.tools.get("wait_for_agents")).toBeUndefined();
-      expect(leafRuntime.spec.tools.get("code").schema.description).not.toContain(
-        '"name":"agents"',
+      expect(leafRuntime.spec.tools.schemas.map(({ name }) => name)).toEqual(
+        parentRuntime.spec.tools.schemas.map(({ name }) => name),
       );
       expect(leafRuntime.spec.attribution).toEqual(parentRuntime.spec.attribution);
       expect(parent.workingDirectory).toBe("/repo/parent");
@@ -3644,12 +3656,11 @@ describe("LocalSessionHost", () => {
 
       const { contextId } = await session.createEphemeralContext({
         instructions: "review instructions",
-        tools: ["bash"],
       });
       const context = session.ephemeralAgentSessions.get(contextId);
       expect(context.options.config.apiKeys).toEqual(apiKeys);
       await context.createThread("thread-1");
-      expect(registry.mock.calls.at(-1)[3].apiKeys).toEqual(apiKeys);
+      expect(registry.mock.calls.at(-1)[0].config.apiKeys).toEqual(apiKeys);
     } finally {
       registry.mockRestore();
       await session.dispose();
@@ -3675,9 +3686,6 @@ describe("LocalSessionHost", () => {
       for (const persona of legacy.catalog.personas) {
         persona.skills = "*";
         persona.subagents = { default: { launchModels: persona.subagentLaunchModels } };
-        persona.tools = persona.tools?.flatMap((name) =>
-          name === "agents" ? ["spawn_agent", "wait_for_agents"] : [name],
-        );
         delete persona.subagentLaunchModels;
       }
       writeFileSync(
@@ -3837,6 +3845,11 @@ describe("LocalSessionHost", () => {
     expect(persisted).toEqual({
       ...storedSnapshot,
       revision: 5,
+      // The stored session predates worker prompts for every persona, so recovery composes one.
+      bootstrap: {
+        ...storedSnapshot.bootstrap,
+        prompt: { ...storedSnapshot.bootstrap.prompt, subagentSystemPrompt: expect.any(String) },
+      },
       agentState: {
         ...storedSnapshot.agentState,
         modelContextKey: recoveredSession.runtime.snapshot().modelContextKey,
@@ -4605,7 +4618,6 @@ describe("LocalSessionHost", () => {
           workingDirectory: "/repo",
           model: personas[0].model,
           settings: {},
-          tools: [],
         },
         prompt: "task",
         title: "child",
@@ -4613,6 +4625,9 @@ describe("LocalSessionHost", () => {
         config: {},
         backend: createLocalToolExecutionBackend(),
         jobs: session.runtime.jobs,
+        history: {},
+        mcp: new McpManager(),
+        agents: { persona: personas[0] },
       });
       const agent = supervisor.records.get(child.id).runtime.agent;
       agent.spec.model.stream = () => ({
@@ -4662,7 +4677,6 @@ describe("LocalSessionHost", () => {
           workingDirectory: "/repo/child",
           model: personas[0].model,
           settings: { reasoning: "medium" },
-          tools: [],
         },
         prompt: "first task",
         title: "child task",
@@ -4670,6 +4684,9 @@ describe("LocalSessionHost", () => {
         config: {},
         backend: createLocalToolExecutionBackend(),
         jobs: parent.runtime.jobs,
+        history: {},
+        mcp: new McpManager(),
+        agents: { persona: personas[0] },
       });
       const agent = supervisor.records.get(child.id).runtime.agent;
       const replies = ["first answer", "steered answer", "follow-up answer"];
@@ -4946,7 +4963,6 @@ describe("LocalSessionHost", () => {
     const session = await host.createSession(localCreateInput);
     const { contextId } = await session.createEphemeralContext({
       instructions: "review instructions",
-      tools: [],
     });
     const hostedContext = session.ephemeralAgentSessions.get(contextId);
     const thread = await hostedContext.getOrCreateThread("thread-1");
@@ -5405,7 +5421,6 @@ describe("session-owned MCP tools", () => {
       );
       expect(spawned.outcome).toBe("succeeded");
       const launch = spawn.mock.calls[0][0];
-      expect(launch.runtimeConfig.tools).toContain("mcp");
       expect(launch.mcp.listServers()).toEqual([{ name: "host" }]);
       spawn.mockRestore();
       let projected = await session.snapshot();

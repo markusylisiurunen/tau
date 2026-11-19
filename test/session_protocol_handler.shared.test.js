@@ -691,7 +691,6 @@ describe("SessionProtocolHandler", () => {
         sessionId: "session-1",
         workingDirectory: "../review",
         instructions: "review this",
-        tools: ["bash"],
       }),
     );
     await observeStarted;
@@ -726,7 +725,6 @@ describe("SessionProtocolHandler", () => {
         sessionId: "session-1",
         workingDirectory: "../review",
         instructions: "review this",
-        tools: ["bash"],
         reasoning: "high",
       }),
     );
@@ -750,7 +748,6 @@ describe("SessionProtocolHandler", () => {
     expect(harness.seededSession.createEphemeralContext).toHaveBeenCalledWith({
       workingDirectory: "../review",
       instructions: "review this",
-      tools: ["bash"],
       reasoning: "high",
     });
     expect(submissions).toEqual([

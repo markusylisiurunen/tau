@@ -20,7 +20,7 @@ type NotificationSummary = { id: string; title: string; read: boolean };
 type Notification = NotificationSummary & { body?: string };
 ```
 
-Listing does not mark notifications read. The inbox keeps the 256 newest notifications, oldest first, and none survive a Tau restart.
+Only the main agent receives notifications, and only when the session has them on, so elsewhere the inbox stays empty. Listing does not mark notifications read. The inbox keeps the 256 newest notifications, oldest first, and none survive a Tau restart.
 
 ## Errors
 

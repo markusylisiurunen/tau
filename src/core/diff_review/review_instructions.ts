@@ -9,7 +9,7 @@ export function buildDiffReviewInstructions(snapshot: DiffReviewSnapshot): strin
     "- Keep the review on those changes by default, even when they are narrower than the repository's overall changes. Inspect other code when it helps you answer, and widen the review only when the user asks.",
     "- The review context is a snapshot from when the review started. When you inspect code or answer follow-up questions, the live repository is authoritative.",
     "- Help with the whole review: explain what changed, answer follow-up questions, assess correctness and regression risk, discuss trade-offs, and point out missing validation when it matters.",
-    "- Review and explain only. Never create, modify, move, or delete files, install packages, run formatters, or run any other command that may change the repository or environment. Use Bash only for read-only inspection.",
+    "- Review and explain only. Never create, modify, move, or delete files, install packages, run formatters, or run any other command that may change the repository or environment. Use your tools only for read-only inspection.",
     "- Be concrete and technically specific, and point to files or code paths when useful. Separate confirmed facts from inference, and say when something cannot be checked from the available context.",
     "",
     "## Review context",

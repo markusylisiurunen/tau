@@ -3,7 +3,6 @@ import type {
   SessionProtocolClientToolCallMessage,
   SessionProtocolClientToolCancelMessage,
   SessionProtocolCreateParams,
-  SessionProtocolEphemeralAgentTool,
   SessionProtocolInitializeParams,
   SessionProtocolPersonaOverrides,
   SessionProtocolReasoningEffort,
@@ -517,14 +516,12 @@ class TauSdkClientImpl implements TauSdkClient {
     sessionId: string,
     options: {
       instructions: string;
-      tools: SessionProtocolEphemeralAgentTool[];
       reasoning?: SessionProtocolReasoningEffort;
     },
   ): Promise<SessionProtocolResultByMethod["session.ephemeral.create"]> {
     return this.transport.request("session.ephemeral.create", {
       sessionId,
       instructions: options.instructions,
-      tools: options.tools,
       ...(options.reasoning !== undefined ? { reasoning: options.reasoning } : {}),
     });
   }
@@ -880,7 +877,6 @@ class TauSdkSessionImpl implements TauSdkSession {
   async createEphemeralContext(options: {
     workingDirectory?: string;
     instructions: string;
-    tools: SessionProtocolEphemeralAgentTool[];
     reasoning?: SessionProtocolReasoningEffort;
   }): Promise<SessionProtocolResultByMethod["session.ephemeral.create"]> {
     return await this.client.sendEphemeralCreate(this.activeSessionId(), options);

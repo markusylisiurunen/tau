@@ -94,7 +94,6 @@ export type {
   TauSdkDelta,
   TauSdkDeltaListener,
   TauSdkEphemeral,
-  TauSdkEphemeralAgentTool,
   TauSdkEphemeralCloseResult,
   TauSdkEphemeralCreateResult,
   TauSdkEphemeralListener,

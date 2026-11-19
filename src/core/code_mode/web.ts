@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { type Availability, requireCapability } from "../agent/capabilities.js";
 import { type ApiKeysConfig, getExaApiKey } from "../config/index.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
 import { discoverAgentContent } from "../tools/web_discovery.js";
@@ -310,13 +311,15 @@ const defaultDeps: WebToolDeps = { createExaClient, discover: discoverAgentConte
 export function createWebPackage(
   backend: ToolExecutionBackend,
   config: ApiKeysConfig,
+  web: Availability,
   deps: WebToolDeps = defaultDeps,
 ): CodeModePackage {
   let exa: ExaClient | undefined;
   const client = () => {
+    requireCapability(web, "Web search and fetch");
     const apiKey = getExaApiKey(config);
-    if (apiKey && !exa) exa = deps.createExaClient(apiKey);
-    if (!exa) throw new Error("Web search and fetch are not configured.");
+    if (!apiKey) throw new Error("Exa API key is missing");
+    exa ??= deps.createExaClient(apiKey);
     return exa;
   };
   return definePackage("web", description, {

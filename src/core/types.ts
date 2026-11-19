@@ -1,6 +1,5 @@
 import type { Api, Model, SimpleStreamOptions, ThinkingLevel } from "@earendil-works/pi-ai";
 import { z } from "zod";
-import type { ToolName } from "./tools/tool_names.js";
 
 export type ReasoningEffort = ThinkingLevel | "none";
 export type ServiceTier = "priority" | "flex";
@@ -45,6 +44,5 @@ export interface Persona {
   subagentLaunchModels: string[];
   autoCompactThresholdTokens?: number;
   subagentAutoCompactThresholdTokens?: Record<string, number>;
-  tools: ToolName[];
   source: PersonaSource;
 }

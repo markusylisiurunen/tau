@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { mainAgentCapabilities } from "../dist/core/agent/capabilities.js";
 import { resolveModel } from "../dist/core/models/catalog.js";
 import { formatModelPromptNotes } from "../dist/core/runtime/model_prompt_notes.js";
 import { composeSessionPrompts } from "../dist/core/runtime/session_prompt_composer.js";
@@ -14,7 +15,6 @@ const customPersona = {
   model: resolveModel("anthropic", "claude-sonnet-5-5"),
   systemPrompt: "Work as a release engineer.",
   settings: {},
-  tools: ["bash", "agents"],
   subagentLaunchModels: [],
   source: "project",
 };
@@ -32,6 +32,7 @@ describe("composeSessionPrompts", () => {
 
     const { baseSystemPrompt, subagentSystemPrompt } = composeSessionPrompts({
       persona: customPersona,
+      capabilities: mainAgentCapabilities({ notifications: true, config: {} }),
       sessionId: "session-1",
       cwd: "/repo",
       sessionStartedAt: "2026-11-18T09:30:00.000Z",
@@ -57,6 +58,7 @@ describe("composeSessionPrompts", () => {
     const compose = (model) =>
       composeSessionPrompts({
         persona: { ...customPersona, model },
+        capabilities: mainAgentCapabilities({ notifications: true, config: {} }),
         cwd: "/repo",
         sessionStartedAt: "2026-11-18T09:30:00.000Z",
         platform: "linux",

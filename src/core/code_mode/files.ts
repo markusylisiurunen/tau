@@ -5,7 +5,7 @@ import {
   type ToolExecutionBackend,
 } from "../tools/execution_backend.js";
 import { replaceExactText } from "../tools/file_edits.js";
-import { type CodeModeMethod, type CodeModePackage, definePackage, method } from "./package.js";
+import { type CodeModePackage, definePackage, method } from "./package.js";
 
 const MAX_FILE_BYTES = 16 * 1024 * 1024;
 const MAX_EDITS = 128;
@@ -16,23 +16,8 @@ const pathValue = z
   .regex(/^[^\r\n\0]+$/);
 const replacement = z.strictObject({ oldText: z.string().min(1), newText: z.string() });
 
-// The tool each function needs. Every function is always exported, so programs and the
-// reference stay the same, and a call without its tool fails with `not_permitted`.
-const REQUIRED_TOOLS = {
-  readText: "bash",
-  readBytes: "bash",
-  writeText: "write",
-  writeBytes: "write",
-  edit: "edit",
-} as const;
-
-/** Whole-file operations, present when the persona's tools permit at least one of them. */
-export function createFilesPackage(
-  backend: ToolExecutionBackend,
-  allowed: ReadonlySet<string>,
-): CodeModePackage | undefined {
-  const denied = Object.entries(REQUIRED_TOOLS).filter(([, tool]) => !allowed.has(tool));
-  if (denied.length === Object.keys(REQUIRED_TOOLS).length) return undefined;
+/** Whole-file reads, writes, and exact edits. */
+export function createFilesPackage(backend: ToolExecutionBackend): CodeModePackage {
   const readBytes = async (path: string) => {
     try {
       return (await backend.readFileBinary(path, { maxBytes: MAX_FILE_BYTES })).content;
@@ -52,7 +37,7 @@ export function createFilesPackage(
   const checkSize = (size: number) => {
     if (size > MAX_FILE_BYTES) throw codeModeError("file_too_large", "File exceeds 16 MiB");
   };
-  const methods: Record<keyof typeof REQUIRED_TOOLS, CodeModeMethod> = {
+  return definePackage("files", "Read, write, and edit whole files.", {
     readText: method(z.tuple([pathValue]), ([path]) => readText(path)),
     readBytes: method(z.tuple([pathValue]), ([path]) => readBytes(path)),
     writeText: method(z.tuple([pathValue, z.string()]), async ([path, text]) => {
@@ -79,14 +64,5 @@ export function createFilesPackage(
         return { path: result.path, edits: edits.length };
       },
     ),
-  };
-  for (const [name] of denied) {
-    methods[name as keyof typeof REQUIRED_TOOLS] = method(z.tuple([]).rest(z.unknown()), () => {
-      throw codeModeError("not_permitted", `${name} is not permitted in this session`);
-    });
-  }
-  const unavailable = denied.length
-    ? ` Not permitted in this session: ${denied.map(([name]) => name).join(", ")}.`
-    : "";
-  return definePackage("files", `Read, write, and edit whole files.${unavailable}`, methods);
+  });
 }

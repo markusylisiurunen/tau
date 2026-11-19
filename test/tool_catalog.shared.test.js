@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
+import { personas } from "../dist/core/personas.js";
 import { BashJobRegistry } from "../dist/core/tools/bash_jobs.js";
 import { ToolCatalog } from "../dist/core/tools/catalog.js";
 import { CodeJobRegistry } from "../dist/core/tools/code_jobs.js";
+import { codeToolDefaults } from "./helpers/code_mode.js";
 
 function createBackend() {
   return {
@@ -19,6 +21,17 @@ function createBackend() {
     readFile: vi.fn(async (path) => ({ path, content: "old text" })),
     readFileBinary: vi.fn(async (path) => ({ path, content: Buffer.from("not an image") })),
     writeFile: vi.fn(async (path, content) => ({ path, bytes: Buffer.byteLength(content) })),
+  };
+}
+
+function childOptions(backend, cwd) {
+  return {
+    ...codeToolDefaults(),
+    backend,
+    cwd,
+    config: {},
+    bashJobs: new BashJobRegistry(),
+    codeJobs: new CodeJobRegistry(),
   };
 }
 
@@ -42,69 +55,19 @@ async function execute(registry, name, args) {
 }
 
 describe("ToolCatalog", () => {
-  it("shares enabled capabilities while excluding agent management from child runtimes", () => {
-    const tools = ["bash", "write", "edit", "view_image", "web", "history", "models", "agents"];
-    const options = {
-      backend: createBackend(),
-      cwd: "/workspace",
-      config: {},
-      persona: { tools },
-      modelResolver: () => undefined,
-      history: {},
-    };
-    const main = ToolCatalog.createDebugRegistry(options);
-    const child = ToolCatalog.createSubagentRegistry(
-      tools,
-      options.backend,
-      options.cwd,
-      options.config,
-      new BashJobRegistry(),
-      new CodeJobRegistry(),
-      options.history,
-    );
-    const management = [
-      "spawn_agent",
-      "list_agents",
-      "wait_for_agents",
-      "send_input_to_agent",
-      "interrupt_agent",
-    ];
-    expect(child.schemas.map((tool) => tool.name)).toEqual(
-      main.schemas.filter((tool) => !management.includes(tool.name)).map((tool) => tool.name),
-    );
-    expect(main.get("code").schema.description).toContain("@tau/agents");
-    expect(child.get("code").schema.description).not.toContain("@tau/agents");
-    expect(main.get("code").schema.description).toContain("@tau/notifications");
-    expect(child.get("code").schema.description).not.toContain("@tau/notifications");
-    for (const name of management) expect(child.get(name)).toBeUndefined();
-  });
-
-  it("keeps intrinsic tools available when the persona selects no capabilities", () => {
+  it("gives the main agent and children the same tools", () => {
     const backend = createBackend();
     const main = ToolCatalog.createDebugRegistry({
       backend,
       cwd: "/workspace",
       config: {},
-      persona: { tools: [] },
+      persona: personas[0],
       modelResolver: () => undefined,
+      history: {},
     });
-    const child = ToolCatalog.createSubagentRegistry(
-      [],
-      backend,
-      "/workspace/child",
-      {},
-      new BashJobRegistry(),
-      new CodeJobRegistry(),
-    );
-    expect(main.schemas.map((tool) => tool.name)).toEqual([
-      "code",
-      "list_code_jobs",
-      "read_code_job",
-      "stop_code_job",
-      "wait_for_code_jobs",
-      "tau_docs",
-    ]);
-    expect(child.schemas.map((tool) => tool.name)).toEqual(["tau_docs"]);
+    const child = ToolCatalog.createSubagentRegistry(childOptions(backend, "/workspace/child"));
+    expect(child.schemas.map((tool) => tool.name)).toEqual(main.schemas.map((tool) => tool.name));
+    expect(child.get("code").schema.description).toBe(main.get("code").schema.description);
   });
 
   it("isolates Bash jobs across child registries without losing their working directory", async () => {
@@ -131,22 +94,14 @@ describe("ToolCatalog", () => {
           );
         }),
     );
-    const first = ToolCatalog.createSubagentRegistry(
-      ["bash"],
-      backend,
-      "/workspace/first",
-      {},
-      jobs,
-      new CodeJobRegistry(),
-    );
-    const second = ToolCatalog.createSubagentRegistry(
-      ["bash"],
-      backend,
-      "/workspace/second",
-      {},
-      otherJobs,
-      new CodeJobRegistry(),
-    );
+    const first = ToolCatalog.createSubagentRegistry({
+      ...childOptions(backend, "/workspace/first"),
+      bashJobs: jobs,
+    });
+    const second = ToolCatalog.createSubagentRegistry({
+      ...childOptions(backend, "/workspace/second"),
+      bashJobs: otherJobs,
+    });
     try {
       const started = await execute(first, "bash", { command: "server", background: true });
       const id = started.content[0].text.match(/job ([^ ]+)/)[1];
@@ -167,14 +122,7 @@ describe("ToolCatalog", () => {
 
   it("scopes every child filesystem and process tool to the child working directory", async () => {
     const backend = createBackend();
-    const registry = ToolCatalog.createSubagentRegistry(
-      ["write", "edit", "view_image", "web"],
-      backend,
-      "/workspace/child",
-      {},
-      new BashJobRegistry(),
-      new CodeJobRegistry(),
-    );
+    const registry = ToolCatalog.createSubagentRegistry(childOptions(backend, "/workspace/child"));
 
     await execute(registry, "write", { path: "created.txt", content: "created" });
     await execute(registry, "edit", {

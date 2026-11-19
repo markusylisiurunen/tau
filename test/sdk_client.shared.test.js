@@ -590,7 +590,6 @@ describe("sdk_client", () => {
     await expect(
       readySession.createEphemeralContext({
         instructions: "review this",
-        tools: ["bash"],
         reasoning: "high",
       }),
     ).resolves.toEqual({ contextId: "ephemeral-1" });
@@ -599,7 +598,6 @@ describe("sdk_client", () => {
       params: {
         sessionId: "session-1",
         instructions: "review this",
-        tools: ["bash"],
         reasoning: "high",
       },
     });

@@ -35,20 +35,18 @@ function claudeContent(
   });
 }
 
-export function claudeCodeTools(tools: string[]): string[] {
-  const selected = new Set<string>();
-  if (tools.includes("bash") || tools.includes("view_image")) {
-    for (const name of ["Read", "Glob", "Grep"]) selected.add(name);
-  }
-  if (tools.includes("bash")) selected.add("Bash");
-  if (tools.includes("write")) selected.add("Write");
-  if (tools.includes("edit")) selected.add("Edit");
-  if (tools.includes("web")) {
-    selected.add("WebSearch");
-    selected.add("WebFetch");
-  }
-  return [...selected];
-}
+// Every Claude Code worker gets the same tools, as native workers do.
+const CLAUDE_CODE_TOOLS = [
+  "Read",
+  "Glob",
+  "Grep",
+  "Bash",
+  "Write",
+  "Edit",
+  "WebSearch",
+  "WebFetch",
+  "Skill",
+];
 
 export function claudeCodeOptions(input: ClaudeCodeInput, executable: string): Options {
   const env = { ...process.env };
@@ -61,7 +59,6 @@ export function claudeCodeOptions(input: ClaudeCodeInput, executable: string): O
     )
       delete env[key];
   }
-  const tools = [...claudeCodeTools(input.tools), "Skill"];
   return {
     cwd: input.cwd,
     model: input.model,
@@ -70,7 +67,7 @@ export function claudeCodeOptions(input: ClaudeCodeInput, executable: string): O
     includePartialMessages: true,
     pathToClaudeCodeExecutable: executable,
     env,
-    tools,
+    tools: CLAUDE_CODE_TOOLS,
     permissionMode: "bypassPermissions",
     allowDangerouslySkipPermissions: true,
     disallowedTools: ["Agent", "Task", "AskUserQuestion"],

@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { AgentRuntime } from "../dist/core/agent/agent_runtime.js";
+import {
+  mainAgentCapabilities,
+  unavailable,
+  workerCapabilities,
+} from "../dist/core/agent/capabilities.js";
 import { NotificationInbox } from "../dist/core/agent/notification_inbox.js";
+import { McpManager } from "../dist/core/mcp/manager.js";
 import { personas } from "../dist/core/personas.js";
 import { renderSubagentPrefixPrompt } from "../dist/core/static/index.js";
 import { AgentSupervisor } from "../dist/core/subagents/agent_supervisor.js";
@@ -58,7 +64,6 @@ function createSpawnOptions(overrides = {}) {
       workingDirectory: "/repo",
       model: personas[0].model,
       settings: { reasoning: "medium" },
-      tools: [],
     },
     prompt: "do work",
     title: "child task",
@@ -66,6 +71,9 @@ function createSpawnOptions(overrides = {}) {
     config: {},
     backend: createLocalToolExecutionBackend(),
     jobs: new AgentJobRegistry(),
+    history: {},
+    mcp: new McpManager(),
+    agents: { persona: personas[0] },
     personaId: "parent-persona",
     ...overrides,
   };
@@ -148,20 +156,6 @@ describe("AgentSupervisor", () => {
     }
   });
 
-  it("rejects delegation tools without their management dependencies before creating jobs", () => {
-    const supervisor = new AgentSupervisor({
-      mainAgentId: "main",
-      onEvent: vi.fn(),
-    });
-    const options = createSpawnOptions();
-    options.runtimeConfig.tools = ["agents"];
-    const createJobs = vi.spyOn(options.jobs, "create");
-
-    expect(() => supervisor.spawn(options)).toThrow();
-    expect(createJobs).not.toHaveBeenCalled();
-    expect(supervisor.list()).toEqual([]);
-  });
-
   it("binds the parent's MCP manager without resolving servers from the child workspace", async () => {
     const supervisor = new AgentSupervisor({
       mainAgentId: "main",
@@ -173,7 +167,6 @@ describe("AgentSupervisor", () => {
         createSpawnOptions({
           runtimeConfig: {
             ...createSpawnOptions().runtimeConfig,
-            tools: ["mcp"],
             workingDirectory: "/repo/alternate",
           },
           config: { mcpServers: { target: { type: "stdio", command: "must-not-run" } } },
@@ -205,10 +198,6 @@ describe("AgentSupervisor", () => {
       expect(result.outcome).toBe("succeeded");
       expect(JSON.parse(result.content[0].text)).toEqual([{ name: "host" }]);
       expect(mcp.listServers).toHaveBeenCalledOnce();
-      const excluded = supervisor.spawn(createSpawnOptions({ mcp }));
-      expect(
-        getRecord(supervisor, excluded.id).runtime.agent.spec.tools.get("code"),
-      ).toBeUndefined();
     } finally {
       supervisor.reset();
     }
@@ -251,13 +240,15 @@ describe("AgentSupervisor", () => {
         jobs: new AgentJobRegistry(),
         cwd: "/repo",
         config: {},
-        persona: { ...personas[0], tools: ["agents"] },
+        persona: personas[0],
         subagentSystemPrompt: "child system",
         modelResolver: () => undefined,
         supervisor,
         bashJobs: new BashJobRegistry(),
         codeJobs: new CodeJobRegistry(),
         history: {},
+        mcp: new McpManager(),
+        capabilities: mainAgentCapabilities({ notifications: true, config: {} }),
         clientTools: () => broker.getToolDefinitions("parent-session"),
       });
       expect(main.get("prefill_input")).toBeDefined();
@@ -493,14 +484,17 @@ it("isolates main and sibling jobs while retaining child jobs across follow-ups"
       }),
   );
   const mainJobs = jobs.create();
-  const main = ToolCatalog.createSubagentRegistry(
-    ["bash"],
+  const main = ToolCatalog.createSubagentRegistry({
     backend,
-    "/repo",
-    {},
-    mainJobs.bashJobs,
-    mainJobs.codeJobs,
-  );
+    cwd: "/repo",
+    config: {},
+    bashJobs: mainJobs.bashJobs,
+    codeJobs: mainJobs.codeJobs,
+    history: {},
+    mcp: new McpManager(),
+    notifications: new NotificationInbox(),
+    capabilities: workerCapabilities({ delegation: unavailable("test"), config: {} }),
+  });
   const execute = (registry, name, args) =>
     registry.get(name).execute(
       { id: "call", name, arguments: args },
@@ -515,7 +509,6 @@ it("isolates main and sibling jobs while retaining child jobs across follow-ups"
   try {
     const children = [0, 1].map(() => {
       const options = createSpawnOptions({ backend, jobs });
-      options.runtimeConfig.tools = ["bash"];
       const result = supervisor.spawn(options);
 
       return result.id;
@@ -734,11 +727,13 @@ it("keeps background orchestration attribution and cancels only its wait", async
       bashJobs: new BashJobRegistry(),
       cwd: "/repo",
       config: {},
-      persona: { ...personas[0], tools: ["agents"] },
+      persona: personas[0],
       subagentSystemPrompt: "child system",
       modelResolver: () => undefined,
       supervisor,
       history: {},
+      mcp: new McpManager(),
+      capabilities: mainAgentCapabilities({ notifications: true, config: {} }),
     });
     const tool = registry.get("code");
     const launched = await tool.execute(
@@ -784,18 +779,18 @@ describe("nested supervision", () => {
     });
     const spawn = (parentId = "main", gate) => {
       const options = createSpawnOptions();
-      options.runtimeConfig.tools = ["agents"];
       options.agents = {
         callerId: parentId,
         supervisor,
         backend: options.backend,
         jobs: options.jobs,
         config: options.config,
-        persona: { ...personas[0], tools: ["agents"] },
+        persona: personas[0],
         autoCompactThresholdTokens: options.runtimeConfig.autoCompactThresholdTokens,
         modelResolver: () => undefined,
         subagentSystemPrompt: options.runtimeConfig.systemPrompt,
         history: {},
+        mcp: options.mcp,
         cwd: options.runtimeConfig.workingDirectory,
       };
       const state = supervisor.spawn({
@@ -831,17 +826,36 @@ describe("nested supervision", () => {
         prompt.startsWith(
           renderSubagentPrefixPrompt({
             sessionIds: [supervisor.mainAgentId, a.id, b.id],
-            historyEnabled: false,
           }),
         ),
       ).toBe(true);
       expect(prompt).not.toContain(sibling.id);
       expect(prompt.split("<subagent-role>")).toHaveLength(2);
       expect(() => spawn(b.id)).toThrow(expect.objectContaining({ code: "operation_failed" }));
-      expect(
-        getRecord(supervisor, b.id).runtime.agent.spec.tools.get("wait_for_agents"),
-      ).toBeUndefined();
-      expect(getRecord(supervisor, b.id).runtime.agent.spec.tools.get("code")).toBeUndefined();
+      // A leaf keeps the same tools, and delegation calls fail instead.
+      const leafTools = getRecord(supervisor, b.id).runtime.agent.spec.tools;
+      const leafContext = {
+        agentId: b.id,
+        turnId: "turn",
+        assistantMessageId: "message",
+        signal: new AbortController().signal,
+        emitActivity: async () => {},
+      };
+      const waited = await leafTools
+        .get("wait_for_agents")
+        .execute({ id: "wait", name: "wait_for_agents", arguments: { ids: [a.id] } }, leafContext);
+      expect(waited.outcome).toBe("blocked");
+      const listed = await leafTools.get("code").execute(
+        {
+          id: "list",
+          name: "code",
+          arguments: {
+            code: 'import { list } from "@tau/agents"; import { printText } from "@tau/core"; try { await list(); } catch (error) { printText(error.code); }',
+          },
+        },
+        leafContext,
+      );
+      expect(listed.content[0].text).toBe("unavailable");
       for (const id of [a.id, sibling.id, "main"]) {
         for (const call of [
           () => scope.read(id),

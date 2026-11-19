@@ -3,18 +3,6 @@ import { z } from "zod";
 import type { ModelResolver } from "../models/catalog.js";
 import { parseModelId } from "../models/model_id.js";
 import type { PromptTemplate } from "../prompts.js";
-import {
-  TOOL_NAME_AGENTS,
-  TOOL_NAME_BASH,
-  TOOL_NAME_EDIT,
-  TOOL_NAME_HISTORY,
-  TOOL_NAME_MCP,
-  TOOL_NAME_MODELS,
-  TOOL_NAME_VIEW_IMAGE,
-  TOOL_NAME_WEB,
-  TOOL_NAME_WRITE,
-  type ToolName,
-} from "../tools/tool_names.js";
 import type { Persona, Skill } from "../types.js";
 import { ReasoningEffortSchema, ServiceTierSchema } from "../types.js";
 import { formatZodError } from "../utils/zod.js";
@@ -35,56 +23,6 @@ type MarkdownPathsResult = {
   paths: string[];
   errors: string[];
 };
-
-const TrimmedNonEmptyStringListSchema = z
-  .array(z.string())
-  .transform((list) => list.map((item) => item.trim()))
-  .refine((list) => list.every(Boolean), {
-    message: "entries must be non-empty strings",
-  });
-
-function parsePersonaTools(toolsRaw: unknown): { tools?: ToolName[]; error?: string } {
-  if (toolsRaw === undefined) {
-    return {};
-  }
-
-  const parsed = TrimmedNonEmptyStringListSchema.safeParse(toolsRaw);
-  if (!parsed.success) {
-    return {
-      error:
-        parsed.error.issues[0]?.message === "entries must be non-empty strings"
-          ? "tools entries must be non-empty strings"
-          : "tools must be a list of strings",
-    };
-  }
-
-  const cleaned = parsed.data.map((tool) => tool.toLowerCase());
-
-  if (cleaned.length === 0) {
-    return { tools: [] };
-  }
-
-  const selected: ToolName[] = [];
-  const unknown: string[] = [];
-  const seen = new Set<string>();
-
-  for (const name of cleaned) {
-    if (seen.has(name)) continue;
-    seen.add(name);
-    if (PERSONA_TOOL_NAME_SET.has(name as ToolName)) {
-      selected.push(name as ToolName);
-    } else {
-      unknown.push(name);
-    }
-  }
-
-  if (unknown.length > 0) {
-    const allowed = PERSONA_TOOL_NAMES.join(", ");
-    return { error: `unknown tool(s): ${unknown.join(", ")}. allowed: ${allowed}` };
-  }
-
-  return { tools: selected };
-}
 
 function mergeById<T extends { id: string }>(base: T[], overlay: T[], overlay2?: T[]): T[] {
   const map = new Map<string, T>();
@@ -158,7 +96,6 @@ const personaFrontMatterSchema = z
     reasoning: ReasoningEffortSchema.optional(),
     serviceTier: ServiceTierSchema.optional(),
     allowedReasoningLevels: z.array(ReasoningEffortSchema).optional(),
-    tools: z.unknown().optional(),
     autoCompactThresholdTokens: autoCompactThresholdTokensSchema.optional(),
     subagentAutoCompactThresholdTokens: z
       .record(z.string(), autoCompactThresholdTokensSchema)
@@ -167,31 +104,6 @@ const personaFrontMatterSchema = z
   .strip();
 
 const promptFrontMatterSchema = z.object({ label: z.string().trim().min(1) }).strip();
-
-const PERSONA_TOOL_NAMES = [
-  TOOL_NAME_BASH,
-  TOOL_NAME_WRITE,
-  TOOL_NAME_EDIT,
-  TOOL_NAME_VIEW_IMAGE,
-  TOOL_NAME_WEB,
-  TOOL_NAME_HISTORY,
-  TOOL_NAME_MCP,
-  TOOL_NAME_MODELS,
-  TOOL_NAME_AGENTS,
-] as const satisfies ReadonlyArray<ToolName>;
-
-const PERSONA_TOOL_NAME_SET = new Set<ToolName>(PERSONA_TOOL_NAMES);
-const DEFAULT_PERSONA_TOOLS = [
-  TOOL_NAME_BASH,
-  TOOL_NAME_WRITE,
-  TOOL_NAME_EDIT,
-  TOOL_NAME_VIEW_IMAGE,
-  TOOL_NAME_WEB,
-  TOOL_NAME_HISTORY,
-  TOOL_NAME_MCP,
-  TOOL_NAME_MODELS,
-] as const satisfies ReadonlyArray<ToolName>;
-const DEFAULT_SUBAGENT_TOOLS = [TOOL_NAME_AGENTS] as const satisfies ReadonlyArray<ToolName>;
 
 function parsePersona(
   file: string,
@@ -221,7 +133,6 @@ function parsePersona(
   const reasoning = parsedFrontMatter.data.reasoning;
   const serviceTier = parsedFrontMatter.data.serviceTier;
   const allowedReasoningLevels = parsedFrontMatter.data.allowedReasoningLevels;
-  const toolsRaw = parsedFrontMatter.data.tools;
 
   if (!markdownResult.body.trim()) {
     return { error: `${file}: a base prompt is required. skipped.` };
@@ -254,14 +165,6 @@ function parsePersona(
     settings.serviceTier = serviceTier;
   }
 
-  const toolsResult = parsePersonaTools(toolsRaw);
-  if (toolsResult.error) {
-    return { error: `${file}: ${toolsResult.error}. skipped.` };
-  }
-
-  const defaultTools = [...DEFAULT_PERSONA_TOOLS, ...DEFAULT_SUBAGENT_TOOLS];
-
-  const tools = toolsResult.tools ?? defaultTools;
   const finalLabel = label || "custom";
   const finalDescription = description;
   const finalSystemPrompt = markdownResult.body;
@@ -275,7 +178,6 @@ function parsePersona(
     model: modelObj,
     systemPrompt: finalSystemPrompt,
     settings,
-    tools,
     ...(finalDescription && { description: finalDescription }),
     ...(finalAllowedReasoningLevels ? { allowedReasoningLevels: finalAllowedReasoningLevels } : {}),
     subagentLaunchModels: [],

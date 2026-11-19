@@ -6,7 +6,6 @@ import type {
   SessionProtocolCompactResult,
   SessionProtocolCreateParams,
   SessionProtocolDeltaMessage,
-  SessionProtocolEphemeralAgentTool,
   SessionProtocolEphemeralCloseResult,
   SessionProtocolEphemeralCreateResult,
   SessionProtocolEphemeralMessage,
@@ -79,7 +78,6 @@ export type TauSdkSessionSampleInput = Omit<SessionProtocolSampleParams, "sessio
 export type TauSdkSessionSampleResult = SessionProtocolSampleResult;
 export type TauSdkSessionInterruptSubagentResult = SessionProtocolInterruptSubagentResult;
 export type TauSdkSessionUnobserveResult = SessionProtocolUnobserveResult;
-export type TauSdkEphemeralAgentTool = SessionProtocolEphemeralAgentTool;
 export type TauSdkReasoningEffort = SessionProtocolReasoningEffort;
 export type TauSdkEphemeralCreateResult = SessionProtocolEphemeralCreateResult;
 export type TauSdkEphemeralSubmitResult = SessionProtocolEphemeralSubmitResult;
@@ -237,7 +235,6 @@ export type TauSdkSession = {
   createEphemeralContext(options: {
     workingDirectory?: string;
     instructions: string;
-    tools: TauSdkEphemeralAgentTool[];
     reasoning?: TauSdkReasoningEffort;
   }): Promise<TauSdkEphemeralCreateResult>;
   submitEphemeralThread(options: {

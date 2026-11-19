@@ -1,27 +1,16 @@
 # Tools
 
-The agent's tools come from three places:
+Every agent has the same tools: `bash`, `write`, `edit`, `view_image`, the [`code` tool](code-mode.md) with all `@tau/*` packages, the Bash and code job tools, `wait_for_agents`, and `tau_docs`, which reads this manual. The main agent also gets the tools of attached [clients](client-tools.md), such as the TUI's `diff_review` and `prefill_input`.
 
-- **Persona-selected tools** act on the execution environment or host services. The persona's `tools` list selects them.
-- **`tau_docs`** is always present and reads this manual.
-- **[Client tools](client-tools.md)** come from attached clients, such as the TUI's `diff_review` and `prefill_input`.
+Some capabilities can be unavailable to an agent, and its instructions say which:
+
+- Starting subagents, for subagents at the depth limit and for side contexts such as diff review. See [subagents](subagents.md).
+- Completion notifications, for subagents and for sessions created with `notifications: false`.
+- Web search and fetch, without an Exa key.
+
+A call that needs a missing capability fails with an error instead of disappearing from the tool set.
 
 A tool runs with the permissions of the machine behind it, and nothing limits it to the repository. See [security](security.md).
-
-## Tool names
-
-| Name in `tools` | Gives the agent |
-| --- | --- |
-| `bash` | `bash`, its job tools, `@tau/bash`, reads in `@tau/files`, and saved programs with their `.js` imports |
-| `write`, `edit` | File tools and the matching `@tau/files` operations |
-| `view_image` | Shows an image to the model |
-| `web` | `@tau/web`: search, fetch, and discovery (search and fetch need an Exa key) |
-| `history` | `@tau/history`: read-only [transcript search](history.md) |
-| `mcp` | `@tau/mcp`: [MCP servers](mcp.md) |
-| `models` | `@tau/models`: standalone model calls |
-| `agents` | `@tau/agents` and `wait_for_agents`: [subagents](subagents.md) |
-
-Packages starting with `@tau/` are APIs inside the [`code` tool](code-mode.md).
 
 ## Bash
 

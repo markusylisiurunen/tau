@@ -1,3 +1,4 @@
+import type { Availability } from "../agent/capabilities.js";
 import type { AgentsPackageOptions } from "../code_mode/agents.js";
 import type { SessionRuntimeSettings } from "../config/index.js";
 import type { HistoryRecordSink } from "../history/recorder.js";
@@ -37,13 +38,15 @@ export type SubagentRuntimeOptions = {
   id: string;
   sessionIds: string[];
   supervisor: AgentSupervisor;
-  agents?: AgentsPackageOptions;
+  /** Whether this worker may start workers of its own. */
+  delegation: Availability;
+  agents: AgentsPackageOptions;
   config: SessionRuntimeSettings;
   backend: ToolExecutionBackend;
   jobs: AgentJobRegistry;
-  history?: HistoryQuery;
+  history: HistoryQuery;
   openHistory?: () => HistoryRecordSink;
-  mcp?: McpManager;
+  mcp: McpManager;
   personaId?: string;
   deps: CoreDeps;
   onEvent: (event: SubagentRuntimeEvent) => Promise<void>;

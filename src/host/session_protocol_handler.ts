@@ -1415,7 +1415,6 @@ export class SessionProtocolHandler {
         ? { workingDirectory: request.params.workingDirectory }
         : {}),
       instructions: request.params.instructions,
-      tools: request.params.tools,
       ...(request.params.reasoning !== undefined ? { reasoning: request.params.reasoning } : {}),
     });
     this.sendMessage(

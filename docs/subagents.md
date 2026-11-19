@@ -4,15 +4,11 @@ Subagents are background workers that the host supervises. Each has its own task
 
 An agent starts subagents only when you or active instructions ask for delegation, in ordinary language. Tau checks that a launch is valid, but the agent itself decides whether delegation was requested.
 
-## Turning them on and off
-
-The `agents` tool enables subagents, and built-in personas have it. A persona with a `tools` list that lacks `agents` cannot start or manage them, and there is no other switch. See [personas](personas.md).
-
 ## What a subagent gets
 
 A native subagent works like a main agent of the same persona in its working directory, with the same prompt, skills, and project instructions. It sees none of the parent's conversation, so the launch prompt must contain what it needs.
 
-It inherits its parent's model, settings, and tools, and it has `tau_docs`. It never gets client tools. With another `workingDirectory`, it uses the `AGENTS.md` files and skills of that directory.
+It inherits its parent's model and settings, has the same tools as every agent, and never gets client tools. With another `workingDirectory`, it uses the `AGENTS.md` files and skills of that directory.
 
 ## Levels and limits
 
@@ -96,7 +92,7 @@ Tau checks for a subscription login before sending a task and has no API fallbac
 These workers differ from native subagents:
 
 - They use Claude Code's own prompt, instructions, skills, compaction, and MCP configuration from the execution environment.
-- Tau tools map to Claude Code tools: `bash` gives Bash, Read, Glob, and Grep, and `view_image` gives Read, Glob, and Grep. `write`, `edit`, and `web` map to Write, Edit, and WebSearch with WebFetch.
+- They get Claude Code's Bash, Read, Glob, Grep, Write, Edit, WebSearch, WebFetch, and Skill tools.
 - They run with permission checks bypassed and the Claude Code sandbox disabled, so review the local Claude settings first.
 - They cannot start subagents or use Tau's `code` capabilities, `tau_docs`, or MCP connections. Hooks and automatic memory are off.
 - A follow-up resumes the same Claude session while the parent session is alive.

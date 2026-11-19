@@ -97,10 +97,11 @@ export function buildBaseSystemPrompt(args: {
   projectContextBlock?: string;
   environmentTag: string;
   subagentsBlock?: string;
+  capabilitiesBlock?: string;
   modelNotes?: string;
 }): string {
   // Project instructions come after Tau's own sections because their content is
-  // user-written. Native subagents append their subagents block and model notes after
+  // user-written. Native subagents append their subagents and capabilities blocks and model notes after
   // this prompt, so the main prompt ends with them too and both read in the same order.
   const parts = [
     args.personaSystemPrompt,
@@ -109,6 +110,7 @@ export function buildBaseSystemPrompt(args: {
     args.environmentTag,
     args.projectContextBlock,
     args.subagentsBlock,
+    args.capabilitiesBlock,
     args.modelNotes,
   ];
   return parts

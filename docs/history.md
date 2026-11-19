@@ -14,7 +14,7 @@ Each [subagent](subagents.md) gets its own child session, which stays after a re
 
 ## Agent access
 
-A persona with `history` in `tools` has the read-only `@tau/history` API in [`code`](code-mode.md). It can see every recorded session, so the agent uses it only when you or active instructions ask for past transcripts. Ask directly:
+The agent has the read-only `@tau/history` API in [`code`](code-mode.md). It can see every recorded session, so the agent uses it only when you or active instructions ask for past transcripts. Ask directly:
 
 ```text
 Search history for the session where we chose the retry policy, and summarize the decision.

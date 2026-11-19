@@ -416,6 +416,20 @@ export class LocalSessionHost implements TauSessionHost {
     if (!attributes) {
       throw new Error("session attributes are required");
     }
+    const resolveSubagentPrompt = createExecutionEnvironmentSubagentPromptResolver({
+      sessionId,
+      executionEnvironment,
+      includeAgentContext: this.sessionOptions.includeAgentContext,
+      sessionStartedAt: createdAt,
+    });
+    const initialPromptComposition = committedSnapshot
+      ? await promptCompositionFromSnapshot(committedSnapshot, async () =>
+          resolveSubagentPrompt({
+            cwd: executionEnvironment.snapshot().cwd,
+            persona: bootstrap.persona,
+          }),
+        )
+      : undefined;
     const runtime = ChatRuntime.create({
       sessionId,
       createdAt,
@@ -426,12 +440,7 @@ export class LocalSessionHost implements TauSessionHost {
       backend: executionEnvironment.getToolExecutionBackend(),
       clientTools: () => this.clientToolBroker.getToolDefinitions(sessionId),
       modelResolver: bootstrap.modelResolver,
-      resolveSubagentPrompt: createExecutionEnvironmentSubagentPromptResolver({
-        sessionId,
-        executionEnvironment,
-        includeAgentContext: this.sessionOptions.includeAgentContext,
-        sessionStartedAt: createdAt,
-      }),
+      resolveSubagentPrompt,
       promptContext: runtimeContext.promptBootstrap.promptContext,
       eventSink: async (event) => await hostedSession.enqueueRuntimeEvent(event),
       subagentEventSink: async (event) => await hostedSession.recordSubagentEvent(event),
@@ -454,9 +463,7 @@ export class LocalSessionHost implements TauSessionHost {
         };
       },
       mcp,
-      initialPromptComposition: committedSnapshot
-        ? promptCompositionFromSnapshot(committedSnapshot)
-        : undefined,
+      initialPromptComposition,
       config: bootstrap.config,
       recordUsage: this.sessionOptions.recordUsage,
       deps: this.sessionOptions.deps,
@@ -1911,7 +1918,8 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         includeAgentContext: this.includeAgentContext,
         executionEnvironment: this.executionEnvironment,
         instructions: options.instructions,
-        tools: options.tools,
+        history: this.runtime.historyQuery,
+        mcp: this.runtime.mcp,
         reasoning: options.reasoning ?? this.runtime.agent.spec.attribution.reasoningEffort,
         recordUsage: this.recordUsage,
         emitUpdate: (threadId, update) => {
@@ -3650,9 +3658,10 @@ function normalizeRecoveredSnapshot(snapshot: SessionProtocolSnapshot): {
   return { snapshot: recovered, changed, legacyAgentState };
 }
 
-function promptCompositionFromSnapshot(
+async function promptCompositionFromSnapshot(
   snapshot: SessionProtocolSnapshot,
-): SessionPromptComposition {
+  composeSubagentPrompt: () => Promise<string>,
+): Promise<SessionPromptComposition> {
   const systemMessage = snapshot.messages[0];
   if (systemMessage?.message.role !== "system") {
     throw new Error(`session snapshot '${snapshot.sessionId}' is missing its system message`);
@@ -3660,9 +3669,9 @@ function promptCompositionFromSnapshot(
   return {
     baseSystemPrompt: systemMessage.message.content,
     environmentTag: snapshot.bootstrap.prompt.environmentTag,
-    ...(snapshot.bootstrap.prompt.subagentSystemPrompt !== undefined
-      ? { subagentSystemPrompt: snapshot.bootstrap.prompt.subagentSystemPrompt }
-      : {}),
+    // Sessions whose persona could not delegate stored no worker prompt, so compose one now.
+    subagentSystemPrompt:
+      snapshot.bootstrap.prompt.subagentSystemPrompt ?? (await composeSubagentPrompt()),
   };
 }
 
@@ -3799,7 +3808,6 @@ function personaSnapshotFromPersona(persona: Persona): SessionProtocolPersonaSna
       ? { allowedReasoningLevels: [...persona.allowedReasoningLevels] }
       : {}),
     subagentLaunchModels: [...persona.subagentLaunchModels],
-    ...(persona.tools ? { tools: [...persona.tools] } : {}),
     source: persona.source,
   };
 }

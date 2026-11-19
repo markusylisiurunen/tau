@@ -1,6 +1,12 @@
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import { AgentRuntime, type AgentSubturnResult, createAgentSpec } from "../agent/agent_runtime.js";
+import {
+  type AgentCapabilities,
+  formatCapabilitiesForPrompt,
+  workerCapabilities,
+} from "../agent/capabilities.js";
 import type { AgentEvent } from "../agent/events.js";
+import { NotificationInbox } from "../agent/notification_inbox.js";
 import { NativeHistoryAdapter } from "../history/agent_history_recorder.js";
 import type { HistoryRecordSink } from "../history/recorder.js";
 import { resolveAgentModel } from "../runtime/agent_model.js";
@@ -51,33 +57,33 @@ export class NativeSubagentRuntime implements SubagentRuntime {
     private readonly config: NativeSubagentConfig,
     private readonly options: SubagentRuntimeOptions,
   ) {
-    if (config.tools.includes("agents") && !options.agents) {
-      throw new Error("Delegating agents require agent-management dependencies");
-    }
     this.jobs = options.jobs.create();
     const persona: Persona = {
-      ...options.agents?.persona,
+      ...options.agents.persona,
       id: options.personaId ?? "agent",
       label: "subagent",
       description: "Background agent",
       source: "project",
-      systemPrompt: options.agents?.persona.systemPrompt ?? config.systemPrompt,
+      systemPrompt: options.agents.persona.systemPrompt,
       model: config.model,
       settings: config.settings,
-      tools: config.tools,
-      subagentLaunchModels: options.agents?.persona.subagentLaunchModels ?? [],
+      subagentLaunchModels: options.agents.persona.subagentLaunchModels,
     };
-    const agents =
-      config.tools.includes("agents") && options.agents
-        ? {
-            ...options.agents,
-            callerId: options.id,
-            persona,
-            cwd: config.workingDirectory,
-            subagentSystemPrompt: config.systemPrompt,
-            autoCompactThresholdTokens: config.autoCompactThresholdTokens,
-          }
-        : undefined;
+    const capabilities = workerCapabilities({
+      delegation: options.delegation,
+      config: options.config,
+    });
+    const agents = capabilities.delegation.available
+      ? {
+          ...options.agents,
+          supervisor: options.supervisor,
+          callerId: options.id,
+          persona,
+          cwd: config.workingDirectory,
+          subagentSystemPrompt: config.systemPrompt,
+          autoCompactThresholdTokens: config.autoCompactThresholdTokens,
+        }
+      : undefined;
     this.agent = new AgentRuntime({
       agentId: options.id,
       spec: createAgentSpec({
@@ -87,23 +93,22 @@ export class NativeSubagentRuntime implements SubagentRuntime {
           deps: options.deps,
         }),
         systemPrompt:
-          buildSubagentSystemPrompt(config.systemPrompt, {
-            sessionIds: options.sessionIds,
-            historyEnabled: config.tools.includes("history"),
-          }) +
-          (formatSubagentsForPrompt(persona) ?? "") +
+          buildSubagentSystemPrompt(config.systemPrompt, { sessionIds: options.sessionIds }) +
+          (agents ? formatSubagentsForPrompt(persona) : "") +
+          formatAppendedCapabilities(capabilities) +
           formatAppendedModelNotes(config.model),
-        tools: ToolCatalog.createSubagentRegistry(
-          config.tools,
-          options.backend,
-          config.workingDirectory,
-          options.config,
-          this.jobs.bashJobs,
-          this.jobs.codeJobs,
-          options.history,
-          options.mcp,
-          agents,
-        ),
+        tools: ToolCatalog.createSubagentRegistry({
+          backend: options.backend,
+          cwd: config.workingDirectory,
+          config: options.config,
+          bashJobs: this.jobs.bashJobs,
+          codeJobs: this.jobs.codeJobs,
+          history: options.history,
+          mcp: options.mcp,
+          notifications: new NotificationInbox(),
+          capabilities,
+          ...(agents ? { agents } : {}),
+        }),
       }),
       eventSink: async (event) => {
         await this.recordEvent(event);
@@ -359,4 +364,9 @@ export class NativeSubagentRuntime implements SubagentRuntime {
 function formatAppendedModelNotes(model: Parameters<typeof formatModelPromptNotes>[0]): string {
   const notes = formatModelPromptNotes(model);
   return notes ? `\n\n${notes}` : "";
+}
+
+function formatAppendedCapabilities(capabilities: AgentCapabilities): string {
+  const block = formatCapabilitiesForPrompt(capabilities);
+  return block ? `\n\n${block}` : "";
 }

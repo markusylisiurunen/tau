@@ -13,6 +13,7 @@ import { createCodeToolDefinition } from "../dist/core/tools/code.js";
 import { CodeJobRegistry } from "../dist/core/tools/code_jobs.js";
 import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
 import { SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES } from "../dist/protocol/session_protocol.js";
+import { codeToolDefaults } from "./helpers/code_mode.js";
 import { createProtocolImage } from "./helpers/session_protocol_fixtures.js";
 
 function context(overrides = {}) {
@@ -50,7 +51,7 @@ describe("code composition", () => {
       const tool = createCodeToolDefinition({
         backend: createLocalToolExecutionBackend(),
         cwd: process.cwd(),
-        allowedTools: ["history"],
+        ...codeToolDefaults(),
         history,
         config: {},
         bashJobs: new BashJobRegistry(),
@@ -76,7 +77,7 @@ describe("code composition", () => {
     const tool = createCodeToolDefinition({
       backend: createLocalToolExecutionBackend(),
       cwd: process.cwd(),
-      allowedTools: ["bash"],
+      ...codeToolDefaults(),
       config: {},
       bashJobs: new BashJobRegistry(),
       codeJobs: new CodeJobRegistry(),
@@ -137,14 +138,14 @@ describe("code composition", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it("exposes only selected packages inside the sandbox", async () => {
+  it("keeps Tau packages out of the sandbox globals", async () => {
     const backend = createLocalToolExecutionBackend();
     const jobs = new BashJobRegistry();
     const history = { search: vi.fn(async () => ({ sessions: [{ sessionId: "past" }] })) };
     const tool = createCodeToolDefinition({
       backend,
       cwd: process.cwd(),
-      allowedTools: ["history"],
+      ...codeToolDefaults(),
       history,
       config: {},
       bashJobs: jobs,
@@ -157,16 +158,6 @@ describe("code composition", () => {
     expect(result.outcome).toBe("succeeded");
     expect(text(result)).toBe("undefined undefined undefined undefined\npast");
     expect(history.search).toHaveBeenCalledOnce();
-    expect(
-      createCodeToolDefinition({
-        backend,
-        cwd: process.cwd(),
-        allowedTools: [],
-        config: {},
-        bashJobs: jobs,
-        codeJobs: new CodeJobRegistry(),
-      }),
-    ).toBeUndefined();
   });
 
   it.each([{ label: "text", stdin: "héllo\n$HOME; $(printf injected)\n'quoted'\u0000" }])(
@@ -234,14 +225,14 @@ describe("code composition", () => {
         }),
     );
     const jobs = new BashJobRegistry();
-    const registry = ToolCatalog.createSubagentRegistry(
-      ["bash"],
+    const registry = ToolCatalog.createSubagentRegistry({
+      ...codeToolDefaults(),
       backend,
-      process.cwd(),
-      {},
-      jobs,
-      new CodeJobRegistry(),
-    );
+      cwd: process.cwd(),
+      config: {},
+      bashJobs: jobs,
+      codeJobs: new CodeJobRegistry(),
+    });
     try {
       const started = await execute(
         registry.get("code"),

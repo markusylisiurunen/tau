@@ -62,15 +62,12 @@ function renderAgentChain(sessionIds: string[]): string {
     .join(" → ");
 }
 
-export function renderSubagentPrefixPrompt(args: {
-  sessionIds: string[];
-  historyEnabled: boolean;
-}): string {
+export function renderSubagentPrefixPrompt(args: { sessionIds: string[] }): string {
   if (args.sessionIds.length < 2) {
     throw new Error("subagent session chain must include the main agent and the subagent");
   }
   return interpolateTemplate(SUBAGENT_PREFIX_PROMPT, {
     agent_chain: renderAgentChain(args.sessionIds),
-    history_guidance: args.historyEnabled ? `\n\n${ANCESTOR_HISTORY_GUIDANCE}` : "",
+    history_guidance: `\n\n${ANCESTOR_HISTORY_GUIDANCE}`,
   });
 }

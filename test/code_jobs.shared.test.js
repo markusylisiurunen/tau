@@ -9,6 +9,7 @@ import { BashJobRegistry } from "../dist/core/tools/bash_jobs.js";
 import { createCodeToolDefinition } from "../dist/core/tools/code.js";
 import { CodeJobRegistry } from "../dist/core/tools/code_jobs.js";
 import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
+import { codeToolDefaults } from "./helpers/code_mode.js";
 
 const signal = () => new AbortController().signal;
 const context = (value = signal()) => ({
@@ -44,7 +45,7 @@ it("loads saved JavaScript once through the backend and exposes JSON input witho
     backend,
     cwd: directory,
     config: {},
-    allowedTools: ["bash"],
+    ...codeToolDefaults(),
     bashJobs: new BashJobRegistry(),
     codeJobs: jobs,
   });
@@ -112,7 +113,7 @@ it.each([false, true])(
       backend,
       cwd: "/remote",
       config: {},
-      allowedTools: ["bash"],
+      ...codeToolDefaults(),
       bashJobs: new BashJobRegistry(),
       codeJobs: jobs,
     });
@@ -314,7 +315,7 @@ it("bounds serialized UTF-8 input before reading a source file or starting a job
     backend,
     cwd: "/workspace",
     config: {},
-    allowedTools: ["bash"],
+    ...codeToolDefaults(),
     bashJobs: new BashJobRegistry(),
     codeJobs: jobs,
   });

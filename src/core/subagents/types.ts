@@ -1,32 +1,7 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ToolCardLine, ToolCardWrap } from "../tools/presentation.js";
-import {
-  TOOL_NAME_AGENTS,
-  TOOL_NAME_BASH,
-  TOOL_NAME_EDIT,
-  TOOL_NAME_HISTORY,
-  TOOL_NAME_MCP,
-  TOOL_NAME_MODELS,
-  TOOL_NAME_VIEW_IMAGE,
-  TOOL_NAME_WEB,
-  TOOL_NAME_WRITE,
-} from "../tools/tool_names.js";
 import type { Persona, PersonaSettings, ReasoningEffort } from "../types.js";
 import type { ClaudeCodeEffort, ClaudeCodeModel } from "./claude_code_models.js";
-
-export const SUBAGENT_TOOL_NAMES = [
-  TOOL_NAME_AGENTS,
-  TOOL_NAME_BASH,
-  TOOL_NAME_WRITE,
-  TOOL_NAME_EDIT,
-  TOOL_NAME_VIEW_IMAGE,
-  TOOL_NAME_WEB,
-  TOOL_NAME_HISTORY,
-  TOOL_NAME_MCP,
-  TOOL_NAME_MODELS,
-] as const;
-
-export type SubagentToolName = (typeof SUBAGENT_TOOL_NAMES)[number];
 
 export type SubagentLaunchModel = (
   | { kind: "native"; model: Model<Api>; reasoning: ReasoningEffort }
@@ -147,7 +122,6 @@ export type NativeSubagentConfig = {
   systemPrompt: string;
   model: Model<Api>;
   settings: PersonaSettings;
-  tools: SubagentToolName[];
   workingDirectory: string;
 };
 
@@ -155,16 +129,12 @@ export type ClaudeCodeSubagentConfig = {
   kind: "claude-code";
   model: ClaudeCodeModel;
   effort: ClaudeCodeEffort;
-  tools: SubagentToolName[];
   workingDirectory: string;
 };
 
 export type SubagentRuntimeConfig = NativeSubagentConfig | ClaudeCodeSubagentConfig;
 
-export type ResolveSubagentPrompt = (options: {
-  cwd: string;
-  persona: Persona;
-}) => Promise<string | undefined>;
+export type ResolveSubagentPrompt = (options: { cwd: string; persona: Persona }) => Promise<string>;
 
 export type SubagentConversationState = {
   id: string;
@@ -173,6 +143,8 @@ export type SubagentConversationState = {
   title: string;
   model: string;
   workingDirectory: string;
+  /** Whether the main agent is notified when this worker finishes. */
+  notifyOnCompletion: boolean;
   pending: { queue: number; steer: number };
   usage: {
     input: number;

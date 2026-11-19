@@ -145,7 +145,7 @@ describe("sdk npm pack types", () => {
           "client.subscribe((delta) => { void delta.sessionId; });",
           "client.subscribeEphemeral((message) => { void message.sessionId; });",
           "transport.onFailure((error) => { void error.message; });",
-          "void client.sessions.observe('session-1').then((session) => session.createEphemeralContext({ instructions: 'review', tools: ['bash'], reasoning }));",
+          "void client.sessions.observe('session-1').then((session) => session.createEphemeralContext({ instructions: 'review', reasoning }));",
           "void client.sessions.observe('session-1').then((session) => session.submitEphemeralThread({ contextId: 'context-1', threadId: 'thread-1', message: 'review', reasoning }));",
           "void client.sessions.observe('session-1').then((session) => session.sample(sampleInput));",
           "void client.sessions.observe('session-1').then(async (session) => { const result: TauSdkSessionSetAutoCompactThresholdResult = await session.setAutoCompactThreshold(50000); await session.setAutoCompactThreshold(null); return result.settings.effectiveAutoCompactThresholdTokens; });",

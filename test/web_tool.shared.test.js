@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { unavailable } from "../dist/core/agent/capabilities.js";
 import { createExaClient, createWebPackage } from "../dist/core/code_mode/web.js";
 import { discoverAgentContent } from "../dist/core/tools/web_discovery.js";
 import { createPackageTool } from "./helpers/code_mode.js";
@@ -36,7 +37,8 @@ function createDeps(client) {
 }
 
 function createWebTool(backend, deps, config = { apiKeys: { exa: "exa-key" } }) {
-  return createPackageTool(backend, createWebPackage(backend, config, deps));
+  const web = config.apiKeys?.exa ? { available: true } : unavailable("no Exa API key");
+  return createPackageTool(backend, createWebPackage(backend, config, web, deps));
 }
 
 async function runTool(tool, arguments_, signal = new AbortController().signal) {
@@ -377,7 +379,7 @@ describe("Exa web code-mode tool", () => {
       code: "import * as web from '@tau/web'; await web.search('tau')",
     });
     expect(missingKey.result.toolResult.outcome).toBe("failed");
-    expect(getToolText(missingKey.result)).toContain("Web search and fetch are not configured.");
+    expect(deps.createExaClient).not.toHaveBeenCalled();
   });
 
   it("enforces provider request bounds", async () => {

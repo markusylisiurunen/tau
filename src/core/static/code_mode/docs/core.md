@@ -19,6 +19,7 @@ printText(`${branch.trim()}\n${status || "clean"}`);
 - Each call starts a fresh program, so nothing carries over between calls. The return value is ignored, and only printed output comes back, cut from the middle when it exceeds the call's `maxOutputTokens`.
 - Every package function returns a promise. Arguments and results are JSON values, except that `Uint8Array` bytes pass through unchanged. Object properties set to `undefined` are dropped from arguments.
 - A failed call rejects with an `Error`. Arguments that do not match the reference fail with `code: "invalid_arguments"` before anything happens, and each reference lists the other codes its package uses. An uncaught error ends the program, and what it printed so far still comes back.
+- Some capabilities can be unavailable to you, such as starting subagents or web search. Your instructions list any that are. A call that needs one fails with `code: "unavailable"`, and an option that depends on one defaults to what you actually get.
 - When a program times out or is cancelled, its pending calls are cancelled too. Completed side effects stay, so check what a mutation did before you repeat it.
 
 | Limit | Value |

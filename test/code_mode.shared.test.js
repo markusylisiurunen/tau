@@ -208,7 +208,7 @@ describe("public code-mode runtime", () => {
       ...createDefinition({
         api: { bytes: async () => ({ file: { data: Buffer.from([1, 2]) } }) },
       }),
-      code: 'import { printText } from "@tau/core"; import { bytes } from "linear"; const { file } = await bytes(); printText(`${file.data instanceof Uint8Array}:${[...file.data]}`);',
+      code: 'import { printText } from "@tau/core"; import { bytes } from "linear"; const { file } = await bytes(); printText(String(file.data instanceof Uint8Array) + ":" + [...file.data]);',
     });
     expect(getTextContent(result)).toContain("true:1,2");
   });
@@ -218,7 +218,7 @@ describe("public code-mode runtime", () => {
       ...createDefinition({
         api: { delete: async () => "d", exports: async () => "e", p: async () => "p" },
       }),
-      code: 'import { printText } from "@tau/core"; import * as linear from "linear"; import { exports, p } from "linear"; printText(`${await linear.delete()}${await exports()}${await p()}`);',
+      code: 'import { printText } from "@tau/core"; import * as linear from "linear"; import { exports, p } from "linear"; printText((await linear.delete()) + (await exports()) + (await p()));',
     });
     expect(getTextContent(result)).toContain("dep");
   });

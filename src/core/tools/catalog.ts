@@ -1,3 +1,4 @@
+import { type AgentCapabilities, mainAgentCapabilities } from "../agent/capabilities.js";
 import { NotificationInbox } from "../agent/notification_inbox.js";
 import type { AgentsPackageOptions } from "../code_mode/agents.js";
 import type { SessionConfig, SessionRuntimeSettings } from "../config/index.js";
@@ -5,7 +6,7 @@ import type { HistoryQuery } from "../history/types.js";
 import { McpManager } from "../mcp/manager.js";
 import type { ModelResolver } from "../models/catalog.js";
 import { AgentSupervisor } from "../subagents/agent_supervisor.js";
-import type { ResolveSubagentPrompt, SubagentToolName } from "../subagents/types.js";
+import type { ResolveSubagentPrompt } from "../subagents/types.js";
 import type { Persona } from "../types.js";
 import { AgentJobRegistry } from "./agent_jobs.js";
 import { createJobToolDefinitions } from "./background_jobs.js";
@@ -17,36 +18,46 @@ import { createEditToolDefinition } from "./edit.js";
 import { scopeToolExecutionBackend, type ToolExecutionBackend } from "./execution_backend.js";
 import { type AgentTool, ToolRegistry } from "./registry.js";
 import { createTauDocsToolDefinition } from "./tau_docs.js";
-import { TOOL_NAME_BASH } from "./tool_names.js";
 import { createViewImageToolDefinition } from "./view_image.js";
 import { createWaitForAgentsToolDefinition } from "./wait_for_agents.js";
 import { createWriteToolDefinition } from "./write.js";
 
-function createCommonTools(options: {
+/** What one agent's tools act on. Every agent gets the same tools; capabilities decide what succeeds. */
+export type AgentToolsOptions = {
   backend: ToolExecutionBackend;
   cwd: string;
-  allowedTools: readonly string[];
   config: SessionRuntimeSettings;
   bashJobs: BashJobRegistry;
   codeJobs: CodeJobRegistry;
-  history?: HistoryQuery;
-  mcp?: McpManager;
+  history: HistoryQuery;
+  mcp: McpManager;
+  /** The agent's own inbox, which is empty for agents nothing notifies. */
+  notifications: NotificationInbox;
+  capabilities: AgentCapabilities;
+  /** Required exactly when `capabilities.delegation` is available. */
   agents?: AgentsPackageOptions;
-  notifications?: NotificationInbox;
-}): AgentTool[] {
+};
+
+function delegationAccess({ capabilities, agents }: AgentToolsOptions) {
+  const { delegation } = capabilities;
+  if (delegation.available && agents) {
+    return { available: true, supervisor: agents.supervisor.scope(agents.callerId) } as const;
+  }
+  if (!delegation.available && !agents) return delegation;
+  throw new Error("agent-management options must be given exactly when delegation is available");
+}
+
+function createAgentTools(options: AgentToolsOptions): AgentTool[] {
   const backend = scopeToolExecutionBackend(options.backend, options.cwd);
-  const enabled = new Set(options.allowedTools);
-  const tools = [
+  return [
     createBashToolDefinition(backend, options.cwd, options.bashJobs),
     createWriteToolDefinition(backend),
     createEditToolDefinition(backend),
     createViewImageToolDefinition(backend),
-  ];
-  const code = createCodeToolDefinition({ ...options, backend });
-  return [
-    ...tools.filter((tool) => enabled.has(tool.schema.name)),
-    ...(code ? [code, ...createJobToolDefinitions(options.codeJobs, "code")] : []),
-    ...(enabled.has(TOOL_NAME_BASH) ? createJobToolDefinitions(options.bashJobs, "bash") : []),
+    createCodeToolDefinition({ ...options, backend }),
+    ...createJobToolDefinitions(options.codeJobs, "code"),
+    ...createJobToolDefinitions(options.bashJobs, "bash"),
+    createWaitForAgentsToolDefinition(delegationAccess(options)),
     createTauDocsToolDefinition(),
   ];
 }
@@ -66,7 +77,7 @@ export const ToolCatalog = {
       jobs,
       ...jobs.create(),
       mcp: new McpManager(options.config.mcpServers),
-      subagentSystemPrompt: undefined,
+      subagentSystemPrompt: "",
       autoCompactThresholdTokens: options.persona.autoCompactThresholdTokens ?? null,
       supervisor: new AgentSupervisor({
         mainAgentId: "main",
@@ -74,71 +85,34 @@ export const ToolCatalog = {
         onCompletion: () => {},
       }),
       notifications: new NotificationInbox(),
+      capabilities: mainAgentCapabilities({ notifications: true, config: options.config }),
     });
   },
 
-  createSessionRegistry(options: {
-    backend: ToolExecutionBackend;
-    cwd: string;
-    config: SessionRuntimeSettings;
-    persona: Persona;
-    subagentSystemPrompt: string | undefined;
-    autoCompactThresholdTokens: number | null;
-    modelResolver: ModelResolver;
-    supervisor: AgentSupervisor;
-    /** Absent when the session has notifications turned off. */
-    notifications?: NotificationInbox;
-    jobs: AgentJobRegistry;
-    bashJobs: BashJobRegistry;
-    codeJobs: CodeJobRegistry;
-    history: HistoryQuery;
-    mcp?: McpManager;
-    resolveSubagentPrompt?: ResolveSubagentPrompt;
-    clientTools?: () => AgentTool[];
-  }): ToolRegistry {
-    const tools = [
-      createWaitForAgentsToolDefinition(options.supervisor.scope(options.supervisor.mainAgentId)),
-    ];
-    const enabledToolNames = new Set<string>(options.persona.tools);
+  /** The main agent's tools, which also include the attached clients' tools. */
+  createSessionRegistry(
+    options: Omit<AgentToolsOptions, "agents"> & {
+      persona: Persona;
+      subagentSystemPrompt: string;
+      autoCompactThresholdTokens: number | null;
+      modelResolver: ModelResolver;
+      supervisor: AgentSupervisor;
+      jobs: AgentJobRegistry;
+      resolveSubagentPrompt?: ResolveSubagentPrompt;
+      clientTools?: () => AgentTool[];
+    },
+  ): ToolRegistry {
     return new ToolRegistry([
-      ...createCommonTools({
+      ...createAgentTools({
         ...options,
-        allowedTools: options.persona.tools,
-        ...(enabledToolNames.has("agents")
-          ? { agents: { ...options, callerId: options.supervisor.mainAgentId } }
-          : {}),
+        agents: { ...options, callerId: options.supervisor.mainAgentId },
       }),
-      ...(enabledToolNames.has("agents") ? tools : []),
       ...(options.clientTools?.() ?? []),
     ]);
   },
 
-  createSubagentRegistry(
-    allowedTools: SubagentToolName[],
-    backend: ToolExecutionBackend,
-    cwd: string,
-    config: SessionRuntimeSettings,
-    bashJobs: BashJobRegistry,
-    codeJobs: CodeJobRegistry,
-    history?: HistoryQuery,
-    mcp?: McpManager,
-    agents?: AgentsPackageOptions,
-  ): ToolRegistry {
-    return new ToolRegistry([
-      ...createCommonTools({
-        backend,
-        cwd,
-        config,
-        bashJobs,
-        codeJobs,
-        history,
-        mcp,
-        allowedTools,
-        agents,
-      }),
-      ...(agents
-        ? [createWaitForAgentsToolDefinition(agents.supervisor.scope(agents.callerId))]
-        : []),
-    ]);
+  /** Tools for a worker or a side context such as diff review. */
+  createSubagentRegistry(options: AgentToolsOptions): ToolRegistry {
+    return new ToolRegistry(createAgentTools(options));
   },
 };

@@ -148,30 +148,10 @@ function migrateStoredSessionV13ToV14(value: unknown): unknown {
   return snapshot;
 }
 
+// Version 13 renamed persona tool selections. Personas no longer store tools, and loading
+// strips the field, so the step has nothing left to change.
 function migrateStoredSessionV12ToV13(value: unknown): unknown {
-  if (!isRecord(value)) throw new Error("stored session snapshot must be an object");
-  const snapshot = structuredClone(value);
-  if (isRecord(snapshot.catalog) && Array.isArray(snapshot.catalog.personas)) {
-    for (const persona of snapshot.catalog.personas) {
-      if (!isRecord(persona) || !Array.isArray(persona.tools)) continue;
-      const retired = new Set([
-        "spawn_agent",
-        "send_input_to_agent",
-        "list_agents",
-        "interrupt_agent",
-        "wait_for_agents",
-      ]);
-      const enabled = persona.tools.includes("spawn_agent");
-      persona.tools = [
-        ...new Set(
-          persona.tools
-            .filter((name) => !retired.has(name as string))
-            .concat(enabled ? ["agents"] : []),
-        ),
-      ];
-    }
-  }
-  return snapshot;
+  return value;
 }
 
 function migrateStoredSessionV11ToV12(value: unknown): unknown {

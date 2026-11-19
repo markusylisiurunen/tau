@@ -1,5 +1,5 @@
 import { loadSkillsFromToolBackend } from "../core/config/runtime_config_snapshot.js";
-import { composeSessionPrompts } from "../core/runtime/session_prompt_composer.js";
+import { composeSubagentSystemPrompt } from "../core/runtime/session_prompt_composer.js";
 import type { ResolveSubagentPrompt } from "../core/subagents/types.js";
 import type { ExecutionEnvironment } from "../execution/execution_environment.js";
 
@@ -21,7 +21,7 @@ export function createExecutionEnvironmentSubagentPromptResolver(options: {
       includeAgentContext: options.includeAgentContext,
     });
     const promptContext = runtimeContext.promptBootstrap.promptContext;
-    return composeSessionPrompts({
+    return composeSubagentSystemPrompt({
       persona,
       sessionId: options.sessionId,
       cwd: promptContext.cwd,
@@ -31,6 +31,6 @@ export function createExecutionEnvironmentSubagentPromptResolver(options: {
       platform: promptContext.platform,
       skillsBlock: promptContext.skillsBlock,
       projectContextBlock: promptContext.projectContextBlock,
-    }).subagentSystemPrompt;
+    });
   };
 }

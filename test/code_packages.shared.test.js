@@ -9,9 +9,10 @@ import {
   createLocalToolExecutionBackend,
   scopeToolExecutionBackend,
 } from "../dist/core/tools/execution_backend.js";
+import { codeToolDefaults } from "./helpers/code_mode.js";
 import { createProtocolImage } from "./helpers/session_protocol_fixtures.js";
 
-async function withTool(allowedTools, test) {
+async function withTool(test) {
   const cwd = await mkdtemp(join(tmpdir(), "tau-code-packages-"));
   const bashJobs = new BashJobRegistry();
   const codeJobs = new CodeJobRegistry();
@@ -19,7 +20,7 @@ async function withTool(allowedTools, test) {
   const tool = createCodeToolDefinition({
     backend,
     cwd,
-    allowedTools,
+    ...codeToolDefaults(),
     config: {},
     bashJobs,
     codeJobs,
@@ -51,15 +52,19 @@ const output = (result) =>
     .map(({ text }) => text)
     .join("\n");
 
-it("loads only enabled packages and does not expose the Code Mode globals", async () => {
-  await withTool(["edit"], async (run, cwd) => {
+it("exposes every package without Code Mode globals and fails unavailable capabilities", async () => {
+  await withTool(async (run) => {
     const result = await run(`
       import { docs, printText } from "@tau/core";
+      import * as agents from "@tau/agents";
       import * as files from "@tau/files";
+      import * as web from "@tau/web";
       const summary = [typeof tau, typeof globalThis.input, typeof globalThis.printText,
-        typeof files.readText, typeof files.writeText, typeof files.edit];
-      try { await files.writeText("denied.txt", "x"); } catch (error) { summary.push(error.code); }
-      for (const page of [undefined, "examples", "@tau/files", "@tau/web"]) {
+        typeof files.edit, typeof agents.spawn, typeof web.discover];
+      for (const call of [() => web.search("books"), () => agents.spawn("task", { title: "t" })]) {
+        try { await call(); } catch (error) { summary.push(error.code); }
+      }
+      for (const page of [undefined, "examples", "@tau/files", "@tau/missing"]) {
         try { summary.push((await (page === undefined ? docs() : docs(page))).split("\\n")[0]); }
         catch (error) { summary.push(error.code); }
       }
@@ -73,23 +78,14 @@ it("loads only enabled packages and does not expose the Code Mode globals", asyn
       "function",
       "function",
       "function",
-      "not_permitted",
+      "unavailable",
+      "unavailable",
       "# Code programs and @tau/core",
       "# Code program examples",
       "# @tau/files",
       "unknown_page",
     ]);
-    await expect(readFile(join(cwd, "denied.txt"))).rejects.toMatchObject({ code: "ENOENT" });
-    // Without Bash, programs cannot read local sources.
-    await writeFile(
-      join(cwd, "helper.js"),
-      'import { printText } from "@tau/core"; printText("ran");',
-    );
-    expect((await run(undefined, { file: "helper.js" })).outcome).toBe("blocked");
     for (const code of [
-      'import "./helper.js";',
-      'import { search } from "@tau/web"; await search("books");',
-      'import { run } from "@tau/bash"; await run("true");',
       'import "node:fs";',
       'await import("./helper.js");',
       'const name = "./helper.js"; await import(name);',
@@ -100,7 +96,7 @@ it("loads only enabled packages and does not expose the Code Mode globals", asyn
 });
 
 it("uses one local module instance for multiple importers and honors the output helpers", async () => {
-  await withTool(["bash"], async (run, cwd) => {
+  await withTool(async (run, cwd) => {
     await Promise.all([
       writeFile(join(cwd, "shared.js"), "export let count = 0; export function add() { count++; }"),
       writeFile(
@@ -125,7 +121,7 @@ it("uses one local module instance for multiple importers and honors the output 
 });
 
 it("does exact batch edits in one write and passes file bytes directly to image output", async () => {
-  await withTool(["bash", "edit", "write"], async (run, cwd) => {
+  await withTool(async (run, cwd) => {
     const image = Buffer.from(createProtocolImage().data, "base64");
     await writeFile(join(cwd, "sample.png"), image);
     await writeFile(join(cwd, "large.txt"), Buffer.alloc(16 * 1024 * 1024 + 1));
@@ -158,7 +154,7 @@ it("does exact batch edits in one write and passes file bytes directly to image 
 });
 
 it("preserves foreground results, stops overflowing commands, and waits for either Bash job form", async () => {
-  await withTool(["bash"], async (run, cwd) => {
+  await withTool(async (run, cwd) => {
     const result = await run(`
       import * as bash from "@tau/bash";
       import { printText } from "@tau/core";

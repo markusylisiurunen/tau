@@ -7,11 +7,13 @@ import {
   TAU_CODE_MODE_DEFAULT_MAX_OUTPUT_TOKENS,
   TAU_CODE_MODE_MAX_OUTPUT_TOKENS,
 } from "../../code_mode/runtime.js";
+import type { AgentCapabilities } from "../agent/capabilities.js";
 import type { NotificationInbox } from "../agent/notification_inbox.js";
 import {
   type AgentsPackageOptions,
   agentsPackageDescription,
   createAgentsPackage,
+  createUnavailableAgentsPackage,
 } from "../code_mode/agents.js";
 import { createBashPackage } from "../code_mode/bash.js";
 import { createFilesPackage } from "../code_mode/files.js";
@@ -81,49 +83,41 @@ function getCodeSubject(raw: unknown): string {
   return "(invalid code)";
 }
 
+/** The `code` tool with every Tau package. Capabilities decide which calls succeed. */
 export function createCodeToolDefinition(options: {
   backend: ToolExecutionBackend;
   cwd: string;
-  allowedTools: readonly string[];
   config: SessionRuntimeSettings;
   bashJobs: BashJobRegistry;
   codeJobs: CodeJobRegistry;
-  history?: HistoryQuery;
-  mcp?: McpManager;
+  history: HistoryQuery;
+  mcp: McpManager;
+  notifications: NotificationInbox;
+  capabilities: AgentCapabilities;
   agents?: AgentsPackageOptions;
-  /** The main agent's inbox, absent for workers and when the session has notifications off. */
-  notifications?: NotificationInbox;
-}): AgentTool | undefined {
-  const allowed = new Set(options.allowedTools);
-  const packages: CodeModePackage[] = [];
-  if (allowed.has("bash"))
-    packages.push(createBashPackage(options.backend, options.cwd, options.bashJobs));
-  const files = createFilesPackage(options.backend, allowed);
-  if (files) packages.push(files);
-  if (allowed.has("web")) packages.push(createWebPackage(options.backend, options.config));
-  if (allowed.has("models")) packages.push(createModelsPackage(options.backend, options.config));
-  if (allowed.has("history")) {
-    if (!options.history) throw new Error("history query is required when history is enabled");
-    packages.push(createHistoryPackage(options.history));
-  }
-  if (allowed.has("mcp") && options.mcp?.available) packages.push(createMcpPackage(options.mcp));
-  if (options.notifications) packages.push(createNotificationsPackage(options.notifications));
+}): AgentTool {
+  const { capabilities } = options;
+  const packages: CodeModePackage[] = [
+    createBashPackage(options.backend, options.cwd, options.bashJobs),
+    createFilesPackage(options.backend),
+    createWebPackage(options.backend, options.config, capabilities.web),
+    createModelsPackage(options.backend, options.config),
+    createHistoryPackage(options.history),
+    createMcpPackage(options.mcp),
+    createNotificationsPackage(options.notifications),
+  ];
   const agents = options.agents;
-  if (!packages.length && !agents) return undefined;
   return createCodeTool({
     backend: options.backend,
     cwd: options.cwd,
     codeJobs: options.codeJobs,
-    summaries: [
-      ...packages,
-      ...(agents ? [{ name: "@tau/agents", description: agentsPackageDescription }] : []),
-    ],
+    summaries: [...packages, { name: "@tau/agents", description: agentsPackageDescription }],
     packagesFor: (origin) => [
       ...packages,
-      ...(agents ? [createAgentsPackage(agents, origin)] : []),
+      agents
+        ? createAgentsPackage(agents, capabilities, origin)
+        : createUnavailableAgentsPackage(capabilities.delegation),
     ],
-    // Bash is the permission to read files, so loading program sources needs it too.
-    readFiles: allowed.has("bash"),
   });
 }
 
@@ -137,21 +131,11 @@ export function createCodeTool(options: {
   codeJobs: CodeJobRegistry;
   summaries: ReadonlyArray<{ name: string; description: string }>;
   packagesFor(origin: string): CodeModePackage[];
-  /** Whether programs may come from saved files and import relative files. */
-  readFiles: boolean;
 }): AgentTool {
-  const fileParameter = {
-    file: Type.Optional(
-      Type.String({
-        description:
-          "Path to a saved .js program, absolute or relative to the current working directory. It runs like inline code, and each source file can be at most 1 MiB. Supply exactly one of code or file.",
-      }),
-    ),
-  };
   const schema: Tool = {
     name: TOOL_NAME_CODE,
     description: [
-      `Run a JavaScript program that imports Tau packages${options.readFiles ? ", either inline or from a saved .js file" : ""}. Use it to pass results between dependent calls, run independent work in parallel, or reduce large results before printing a short answer. A direct tool call is simpler when a program adds nothing.`,
+      "Run a JavaScript program that imports Tau packages, either inline or from a saved .js file. Use it to pass results between dependent calls, run independent work in parallel, or reduce large results before printing a short answer. A direct tool call is simpler when a program adds nothing.",
       `${describeTauCodeModePackages(options.summaries)} \`docs("examples")\` returns recipes that combine packages.`,
       "Only printed output comes back. Side effects are not rolled back, and programs are not retried automatically.",
     ].join("\n\n"),
@@ -172,7 +156,12 @@ export function createCodeTool(options: {
             maximum: TAU_CODE_MODE_MAX_OUTPUT_TOKENS,
           }),
         ),
-        ...(options.readFiles ? fileParameter : {}),
+        file: Type.Optional(
+          Type.String({
+            description:
+              "Path to a saved .js program, absolute or relative to the current working directory. It runs like inline code, and each source file can be at most 1 MiB. Supply exactly one of code or file.",
+          }),
+        ),
         input: Type.Optional(
           Type.Unknown({
             description:
@@ -187,7 +176,8 @@ export function createCodeTool(options: {
         ),
         code: Type.Optional(
           Type.String({
-            description: `JavaScript source.${options.readFiles ? " Supply exactly one of code or file." : ""} Print relevant text with printText and forward images with awaited printImage, both from @tau/core.`,
+            description:
+              "JavaScript source. Supply exactly one of code or file. Print relevant text with printText and forward images with awaited printImage, both from @tau/core.",
           }),
         ),
       },
@@ -213,10 +203,6 @@ export function createCodeTool(options: {
         );
       }
       const args = parsed.data;
-      if ("file" in args && !options.readFiles) {
-        const reason = "This session cannot run saved programs. Pass the program as code.";
-        return executeTool(context, presentCodeProgramBlocked(call, args.file, reason, "blocked"));
-      }
       const subject = "file" in args ? args.file : args.code;
       const source = "file" in args ? args.file : "inline code";
       let run: CodeProgramRun;
@@ -234,7 +220,6 @@ export function createCodeTool(options: {
           program,
           packages: options.packagesFor(context.assistantMessageId),
           input: args.input,
-          readFiles: options.readFiles,
         };
         if (args.background)
           jobId = options.codeJobs.start({ source, backend: options.backend, run });

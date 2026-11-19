@@ -1,59 +1,9 @@
-import {
-  TOOL_NAME_AGENTS,
-  TOOL_NAME_BASH,
-  TOOL_NAME_EDIT,
-  TOOL_NAME_HISTORY,
-  TOOL_NAME_MCP,
-  TOOL_NAME_MODELS,
-  TOOL_NAME_VIEW_IMAGE,
-  TOOL_NAME_WEB,
-  TOOL_NAME_WRITE,
-} from "../tools/tool_names.js";
 import type { Persona } from "../types.js";
 import type {
   ClaudeCodeSubagentConfig,
   NativeSubagentConfig,
   SubagentLaunchModel,
-  SubagentToolName,
 } from "./types.js";
-
-const INHERITABLE_TOOL_NAMES = new Set<SubagentToolName>([
-  TOOL_NAME_AGENTS,
-  TOOL_NAME_BASH,
-  TOOL_NAME_WRITE,
-  TOOL_NAME_EDIT,
-  TOOL_NAME_VIEW_IMAGE,
-  TOOL_NAME_WEB,
-  TOOL_NAME_HISTORY,
-  TOOL_NAME_MCP,
-  TOOL_NAME_MODELS,
-]);
-
-function normalizeTools(tools: SubagentToolName[]): SubagentToolName[] {
-  const seen = new Set<SubagentToolName>();
-  const normalized: SubagentToolName[] = [];
-
-  for (const tool of tools) {
-    if (seen.has(tool)) continue;
-    seen.add(tool);
-    normalized.push(tool);
-  }
-
-  return normalized;
-}
-
-function getInheritedSubagentTools(persona: Persona): SubagentToolName[] {
-  const toolNames = persona.tools;
-  const selected: SubagentToolName[] = [];
-
-  for (const name of toolNames) {
-    if (INHERITABLE_TOOL_NAMES.has(name as SubagentToolName)) {
-      selected.push(name as SubagentToolName);
-    }
-  }
-
-  return normalizeTools(selected);
-}
 
 type NativeSubagentSettings = Omit<
   NativeSubagentConfig,
@@ -76,13 +26,11 @@ export function resolveSubagentEffectiveSettings(args: {
   persona: Persona;
   launchModel?: SubagentLaunchModel;
 }): SubagentEffectiveSettings {
-  const tools = getInheritedSubagentTools(args.persona);
   if (args.launchModel?.kind === "claude-code") {
     return {
       kind: "claude-code",
       model: args.launchModel.model,
       effort: args.launchModel.reasoning,
-      tools,
     };
   }
   const settings = { ...args.persona.settings };
@@ -93,7 +41,6 @@ export function resolveSubagentEffectiveSettings(args: {
     kind: "native",
     model: args.launchModel?.model ?? args.persona.model,
     settings,
-    tools,
   };
 }
 
@@ -108,11 +55,7 @@ export function describeSubagentLaunchChoices(persona: Persona): {
   };
 }
 
-export function formatSubagentsForPrompt(persona: Persona): string | undefined {
-  if (!persona.tools.includes(TOOL_NAME_AGENTS)) {
-    return undefined;
-  }
-
+export function formatSubagentsForPrompt(persona: Persona): string {
   const { inherited, overrides: launchModels } = describeSubagentLaunchChoices(persona);
   const launchModelsText =
     launchModels.length > 0 ? launchModels.map((entry) => `\`${entry}\``).join(", ") : "none";

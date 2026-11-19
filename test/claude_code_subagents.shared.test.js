@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { HistoryRecorder } from "../dist/core/history/recorder.js";
 import { resolveModel } from "../dist/core/models/catalog.js";
 import { AgentSupervisor } from "../dist/core/subagents/agent_supervisor.js";
-import { claudeCodeOptions, claudeCodeTools } from "../dist/core/subagents/claude_code_runner.js";
+import { claudeCodeOptions } from "../dist/core/subagents/claude_code_runner.js";
 import { ClaudeCodeRuntime } from "../dist/core/subagents/claude_code_runtime.js";
 import { parseSubagentLaunchModel } from "../dist/core/subagents/launch_model.js";
 import { boundedHistoryText, boundedHistoryValue } from "../dist/core/subagents/trace.js";
@@ -69,7 +69,6 @@ function fixture(run) {
         kind: "claude-code",
         model,
         effort: "medium",
-        tools: ["bash", "edit"],
         workingDirectory: "/remote/workspace",
       },
       prompt: "first task",
@@ -93,17 +92,13 @@ describe("Claude Code launch models", () => {
     expect(boundedHistoryValue({ command: text })).toEqual({ unavailable: expect.any(String) });
   });
 
-  it("maps inherited built-in tools and leaves MCP discovery to Claude Code", () => {
-    expect(claudeCodeTools([])).toEqual([]);
-    expect(claudeCodeTools(["view_image", "edit"])).toEqual(["Read", "Glob", "Grep", "Edit"]);
-    expect(claudeCodeTools(["history", "mcp", "models"])).toEqual([]);
+  it("gives every worker the same built-in tools and leaves MCP discovery to Claude Code", () => {
     const options = claudeCodeOptions(
       {
         prompt: "task",
         cwd: "/target",
         model: "claude-haiku-5-5",
         effort: "low",
-        tools: ["bash"],
         sessionId,
       },
       "/bin/claude",
@@ -114,7 +109,7 @@ describe("Claude Code launch models", () => {
       effort: "low",
       resume: sessionId,
       pathToClaudeCodeExecutable: "/bin/claude",
-      tools: ["Read", "Glob", "Grep", "Bash", "Skill"],
+      tools: ["Read", "Glob", "Grep", "Bash", "Write", "Edit", "WebSearch", "WebFetch", "Skill"],
       permissionMode: "bypassPermissions",
       allowDangerouslySkipPermissions: true,
       disallowedTools: ["Agent", "Task", "AskUserQuestion"],
@@ -148,7 +143,6 @@ describe("Claude Code supervised lifecycle", () => {
     expect(f.calls[0].input).toMatchObject({
       cwd: "/remote/workspace",
       prompt: "first task",
-      tools: ["bash", "edit"],
     });
     expect(f.calls[0].input).not.toHaveProperty("sessionId");
     expect(f.calls[0].input).not.toHaveProperty("systemPrompt");
@@ -474,7 +468,6 @@ it.each([false, true])(
         kind: "claude-code",
         model: { provider: "claude-code", id: "claude-sonnet-5-5" },
         effort: "medium",
-        tools: [],
         workingDirectory: "/repo",
       },
       now: Date.now,

@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import { unavailableError } from "../agent/capabilities.js";
 import type { ApiKeysConfig } from "../config/index.js";
 import {
+  OpenRouterError,
+  type OpenRouterFailureKind,
   openRouterModels,
   requestOpenRouterChat,
   requestOpenRouterDecisions,
@@ -46,15 +49,29 @@ function providerAttachment(part: z.infer<typeof attachment>): OpenRouterAttachm
     : { kind: part.type, data: Buffer.from(part.bytes).toString("base64") };
 }
 
+// The reference keeps the provider out of view, so each failure gets its own wording.
+const FAILURES: Record<Exclude<OpenRouterFailureKind, "missing_key">, string> = {
+  invalid_key: "The model service API key is not valid",
+  auth_failed: "The model service rejected the API key",
+  insufficient_credits: "The model service account has insufficient credits",
+  forbidden: "The model service refused the request; check key permissions and content policy",
+  rate_limited:
+    "The model service is rate limiting requests; wait before deciding whether to retry",
+  provider_failure: "The model service or the model's provider failed",
+  rejected: "The model service rejected the request",
+  invalid_response: "The model service returned an invalid response or no answer",
+};
+
 async function infer<T>(request: Promise<T>): Promise<T> {
   try {
     return await request;
   } catch (error) {
-    if (!(error instanceof Error) || !/openrouter/i.test(error.message)) throw error;
-    const message = error.message.includes("OPENROUTER_API_KEY")
-      ? "Model inference is not configured"
-      : error.message.replace(/OpenRouter/gi, "model service");
-    throw new Error(message);
+    if (!(error instanceof OpenRouterError)) throw error;
+    if (error.kind === "missing_key") {
+      throw unavailableError("Model inference", "no model service API key is configured");
+    }
+    const status = error.status === undefined ? "" : ` (status ${error.status})`;
+    throw new Error(`${FAILURES[error.kind]}${status}`);
   }
 }
 

@@ -191,9 +191,10 @@ export class BashJobRegistry {
     const timedOut = await this.waitJobs(ids, timeout, signal);
     if (timedOut)
       throw codeModeError("wait_timeout", "No Bash job finished before the wait timed out");
-    const finished = this.read(ids).find((job) => job.status !== "running");
-    if (!finished) throw new Error("No finished Bash job found");
-    return finished;
+    // Pick by state first, because reading a job builds its whole retained output.
+    const id = ids.find((jobId) => this.get(jobId).state.status !== "running");
+    if (!id) throw new Error("No finished Bash job found");
+    return this.read([id])[0];
   }
 
   get hasRunning(): boolean {

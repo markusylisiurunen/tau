@@ -1,18 +1,13 @@
 // Binary paths travel separately from the JSON value so arbitrary JSON objects
 // cannot be mistaken for byte arrays.
 export function encodeBridgeValue(value: unknown, omitUndefined: boolean): string {
+  if (value instanceof Uint8Array) return `[${JSON.stringify(toBase64(value))},[[]]]`;
   const paths = new WeakMap<object, string[]>();
   const binary: string[][] = [];
   let root = true;
   const json = JSON.stringify(value, function (key, item: unknown) {
     const path = root ? [] : [...(paths.get(this) ?? []), key];
     root = false;
-    // Check the original value, because a Buffer's toJSON runs before the replacer sees it.
-    const raw: unknown = this[key];
-    if (raw instanceof Uint8Array) {
-      binary.push(path);
-      return Buffer.from(raw.buffer, raw.byteOffset, raw.byteLength).toString("base64");
-    }
     if (item === undefined && omitUndefined && !Array.isArray(this) && path.length > 0) {
       return undefined;
     }
@@ -25,10 +20,29 @@ export function encodeBridgeValue(value: unknown, omitUndefined: boolean): strin
     ) {
       throw new TypeError("Code Mode values must be JSON data or Uint8Array bytes");
     }
-    if (item && typeof item === "object") paths.set(item, path);
-    return item;
+    if (!item || typeof item !== "object") return item;
+    const encoded = encodeChildBytes(item, path, binary);
+    paths.set(encoded, path);
+    return encoded;
   });
   return `[${json},${JSON.stringify(binary)}]`;
+}
+
+// JSON.stringify calls toJSON on a property before the replacer sees it, which turns a
+// Buffer into an array of numbers. Encoding the bytes one level up avoids that copy.
+function encodeChildBytes(item: object, path: string[], binary: string[][]): object {
+  let copy: Record<string, unknown> | unknown[] | undefined;
+  for (const [key, child] of Object.entries(item)) {
+    if (!(child instanceof Uint8Array)) continue;
+    copy ??= Array.isArray(item) ? [...item] : { ...item };
+    (copy as Record<string, unknown>)[key] = toBase64(child);
+    binary.push([...path, key]);
+  }
+  return copy ?? item;
+}
+
+function toBase64(bytes: Uint8Array): string {
+  return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("base64");
 }
 
 export function decodeBridgeValue(encoded: string): unknown {

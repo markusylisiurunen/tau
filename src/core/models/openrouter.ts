@@ -161,20 +161,64 @@ const chatResponse = z.object({
   ]),
 });
 
-function requestFailure(status: number): Error {
-  const kind =
-    status === 401
-      ? "authentication failed; check OPENROUTER_API_KEY or global apiKeys.openrouter"
-      : status === 402
-        ? "insufficient credits; check OpenRouter billing"
-        : status === 403
-          ? "request forbidden; check key permissions and content policy"
-          : status === 429
-            ? "rate limited; wait before deciding whether to retry"
-            : status >= 500
-              ? "provider or OpenRouter service failure"
-              : "request rejected";
-  return new Error(`OpenRouter ${kind} (status ${status}); no automatic retry`);
+/** What went wrong with an OpenRouter request, so callers can describe it in their own terms. */
+export type OpenRouterFailureKind =
+  | "missing_key"
+  | "invalid_key"
+  | "auth_failed"
+  | "insufficient_credits"
+  | "forbidden"
+  | "rate_limited"
+  | "provider_failure"
+  | "rejected"
+  | "invalid_response";
+
+export class OpenRouterError extends Error {
+  constructor(
+    readonly kind: OpenRouterFailureKind,
+    message: string,
+    readonly status?: number,
+  ) {
+    super(message);
+    this.name = "OpenRouterError";
+  }
+}
+
+const STATUS_FAILURES: Array<[(status: number) => boolean, OpenRouterFailureKind, string]> = [
+  [
+    (status) => status === 401,
+    "auth_failed",
+    "authentication failed; check OPENROUTER_API_KEY or global apiKeys.openrouter",
+  ],
+  [
+    (status) => status === 402,
+    "insufficient_credits",
+    "insufficient credits; check OpenRouter billing",
+  ],
+  [
+    (status) => status === 403,
+    "forbidden",
+    "request forbidden; check key permissions and content policy",
+  ],
+  [
+    (status) => status === 429,
+    "rate_limited",
+    "rate limited; wait before deciding whether to retry",
+  ],
+  [(status) => status >= 500, "provider_failure", "provider or OpenRouter service failure"],
+];
+
+function requestFailure(status: number): OpenRouterError {
+  const [, kind, description] = STATUS_FAILURES.find(([matches]) => matches(status)) ?? [
+    undefined,
+    "rejected",
+    "request rejected",
+  ];
+  return new OpenRouterError(
+    kind,
+    `OpenRouter ${description} (status ${status}); no automatic retry`,
+    status,
+  );
 }
 
 async function requestOpenRouter(
@@ -189,9 +233,15 @@ async function requestOpenRouter(
     (options.env ?? process.env).OPENROUTER_API_KEY?.trim() ||
     getApiKeyForProvider(options.config, "openrouter");
   if (!key)
-    throw new Error("configure OPENROUTER_API_KEY or global apiKeys.openrouter on this machine");
+    throw new OpenRouterError(
+      "missing_key",
+      "configure OPENROUTER_API_KEY or global apiKeys.openrouter on this machine",
+    );
   if (!/^[\x21-\x7e]+$/.test(key))
-    throw new Error("OpenRouter API key must contain only printable ASCII without whitespace");
+    throw new OpenRouterError(
+      "invalid_key",
+      "OpenRouter API key must contain only printable ASCII without whitespace",
+    );
   const response = await (options.fetchImpl ?? fetch)(
     `https://openrouter.ai/api/${operation === "decisions" ? "alpha/decisions" : "v1/chat/completions"}`,
     {
@@ -206,14 +256,23 @@ async function requestOpenRouter(
     await response.body?.cancel();
     throw requestFailure(response.status);
   }
-  const value = parseMediaJson(
-    decodeOpenRouterText(await readMediaResponse(response, OPENROUTER_RESPONSE_BYTES)),
-    "OpenRouter response",
-  );
+  const bytes = await readMediaResponse(response, OPENROUTER_RESPONSE_BYTES);
+  let value: unknown;
+  try {
+    value = parseMediaJson(decodeOpenRouterText(bytes), "OpenRouter response");
+  } catch (error) {
+    throw new OpenRouterError(
+      "invalid_response",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
   if (value && typeof value === "object" && "error" in value) {
     const error = z.object({ code: z.number().int() }).safeParse(value.error);
     if (error.success) throw requestFailure(error.data.code);
-    throw new Error("OpenRouter returned a provider error; no automatic retry");
+    throw new OpenRouterError(
+      "provider_failure",
+      "OpenRouter returned a provider error; no automatic retry",
+    );
   }
   return value;
 }
@@ -241,7 +300,11 @@ export async function requestOpenRouterDecisions(
     const result = decisionResponse.safeParse(
       await requestOpenRouter("decisions", { model, state, questions: input.questions }, options),
     );
-    if (!result.success) throw new Error("OpenRouter returned an invalid decisions response");
+    if (!result.success)
+      throw new OpenRouterError(
+        "invalid_response",
+        "OpenRouter returned an invalid decisions response",
+      );
     validateDecisionAnswers(input, result.data);
     return { requested_model: model, ...result.data };
   });
@@ -316,11 +379,14 @@ export async function requestOpenRouterChat(
       ),
     );
     if (!result.success)
-      throw new Error("OpenRouter returned an invalid or unsupported chat response");
+      throw new OpenRouterError(
+        "invalid_response",
+        "OpenRouter returned an invalid or unsupported chat response",
+      );
     const { choices, ...metadata } = result.data;
     const { message, finish_reason, native_finish_reason } = choices[0];
     if (finish_reason === "stop" && !message.content?.trim() && !message.refusal)
-      throw new Error("OpenRouter returned no answer or refusal");
+      throw new OpenRouterError("invalid_response", "OpenRouter returned no answer or refusal");
     return {
       requested_model: input.model,
       ...metadata,

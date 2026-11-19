@@ -203,14 +203,22 @@ describe("public code-mode runtime", () => {
     ).rejects.toThrow("linear.invalid returned a non-JSON value");
   });
 
-  it("returns nested Node buffers to programs as bytes", async () => {
+  it("returns nested byte arrays to programs as bytes without calling their toJSON", async () => {
+    // A Buffer's toJSON copies every byte into an array of numbers, so encoding must skip it.
+    class Bytes extends Uint8Array {
+      toJSON() {
+        throw new Error("toJSON must not run");
+      }
+    }
     const result = await executeTauCodeMode({
       ...createDefinition({
-        api: { bytes: async () => ({ file: { data: Buffer.from([1, 2]) } }) },
+        api: {
+          bytes: async () => ({ file: { data: Bytes.from([1, 2]) }, list: [Buffer.from([3])] }),
+        },
       }),
-      code: 'import { printText } from "@tau/core"; import { bytes } from "linear"; const { file } = await bytes(); printText(String(file.data instanceof Uint8Array) + ":" + [...file.data]);',
+      code: 'import { printText } from "@tau/core"; import { bytes } from "linear"; const { file, list } = await bytes(); printText(String(file.data instanceof Uint8Array && list[0] instanceof Uint8Array) + ":" + [...file.data, ...list[0]]);',
     });
-    expect(getTextContent(result)).toContain("true:1,2");
+    expect(getTextContent(result)).toContain("true:1,2,3");
   });
 
   it("imports packages whose method names are reserved words or internal names", async () => {

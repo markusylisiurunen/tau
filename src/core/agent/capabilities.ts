@@ -52,11 +52,13 @@ export function workerCapabilities(options: {
   };
 }
 
-/** Throws the `unavailable` error a program sees when it calls something it cannot use. */
+/** The error a program sees when it calls something it cannot use. */
+export function unavailableError(what: string, reason: string): Error & { code: string } {
+  return codeModeError("unavailable", `${what} is unavailable: ${reason}.`);
+}
+
 export function requireCapability(availability: Availability, what: string): void {
-  if (!availability.available) {
-    throw codeModeError("unavailable", `${what} is unavailable: ${availability.reason}.`);
-  }
+  if (!availability.available) throw unavailableError(what, availability.reason);
 }
 
 /** Lists the capabilities this agent lacks, or nothing when it has them all. */

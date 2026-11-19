@@ -78,4 +78,4 @@ With `schema`, Tau requests structured output and parses the answer, but does no
 
 ## Errors
 
-Request failures throw without a `code` and are not retried, as do answers that are missing or not valid JSON.
+Calls fail with `code: "unavailable"` when no model service key is configured. Other request failures throw without a `code` and are not retried, as do answers that are missing or not valid JSON.

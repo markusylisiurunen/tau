@@ -3856,6 +3856,18 @@ describe("LocalSessionHost", () => {
       },
       agents: {},
       facets: { "session-facet": storedSnapshot.facets["session-facet"] },
+      timeline: {
+        epoch: 1,
+        sequence: 1,
+        items: [
+          expect.objectContaining({
+            notice: expect.objectContaining({
+              kind: "tau.worker.unavailable",
+              data: { id: "agent-1" },
+            }),
+          }),
+        ],
+      },
     });
     await expect(recoveredSession.snapshot()).resolves.toEqual(persisted);
     expect(recoveredSession.session.hasSubagent("agent-1")).toBe(false);
@@ -4601,7 +4613,10 @@ describe("LocalSessionHost", () => {
   });
 
   it("keeps running subagents alive after release and preserves idle workers under retention", async () => {
-    const host = createHost(new MemorySessionStore());
+    const directory = mkdtempSync(join(tmpdir(), "tau-workers-"));
+    const store = new FileSessionStore({ directory });
+    const host = createHost(store);
+    let reopenedHost;
     const gate = deferred();
     try {
       const session = await host.createSession(localCreateInput);
@@ -4613,6 +4628,7 @@ describe("LocalSessionHost", () => {
         launchEpoch: supervisor.prepareSpawn(supervisor.mainAgentId),
         runtimeConfig: {
           kind: "native",
+          delegationPolicy: { subagentLaunchModels: personas[0].subagentLaunchModels },
           systemPrompt: "child system",
           autoCompactThresholdTokens: 80000,
           workingDirectory: "/repo",
@@ -4650,12 +4666,47 @@ describe("LocalSessionHost", () => {
       await supervisor.waitForIdle();
       expect(await host.observeSession(session.sessionId)).toBe(session);
       expect(supervisor.read(child.id).status).toBe("idle");
+      const priorTotal = (await session.snapshot()).costTotal;
+      // A failed parent rewind leaves the committed worker recoverable.
+      await expect(
+        supervisor.retainOrigins(new Set(), async () => {
+          throw new Error("parent commit failed");
+        }),
+      ).rejects.toThrow();
       host.setRetention(session.sessionId, null);
       host.releaseSession(session);
       expect(await host.collectSession(session.sessionId)).toEqual({ disposed: true });
+      await host.shutdown();
+      const workerStore = store.workers(session.sessionId);
+      const [worker] = await workerStore.list();
+      // The worker usage write succeeded but the corresponding parent commit did not.
+      worker.state.costTotal += 1;
+      await workerStore.save(worker);
+      reopenedHost = createHost(new FileSessionStore({ directory }));
+      const reopened = await reopenedHost.observeSession(session.sessionId);
+      expect((await reopened.snapshot()).costTotal).toBe(priorTotal + 1);
+      const workers = reopened.runtime.supervisor;
+      expect(workers.getLastResponse(child.id)?.text).toBe("done");
+      const resumed = workers.records.get(child.id).runtime.agent;
+      const contexts = [];
+      resumed.spec.model.stream = (context) => {
+        contexts.push(context);
+        return {
+          async *[Symbol.asyncIterator]() {},
+          async result() {
+            return fauxAssistantMessage("second");
+          },
+        };
+      };
+      workers.sendInput({ id: child.id, prompt: "follow-up", mode: "queue" });
+      await workers.waitForIdle();
+      expect(JSON.stringify(contexts[0].messages)).toContain("done");
+      expect(workers.getLastResponse(child.id)?.text).toBe("second");
     } finally {
       gate.resolve();
+      await reopenedHost?.shutdown();
       await host.shutdown();
+      rmSync(directory, { force: true, recursive: true });
     }
   });
 
@@ -4672,6 +4723,7 @@ describe("LocalSessionHost", () => {
         launchEpoch: supervisor.prepareSpawn(supervisor.mainAgentId),
         runtimeConfig: {
           kind: "native",
+          delegationPolicy: { subagentLaunchModels: personas[0].subagentLaunchModels },
           systemPrompt: "child system",
           autoCompactThresholdTokens: 80000,
           workingDirectory: "/repo/child",

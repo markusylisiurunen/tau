@@ -15,10 +15,13 @@ import {
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
+import type { WorkerCheckpoint, WorkerStore } from "../core/subagents/checkpoint.js";
 import type { SessionProtocolSnapshot } from "../protocol/session_protocol.js";
 import {
   createStoredSessionDocument,
+  createWorkerDocument,
   parseStoredSessionDocument,
+  parseWorkerDocument,
   UnsupportedStoredSessionVersionError,
 } from "./session_snapshot_migrations.js";
 import {
@@ -59,6 +62,49 @@ export class FileSessionStore implements SessionStore {
 
   constructor(options: FileSessionStoreOptions) {
     this.directory = options.directory;
+  }
+
+  workers(sessionId: string): WorkerStore {
+    const directory = `${this.snapshotPath(sessionId)}.workers`;
+    const pathFor = (id: string) => join(directory, snapshotFilename(id));
+    return {
+      list: async () => {
+        let files: string[];
+        try {
+          files = await readdir(directory);
+        } catch (error) {
+          if (isNotFound(error)) return [];
+          throw error;
+        }
+        const workers: WorkerCheckpoint[] = [];
+        for (const file of files.filter(isSnapshotFilename)) {
+          try {
+            const worker = parseWorkerDocument(
+              JSON.parse(await readFile(join(directory, file), "utf8")),
+            );
+            if (snapshotFilename(worker.state.id) === file) workers.push(worker);
+          } catch {
+            // Recovery reports missing members. Preserve unreadable files for inspection.
+          }
+        }
+        return workers;
+      },
+      save: async (worker) => {
+        await mkdir(directory, { recursive: true, mode: PRIVATE_DIRECTORY_MODE });
+        const path = pathFor(worker.state.id),
+          temp = `${path}.${randomUUID()}.tmp`;
+        try {
+          await writeFile(temp, JSON.stringify(createWorkerDocument(worker)), {
+            mode: PRIVATE_FILE_MODE,
+            flag: "wx",
+          });
+          await rename(temp, path);
+        } finally {
+          await rm(temp, { force: true });
+        }
+      },
+      remove: (id) => rm(pathFor(id), { force: true }),
+    };
   }
 
   async acquireSession(sessionId: string): Promise<() => Promise<void>> {

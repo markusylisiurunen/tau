@@ -1631,7 +1631,7 @@ const modelToolResultMessageSchema = z
     timestamp: z.number().finite(),
   })
   .strip();
-const modelMessageSchema = z.union([
+export const modelMessageSchema = z.union([
   z.custom<IntermediateSystemMessage>(isIntermediateSystemMessage),
   modelUserMessageSchema,
   modelAssistantMessageSchema,
@@ -2538,7 +2538,7 @@ const sessionProtocolAgentRunStateSchema = z.discriminatedUnion("status", [
     .strip(),
 ]);
 
-const sessionProtocolAgentRunSchema = z
+export const sessionProtocolAgentRunSchema = z
   .object({
     id: nonEmptyStringSchema,
     parentId: nonEmptyStringSchema,
@@ -2580,7 +2580,7 @@ const sessionProtocolFacetSchema = z
   })
   .strip();
 
-const sessionProtocolAgentStateSnapshotSchema = z
+export const sessionProtocolAgentStateSnapshotSchema = z
   .object({
     revision: z.number().int().nonnegative(),
     modelContextKey: nonEmptyStringSchema,

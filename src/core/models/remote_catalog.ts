@@ -38,7 +38,7 @@ const CostRatesSchema = z
   })
   .passthrough();
 
-const ModelSchema = z
+export const ModelSchema = z
   .object({
     id: z.string().min(1),
     name: z.string().min(1),

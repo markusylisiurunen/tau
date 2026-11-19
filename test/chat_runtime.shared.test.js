@@ -11,6 +11,7 @@ import { createDefaultCoreDeps } from "../dist/core/runtime/deps.js";
 import { ToolCatalog } from "../dist/core/tools/catalog.js";
 import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
 import { ModelRuntime } from "../dist/core/utils/model_stream.js";
+import { MemorySessionStore } from "../dist/store/memory_session_store.js";
 
 function createPersona(overrides = {}) {
   return {
@@ -41,6 +42,7 @@ function createPromptContext(overrides = {}) {
 
 function createRuntime(overrides = {}) {
   return ChatRuntime.create({
+    workerStore: new MemorySessionStore().workers("main"),
     sessionId: "session-1",
     createdAt: Date.parse("2026-01-01T00:00:00.000Z"),
     persona: createPersona(),

@@ -1,4 +1,5 @@
 import type { Persona } from "../types.js";
+import { opusPreset } from "./claude_code_models.js";
 import type {
   ClaudeCodeSubagentConfig,
   NativeSubagentConfig,

@@ -110,7 +110,10 @@ export function createAgentsPackage(
   const supervisor = options.supervisor.scope(options.callerId);
   const notifications = capabilities.completionNotifications;
   const message = opusPreset(options.persona)
-    ? z.string().max(256 * 1024).regex(/\S/)
+    ? z
+        .string()
+        .max(256 * 1024)
+        .regex(/\S/)
     : workerMessage;
   const parseAllowedLaunchModel = (model: string) => {
     const { launchModel, error } = parseSubagentLaunchModel(model, {

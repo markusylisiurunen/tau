@@ -28,7 +28,7 @@ export function formatModelPromptNotes(
     `You are running on \`${model.id}\`.`,
     "",
     "- Write the final reply anew for its reader. Do not copy or closely paraphrase your reasoning or adopt its writing style.",
-    "- Finish what the request authorizes before you end your turn. If your reply would end with a step you could take yourself, take it and note the assumptions you made. A request for a plan or your view authorizes only that, and commits and other irreversible actions still need their own request.",
+    "- Finish what the request authorizes before you end your turn. A request covers the steps it clearly implies, such as running the checks for a change you made, so take those steps instead of offering them, and note the assumptions you made. Offer a step only when it needs the user's go-ahead, such as committing, or when it goes beyond what they asked for.",
     "- Do not second-guess yourself, stop after describing what you could do, or give a partial answer unless there is no way to proceed.",
     "- When you write code, reuse existing classes, functions, and APIs where they keep the code correct, and keep the behavior that callers rely on unless the task changes it. Keep the code readable, and do not use fewer lines, shorter names, or dense one-liners as a substitute for simplicity.",
   ].join("\n");

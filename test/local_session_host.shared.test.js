@@ -784,7 +784,9 @@ describe("LocalSessionHost", () => {
     try {
       expect((await session.snapshot()).settings.notifications).toBe(false);
       expect(session.runtime.notifications).toBeUndefined();
-      expect(session.runtime.agent.spec.tools.get("list_notifications")).toBeUndefined();
+      expect(session.runtime.agent.spec.tools.get("code")?.schema.description ?? "").not.toContain(
+        "@tau/notifications",
+      );
     } finally {
       await recoveredHost.shutdown();
     }

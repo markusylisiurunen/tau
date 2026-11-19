@@ -7,6 +7,7 @@ import {
   TAU_CODE_MODE_DEFAULT_MAX_OUTPUT_TOKENS,
   TAU_CODE_MODE_MAX_OUTPUT_TOKENS,
 } from "../../code_mode/runtime.js";
+import type { NotificationInbox } from "../agent/notification_inbox.js";
 import {
   type AgentsPackageOptions,
   agentsPackageDescription,
@@ -17,6 +18,7 @@ import { createFilesPackage } from "../code_mode/files.js";
 import { createHistoryPackage } from "../code_mode/history.js";
 import { createMcpPackage } from "../code_mode/mcp.js";
 import { createModelsPackage } from "../code_mode/models.js";
+import { createNotificationsPackage } from "../code_mode/notifications.js";
 import type { CodeModePackage } from "../code_mode/package.js";
 import { createWebPackage } from "../code_mode/web.js";
 import type { SessionRuntimeSettings } from "../config/index.js";
@@ -89,6 +91,8 @@ export function createCodeToolDefinition(options: {
   history?: HistoryQuery;
   mcp?: McpManager;
   agents?: AgentsPackageOptions;
+  /** The main agent's inbox, absent for workers and when the session has notifications off. */
+  notifications?: NotificationInbox;
 }): AgentTool | undefined {
   const allowed = new Set(options.allowedTools);
   const packages: CodeModePackage[] = [];
@@ -103,6 +107,7 @@ export function createCodeToolDefinition(options: {
     packages.push(createHistoryPackage(options.history));
   }
   if (allowed.has("mcp") && options.mcp?.available) packages.push(createMcpPackage(options.mcp));
+  if (options.notifications) packages.push(createNotificationsPackage(options.notifications));
   const agents = options.agents;
   if (!packages.length && !agents) return undefined;
   return createCodeTool({

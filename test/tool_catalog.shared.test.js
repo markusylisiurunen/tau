@@ -68,14 +68,14 @@ describe("ToolCatalog", () => {
       "wait_for_agents",
       "send_input_to_agent",
       "interrupt_agent",
-      "list_notifications",
-      "read_notification",
     ];
     expect(child.schemas.map((tool) => tool.name)).toEqual(
       main.schemas.filter((tool) => !management.includes(tool.name)).map((tool) => tool.name),
     );
     expect(main.get("code").schema.description).toContain("@tau/agents");
     expect(child.get("code").schema.description).not.toContain("@tau/agents");
+    expect(main.get("code").schema.description).toContain("@tau/notifications");
+    expect(child.get("code").schema.description).not.toContain("@tau/notifications");
     for (const name of management) expect(child.get(name)).toBeUndefined();
   });
 
@@ -97,9 +97,12 @@ describe("ToolCatalog", () => {
       new CodeJobRegistry(),
     );
     expect(main.schemas.map((tool) => tool.name)).toEqual([
+      "code",
+      "list_code_jobs",
+      "read_code_job",
+      "stop_code_job",
+      "wait_for_code_jobs",
       "tau_docs",
-      "list_notifications",
-      "read_notification",
     ]);
     expect(child.schemas.map((tool) => tool.name)).toEqual(["tau_docs"]);
   });

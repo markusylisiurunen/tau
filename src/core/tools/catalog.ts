@@ -15,7 +15,6 @@ import { createCodeToolDefinition } from "./code.js";
 import type { CodeJobRegistry } from "./code_jobs.js";
 import { createEditToolDefinition } from "./edit.js";
 import { scopeToolExecutionBackend, type ToolExecutionBackend } from "./execution_backend.js";
-import { createNotificationTools } from "./notifications.js";
 import { type AgentTool, ToolRegistry } from "./registry.js";
 import { createTauDocsToolDefinition } from "./tau_docs.js";
 import { TOOL_NAME_BASH } from "./tool_names.js";
@@ -33,6 +32,7 @@ function createCommonTools(options: {
   history?: HistoryQuery;
   mcp?: McpManager;
   agents?: AgentsPackageOptions;
+  notifications?: NotificationInbox;
 }): AgentTool[] {
   const backend = scopeToolExecutionBackend(options.backend, options.cwd);
   const enabled = new Set(options.allowedTools);
@@ -109,7 +109,6 @@ export const ToolCatalog = {
           : {}),
       }),
       ...(enabledToolNames.has("agents") ? tools : []),
-      ...(options.notifications ? createNotificationTools(options.notifications) : []),
       ...(options.clientTools?.() ?? []),
     ]);
   },

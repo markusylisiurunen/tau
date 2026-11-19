@@ -76,6 +76,29 @@ Media paths resolve from the working directory. Prefer paths for large media, be
 
 With `schema`, Tau requests structured output and parses the answer, but does not check it against the schema. `decisions` answers each question under its name. Check an answer's `type` before reading its field.
 
+```js
+import { input, printText } from "@tau/core";
+import { decisions, list } from "@tau/models";
+
+const { decisions: [model] } = await list();
+if (!model) throw new Error("No decision model available");
+const { answers } = await decisions({ ticket: input.ticket }, {
+  model: model.id,
+  questions: {
+    urgent: { type: "noul", instructions: "The customer cannot use the product at all." },
+    area: { type: "choice", instructions: "Which area the ticket is about.", criteria: { billing: null, login: null, other: null } },
+  },
+});
+const { urgent, area } = answers;
+if (urgent.type === "noul" && area.type === "choice") {
+  printText(`${area.choice}, urgent with probability ${urgent.noul.toFixed(2)}`);
+}
+```
+
 ## Errors
 
-Calls fail with `code: "unavailable"` when no model service key is configured. Other request failures throw without a `code` and are not retried, as do answers that are missing or not valid JSON.
+| `code` | Meaning |
+| --- | --- |
+| `unavailable` | No model service key is configured. |
+
+Other request failures throw without a `code` and are not retried, as do answers that are missing or not valid JSON.

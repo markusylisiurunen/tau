@@ -9,13 +9,7 @@ import { type CodeModePackage, definePackage, method } from "./package.js";
 const EXA_API_BASE_URL = "https://api.exa.ai";
 const EXA_MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 
-const description = [
-  "Search the web, discover agent-friendly resources, and retrieve page content.",
-  "Use it when the task needs open-web search or page extraction and no more direct source can answer, such as local files and repository data, purpose-built CLIs, first-party APIs and SDKs, or structured endpoints.",
-  "A URL alone is no reason to use @tau/web.",
-  "For a GitHub URL, use gh for pull requests, issues, releases, repository metadata, and authenticated access, and use git for source, diffs, status, and history in a checkout.",
-  "Use @tau/web for these only when those tools cannot provide what you need, or when the user explicitly asks to search the open web or inspect the page itself.",
-].join(" ");
+const description = "Search the web, extract page content, and find Markdown versions of pages.";
 
 type ExaClient = {
   search(query: string, options: Record<string, unknown>, signal: AbortSignal): Promise<unknown>;

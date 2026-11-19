@@ -175,10 +175,6 @@ describe("AgentSupervisor", () => {
       );
 
       const tool = getRecord(supervisor, spawned.id).runtime.agent.spec.tools.get("code");
-      expect(tool.schema.description).toContain(JSON.stringify({ name: "host" }));
-      expect(tool.schema.description).not.toContain("target");
-      expect(mcp.listServers).toHaveBeenCalledOnce();
-      mcp.listServers.mockClear();
       const result = await tool.execute(
         {
           id: "mcp-call",

@@ -421,6 +421,7 @@ export class LocalSessionHost implements TauSessionHost {
       executionEnvironment,
       includeAgentContext: this.sessionOptions.includeAgentContext,
       sessionStartedAt: createdAt,
+      mcpServers: mcp.listServers(),
     });
     const initialPromptComposition = committedSnapshot
       ? await promptCompositionFromSnapshot(committedSnapshot, async () =>

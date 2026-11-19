@@ -27,6 +27,9 @@ interface Connection {
   revision: number;
 }
 
+/** What the agent is told about one enabled server. */
+export type McpServerSummary = { name: string; description?: string };
+
 export class McpManager {
   private readonly servers: McpServersConfig;
   private readonly connections = new Map<string, Connection>();
@@ -48,7 +51,7 @@ export class McpManager {
     return Object.values(this.servers).some((server) => server.enabled !== false);
   }
 
-  listServers() {
+  listServers(): McpServerSummary[] {
     this.assertOpen();
     return Object.entries(this.servers)
       .filter(([, server]) => server.enabled !== false)

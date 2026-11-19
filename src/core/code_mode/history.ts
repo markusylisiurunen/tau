@@ -2,10 +2,7 @@ import { z } from "zod";
 import type { HistoryQuery } from "../history/types.js";
 import { type CodeModePackage, definePackage, method } from "./package.js";
 
-const description = [
-  "Search and read saved conversation transcripts across repositories and machines. It is read-only.",
-  "Use @tau/history only when the user or active instructions explicitly ask to reference, search, or read historical transcripts, not merely because prior sessions might be relevant.",
-].join(" ");
+const description = "Search and read the transcripts of past Tau sessions.";
 
 const attributeFilterSchema = z.union([
   z.string().max(1_024),

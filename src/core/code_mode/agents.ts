@@ -70,7 +70,7 @@ const traceOptions = z.strictObject({
 });
 
 export const agentsPackageDescription =
-  "Inspect allowed launch models and capacity, start delegated workers, send them queued or steering input, interrupt and wait for them, and read selected parts of their conversations. Access covers the workers you started and the workers they started. Follow the delegation policy in your instructions. Workers keep running when a program ends or is cancelled.";
+  "Start, steer, and wait for worker agents, and read what they did.";
 
 const AGENTS_FUNCTIONS = [
   "launchOptions",

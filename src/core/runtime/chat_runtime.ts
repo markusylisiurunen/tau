@@ -114,6 +114,7 @@ export class ChatRuntime {
         platform: options.promptContext.platform,
         skillsBlock: options.promptContext.skillsBlock,
         projectContextBlock: options.promptContext.projectContextBlock,
+        mcpServers: options.mcp.listServers(),
       });
     return new ChatRuntime(options, promptComposition);
   }
@@ -424,6 +425,7 @@ export class ChatRuntime {
       platform: this.promptContext.platform,
       skillsBlock: this.promptContext.skillsBlock,
       projectContextBlock: this.promptContext.projectContextBlock,
+      mcpServers: this.mcp.listServers(),
     });
   }
 }

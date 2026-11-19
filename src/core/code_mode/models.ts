@@ -114,7 +114,7 @@ export function createModelsPackage(
 
   return definePackage(
     "models",
-    "Run standalone model calls for text and media analysis, structured output, and typed decisions.",
+    "Make one-off LLM calls to analyze text and media, return structured output, and make typed decisions.",
     {
       list: method(z.tuple([]), () =>
         Object.fromEntries(

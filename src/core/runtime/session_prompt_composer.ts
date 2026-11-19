@@ -1,7 +1,12 @@
 import { type AgentCapabilities, formatCapabilitiesForPrompt } from "../agent/capabilities.js";
+import type { McpServerSummary } from "../mcp/manager.js";
 import { formatSubagentsForPrompt } from "../subagents/registry.js";
 import type { Persona } from "../types.js";
-import { buildBaseSystemPrompt, buildEnvironmentTag } from "../utils/context.js";
+import {
+  buildBaseSystemPrompt,
+  buildEnvironmentTag,
+  buildMcpServersBlock,
+} from "../utils/context.js";
 import { formatModelPromptNotes } from "./model_prompt_notes.js";
 
 type PromptSourceArgs = {
@@ -14,6 +19,7 @@ type PromptSourceArgs = {
   platform: NodeJS.Platform;
   skillsBlock?: string;
   projectContextBlock?: string;
+  mcpServers: readonly McpServerSummary[];
 };
 
 export type ComposeSessionPromptsArgs = PromptSourceArgs & {
@@ -40,6 +46,7 @@ function promptContext(args: PromptSourceArgs) {
   return {
     personaSystemPrompt: args.persona.systemPrompt,
     skillsBlock: args.skillsBlock,
+    mcpServersBlock: buildMcpServersBlock(args.mcpServers),
     projectContextBlock: args.projectContextBlock,
     environmentTag,
   };

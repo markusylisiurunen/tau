@@ -1,6 +1,7 @@
 import type { Tool } from "@earendil-works/pi-ai";
 import { mainAgentCapabilities } from "./agent/capabilities.js";
 import type { VirtualBundle } from "./config/index.js";
+import { McpManager } from "./mcp/manager.js";
 import type { PromptTemplate } from "./prompts.js";
 import type { ChatRuntimePromptContext } from "./runtime/chat_runtime.js";
 import { composeSessionPrompts } from "./runtime/session_prompt_composer.js";
@@ -144,6 +145,7 @@ export function printDebugInfo(args: {
     platform: promptContext.platform,
     skillsBlock: promptContext.skillsBlock,
     projectContextBlock: promptContext.projectContextBlock,
+    mcpServers: new McpManager(virtualBundle?.config?.mcpServers ?? {}).listServers(),
   });
 
   console.log(`\n${promptComposition.baseSystemPrompt}`);

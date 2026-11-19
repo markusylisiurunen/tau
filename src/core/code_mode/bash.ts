@@ -57,7 +57,7 @@ export function createBashPackage(
     if (truncated) throw codeModeError("output_limit", "Command output exceeded 24 MiB");
     return result;
   };
-  return definePackage("bash", "Run Bash commands and manage background jobs.", {
+  return definePackage("bash", "Run shell commands and manage background jobs.", {
     run: method(z.tuple([command, runOptions.optional()]), ([source, options], { signal }) =>
       run(source, options, signal),
     ),

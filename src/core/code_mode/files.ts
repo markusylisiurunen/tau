@@ -37,7 +37,7 @@ export function createFilesPackage(backend: ToolExecutionBackend): CodeModePacka
   const checkSize = (size: number) => {
     if (size > MAX_FILE_BYTES) throw codeModeError("file_too_large", "File exceeds 16 MiB");
   };
-  return definePackage("files", "Read, write, and edit whole files.", {
+  return definePackage("files", "Read, write, and edit files as text or bytes.", {
     readText: method(z.tuple([pathValue]), ([path]) => readText(path)),
     readBytes: method(z.tuple([pathValue]), ([path]) => readBytes(path)),
     writeText: method(z.tuple([pathValue, z.string()]), async ([path, text]) => {

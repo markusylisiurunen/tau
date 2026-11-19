@@ -70,6 +70,7 @@ describe("execution environment subagent prompt resolver", () => {
       executionEnvironment,
       includeAgentContext: true,
       sessionStartedAt: Date.parse("2026-01-01T00:00:00.000Z"),
+      mcpServers: [],
     });
 
     const prompts = await resolvePrompts({

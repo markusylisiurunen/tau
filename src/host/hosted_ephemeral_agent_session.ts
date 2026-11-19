@@ -123,6 +123,7 @@ export class HostedEphemeralAgentSession {
       platform: promptContext.platform,
       skillsBlock: promptContext.skillsBlock,
       projectContextBlock: promptContext.projectContextBlock,
+      mcpServers: options.mcp.listServers(),
     });
     const systemPrompt = [composition.baseSystemPrompt, options.instructions].join("\n\n");
     const spec = createAgentSpec({

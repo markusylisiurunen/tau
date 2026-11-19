@@ -1,4 +1,5 @@
 import { loadSkillsFromToolBackend } from "../core/config/runtime_config_snapshot.js";
+import type { McpServerSummary } from "../core/mcp/manager.js";
 import { composeSubagentSystemPrompt } from "../core/runtime/session_prompt_composer.js";
 import type { ResolveSubagentPrompt } from "../core/subagents/types.js";
 import type { ExecutionEnvironment } from "../execution/execution_environment.js";
@@ -8,6 +9,7 @@ export function createExecutionEnvironmentSubagentPromptResolver(options: {
   executionEnvironment: ExecutionEnvironment;
   includeAgentContext: boolean;
   sessionStartedAt: number;
+  mcpServers: readonly McpServerSummary[];
 }): ResolveSubagentPrompt {
   return async ({ cwd, persona }) => {
     const { skills } = await loadSkillsFromToolBackend({
@@ -31,6 +33,7 @@ export function createExecutionEnvironmentSubagentPromptResolver(options: {
       platform: promptContext.platform,
       skillsBlock: promptContext.skillsBlock,
       projectContextBlock: promptContext.projectContextBlock,
+      mcpServers: options.mcpServers,
     });
   };
 }

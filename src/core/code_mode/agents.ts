@@ -163,6 +163,10 @@ export function createAgentsPackage(
           ...settings,
           workingDirectory: cwd,
           systemPrompt,
+          delegationPolicy: {
+            subagentLaunchModels: options.persona.subagentLaunchModels,
+            subagentAutoCompactThresholdTokens: options.persona.subagentAutoCompactThresholdTokens,
+          },
           autoCompactThresholdTokens: getEffectiveAutoCompactThresholdTokens(
             settings.model.contextWindow,
             launchModel
@@ -243,9 +247,9 @@ export function createAgentsPackage(
         throw new AgentRequestError("expired_content", "The full trace text is unavailable");
       return result.text;
     }),
-    setCompletionNotification: method(z.tuple([id, z.boolean()]), ([agentId, enabled]) => {
+    setCompletionNotification: method(z.tuple([id, z.boolean()]), async ([agentId, enabled]) => {
       requireCapability(notifications, COMPLETION_NOTIFICATIONS);
-      supervisor.setCompletionNotification(agentId, enabled);
+      await supervisor.setCompletionNotification(agentId, enabled);
       return supervisor.read(agentId);
     }),
   };

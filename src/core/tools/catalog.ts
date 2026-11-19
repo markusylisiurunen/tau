@@ -1,3 +1,4 @@
+import { MemorySessionStore } from "../../store/memory_session_store.js";
 import { type AgentCapabilities, mainAgentCapabilities } from "../agent/capabilities.js";
 import { NotificationInbox } from "../agent/notification_inbox.js";
 import type { AgentsPackageOptions } from "../code_mode/agents.js";
@@ -80,6 +81,7 @@ export const ToolCatalog = {
       subagentSystemPrompt: "",
       autoCompactThresholdTokens: options.persona.autoCompactThresholdTokens ?? null,
       supervisor: new AgentSupervisor({
+        store: new MemorySessionStore().workers("main"),
         mainAgentId: "main",
         onEvent: () => {},
         onCompletion: () => {},

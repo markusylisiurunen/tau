@@ -41,7 +41,7 @@ Project configuration comes from `/srv/ledger` on `devbox.example`, and `!pwd` p
 
 ## What a session keeps
 
-The host saves each session under `~/.config/tau/sessions` and recovers it after a restart. Running processes and subagents do not survive a restart. See [sessions](sessions.md).
+The host saves each session under `~/.config/tau/sessions` and recovers it after a restart. Running processes do not survive a restart, and subagents come back idle. See [sessions](sessions.md).
 
 Never edit Tau's own state by hand: `~/.config/tau/auth.json`, `models-store.json`, `sessions/`, `history.sqlite`, or Telegram runner state files. Use Tau's commands instead.
 

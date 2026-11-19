@@ -21,6 +21,8 @@ type StoredEvent<T> = T extends { content: ContentBlock[] }
     : T;
 export type TraceEntry = StoredEvent<TraceEvent> & { seq: number; timestamp: number };
 
+export type SavedAssistant = { seq: number; timestamp: number; content: ContentBlock[] };
+
 const INLINE_BYTES = 4096;
 const PAGE_CHARS = 16384;
 const RETENTION_BYTES = 64 * 1024 * 1024;
@@ -29,12 +31,36 @@ export class AgentTrace {
   private entries: { entry: TraceEntry; bytes: number; ref?: string }[] = [];
   private contents = new Map<string, ContentBlock[]>();
   private bytes = 0;
-  private sequence = 0;
+  constructor(
+    private sequence = 0,
+    assistant?: SavedAssistant,
+  ) {
+    if (assistant)
+      this.store(
+        { kind: "assistant", content: assistant.content },
+        assistant.timestamp,
+        assistant.seq,
+      );
+    this.evicted = sequence > 0;
+  }
+  get lastSequence() {
+    return this.sequence;
+  }
   private evicted = false;
   private readonly key = randomUUID();
 
+  savedAssistant(seq?: number): SavedAssistant | undefined {
+    const entry = this.entries.find((item) => item.entry.seq === seq)?.entry;
+    if (entry?.kind !== "assistant") return;
+    const content =
+      entry.content.kind === "inline" ? entry.content.blocks : this.contents.get(entry.content.ref);
+    if (content) return { seq: entry.seq, timestamp: entry.timestamp, content };
+  }
+
   append(event: TraceEvent, timestamp = Date.now()): number {
-    const seq = ++this.sequence;
+    return this.store(event, timestamp, ++this.sequence);
+  }
+  private store(event: TraceEvent, timestamp: number, seq: number) {
     let ref: string | undefined;
     let retainedBytes = 0;
     const store = (blocks: ContentBlock[]): TraceContent => {

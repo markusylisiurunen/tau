@@ -10,6 +10,7 @@ import { type CoreDeps, createDefaultCoreDeps } from "../runtime/deps.js";
 import type { AgentJobRegistry } from "../tools/agent_jobs.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
 import { appendUsageLogEntry, type UsageRecorder } from "../usage/logs.js";
+import type { WorkerCheckpoint, WorkerStore } from "./checkpoint.js";
 import { AgentRequestError } from "./errors.js";
 import type { SubagentRuntimeEvent } from "./events.js";
 import { formatActiveSubagentsForCompaction } from "./format.js";
@@ -25,6 +26,23 @@ import type {
   SubagentStateSnapshot,
   SubagentUsageSnapshot,
 } from "./types.js";
+
+type SpawnOptions = {
+  parentId: string;
+  notifyOnCompletion: boolean;
+  launchEpoch: number;
+  agents: AgentsPackageOptions;
+  runtimeConfig: SubagentRuntimeConfig;
+  prompt: string;
+  title: string;
+  originHistoryEntryId: string;
+  config: SessionRuntimeSettings;
+  backend: ToolExecutionBackend;
+  jobs: AgentJobRegistry;
+  history: HistoryQuery;
+  mcp: McpManager;
+  personaId?: string;
+};
 
 const MAX_ACTIVE_SUBAGENTS = 16;
 
@@ -45,6 +63,9 @@ type SubagentRecord = {
   createdAt: number;
   originHistoryEntryId: string;
   personaId?: string;
+  saving?: Promise<void>;
+  dirty?: boolean;
+  settling?: boolean;
   runtime: SubagentRuntime;
   run: SubagentRunSnapshot;
   costTotal: number;
@@ -92,6 +113,7 @@ export class AgentSupervisor {
       onCompletion: (state: SubagentStateSnapshot) => void;
       recordUsage?: UsageRecorder;
       openHistory?: OpenSubagentHistory;
+      store: WorkerStore;
       deps?: CoreDeps;
     },
   ) {
@@ -145,23 +167,31 @@ export class AgentSupervisor {
 
   dispose(): void {
     this.disposed = true;
-    this.reset();
-    this.records.get(this.mainAgentId)?.runtime.dispose();
-    this.records.delete(this.mainAgentId);
+    this.mainLaunchEpoch++;
+    for (const record of this.records.values()) record.runtime.dispose();
+    this.records.clear();
   }
 
-  reset(): void {
-    this.retainOrigins(new Set());
+  reset() {
+    return this.retainOrigins(new Set());
   }
 
-  retainOrigins(originHistoryEntryIds: ReadonlySet<string>): void {
+  retainOrigins(originHistoryEntryIds: ReadonlySet<string>, commit = async () => {}) {
+    const removed: SubagentRecord[] = [];
     this.mainLaunchEpoch++;
     for (const record of this.delegatedRecords()) {
       const id = record.id;
       if (originHistoryEntryIds.has(record.originHistoryEntryId)) continue;
+      removed.push(record);
       this.records.delete(id);
       record.runtime.dispose();
     }
+    return commit().then(async () => {
+      for (const record of removed) {
+        await record.saving?.catch(() => {});
+        await this.options.store.remove(record.id);
+      }
+    });
   }
 
   getCapacity(): SubagentCapacitySnapshot {
@@ -175,7 +205,9 @@ export class AgentSupervisor {
   }
 
   getActiveCount(): number {
-    return this.delegatedRecords().filter((record) => record.run.status === "running").length;
+    return this.delegatedRecords().filter(
+      (record) => record.run.status === "running" || record.settling,
+    ).length;
   }
 
   getActiveCompactionContext(callerId: string): string | undefined {
@@ -187,22 +219,7 @@ export class AgentSupervisor {
     return `<active-subagents>\n${state}\n</active-subagents>`;
   }
 
-  spawn(options: {
-    parentId: string;
-    notifyOnCompletion: boolean;
-    launchEpoch: number;
-    agents: AgentsPackageOptions;
-    runtimeConfig: SubagentRuntimeConfig;
-    prompt: string;
-    title: string;
-    originHistoryEntryId: string;
-    config: SessionRuntimeSettings;
-    backend: ToolExecutionBackend;
-    jobs: AgentJobRegistry;
-    history: HistoryQuery;
-    mcp: McpManager;
-    personaId?: string;
-  }): SubagentConversationState {
+  spawn(options: SpawnOptions): SubagentConversationState {
     if (options.notifyOnCompletion && options.parentId !== this.mainAgentId)
       throw new AgentRequestError("invalid_arguments", "Only main can subscribe to completions");
     if (this.getActiveCount() >= MAX_ACTIVE_SUBAGENTS) {
@@ -216,6 +233,21 @@ export class AgentSupervisor {
     const epoch = this.prepareSpawn(parentId);
     if (options.launchEpoch !== epoch)
       throw new AgentRequestError("operation_failed", "Delegation was interrupted");
+    const record = this.register(options);
+    record.trace.append({
+      kind: "input",
+      mode: "initial",
+      content: [{ type: "text", text: options.prompt }],
+    });
+    this.startRun(record, options.prompt, "subagent_spawned");
+    return this.read(record.id);
+  }
+
+  private register(
+    options: Omit<SpawnOptions, "launchEpoch" | "prompt">,
+    saved?: WorkerCheckpoint,
+  ) {
+    const parentId = options.parentId;
     const parent = parentId === this.mainAgentId ? undefined : this.requireRecord(parentId);
     const depth = (parent?.depth ?? 0) + 1;
     const workingDirectory = options.runtimeConfig.workingDirectory.trim();
@@ -226,7 +258,7 @@ export class AgentSupervisor {
       );
     }
 
-    const id = randomUUID();
+    const id = saved?.state.id ?? randomUUID();
     const runtimeConfig = { ...options.runtimeConfig, workingDirectory };
     const delegation =
       depth < MAX_DELEGATION_DEPTH
@@ -239,12 +271,18 @@ export class AgentSupervisor {
       ancestorId = this.requireRecord(ancestorId).parentId;
     }
     sessionIds.unshift(this.mainAgentId);
-    const createdAt = this.deps.clock.now();
+    const createdAt = saved?.state.createdAt ?? this.deps.clock.now();
     const openHistory = this.options.openHistory;
-    const runtime = createSubagentRuntime(runtimeConfig, {
+    const launch =
+      saved ??
+      (runtimeConfig.kind === "native"
+        ? { kind: "native" as const, config: runtimeConfig }
+        : { kind: "claude-code" as const, config: runtimeConfig });
+    const runtime = createSubagentRuntime(launch, {
       ...options,
       id,
       sessionIds,
+      checkpoint: () => this.checkpoint(id),
       supervisor: this,
       delegation,
       agents: options.agents,
@@ -288,17 +326,91 @@ export class AgentSupervisor {
         contextWindow: runtime.contextWindow,
       },
       completion: Promise.resolve(),
-      trace: new AgentTrace(),
+      trace: new AgentTrace(saved?.traceSequence, saved?.assistant),
+      lastAssistantSeq: saved?.lastAssistantSeq,
       pending: [],
     };
     this.records.set(id, record);
-    record.trace.append({
-      kind: "input",
-      mode: "initial",
-      content: [{ type: "text", text: options.prompt }],
+    return record;
+  }
+
+  async restore(agents: AgentsPackageOptions, members: ReadonlySet<string>) {
+    const saved = await this.options.store.list();
+    const restored: SubagentStateSnapshot[] = [];
+    for (const worker of saved.sort((a, b) => a.state.depth - b.state.depth)) {
+      const { state } = worker;
+      if (
+        !members.has(state.id) ||
+        (state.parentId !== this.mainAgentId && !this.records.has(state.parentId))
+      ) {
+        await this.options.store.remove(state.id);
+        continue;
+      }
+      let record: SubagentRecord;
+      try {
+        record = this.register(
+          {
+            ...agents,
+            agents,
+            parentId: state.parentId,
+            runtimeConfig: worker.config,
+            title: state.title,
+            personaId: worker.personaId,
+            originHistoryEntryId: worker.originHistoryEntryId,
+            notifyOnCompletion: worker.notifyOnCompletion,
+          },
+          worker,
+        );
+      } catch {
+        // The host reports committed members that could not be opened.
+        continue;
+      }
+      record.usage = state.usage;
+      record.costTotal = state.costTotal;
+      record.run = state.run;
+      if (record.run.status === "running") {
+        this.finishInterrupted(
+          record,
+          `Worker interrupted by restart. Discarded ${worker.pending.queue} queued inputs. Delivery of ${worker.pending.steer} steering inputs was unconfirmed.`,
+        );
+        await this.checkpoint(record.id);
+      }
+      restored.push(this.toSnapshot(record));
+    }
+    return restored;
+  }
+
+  private async checkpoint(id: string): Promise<void> {
+    const record = this.records.get(id);
+    if (record?.kind !== "delegated") return;
+    record.dirty = true;
+    record.saving ??= Promise.resolve().then(async () => {
+      try {
+        while (record.dirty && this.records.get(id) === record) {
+          record.dirty = false;
+          const {
+            availability: _availability,
+            workingDirectory: _cwd,
+            model: _model,
+            ...state
+          } = this.toSnapshot(record);
+          await this.options.store.save({
+            ...record.runtime.checkpoint(),
+            state,
+            pending: this.read(id).pending,
+            originHistoryEntryId: record.originHistoryEntryId,
+            personaId: record.personaId,
+            notifyOnCompletion: record.notifyOnCompletion,
+            traceSequence: record.trace.lastSequence,
+            lastAssistantSeq: record.lastAssistantSeq,
+            assistant: record.trace.savedAssistant(record.lastAssistantSeq),
+          });
+        }
+      } finally {
+        record.saving = undefined;
+      }
     });
-    this.startRun(record, options.prompt, "subagent_spawned");
-    return this.read(record.id);
+    await record.saving;
   }
 
   /** Only a direct child of main can notify, and only while it runs. */
@@ -313,18 +425,15 @@ export class AgentSupervisor {
     }
   }
 
-  setCompletionNotification(callerId: string, id: string, enabled: boolean): void {
+  setCompletionNotification(callerId: string, id: string, enabled: boolean) {
     const record = this.requireRecord(id);
     if (callerId !== this.mainAgentId || record.parentId !== callerId)
       throw new AgentRequestError("unknown_agent", `Unknown subagent ID: ${id}`);
     record.notifyOnCompletion = enabled;
+    return this.checkpoint(id);
   }
 
-  sendInput(options: {
-    id: string;
-    prompt: string;
-    mode: "queue" | "steer";
-  }): SubagentConversationState {
+  sendInput(options: { id: string; prompt: string; mode: "queue" | "steer" }) {
     const record = this.requireRecord(options.id);
     if (
       record.subtreeStops > 0 ||
@@ -340,13 +449,17 @@ export class AgentSupervisor {
       mode: options.mode,
       content: [{ type: "text", text: options.prompt }],
     });
-    if (record.run.status === "running") {
-      if (options.mode === "steer") record.runtime.steer(options.prompt);
+    let saved: Promise<void>;
+    if (record.run.status === "running" || record.settling) {
+      if (options.mode === "steer" && !record.settling) record.runtime.steer(options.prompt);
       else record.pending.push({ prompt: options.prompt, mode: options.mode });
+      saved = this.checkpoint(record.id);
     } else {
       this.beginFollowup(record, options.prompt);
+      saved = record.saving!;
     }
-    return this.read(record.id);
+    const accepted = this.read(record.id);
+    return saved.then(() => accepted);
   }
 
   private beginFollowup(record: SubagentRecord, prompt: string): void {
@@ -379,7 +492,13 @@ export class AgentSupervisor {
               reason: "failed",
               error: { code: run.failure.kind, message: run.failure.message },
             }
-          : { status: "idle", reason: run.status === "succeeded" ? "completed" : "interrupted" }),
+          : run.status === "succeeded"
+            ? { status: "idle", reason: "completed" }
+            : {
+                status: "idle",
+                reason: "interrupted",
+                error: { code: run.failure.kind, message: run.failure.message },
+              }),
       pending: {
         queue: record.pending.filter((input) => input.mode === "queue").length,
         steer:
@@ -488,6 +607,7 @@ export class AgentSupervisor {
     record.trace.append({ kind: "status", status: "working" });
     record.completion = (async () => {
       try {
+        await this.checkpoint(record.id);
         await this.emit({ type: eventType, state: this.toSnapshot(record) });
         if (this.records.get(record.id) !== record || record.run.interruptRequested) {
           this.finishInterrupted(record);
@@ -517,6 +637,9 @@ export class AgentSupervisor {
           this.beginFollowup(record, next.prompt);
           return await record.completion;
         }
+        const interruptedByMain = record.interruptedByMain && record.run.status === "interrupted";
+        record.interruptedByMain = false;
+
         record.trace.append({
           kind: "status",
           status: "idle",
@@ -527,17 +650,39 @@ export class AgentSupervisor {
                 ? "interrupted"
                 : "failed",
         });
-        const interruptedByMain = record.interruptedByMain && record.run.status === "interrupted";
-        record.interruptedByMain = false;
-        if (record.notifyOnCompletion && !interruptedByMain) {
-          this.options.onCompletion(this.toSnapshot(record));
+        record.settling = true;
+        try {
+          await this.checkpoint(record.id);
+        } catch (error) {
+          this.finishFailed(record, {
+            kind: "runtime-error",
+            message: `Failed to save worker: ${error instanceof Error ? error.message : String(error)}`,
+          });
         }
-        await this.emit({ type: "subagent_finished", state: this.toSnapshot(record) });
+        try {
+          if (record.notifyOnCompletion && !interruptedByMain) {
+            this.options.onCompletion(this.toSnapshot(record));
+          }
+          await this.emit({ type: "subagent_finished", state: this.toSnapshot(record) });
+        } finally {
+          record.settling = false;
+        }
+        const queued = record.pending.shift();
+        if (queued && this.records.get(record.id) === record) {
+          this.beginFollowup(record, queued.prompt);
+          return await record.completion;
+        }
       }
     })();
+    void record.completion.catch(() => {});
   }
 
   private finishSucceeded(record: SubagentRecord, response: string): void {
+    if (record.lastAssistantSeq === undefined && response)
+      record.lastAssistantSeq = record.trace.append({
+        kind: "assistant",
+        content: [{ type: "text", text: response }],
+      });
     record.run = {
       revision: record.run.revision,
       status: "succeeded",
@@ -548,14 +693,17 @@ export class AgentSupervisor {
     };
   }
 
-  private finishInterrupted(record: SubagentRecord): void {
+  private finishInterrupted(
+    record: SubagentRecord,
+    message = "Subagent run was interrupted.",
+  ): void {
     record.run = {
       revision: record.run.revision,
       status: "interrupted",
       startedAt: record.run.startedAt,
       finishedAt: this.deps.clock.now(),
       interruptRequested: true,
-      failure: { kind: "interrupted", message: "Subagent run was interrupted." },
+      failure: { kind: "interrupted", message },
     };
   }
 
@@ -601,6 +749,7 @@ export class AgentSupervisor {
         contextWindowUsageTokens: event.contextTokens,
         contextWindow: event.contextWindow,
       };
+      await this.checkpoint(id);
       (this.options.recordUsage ?? appendUsageLogEntry)({
         ...event.entry,
         sessionId: record.id,
@@ -678,8 +827,8 @@ export class ScopedAgentSupervisor {
     this.check(id);
     return this.supervisor.read(id);
   }
-  setCompletionNotification(id: string, enabled: boolean): void {
-    this.supervisor.setCompletionNotification(this.callerId, id, enabled);
+  setCompletionNotification(id: string, enabled: boolean) {
+    return this.supervisor.setCompletionNotification(this.callerId, id, enabled);
   }
   sendInput(options: Parameters<AgentSupervisor["sendInput"]>[0]) {
     this.check(options.id);

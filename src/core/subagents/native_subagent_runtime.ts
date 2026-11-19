@@ -1,5 +1,10 @@
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
-import { AgentRuntime, type AgentSubturnResult, createAgentSpec } from "../agent/agent_runtime.js";
+import {
+  AgentRuntime,
+  type AgentState,
+  type AgentSubturnResult,
+  createAgentSpec,
+} from "../agent/agent_runtime.js";
 import {
   type AgentCapabilities,
   formatCapabilitiesForPrompt,
@@ -53,9 +58,12 @@ export class NativeSubagentRuntime implements SubagentRuntime {
   private readonly deliveries = new Set<Promise<void>>();
   private interrupted = false;
 
+  private savedRevision?: number;
+
   constructor(
     private readonly config: NativeSubagentConfig,
     private readonly options: SubagentRuntimeOptions,
+    restored?: AgentState,
   ) {
     this.jobs = options.jobs.create();
     const persona: Persona = {
@@ -67,7 +75,9 @@ export class NativeSubagentRuntime implements SubagentRuntime {
       systemPrompt: options.agents.persona.systemPrompt,
       model: config.model,
       settings: config.settings,
-      subagentLaunchModels: options.agents.persona.subagentLaunchModels,
+      subagentLaunchModels: config.delegationPolicy.subagentLaunchModels,
+      subagentAutoCompactThresholdTokens:
+        config.delegationPolicy.subagentAutoCompactThresholdTokens,
     };
     const capabilities = workerCapabilities({
       delegation: options.delegation,
@@ -85,6 +95,7 @@ export class NativeSubagentRuntime implements SubagentRuntime {
         }
       : undefined;
     this.agent = new AgentRuntime({
+      state: restored,
       agentId: options.id,
       spec: createAgentSpec({
         autoCompactThresholdTokens: config.autoCompactThresholdTokens,
@@ -111,6 +122,12 @@ export class NativeSubagentRuntime implements SubagentRuntime {
         }),
       }),
       eventSink: async (event) => {
+        if (
+          "revision" in event &&
+          event.type !== "assistant_final" &&
+          event.revision !== this.savedRevision
+        )
+          await options.checkpoint();
         await this.recordEvent(event);
         if (this.historySink) {
           for (const input of this.historyAdapter.translate(event)) await this.historySink(input);
@@ -124,6 +141,12 @@ export class NativeSubagentRuntime implements SubagentRuntime {
       archiveAutoCompaction: createAutoCompactionArchiver(options.backend),
     });
     this.historySink = options.openHistory?.();
+  }
+
+  checkpoint() {
+    const context = this.agent.snapshot();
+    this.savedRevision = context.revision;
+    return { kind: "native" as const, config: this.config, context };
   }
 
   get model() {

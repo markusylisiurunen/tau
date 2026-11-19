@@ -254,12 +254,15 @@ For Claude subagents, prefer the Claude Code models, which use subscription limi
 - Luna: `openai-codex/gpt-6-luna`; allowed efforts: low, medium, high, xhigh; default: `medium`.
 - Terra: `openai-codex/gpt-6.1-terra`; allowed efforts: low, medium, high; default: `medium`.
 - Sol: `openai-codex/gpt-6.2-sol`; allowed efforts: low, medium, high; default: `medium`.
-- Astra: `openai-codex/gpt-6.2-astra`; allowed efforts: low, medium, high; default: `low`.
+- Astra: `openai-codex/gpt-6.2-astra`; allowed efforts: low, medium, high; default: `medium`.
+- Hydrogen: `google/gemini-4-hydrogen`; allowed efforts: low, medium, high; default: `medium`.
+- Neon: `google/gemini-4-neon`; allowed efforts: low, medium, high; default: `medium`.
+- Carbon: `google/gemini-4-carbon`; allowed efforts: low, medium, high; default: `medium`.
 - Sonnet: `anthropic/claude-sonnet-5-5`; allowed efforts: low, medium, high; default: `medium`.
 - Claude Code Sonnet: `claude-code/claude-sonnet-5-5`; allowed efforts: low, medium, high; default: `medium`.
 - Claude Code Opus: `claude-code/claude-opus-5-5`; allowed efforts: low, medium, high; default: `medium`.
 - Claude Code Haiku: `claude-code/claude-haiku-5-5`; allowed efforts: low, medium, high; default: `medium`.
 - Opus: `anthropic/claude-opus-5-5`; allowed efforts: low, medium, high; default: `medium`.
 
-Sonnet, Claude Code Sonnet, Claude Code Opus, Claude Code Haiku, and Opus may be selected as model overrides only when explicitly requested by the user or active instructions. Do not select them on your own. This does not prevent inheriting the parent model when no override is requested.
+Hydrogen, Neon, Carbon, Sonnet, Claude Code Sonnet, Claude Code Opus, Claude Code Haiku, and Opus may be selected as model overrides only when explicitly requested by the user or active instructions. Do not select them on your own. This does not prevent inheriting the parent model when no override is requested.
 <!-- agents:subagents:end -->

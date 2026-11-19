@@ -1,6 +1,3 @@
-// @preload ./lib/workflow.js
-// @preload ./lib/review.js
-//
 // Prune a committed change down to what earns its place.
 //
 // 1. The pruner studies the change and forms its own view of what does not
@@ -14,7 +11,8 @@
 // fail. An optional focus narrows every step. Only the pruner edits files, and
 // the working tree must start clean.
 
-const {
+import { input } from "@tau/core";
+import {
   preflightModels,
   startRun,
   responseFormat,
@@ -22,8 +20,8 @@ const {
   tokens,
   log,
   ensure,
-} = workflow;
-const {
+} from "./lib/workflow.js";
+import {
   MODELS,
   readInputs,
   repositoryRoot,
@@ -31,7 +29,7 @@ const {
   ensureCleanTree,
   diffOverview,
   formatBlocks,
-} = review;
+} from "./lib/review.js";
 
 const MAX_FOCUS_TOKENS = 1024;
 

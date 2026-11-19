@@ -1,6 +1,3 @@
-// @preload ./lib/workflow.js
-// @preload ./lib/history.js
-//
 // Answer a question from past Tau sessions.
 //
 // 1. Select candidate sessions by time window, attribute scopes, or IDs.
@@ -9,7 +6,8 @@
 //
 // With preview, the workflow stops after selection.
 
-const {
+import { input, printText } from "@tau/core";
+import {
   preflightModels,
   startRun,
   responseFormat,
@@ -17,8 +15,8 @@ const {
   log,
   tokens,
   ensure,
-} = workflow;
-const {
+} from "./lib/workflow.js";
+import {
   readSelection,
   selectCandidates,
   describeSelection,
@@ -27,7 +25,7 @@ const {
   readSessions,
   screen,
   classify,
-} = history;
+} from "./lib/history.js";
 
 const MODELS = {
   final: "openai-codex/gpt-6.1-terra:medium",

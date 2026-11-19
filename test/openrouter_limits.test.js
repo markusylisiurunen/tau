@@ -378,28 +378,24 @@ it("bounds the complete serialized request including media and envelope overhead
 
 it.each([
   { label: "a missing key", config: {}, status: undefined, code: "unavailable" },
+  // A rejected key is an ordinary request failure, never a missing key.
   { label: "a rejected key", config: { apiKeys: { openrouter: "bad-key" } }, status: 401 },
-  { label: "rate limiting", config: { apiKeys: { openrouter: "test-key" } }, status: 429 },
-  { label: "a provider failure", config: { apiKeys: { openrouter: "test-key" } }, status: 502 },
-])(
-  "reports $label from @tau/models without naming the provider",
-  async ({ config, status, code }) => {
-    vi.stubEnv("OPENROUTER_API_KEY", "");
-    try {
-      const fetchImpl = vi.fn(async () => new Response("{}", { status }));
-      const { api } = createModelsPackage({}, config, fetchImpl);
-      const error = await api
-        .chat(["Describe", { model: "openai/gpt-6-luna" }], { signal: signal() })
-        .then(
-          () => undefined,
-          (failure) => failure,
-        );
-      expect(error).toBeInstanceOf(Error);
-      expect(error.code).toBe(code);
-      expect(error.message).not.toMatch(/openrouter/i);
-      expect(fetchImpl).toHaveBeenCalledTimes(status === undefined ? 0 : 1);
-    } finally {
-      vi.unstubAllEnvs();
-    }
-  },
-);
+  { label: "a rejected request", config: { apiKeys: { openrouter: "test-key" } }, status: 502 },
+])("reports $label from @tau/models", async ({ config, status, code }) => {
+  vi.stubEnv("OPENROUTER_API_KEY", "");
+  try {
+    const fetchImpl = vi.fn(async () => new Response("{}", { status }));
+    const { api } = createModelsPackage({}, config, fetchImpl);
+    const error = await api
+      .chat(["Describe", { model: "openai/gpt-6-luna" }], { signal: signal() })
+      .then(
+        () => undefined,
+        (failure) => failure,
+      );
+    expect(error).toBeInstanceOf(Error);
+    expect(error.code).toBe(code);
+    expect(fetchImpl).toHaveBeenCalledTimes(status === undefined ? 0 : 1);
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});

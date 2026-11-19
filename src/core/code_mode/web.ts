@@ -317,9 +317,8 @@ export function createWebPackage(
   let exa: ExaClient | undefined;
   const client = () => {
     requireCapability(web, "Web search and fetch");
-    const apiKey = getExaApiKey(config);
-    if (!apiKey) throw new Error("Exa API key is missing");
-    exa ??= deps.createExaClient(apiKey);
+    // Web availability comes from the same config, so the key is present here.
+    exa ??= deps.createExaClient(getExaApiKey(config)!);
     return exa;
   };
   return definePackage("web", description, {

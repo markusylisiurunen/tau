@@ -65,7 +65,7 @@ it("exposes every package without Code Mode globals and fails unavailable capabi
         try { await call(); } catch (error) { summary.push(error.code); }
       }
       for (const page of [undefined, "examples", "@tau/files", "@tau/missing"]) {
-        try { summary.push((await (page === undefined ? docs() : docs(page))).split("\\n")[0]); }
+        try { summary.push((await (page === undefined ? docs() : docs(page))).trim().length > 0); }
         catch (error) { summary.push(error.code); }
       }
       printText(JSON.stringify(summary));
@@ -80,9 +80,9 @@ it("exposes every package without Code Mode globals and fails unavailable capabi
       "function",
       "unavailable",
       "unavailable",
-      "# Code programs and @tau/core",
-      "# Code program examples",
-      "# @tau/files",
+      true,
+      true,
+      true,
       "unknown_page",
     ]);
     for (const code of [

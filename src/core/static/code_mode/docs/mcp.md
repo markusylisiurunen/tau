@@ -68,7 +68,7 @@ type ResourceContent = { uri: string; mimeType?: string } & ({ text: string } | 
 
 ## Discovery
 
-`searchTools` ranks tools across servers, or within one, by lexical match on names, descriptions, schema fields, and server guidance. Scores only order results. A server whose discovery failed appears in `errors`, so an empty result with errors does not prove that no tool exists. When search finds nothing useful, score the whole catalog with `@tau/models`; `docs("examples")` has a recipe.
+`searchTools` ranks tools across servers, or within one, by lexical match on names, descriptions, schema fields, and server guidance. Scores only order results. A server whose discovery failed appears in `errors`, so an empty result with errors does not prove that no tool exists.
 
 `listTools`, `listResources`, and `listResourceTemplates` page through one server. Every term of `query` must occur in the name or description, or for resources also the URI and title, ignoring case. Continue with `nextOffset` and the same query. `instructions` is the server's usage guidance.
 

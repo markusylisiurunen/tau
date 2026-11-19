@@ -6,11 +6,17 @@ Start workers, steer and wait for them, and read what they did. You can manage t
 import { readResponse, spawn, waitUntilIdle } from "@tau/agents";
 import { printText } from "@tau/core";
 
-const { id } = await spawn("Review docs/code-mode.md for unclear examples.", {
-  title: "Review Code Mode docs",
-});
-await waitUntilIdle(id);
-printText(await readResponse(id));
+const areas = ["src/auth", "src/billing"];
+const workers = await Promise.all(areas.map((area) =>
+  spawn(`Review ${area} for unchecked errors. Report file, line, and problem.`, {
+    title: `Review ${area}`,
+  })));
+for (const [index, { id }] of workers.entries()) {
+  const worker = await waitUntilIdle(id);
+  printText(`## ${areas[index]}\n` + (worker.reason === "completed"
+    ? await readResponse(id)
+    : `worker ${id} ended: ${worker.reason}`));
+}
 ```
 
 ## API

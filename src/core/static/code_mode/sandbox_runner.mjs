@@ -127,7 +127,6 @@ function flushOutput(force = false) {
 }
 
 function writeOutput(text) {
-  if (typeof text !== "string") throw new Error("invalid program output");
   const output = text + "\n";
   outputBytes += Buffer.byteLength(output);
   outputText = truncateToBytesFromEnd(outputText + output, workerData.maxCaptureBytes);

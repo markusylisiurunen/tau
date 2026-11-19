@@ -39,27 +39,6 @@ printText(await bash.text("git diff -- src/date.js"));
 printText(result.exitCode === 0 ? "tests pass" : truncate(result.stdout, { maxLines: 60, keep: "tail" }));
 ```
 
-## Delegate reviews and collect the answers
-
-`@tau/agents`. Workers run concurrently, and the program waits for all of them.
-
-```js
-import { readResponse, spawn, waitUntilIdle } from "@tau/agents";
-import { printText } from "@tau/core";
-
-const areas = ["src/auth", "src/billing"];
-const workers = await Promise.all(areas.map((area) =>
-  spawn(`Review ${area} for unchecked errors. Report file, line, and problem.`, {
-    title: `Review ${area}`,
-  })));
-for (const [index, { id }] of workers.entries()) {
-  const worker = await waitUntilIdle(id);
-  printText(`## ${areas[index]}\n` + (worker.reason === "completed"
-    ? await readResponse(id)
-    : `worker ${id} ended: ${worker.reason}`));
-}
-```
-
 ## Read the relevant part of a past conversation
 
 `@tau/history`. Find the session, then print short excerpts instead of the transcript.
@@ -76,59 +55,6 @@ for (const entry of entries) {
   printText(`[${entry.id}] ${truncate(entry.content, { maxChars: 800 })}`);
 }
 if (nextCursor) printText("more entries follow");
-```
-
-## Find MCP tools by meaning
-
-`@tau/mcp` and `@tau/models`. A task such as "find customer conversations about login failures" may need a tool described as "search support tickets", which shares none of its words, so `searchTools` misses it. A decision model scores every tool description instead. Mind the call limit for very large catalogs, and read the chosen tool's schema with `describeTool` before calling it.
-
-```js
-import { printText } from "@tau/core";
-import { listServers, listTools } from "@tau/mcp";
-import { decisions, list } from "@tau/models";
-
-const task = "Find customer conversations about login failures from last week";
-const { decisions: [model] } = await list();
-if (!model) throw new Error("No decision model available");
-const tools = [];
-for (const server of await listServers()) {
-  let offset = 0;
-  do {
-    const page = await listTools(server.name, { limit: 100, offset });
-    for (const tool of page.tools) {
-      tools.push({
-        id: `tool_${tools.length}`,
-        server: server.name,
-        name: tool.name,
-        description: (tool.description ?? "").slice(0, 1000),
-      });
-    }
-    offset = page.nextOffset;
-  } while (offset !== undefined);
-}
-
-const ranked = [];
-for (let start = 0; start < tools.length; start += 128) {
-  const batch = tools.slice(start, start + 128);
-  const questions = Object.fromEntries(batch.map((tool) => [tool.id, {
-    type: "score",
-    instructions: `Rate how useful candidate ${tool.id} is for the task, judging only its own name and description.`,
-    criteria: [
-      "Unrelated, or performs an incompatible action.",
-      "Related topic, but no evidence it can do the task.",
-      "Useful for a necessary part of the task.",
-      "Directly provides the main capability the task needs.",
-    ],
-  }]));
-  const { answers } = await decisions({ task, candidates: batch }, { model: model.id, questions });
-  for (const tool of batch) {
-    const answer = answers[tool.id];
-    if (answer.type === "score" && answer.score >= 2) ranked.push({ ...tool, score: answer.score });
-  }
-}
-ranked.sort((a, b) => b.score - a.score);
-for (const { server, name, score } of ranked.slice(0, 8)) printText(`${server}/${name} ${score}`);
-if (ranked.length === 0) printText("No relevant tools found.");
 ```
 
 ## Show a screenshot from an MCP tool

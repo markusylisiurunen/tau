@@ -131,10 +131,12 @@ function invalidRequest(message: string): HistoryApiError {
 export default {
   async fetch(request: Request, env: Env, _context: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+    const viewerEntriesRoute = /^\/sessions\/[^/]+\/entries$/.test(url.pathname);
     const viewerRoute =
       url.pathname === "/" ||
       url.pathname === "/viewer.js" ||
-      /^\/sessions\/[^/]+(?:\/entries)?$/.test(url.pathname);
+      viewerEntriesRoute ||
+      /^\/sessions\/[^/]+$/.test(url.pathname);
     if (viewerRoute && url.protocol === "http:" && !isLoopbackHost(url.hostname)) {
       return redirectViewerToHttps(url);
     }
@@ -179,11 +181,16 @@ export default {
         });
       }
       if (url.pathname === "/") return await renderViewerIndex(env.DB, url);
-      if (/^\/sessions\/[^/]+\/entries$/.test(url.pathname))
-        return await readViewerEntries(env.DB, url);
+      if (viewerEntriesRoute) return await readViewerEntries(env.DB, url);
       return await renderViewerSession(env.DB, url);
     } catch (caught) {
       if (caught instanceof HistoryApiError) {
+        if (viewerEntriesRoute) {
+          return viewerJson(
+            { error: { code: caught.code, message: caught.message } },
+            caught.status,
+          );
+        }
         return viewerRoute
           ? viewerError(caught.message, caught.status)
           : error(caught.code, caught.message, caught.status, operationId);
@@ -1021,14 +1028,10 @@ async function readViewerEntries(database: D1Database, url: URL): Promise<Respon
     url.origin,
     VIEWER_READ_PAGE_PAYLOAD_BYTES,
   );
-  return viewerResponse(
-    JSON.stringify({
-      html: result.entries.map(renderViewerEntry).join(""),
-      nextCursor: result.nextCursor ?? null,
-    }),
-    200,
-    { "content-type": "application/json; charset=utf-8" },
-  );
+  return viewerJson({
+    html: result.entries.map(renderViewerEntry).join(""),
+    nextCursor: result.nextCursor ?? null,
+  });
 }
 
 async function renderViewerSession(database: D1Database, url: URL): Promise<Response> {
@@ -1208,6 +1211,12 @@ function viewerResponse(
       "content-type": "text/html; charset=utf-8",
       ...headers,
     },
+  });
+}
+
+function viewerJson(body: unknown, status = 200): Response {
+  return viewerResponse(JSON.stringify(body), status, {
+    "content-type": "application/json; charset=utf-8",
   });
 }
 

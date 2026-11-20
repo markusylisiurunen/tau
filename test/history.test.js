@@ -418,6 +418,7 @@ describe("history search time ranges", () => {
 describe("session history", () => {
   it("stores, searches, reads, and truncates active transcripts", async () => {
     const store = new LocalHistoryStore(":memory:");
+    const assistantId = "a".repeat(2_049);
     try {
       store.createSession({
         sessionId: "session-1",
@@ -431,7 +432,7 @@ describe("session history", () => {
       });
       store.append("session-1", [
         createTextEntry("user-1", "user", "design durable history", 110),
-        createTextEntry("assistant-1", "assistant", "use sqlite locally", 120),
+        createTextEntry(assistantId, "assistant", "use sqlite locally", 120),
         {
           id: "tool-1",
           sourceIds: ["assistant-call", "tool-result"],
@@ -466,21 +467,22 @@ describe("session history", () => {
         }),
       ).resolves.toMatchObject({ sessions: [{ sessionId: "session-1" }] });
       const firstPage = await store.read({ sessionId: "session-1", limit: 2 });
-      expect(firstPage.entries.map((entry) => entry.id)).toEqual(["user-1", "assistant-1"]);
+      expect(firstPage.entries.map((entry) => entry.id)).toEqual(["user-1", assistantId]);
       expect(firstPage.nextCursor).toEqual(expect.any(String));
+      expect(firstPage.nextCursor.length).toBeLessThanOrEqual(2_048);
       await expect(
         store.read({ sessionId: "session-1", limit: 2, cursor: firstPage.nextCursor }),
       ).resolves.toMatchObject({ entries: [{ id: "tool-1", type: "tool" }] });
 
       store.truncateFromSources("session-1", ["assistant-call"]);
       await expect(store.read({ sessionId: "session-1", limit: 10 })).resolves.toMatchObject({
-        entries: [{ id: "user-1" }, { id: "assistant-1" }],
+        entries: [{ id: "user-1" }, { id: assistantId }],
       });
-      store.truncateFromSources("session-1", ["assistant-1"]);
+      store.truncateFromSources("session-1", [assistantId]);
       store.append("session-1", [createTextEntry("replacement", "user", "new branch", 200)]);
       await expect(
         store.read({ sessionId: "session-1", cursor: firstPage.nextCursor, limit: 2 }),
-      ).rejects.toThrow();
+      ).rejects.toThrow("history read anchor was not found");
     } finally {
       store.close();
     }
@@ -1691,6 +1693,22 @@ describe("session history", () => {
         [...html.matchAll(/<pre>extra (\d+)<\/pre>/g)].map((match) => Number(match[1])),
       ).toEqual(Array.from({ length: 208 }, (_, index) => index));
       expect(html).not.toContain("<script>alert(1)</script>");
+
+      const staleCursor = (await (await callHistoryViewer(endpoint, harness)).json()).nextCursor;
+      await applyOperation(harness.database, {
+        id: "viewer-rewind",
+        sessionId: "viewer/session",
+        type: "truncate",
+        afterEntryId: "viewer-user",
+      });
+      const stale = await callHistoryViewer(
+        `${endpoint}?cursor=${encodeURIComponent(staleCursor)}`,
+        harness,
+      );
+      expect(stale.status).toBe(404);
+      expect(stale.headers.get("content-type")).toContain("application/json");
+      expect(stale.headers.get("cache-control")).toBe("no-store");
+      await expect(stale.json()).resolves.toMatchObject({ error: { code: "anchor_not_found" } });
 
       const missing = await callHistoryViewer("/sessions/missing", harness);
       expect(missing.status).toBe(404);

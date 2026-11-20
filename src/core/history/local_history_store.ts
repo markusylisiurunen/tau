@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -320,15 +320,21 @@ export class LocalHistoryStore {
         throw new Error(`history session '${input.sessionId}' was not found`);
       }
       let position = 0;
-      const anchorId =
-        input.afterEntryId ??
-        (input.cursor === undefined ? undefined : decodeReadCursor(input.cursor));
-      if (anchorId !== undefined) {
+      if (input.afterEntryId !== undefined) {
         const anchor = this.database
           .prepare("SELECT position FROM history_entries WHERE session_id = ? AND entry_id = ?")
-          .get(input.sessionId, anchorId);
+          .get(input.sessionId, input.afterEntryId);
         if (!anchor) throw new Error("history read anchor was not found");
         position = Number(anchor.position);
+      } else if (input.cursor !== undefined) {
+        const cursor = decodeReadCursor(input.cursor);
+        const anchor = this.database
+          .prepare("SELECT entry_id FROM history_entries WHERE session_id = ? AND position = ?")
+          .get(input.sessionId, cursor.position);
+        if (!anchor || hashEntryId(String(anchor.entry_id)) !== cursor.entryHash) {
+          throw new Error("history read anchor was not found");
+        }
+        position = cursor.position;
       }
       const candidates = this.database
         .prepare(
@@ -338,7 +344,7 @@ export class LocalHistoryStore {
       const selectedCount = selectHistoryReadPage(candidates, input.limit);
       const rows = this.database
         .prepare(
-          "SELECT entry_id, payload_json FROM history_entries WHERE session_id = ? AND position > ? ORDER BY position LIMIT ?",
+          "SELECT position, entry_id, payload_json FROM history_entries WHERE session_id = ? AND position > ? ORDER BY position LIMIT ?",
         )
         .all(input.sessionId, position, selectedCount) as SqlRow[];
       const last = rows.at(-1);
@@ -346,7 +352,7 @@ export class LocalHistoryStore {
         session: descriptorFromRow(sessionRow),
         entries: rows.map((row) => JSON.parse(String(row.payload_json)) as HistoryEntry),
         ...(candidates.length > selectedCount && last
-          ? { nextCursor: `entry:${last.entry_id}` }
+          ? { nextCursor: `entry:${last.position}:${hashEntryId(String(last.entry_id))}` }
           : {}),
       };
     }, "BEGIN");
@@ -681,7 +687,13 @@ function decodeOffsetCursor(cursor: string | undefined): number {
   throw new Error("invalid history search cursor");
 }
 
-function decodeReadCursor(cursor: string): string {
-  if (cursor.startsWith("entry:") && cursor.length > 6) return cursor.slice(6);
-  throw new Error("invalid history read cursor");
+function hashEntryId(entryId: string): string {
+  return createHash("sha256").update(entryId).digest("hex");
+}
+
+function decodeReadCursor(cursor: string): { position: number; entryHash: string } {
+  const match = /^entry:([1-9][0-9]{0,15}):([0-9a-f]{64})$/.exec(cursor);
+  const position = Number(match?.[1]);
+  if (!match || !Number.isSafeInteger(position)) throw new Error("invalid history read cursor");
+  return { position, entryHash: match[2]! };
 }

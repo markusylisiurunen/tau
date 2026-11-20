@@ -12,7 +12,7 @@ function inspectChatContainer(container) {
 }
 
 describe("ChatContainerComponent", () => {
-  it("reuses combined history lines and Markdown components while the last answer streams", () => {
+  it("keeps previous frames intact and reuses history components while the last answer streams", () => {
     const container = new ChatContainerComponent(createUiTheme("plain"));
     const parent = new Container();
     parent.addChild(container);
@@ -28,6 +28,7 @@ describe("ChatContainerComponent", () => {
     const previousFrame = parent.render(80);
     const previousLines = [...previousFrame];
     const combinedLines = container.render(80);
+    const previousCombinedLines = [...combinedLines];
     const history = container.allMessages.map((record) => {
       const component = record.renderedMessage.component;
       return {
@@ -43,7 +44,7 @@ describe("ChatContainerComponent", () => {
     view.ui = { requestRender: vi.fn() };
     for (const text of ["start", `# Answer\n\n${"long answer ".repeat(100)}`, "short"]) {
       view.updateAssistantMessage("stream", { type: "assistant_partial", text });
-      expect(container.render(80)).toBe(combinedLines);
+      expect(combinedLines).toEqual(previousCombinedLines);
       const expected = new ChatContainerComponent(createUiTheme("plain"));
       for (const record of container.allMessages) expected.addMessage(record.model, record.id);
       expect(parent.render(80)).toEqual(expected.render(80));

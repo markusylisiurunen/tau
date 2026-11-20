@@ -4,7 +4,9 @@ label: "upgrade Tau dependencies"
 
 Bring all dependencies in this repository up to date. Perform the upgrade completely; do not only recommend versions, and do not commit.
 
-Tau has independent package roots at `/` and `/src/diff_tool/app`. In both, identify every outdated direct dependency, upgrade it to the latest stable release, preserve the manifest's existing pin or range style, and regenerate its lockfile with npm 12. Include compatible transitive lockfile updates, but do not add overrides for versions owned by upstream packages.
+Tau has independent package roots at `/` and `/src/diff_tool/app`. In both, upgrade each outdated direct dependency to the newest eligible release by semver. Check published versions as well as npm's `latest` tag. Stable dependencies take only stable releases. If a dependency is already on a prerelease, also consider newer prereleases with the same major and prerelease identifier. For example, `5.0.0-beta.2` can move to `5.1.0-beta.1` or a newer stable release, but not to `5.0.0-rc.1` or `6.0.0-beta.1`. Never downgrade to an older release just because npm tags it as `latest`.
+
+Preserve the manifest's existing pin or range style and regenerate both lockfiles with npm 12. Include compatible transitive lockfile updates, but do not add overrides for versions owned by upstream packages.
 
 Apply these repository-specific constraints:
 

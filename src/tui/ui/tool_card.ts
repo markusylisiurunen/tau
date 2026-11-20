@@ -170,7 +170,7 @@ export class ToolCardComponent implements Component, UiComponent<ToolCardProps> 
 
   invalidate(): void {}
 
-  render(width: number): string[] {
+  render(width: number): readonly string[] {
     const { model, theme } = this.props;
     const marker = getMarker(model.status);
     const subject = wrapSubject(model, marker, width);

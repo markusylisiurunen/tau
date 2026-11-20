@@ -47,6 +47,7 @@ type ReadOptions = {
   source?: "local";
   limit?: number; // 1–100, default 50
   cursor?: string;
+  afterEntryId?: string; // start after this entry; not with cursor
 };
 type ReadResult = { session: Session; entries: Entry[]; nextCursor?: string };
 
@@ -63,7 +64,7 @@ type Entry = { id: string; sourceIds: string[]; timestamp: number } & (
 );
 ```
 
-Timestamps are Unix milliseconds. Continue a page with `nextCursor` and otherwise unchanged arguments. Only a missing `nextCursor` means the end, because pages can hold fewer items than requested.
+Timestamps are Unix milliseconds. Continue with `cursor: nextCursor`, keeping the other options (including `source`) unchanged. For an anchored read, replace `afterEntryId` with `cursor` after the first page. Only a missing `nextCursor` means the end, because pages can hold fewer items than requested.
 
 ## Search
 
@@ -73,7 +74,7 @@ Common attributes are `source` (such as `tui` or `telegram`), `repository` (`hos
 
 `timeRange` filters by one timestamp, with `since` inclusive and `until` exclusive, and needs at least one bound. `updatedAt` means last active, so a session that continued after `until` is excluded.
 
-A digest can be missing or stale; `updatedThroughEntryId` is the last entry it covers. A digest or snippet may already answer the question. When the user asks for a conversation link, return `webUrl` if present. Local-only sessions have none.
+A digest can be missing or stale. `updatedThroughEntryId` is the last entry it covers, so `read` with `afterEntryId` set to it returns only the entries the digest does not cover. If a rewind removes the anchor or a continuation entry, discard the stale digest and restart from the beginning when you need the transcript. A digest or snippet may already answer the question. When the user asks for a conversation link, return `webUrl` if present. Local-only sessions have none.
 
 ## Workers
 

@@ -1,3 +1,4 @@
+import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import { formatZodError } from "../utils/zod.js";
 import { historyEntrySchema, historySessionDescriptorSchema } from "./schema.js";
@@ -11,6 +12,7 @@ import type {
   HistorySearchResult,
 } from "./types.js";
 
+const OVERLOAD_RETRY_DELAYS_MS = [10_000, 20_000];
 const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 const MAX_ERROR_CODE_BYTES = 128;
 const MAX_ERROR_MESSAGE_BYTES = 4096;
@@ -27,6 +29,10 @@ export class RemoteHistoryError extends Error {
   }
 }
 
+export function isOverloaded(error: unknown): boolean {
+  return error instanceof RemoteHistoryError && error.status === 503 && error.code === "overloaded";
+}
+
 const remoteDescriptorSchema = historySessionDescriptorSchema.extend({ webUrl: z.url() });
 const searchResultSchema = z
   .object({
@@ -37,6 +43,7 @@ const searchResultSchema = z
 const readResultSchema = z
   .object({
     session: remoteDescriptorSchema,
+    afterEntryId: z.string().optional(),
     entries: z.array(historyEntrySchema),
     nextCursor: z.string().optional(),
   })
@@ -68,7 +75,7 @@ export class RemoteHistoryClient implements HistoryQuery {
   }
 
   async search(input: HistorySearchInput, signal?: AbortSignal): Promise<HistorySearchResult> {
-    const value = await this.request("/v1/search", input, signal);
+    const value = await this.query("/v1/search", input, signal);
     const parsed = searchResultSchema.safeParse(value);
     if (!parsed.success) {
       throw new Error(
@@ -79,14 +86,29 @@ export class RemoteHistoryClient implements HistoryQuery {
   }
 
   async read(input: HistoryReadInput, signal?: AbortSignal): Promise<HistoryReadResult> {
-    const value = await this.request("/v1/read", input, signal);
+    const value = await this.query("/v1/read", input, signal);
     const parsed = readResultSchema.safeParse(value);
     if (!parsed.success) {
       throw new Error(
         `History service returned invalid transcript data: ${formatZodError(parsed.error)}`,
       );
     }
-    return parsed.data as HistoryReadResult;
+    const { afterEntryId, ...page } = parsed.data;
+    if (afterEntryId !== input.afterEntryId)
+      throw new Error("history service did not honor the read anchor");
+    return page as HistoryReadResult;
+  }
+
+  private async query(path: string, input: unknown, signal?: AbortSignal): Promise<unknown> {
+    for (const wait of OVERLOAD_RETRY_DELAYS_MS) {
+      try {
+        return await this.request(path, input, signal);
+      } catch (error) {
+        if (!isOverloaded(error)) throw error;
+        await delay(wait * (1 + Math.random() / 2), undefined, { signal });
+      }
+    }
+    return await this.request(path, input, signal);
   }
 
   private async request(path: string, body: unknown, signal?: AbortSignal): Promise<unknown> {

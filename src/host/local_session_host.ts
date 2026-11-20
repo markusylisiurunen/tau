@@ -192,6 +192,7 @@ export class LocalSessionHost implements TauSessionHost {
     this.store = store;
     this.history = history;
     this.historyRemote = historyRemote;
+    if (historyRemote) history.scheduleReplication(historyRemote);
     this.onShutdown = onShutdown;
     this.sessionOptions = sessionOptions;
   }

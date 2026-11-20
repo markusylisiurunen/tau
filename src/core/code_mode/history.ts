@@ -43,11 +43,17 @@ const searchInputSchema = z
   .strict();
 const readInputSchema = z
   .object({
+    afterEntryId: z.string().min(1).max(512).optional(),
     source: z.literal("local").optional(),
     limit: z.number().int().min(1).max(100).default(50),
     cursor: z.string().min(1).max(2_048).optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (input): input is typeof input & ({ afterEntryId?: never } | { cursor?: never }) =>
+      input.afterEntryId === undefined || input.cursor === undefined,
+    "pass afterEntryId or cursor, not both",
+  );
 
 export function createHistoryPackage(history: HistoryQuery): CodeModePackage {
   return definePackage("history", description, {

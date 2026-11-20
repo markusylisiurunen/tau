@@ -37,7 +37,7 @@
     "@earendil-works/pi-ai": "1.5.2",
     "@earendil-works/pi-mcp": "1.5.2",
     "@earendil-works/pi-tui": "1.5.2",
-    "@fly/sprites": "^0.2.4",
+    "@fly/sprites": "^0.2.5",
     "chalk": "^6.0.1",
     "colorjs.io": "^0.7.1",
     "esbuild": "0.28.2",
@@ -51,9 +51,9 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.3.328",
+    "@anthropic-ai/claude-agent-sdk": "0.3.329",
     "@biomejs/biome": "2.6.8",
-    "@cloudflare/workers-types": "^5.20261119.1",
+    "@cloudflare/workers-types": "^5.20261120.1",
     "@types/node": "^26.6.6",
     "@types/ws": "^8.18.2",
     "miniflare": "5.20261118.0-beta",

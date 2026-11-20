@@ -110,13 +110,22 @@ export async function selectCandidates(selection) {
     }
   }
   return [...found.values()].map(
-    ({ sessionId, attributes, createdAt, updatedAt, webUrl, digest }) => ({
+    ({
       sessionId,
       attributes,
       createdAt,
       updatedAt,
       webUrl,
       digest,
+      lastEntryId,
+    }) => ({
+      sessionId,
+      attributes,
+      createdAt,
+      updatedAt,
+      webUrl,
+      digest,
+      lastEntryId,
     }),
   );
 }
@@ -335,8 +344,9 @@ function formatEntry(entry) {
 
 // ── Screening ───────────────────────────────────────────────────────────
 
-// Screen summaries and unsummarized tails in batches. Sessions without a
-// usable summary, and sessions in a failed batch, pass through.
+// Screen summaries and unsummarized tails in batches. A summary that covers
+// the session's last entry has no tail to read. Sessions without a usable
+// summary, and sessions in a failed batch, pass through.
 export async function screen(run, sessions, { state, question }) {
   const tailStarted = Date.now();
   const before = pages;
@@ -354,6 +364,8 @@ export async function screen(run, sessions, { state, question }) {
     async (session) => {
       if (!session.digest?.summary || !session.digest.updatedThroughEntryId)
         return { session, tail: null };
+      if (session.digest.updatedThroughEntryId === session.lastEntryId)
+        return { session, tail: "", current: true };
       try {
         return { session, tail: await readTail(session) };
       } catch (error) {
@@ -374,7 +386,7 @@ export async function screen(run, sessions, { state, question }) {
     "tails",
     tailStarted,
     0,
-    `pages=${pages - before} missing-summary-or-anchor=${sessions.length - anchored} oversized=${anchored - screenable.length - failed.length} failed=${failed.length}`,
+    `pages=${pages - before} current=${reads.filter((r) => r.current).length} missing-summary-or-anchor=${sessions.length - anchored} oversized=${anchored - screenable.length - failed.length} failed=${failed.length}`,
   );
 
   const started = Date.now();

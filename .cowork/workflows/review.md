@@ -5,19 +5,20 @@ persona: gpt-6.2-sol-chatgpt-coder
 reasoning: medium
 ---
 
-Review the pull request as it stands now, and publish the result on GitHub. Use `gh` to read the pull request and its discussion. Then check out its head commit and note its SHA.
+Review the pull request as it stands now, and publish the result on GitHub. Use `gh` to read the pull request's metadata and the triggering request, then check out its head commit and note its SHA.
 
-Run the review with the `review` workflow from skill `tau-workflows`. This workflow authorizes its delegation. The workflow plans the review, runs the reviewers, and chooses the findings worth raising with a final agent. Do not launch reviewers of your own, and do not perform a separate full review.
+Run the review with the `review` workflow from skill `tau-workflows`. This workflow authorizes its delegation and the history access its context gathering needs. The workflow plans the review, runs the reviewers, gathers the conversations behind the pull request, and chooses the findings worth raising with a final agent. Do not launch reviewers of your own, and do not perform a separate full review.
 
 Pass these inputs:
 
 - `base`: the merge base of the pull request's target branch and its head, as a full commit ID.
 - `head`: the pull request's head commit, as a full commit ID. It must match the checked-out `HEAD`.
-- `context`: written as the skill describes, usually just `Read issue #120 for context.` with the actual issue number. Add any requirements from the triggering comment.
+- `gatherContext`: `true`.
+- `focus`: only when the triggering comment asks for a review of something specific, in the comment's own words. Leave it unset otherwise.
 
 Set `depth` only when the user asks for one.
 
-Review the whole pull request every time. If the request asks you to focus on something, pass it on as a requirement, but the review still covers everything else. The pull request may have been reviewed before, even by your own account and on the same commit. Do not read earlier reviews or their comments, and do not pass them to the workflow, so that they cannot anchor its judgment.
+The pull request may have been reviewed before, even by your own account and on the same commit. Do not read earlier reviews or their comments, and do not pass them or your own account of the discussion to the workflow. Its context gathering finds the discussion and exports it in full for the final agent, and the reviewers judge the code without it.
 
 The workflow's output is a log followed by the final result, which lists any warnings, the qualifying findings, and the dropped candidates. Publish the qualifying findings as the review, following the outcomes and the format below. The workflow has already assessed them, so do not check them again, drop them, or add findings of your own, and do not publish dropped candidates. The output is normally enough. Read the files in the workflow's run folder only when it is not.
 
@@ -28,7 +29,7 @@ Finish with exactly one of these outcomes:
 
 Do not approve, request changes, use suggested changes, leave a pending review, or change the branch. Your role is to inform the people who decide on the pull request, not to decide for them.
 
-Start the top-level review body with a short overview in natural sentences: how many issues the review found, its depth, the number of focused reviews when there were any, the total cost from the log, and anything that failed. Leave the issues themselves to the inline comments. So that the wording varies between reviews, run `shuf -i 1-8 -n 2` and let the two examples whose numbers it prints influence your style the most. Treat them as a starting point, not a template, and word your overview in your own way:
+Start the top-level review body with a short overview in natural sentences: how many issues the review found, its depth, its focus when the triggering comment gave one, the number of focused reviews when there were any, the total cost from the log, and anything that failed. Leave the issues themselves to the inline comments. So that the wording varies between reviews, run `shuf -i 1-8 -n 2` and let the two examples whose numbers it prints influence your style the most. Treat them as a starting point, not a template, and word your overview in your own way:
 
 1. Found 2 issues in a deep review with 3 focused reviews. The review cost $2.14.
 2. Found no issues in a light review, which cost $0.31.

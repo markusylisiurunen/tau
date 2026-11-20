@@ -37,6 +37,7 @@ export async function startRun({ prefix, workingDirectory }) {
   log(`Agent responses are parsed with ${PARSE_MODEL} at low reasoning`);
 
   const run = {
+    folder,
     started: Date.now(),
     cost: 0,
     warnings: [],

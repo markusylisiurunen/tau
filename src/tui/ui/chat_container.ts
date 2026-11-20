@@ -181,23 +181,25 @@ export class ChatContainerComponent extends Container {
     super.invalidate();
   }
 
-  override render(width: number): string[] {
+  override render(width: number): readonly string[] {
     if (this.cachedRenderWidth !== width) {
       this.invalidateRenderCache();
       this.cachedRenderWidth = width;
     }
 
-    // The parent Container copies these lines into its own frame buffer.
-    const lines = this.cachedRenderLines;
-    lines.length = this.childLineOffsets[this.dirtyChildIndex]!;
-    this.childLineOffsets.length = this.dirtyChildIndex + 1;
     const children = this.chatContainer.children;
+    if (this.dirtyChildIndex === children.length) return this.cachedRenderLines;
+
+    // The parent Container retains child render output across frames.
+    const lines = this.cachedRenderLines.slice(0, this.childLineOffsets[this.dirtyChildIndex]!);
+    this.childLineOffsets.length = this.dirtyChildIndex + 1;
     for (let index = this.dirtyChildIndex; index < children.length; index += 1) {
       const childLines = children[index]!.render(width);
       for (const line of childLines) lines.push(line);
       this.childLineOffsets.push(lines.length);
     }
     this.dirtyChildIndex = children.length;
+    this.cachedRenderLines = lines;
     return lines;
   }
 

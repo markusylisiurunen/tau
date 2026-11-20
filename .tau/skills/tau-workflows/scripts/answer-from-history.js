@@ -82,13 +82,13 @@ if (preview) {
   const run = await startRun({ prefix: "tau-answer-from-history" });
   await run.save("candidates.json", JSON.stringify(candidates, null, 2));
 
-  // 2. Read the transcripts, screen summaries, and classify transcript chunks.
-  const sessions = await readSessions(run, candidates, selection);
-  const screened = await screen(run, sessions, {
+  // 2. Screen summaries and tails before reading full transcripts for classification.
+  const screened = await screen(run, candidates, {
     state: { question },
     question: screenQuestion,
   });
-  const selected = await classify(run, screened, {
+  const sessions = await readSessions(run, screened);
+  const selected = await classify(run, sessions, {
     state: { question },
     question: classifyQuestion(),
   });

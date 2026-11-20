@@ -1,10 +1,17 @@
 // Shared selection, reading, screening, and classification for the history
 // workflows.
 
-import { truncate } from "@tau/core";
+import { docs, truncate } from "@tau/core";
 import * as history from "@tau/history";
 import { decisions } from "@tau/models";
-import { ensure, inParallel, logStart, tokens } from "./workflow.js";
+import {
+  bash,
+  byteLength,
+  ensure,
+  inParallel,
+  logStart,
+  tokens,
+} from "./workflow.js";
 
 const DECISION_MODEL = "typesafe/jev-1.14";
 
@@ -13,10 +20,18 @@ const MAX_TAIL_TOKENS = 8192;
 const MAX_SCREEN_BATCH_TOKENS = 65_536;
 const CHUNK_TOKENS = 65_536;
 
-// Each session needs at least one history read and usually a model call,
-// and a code job can make 4,096 API requests in total.
+// For 512 summarized candidates, one tail page, one full page, their waits,
+// and one classification each use at most 2,560 calls before selection and
+// batch screening. Count extra pages and chunks against the job's 4,096 calls.
+// Background jobs have no time limit. Leave room for setup and the final agent.
 const MAX_SESSIONS = 512;
+const HISTORY_AND_MODEL_CALLS = 4096 - 64;
 const MAX_SCREEN_BATCH_SESSIONS = 32;
+
+// History reads coincided with database overload (tau#769). Limit both
+// the rate of request starts and the number of requests in flight.
+const HISTORY_READ_INTERVAL_MS = 250;
+const HISTORY_READ_CONCURRENCY = 2;
 
 // At most 262,144 bytes, so a single entry always fits in one chunk.
 const MAX_ENTRY_CHARS = 65_536;
@@ -56,7 +71,9 @@ export async function selectCandidates(selection) {
   const found = new Map();
   if (sessionIds) {
     for (const sessionId of sessionIds) {
-      const { session } = await history.read(sessionId, { limit: 1 });
+      const { session } = await paced(() =>
+        history.read(sessionId, { limit: 1 }),
+      );
       if (
         inWindow(session, selection) &&
         scopes.some((scope) => matchesScope(session, scope))
@@ -69,16 +86,20 @@ export async function selectCandidates(selection) {
     for (const attributes of scopes) {
       let cursor;
       do {
-        const page = await history.search({
-          attributes,
-          timeRange: { field: "updatedAt", since: selection.start },
-          limit: 75,
-          cursor,
-        });
+        const page = await paced(() =>
+          history.search({
+            attributes,
+            timeRange: {
+              field: "updatedAt",
+              since: selection.start,
+              until: selection.end,
+            },
+            limit: 75,
+            cursor,
+          }),
+        );
         for (const session of page.sessions) {
-          if (inWindow(session, selection)) {
-            found.set(session.sessionId, session);
-          }
+          found.set(session.sessionId, session);
         }
         ensure(
           found.size <= MAX_SESSIONS,
@@ -100,10 +121,11 @@ export async function selectCandidates(selection) {
   );
 }
 
-// A session may have been active in the window if it was created before the
-// end and last updated after the start. Its transcript decides for certain.
-function inWindow(session, { start, end }) {
-  return session.updatedAt >= start && session.createdAt < end;
+function inWindow(session, { since, until, start, end }) {
+  return (
+    (since === undefined && until === undefined) ||
+    (session.updatedAt >= start && session.updatedAt < end)
+  );
 }
 
 function matchesScope(session, scope) {
@@ -128,7 +150,7 @@ export function describeSelection({
     const from =
       since === undefined ? "the beginning" : new Date(start).toISOString();
     parts.push(
-      `sessions active from ${from} (inclusive) to ${new Date(end).toISOString()} (exclusive)`,
+      `sessions last updated from ${from} (inclusive) to ${new Date(end).toISOString()} (exclusive)`,
     );
   }
   if (sessionIds) parts.push(`${sessionIds.length} requested session IDs`);
@@ -164,52 +186,125 @@ export function previewNote({ since, until }) {
   if (since === undefined && until === undefined) {
     return "Preview only. The candidates are the requested sessions that match the scopes.";
   }
-  return "Preview only. Candidates are sessions created before the end of the window and last updated at or after its start, so they may have been active in it. A full run keeps only those with transcript entries inside the window, and their transcripts can also contain earlier and later entries. Missing attributes do not show that a session is outside a scope; older sessions often lack them.";
+  return "Preview only. Candidates were last updated inside the window. Classification uses the whole transcript. Missing attributes do not show that a session is outside a scope; older sessions often lack them.";
 }
 
 // ── Reading ─────────────────────────────────────────────────────────────
 
-// Read each transcript once, and keep sessions with entries in the window.
-export async function readSessions(run, candidates, { start, end }) {
-  const started = Date.now();
-  logStart("read", "@tau/history", `${candidates.length} sessions`);
-  const unreadable = [];
-  const read = await inParallel(candidates, async (session) => {
-    try {
-      return { session, entries: await readEntries(session.sessionId) };
-    } catch {
-      unreadable.push(session.sessionId);
-      return null;
-    }
-  });
-  const active = read.filter((item) =>
-    item?.entries.some(
-      (entry) => entry.timestamp >= start && entry.timestamp < end,
-    ),
-  );
-  if (unreadable.length) {
-    run.warn(
-      `${unreadable.length} sessions could not be read: ${unreadable.join(", ")}.`,
+let remainingCalls = HISTORY_AND_MODEL_CALLS;
+class HistoryWorkflowError extends Error {}
+
+function reserveCalls(count) {
+  if (remainingCalls < count) {
+    throw new HistoryWorkflowError(
+      "Selection exceeds the request budget. Split the time window or session IDs and run each part separately.",
     );
   }
+  remainingCalls -= count;
+}
+
+let nextStart = Promise.resolve();
+let lastStart = 0;
+let pages = 0;
+let overload;
+async function paced(request) {
+  let response;
+  nextStart = nextStart.then(async () => {
+    if (overload) throw overload;
+    const wait = lastStart + HISTORY_READ_INTERVAL_MS - Date.now();
+    reserveCalls(wait > 0 ? 2 : 1);
+    if (wait > 0) {
+      try {
+        await bash(`sleep ${wait / 1000}`);
+      } catch (error) {
+        throw new HistoryWorkflowError(
+          `History search did not complete: could not pace requests. ${error}`,
+          { cause: error },
+        );
+      }
+    }
+    if (overload) throw overload;
+    lastStart = Date.now();
+    pages++;
+    response = request().catch((error) => {
+      if (error.code === "overloaded") {
+        overload ??= new HistoryWorkflowError(
+          "History search did not complete: the history service is still overloaded after retries. Try again later.",
+          { cause: error },
+        );
+        throw overload;
+      }
+      throw error;
+    });
+  });
+  await nextStart;
+  return response;
+}
+
+async function* readEntries(sessionId, options = {}) {
+  let cursor;
+  do {
+    const page = await paced(() =>
+      history.read(sessionId, {
+        limit: 100,
+        ...(cursor ? { cursor } : options),
+      }),
+    );
+    yield page.entries.map(formatEntry);
+    cursor = page.nextCursor;
+  } while (cursor);
+}
+
+async function readTranscript(sessionId) {
+  const entries = [];
+  for await (const page of readEntries(sessionId)) entries.push(...page);
+  return entries;
+}
+
+async function readTail(session) {
+  let text = "";
+  let bytes = 0;
+  for await (const page of readEntries(session.sessionId, {
+    afterEntryId: session.digest.updatedThroughEntryId,
+  })) {
+    for (const entry of page) {
+      bytes += byteLength(entry.text);
+      if (bytes > 6 * MAX_TAIL_TOKENS) return null;
+      text += entry.text;
+    }
+  }
+  return text;
+}
+
+export async function readSessions(run, sessions) {
+  const started = Date.now();
+  const before = pages;
+  logStart("read", "@tau/history", `${sessions.length} sessions`);
+  const results = await inParallel(
+    sessions,
+    async (session) => {
+      try {
+        return { session, entries: await readTranscript(session.sessionId) };
+      } catch (error) {
+        if (error instanceof HistoryWorkflowError) throw error;
+        return null;
+      }
+    },
+    HISTORY_READ_CONCURRENCY,
+  );
+  const unreadable = sessions.filter((_, i) => !results[i]);
+  if (unreadable.length)
+    run.warn(
+      `${unreadable.length} sessions could not be read and were excluded: ${unreadable.map((s) => s.sessionId).join(", ")}.`,
+    );
+  const read = results.filter(Boolean);
   run.done(
     "read",
     started,
     0,
-    `active=${active.length} unreadable=${unreadable.length}`,
+    `pages=${pages - before} read=${read.length} unreadable=${unreadable.length}`,
   );
-  return active;
-}
-
-async function readEntries(sessionId) {
-  const entries = [];
-  let cursor;
-  do {
-    const page = await history.read(sessionId, { limit: 100, cursor });
-    entries.push(...page.entries.map(formatEntry));
-    cursor = page.nextCursor;
-  } while (cursor);
-  return entries;
+  return read;
 }
 
 function formatEntry(entry) {
@@ -223,7 +318,6 @@ function formatEntry(entry) {
     });
     return {
       id: entry.id,
-      timestamp: entry.timestamp,
       text: `\n[${time} tool ${entry.name}, ${entry.outcome}, id=${entry.id}]\n${args}\n${result}\n`,
     };
   }
@@ -235,7 +329,6 @@ function formatEntry(entry) {
           .join("\n");
   return {
     id: entry.id,
-    timestamp: entry.timestamp,
     text: `\n[${time} ${entry.type}, id=${entry.id}]\n${truncate(content, { maxChars: MAX_ENTRY_CHARS })}\n`,
   };
 }
@@ -245,14 +338,46 @@ function formatEntry(entry) {
 // Screen summaries and unsummarized tails in batches. Sessions without a
 // usable summary, and sessions in a failed batch, pass through.
 export async function screen(run, sessions, { state, question }) {
+  const tailStarted = Date.now();
+  const before = pages;
+  const anchored = sessions.filter(
+    (s) => s.digest?.summary && s.digest.updatedThroughEntryId,
+  ).length;
+  logStart("tails", "@tau/history", `${anchored} summarized sessions`);
+  if (anchored)
+    ensure(
+      (await docs("@tau/history")).includes("afterEntryId"),
+      "Upgrade Tau before screening: @tau/history.read must support afterEntryId.",
+    );
+  const reads = await inParallel(
+    sessions,
+    async (session) => {
+      if (!session.digest?.summary || !session.digest.updatedThroughEntryId)
+        return { session, tail: null };
+      try {
+        return { session, tail: await readTail(session) };
+      } catch (error) {
+        if (error instanceof HistoryWorkflowError) throw error;
+        return { session, tail: null, error: String(error) };
+      }
+    },
+    HISTORY_READ_CONCURRENCY,
+  );
+  const failed = reads.filter((r) => r.error);
+  if (failed.length)
+    run.warn(
+      `${failed.length} tail reads failed; those sessions will be classified in full. First failure: ${failed[0].session.sessionId}: ${failed[0].error}`,
+    );
+  const screenable = reads.filter((r) => r.tail !== null);
+  const unscreened = reads.filter((r) => r.tail === null).map((r) => r.session);
+  run.done(
+    "tails",
+    tailStarted,
+    0,
+    `pages=${pages - before} missing-summary-or-anchor=${sessions.length - anchored} oversized=${anchored - screenable.length - failed.length} failed=${failed.length}`,
+  );
+
   const started = Date.now();
-  const screenable = [];
-  const unscreened = [];
-  for (const item of sessions) {
-    const tail = unsummarizedTail(item);
-    if (tail === null) unscreened.push(item);
-    else screenable.push({ ...item, tail });
-  }
   logStart(
     "screen",
     DECISION_MODEL,
@@ -261,7 +386,9 @@ export async function screen(run, sessions, { state, question }) {
 
   let cost = 0;
   let failedBatches = 0;
-  const passed = await inParallel(batches(screenable), async (batch) => {
+  const groups = batches(screenable);
+  reserveCalls(groups.length);
+  const passed = await inParallel(groups, async (batch) => {
     const questions = {};
     const summaries = batch.map(({ session, tail }, index) => {
       questions[`s${index}`] = question(`s${index}`);
@@ -292,7 +419,7 @@ export async function screen(run, sessions, { state, question }) {
     );
   }
 
-  const result = [...unscreened, ...passed.flat()];
+  const result = [...unscreened, ...passed.flat().map((item) => item.session)];
   run.done(
     "screen",
     started,
@@ -300,21 +427,6 @@ export async function screen(run, sessions, { state, question }) {
     `passed=${result.length}/${sessions.length} failed-batches=${failedBatches}`,
   );
   return result;
-}
-
-// The entries after the summary, or null when the session has no usable
-// summary or its tail is too long to screen.
-function unsummarizedTail({ session, entries }) {
-  if (!session.digest?.summary) return null;
-  const index = entries.findIndex(
-    (entry) => entry.id === session.digest.updatedThroughEntryId,
-  );
-  if (index === -1) return null;
-  const tail = entries
-    .slice(index + 1)
-    .map((entry) => entry.text)
-    .join("");
-  return tokens(tail) <= MAX_TAIL_TOKENS ? tail : null;
 }
 
 function batches(items) {
@@ -355,6 +467,7 @@ export async function classify(run, sessions, { state, question }) {
   let cost = 0;
   const failed = new Set();
   let failedChunks = 0;
+  reserveCalls(chunks.length);
   const passed = await inParallel(chunks, async (chunk) => {
     try {
       const result = await decisions(

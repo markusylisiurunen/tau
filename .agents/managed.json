@@ -335,11 +335,11 @@
     },
     ".tau/skills/tau-workflows/scripts/answer-from-history.js": {
       "type": "file",
-      "hash": "d2dad4c90b97000e185a039734f08f41d610fd03a8ce0c2cc691f904ca46fe46"
+      "hash": "e1055cc71f39ec58f36863d1a09381e933960566aea37367f06015cf3dc85742"
     },
     ".tau/skills/tau-workflows/scripts/find-sessions.js": {
       "type": "file",
-      "hash": "d454cae5b8350526d343bc5cdae4bd0f03e9d32625cf48226a9490f9bb6f8cfd"
+      "hash": "f57373c5a5c65fc9d7613a63b653abb4ad1cf697c51c63a694093199b0a56a97"
     },
     ".tau/skills/tau-workflows/scripts/improve.js": {
       "type": "file",
@@ -347,7 +347,7 @@
     },
     ".tau/skills/tau-workflows/scripts/lib/history.js": {
       "type": "file",
-      "hash": "a997c79ab9847ba60f425ef67eb344f4bf868cd93b9461db614005d205bebde4"
+      "hash": "ea58766aafb43c6687f580130f1b0866fbe4836133eace4f239f404aa1c0320d"
     },
     ".tau/skills/tau-workflows/scripts/lib/review.js": {
       "type": "file",
@@ -355,7 +355,7 @@
     },
     ".tau/skills/tau-workflows/scripts/lib/workflow.js": {
       "type": "file",
-      "hash": "d1bb76cce12210f58cf94e4b9c8cc0663750e6577d2a8a07b67855e7b8e462d9"
+      "hash": "5d7a7782188f3741b558bf75dca94352ec9d920235bd24cc2771822cf0e5cddd"
     },
     ".tau/skills/tau-workflows/scripts/prune.js": {
       "type": "file",
@@ -375,7 +375,7 @@
     },
     ".tau/skills/tau-workflows/SKILL.md": {
       "type": "file",
-      "hash": "9137a9bb82022feb4d607d31b4dc4a9c767073fd9e154f22a7b4857f09548019"
+      "hash": "a7ed0ec27f5567b3431b9e618e31d8d87d89308349980ffde559699a1d705e8f"
     },
     "AGENTS.md": {
       "type": "section",

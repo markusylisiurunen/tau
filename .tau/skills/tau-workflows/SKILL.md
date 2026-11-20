@@ -18,11 +18,11 @@ The workflows start subagents and call models, so they fail when your instructio
 
 Both take the same selection, and search all of it:
 
-- `since` and `until`: ISO timestamps for the window, with the user's UTC offset, because a bare date means midnight UTC. The start is inclusive and the end exclusive, and the end defaults to now.
+- `since` and `until`: ISO timestamps for the window, with the user's UTC offset, because a bare date means midnight UTC. The start is inclusive and the end exclusive, and the end defaults to now. The window selects sessions by when they were last updated, so a session that continued after `until` is left out.
 - `scopes`: attribute filters. A session is selected when it matches any filter, and all attributes in one filter must match. A value is an exact string or `{ "contains": "…" }` for a case-sensitive substring. Omit `scopes` to search all sessions.
 - `sessionIds`: specific sessions to search, such as ones found earlier. The window and scopes still narrow them.
 
-Each workflow reads the selected transcripts, has Jev screen session summaries and then classify transcript chunks, and gives the sessions that pass to a read-only Terra agent, which reads them and writes the result. Unreadable sessions and failed model calls are logged as warnings. When no session passes, the workflow says so without starting the agent.
+Each workflow has Jev screen session summaries, together with the entries each summary does not yet cover, then classify the whole transcripts of the sessions that remain. It gives the sessions that pass to a read-only Terra agent, which reads them and writes the result. Unreadable sessions and failed model calls are logged as warnings. When no session passes, the workflow says so without starting the agent.
 
 Pass `since`, `sessionIds`, or both. Subagent sessions are included only by ID. Pass `"preview": true` to count the candidates by source without reading transcripts or calling models. Preview a broad selection first: the workflows refuse more than 512 candidates.
 

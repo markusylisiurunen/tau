@@ -204,7 +204,7 @@ export function object(properties) {
 }
 
 // Run fn over items with a bounded number of calls in flight.
-export async function inParallel(items, fn) {
+export async function inParallel(items, fn, concurrency = PARALLEL_REQUESTS) {
   const results = [];
   let next = 0;
   async function worker() {
@@ -213,7 +213,7 @@ export async function inParallel(items, fn) {
       results[index] = await fn(items[index]);
     }
   }
-  await Promise.all(Array.from({ length: PARALLEL_REQUESTS }, worker));
+  await Promise.all(Array.from({ length: concurrency }, worker));
   return results;
 }
 
@@ -264,14 +264,18 @@ function elapsed(started) {
   return `${Math.floor(seconds / 60)}m${String(seconds % 60).padStart(2, "0")}s`;
 }
 
-// Tau estimates one token per six bytes of UTF-8.
-export function tokens(text) {
+export function byteLength(text) {
   let bytes = 0;
   for (const char of text) {
     const code = char.codePointAt(0);
     bytes += code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
   }
-  return Math.ceil(bytes / 6);
+  return bytes;
+}
+
+// Tau estimates one token per six bytes of UTF-8.
+export function tokens(text) {
+  return Math.ceil(byteLength(text) / 6);
 }
 
 export function ensure(condition, message) {

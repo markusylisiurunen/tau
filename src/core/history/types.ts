@@ -50,8 +50,7 @@ export type HistoryReadInput = {
   sessionId: string;
   source?: "local";
   limit: number;
-  cursor?: string;
-};
+} & ({ cursor?: string; afterEntryId?: never } | { afterEntryId: string; cursor?: never });
 
 export type HistoryReadResult = {
   session: HistorySessionDescriptor;

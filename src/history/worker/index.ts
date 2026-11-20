@@ -53,6 +53,7 @@ type RemoteHistorySearchResult = Omit<HistorySearchResult, "sessions"> & {
 };
 type RemoteHistoryReadResult = Omit<HistoryReadResult, "session"> & {
   session: RemoteHistorySessionDescriptor;
+  afterEntryId?: string;
 };
 
 const DIGEST_MODEL = "openai/gpt-6-luna";
@@ -130,10 +131,12 @@ function invalidRequest(message: string): HistoryApiError {
 export default {
   async fetch(request: Request, env: Env, _context: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+    const viewerEntriesRoute = /^\/sessions\/[^/]+\/entries$/.test(url.pathname);
     const viewerRoute =
       url.pathname === "/" ||
       url.pathname === "/viewer.js" ||
-      /^\/sessions\/[^/]+(?:\/entries)?$/.test(url.pathname);
+      viewerEntriesRoute ||
+      /^\/sessions\/[^/]+$/.test(url.pathname);
     if (viewerRoute && url.protocol === "http:" && !isLoopbackHost(url.hostname)) {
       return redirectViewerToHttps(url);
     }
@@ -178,16 +181,26 @@ export default {
         });
       }
       if (url.pathname === "/") return await renderViewerIndex(env.DB, url);
-      if (/^\/sessions\/[^/]+\/entries$/.test(url.pathname))
-        return await readViewerEntries(env.DB, url);
+      if (viewerEntriesRoute) return await readViewerEntries(env.DB, url);
       return await renderViewerSession(env.DB, url);
     } catch (caught) {
       if (caught instanceof HistoryApiError) {
+        if (viewerEntriesRoute) {
+          return viewerJson(
+            { error: { code: caught.code, message: caught.message } },
+            caught.status,
+          );
+        }
         return viewerRoute
           ? viewerError(caught.message, caught.status)
           : error(caught.code, caught.message, caught.status, operationId);
       }
       logWorkerError("history_request_failed", caught, { pathname: url.pathname });
+      if (caught instanceof Error && /D1 DB is overloaded/i.test(caught.message)) {
+        return viewerRoute
+          ? viewerError("History is temporarily overloaded", 503)
+          : error("overloaded", "History is temporarily overloaded", 503, operationId);
+      }
       return viewerRoute
         ? viewerError("Internal server error", 500)
         : error("internal_error", "Internal server error", 500, operationId);
@@ -772,32 +785,48 @@ async function read(
   const input = asRecord(raw, "read input");
   const sessionId = requiredString(input.sessionId, "sessionId", 256);
   const limit = boundedInteger(input.limit ?? 50, "limit", 1, MAX_READ_LIMIT);
-  const position = decodeCursor(optionalString(input.cursor, "cursor", 2_048), "position");
-  const session = await database
-    .prepare(`SELECT s.*, ${CHILD_COUNT_COLUMN} FROM sessions s WHERE s.session_id = ?`)
-    .bind(sessionId)
-    .first<Record<string, unknown>>();
-  if (!session) {
+  const cursor = optionalString(input.cursor, "cursor", 2_048);
+  const afterEntryId = optionalString(input.afterEntryId, "afterEntryId", 512);
+  if (afterEntryId && cursor) throw invalidRequest("pass afterEntryId or cursor, not both");
+  if (cursor && (!cursor.startsWith("entry:") || cursor.length === 6))
+    throw invalidRequest("invalid cursor");
+  const anchor = afterEntryId ?? cursor?.slice(6) ?? null;
+  const start = `CASE WHEN ?2 IS NULL THEN 0 ELSE
+    (SELECT position FROM entries WHERE session_id = ?1 AND entry_id = ?2) END`;
+  // D1 executes a batch in one transaction. Size candidates before fetching payloads.
+  const [descriptorRows, page] = await database.batch<Record<string, unknown>>([
+    database
+      .prepare(`SELECT s.*, ${CHILD_COUNT_COLUMN}, ${start} AS start_position
+      FROM sessions s WHERE s.session_id = ?1`)
+      .bind(sessionId, anchor),
+    database
+      .prepare(`WITH candidates AS (
+      SELECT position, octet_length(payload_json) + 1 AS bytes FROM entries
+      WHERE session_id = ?1 AND position > (${start}) ORDER BY position LIMIT ?3
+    ), sized AS (
+      SELECT position, row_number() OVER (ORDER BY position) AS n,
+        sum(bytes) OVER (ORDER BY position) AS total_bytes, count(*) OVER () AS candidates
+      FROM candidates
+    )
+    SELECT e.entry_id, e.payload_json, sized.candidates FROM sized
+    JOIN entries e ON e.session_id = ?1 AND e.position = sized.position
+    WHERE n <= ?4 AND (n = 1 OR total_bytes <= ?5) ORDER BY n`)
+      .bind(sessionId, anchor, limit + 1, limit, maxPayloadBytes),
+  ]);
+  if (!descriptorRows || !page) throw new Error("incomplete history read batch");
+  const session = descriptorRows.results[0];
+  if (!session)
     throw new HistoryApiError("not_found", `history session '${sessionId}' was not found`, 404);
-  }
-  const candidates = await database
-    .prepare(
-      "SELECT position, LENGTH(CAST(payload_json AS BLOB)) AS payload_bytes FROM entries WHERE session_id = ? AND position > ? ORDER BY position LIMIT ?",
-    )
-    .bind(sessionId, position, limit + 1)
-    .all<{ position: number; payload_bytes: number }>();
-  const page = selectHistoryReadPage(candidates.results, limit, maxPayloadBytes);
-  const rows = await database
-    .prepare(
-      "SELECT position, payload_json FROM entries WHERE session_id = ? AND position > ? ORDER BY position LIMIT ?",
-    )
-    .bind(sessionId, position, page.count)
-    .all<{ position: number; payload_json: string }>();
-  const last = rows.results.at(-1);
+  if (session.start_position === null)
+    throw new HistoryApiError("anchor_not_found", "history read anchor was not found", 404);
+  const last = page.results.at(-1);
   return {
     session: descriptor(session, origin),
-    entries: rows.results.map((row) => JSON.parse(row.payload_json) as HistoryEntry),
-    ...(page.hasMore && last ? { nextCursor: encodeCursor({ position: last.position }) } : {}),
+    ...(afterEntryId ? { afterEntryId } : {}),
+    entries: page.results.map((row) => JSON.parse(String(row.payload_json)) as HistoryEntry),
+    ...(last && Number(last.candidates) > page.results.length
+      ? { nextCursor: `entry:${last.entry_id}` }
+      : {}),
   };
 }
 
@@ -872,22 +901,6 @@ export async function readSessionTree(
         (descendant) => descendant.depth === MAX_TREE_DEPTH && descendant.session.childCount > 0,
       ),
   };
-}
-
-export function selectHistoryReadPage(
-  candidates: Array<{ payload_bytes: number }>,
-  limit: number,
-  maxPayloadBytes = MAX_READ_PAGE_PAYLOAD_BYTES,
-): { count: number; hasMore: boolean } {
-  let count = 0;
-  let bytes = 0;
-  for (const candidate of candidates.slice(0, limit)) {
-    const nextBytes = bytes + Number(candidate.payload_bytes) + 1;
-    if (count > 0 && nextBytes > maxPayloadBytes) break;
-    count += 1;
-    bytes = nextBytes;
-  }
-  return { count, hasMore: candidates.length > count };
 }
 
 function descriptor(row: Record<string, unknown>, origin: string): RemoteHistorySessionDescriptor {
@@ -1015,14 +1028,10 @@ async function readViewerEntries(database: D1Database, url: URL): Promise<Respon
     url.origin,
     VIEWER_READ_PAGE_PAYLOAD_BYTES,
   );
-  return viewerResponse(
-    JSON.stringify({
-      html: result.entries.map(renderViewerEntry).join(""),
-      nextCursor: result.nextCursor ?? null,
-    }),
-    200,
-    { "content-type": "application/json; charset=utf-8" },
-  );
+  return viewerJson({
+    html: result.entries.map(renderViewerEntry).join(""),
+    nextCursor: result.nextCursor ?? null,
+  });
 }
 
 async function renderViewerSession(database: D1Database, url: URL): Promise<Response> {
@@ -1202,6 +1211,12 @@ function viewerResponse(
       "content-type": "text/html; charset=utf-8",
       ...headers,
     },
+  });
+}
+
+function viewerJson(body: unknown, status = 200): Response {
+  return viewerResponse(JSON.stringify(body), status, {
+    "content-type": "application/json; charset=utf-8",
   });
 }
 

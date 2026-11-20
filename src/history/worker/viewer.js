@@ -94,10 +94,26 @@ function initializeTranscript() {
     retry.hidden = true;
     status.textContent = "Loading conversation…";
     transcript.setAttribute("aria-busy", "true");
+    if (nextUrl === endpoint) transcript.replaceChildren();
     try {
       while (nextUrl) {
         const response = await fetch(nextUrl, { credentials: "same-origin" });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        if (!response.ok) {
+          if (
+            response.status === 404 &&
+            response.headers.get("content-type")?.includes("application/json")
+          ) {
+            const { error } = await response.json();
+            if (error?.code === "anchor_not_found") {
+              nextUrl = endpoint;
+              status.textContent =
+                "The conversation changed. Retry to reload it from the beginning.";
+              retry.hidden = false;
+              return;
+            }
+          }
+          throw new Error(`HTTP ${response.status}`);
+        }
         const page = await response.json();
         transcript.insertAdjacentHTML("beforeend", page.html);
         nextUrl =

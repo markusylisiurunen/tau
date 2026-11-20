@@ -293,29 +293,36 @@ export class HistoryManager {
     }
   }
 
-  private retryReplicationLater(target: HistoryRemoteTarget): void {
-    if (this.closed || this.replicationRetries.has(target.endpoint)) return;
-    const timer = setTimeout(() => {
-      this.replicationRetries.delete(target.endpoint);
-      this.scheduleReplication(target);
-    }, 5_000);
+  private retryReplicationLater(endpoint: string): void {
+    if (this.closed || this.replicationRetries.has(endpoint)) return;
+    const timer = setTimeout(
+      () => {
+        this.replicationRetries.delete(endpoint);
+        this.startReplication(endpoint);
+      },
+      10_000 + Math.random() * 5_000,
+    );
     timer.unref();
-    this.replicationRetries.set(target.endpoint, timer);
+    this.replicationRetries.set(endpoint, timer);
   }
 
-  private scheduleReplication(target: HistoryRemoteTarget): void {
+  scheduleReplication(target: HistoryRemoteTarget): void {
     if (this.closed) return;
     this.targets.set(target.endpoint, target);
-    if (this.replicationRuns.has(target.endpoint)) return;
-    const run = this.replicate(target.endpoint).finally(() => {
-      if (this.replicationRuns.get(target.endpoint) === run) {
-        this.replicationRuns.delete(target.endpoint);
+    this.startReplication(target.endpoint);
+  }
+
+  private startReplication(endpoint: string): void {
+    if (this.replicationRetries.has(endpoint) || this.replicationRuns.has(endpoint)) return;
+    const run = this.replicate(endpoint).finally(() => {
+      if (this.replicationRuns.get(endpoint) === run) {
+        this.replicationRuns.delete(endpoint);
       }
     });
-    this.replicationRuns.set(target.endpoint, run);
+    this.replicationRuns.set(endpoint, run);
     void run.catch((error) => {
-      this.emitReplicationFailure({ endpoint: target.endpoint, error });
-      this.retryReplicationLater(target);
+      this.emitReplicationFailure({ endpoint, error });
+      this.retryReplicationLater(endpoint);
     });
   }
 
@@ -365,7 +372,7 @@ export class HistoryManager {
             operationId: error instanceof RemoteHistoryError ? error.operationId : undefined,
             error,
           });
-          this.retryReplicationLater(target);
+          this.retryReplicationLater(endpoint);
           return;
         }
         await local.acknowledgeOperations(batch.map((item) => item.rowId));

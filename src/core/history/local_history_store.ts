@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -310,34 +310,52 @@ export class LocalHistoryStore {
   }
 
   async read(input: HistoryReadInput): Promise<HistoryReadResult> {
-    const position = decodePositionCursor(input.cursor);
-    const sessionRow = this.database
-      .prepare(
-        `SELECT s.*, NULL AS snippets, ${CHILD_COUNT_COLUMN} FROM history_sessions s WHERE s.session_id = ?`,
-      )
-      .get(input.sessionId) as SqlRow | undefined;
-    if (!sessionRow) {
-      throw new Error(`history session '${input.sessionId}' was not found`);
-    }
-    const candidates = this.database
-      .prepare(
-        "SELECT position, LENGTH(CAST(payload_json AS BLOB)) AS payload_bytes FROM history_entries WHERE session_id = ? AND position > ? ORDER BY position LIMIT ?",
-      )
-      .all(input.sessionId, position, input.limit + 1) as SqlRow[];
-    const selectedCount = selectHistoryReadPage(candidates, input.limit);
-    const rows = this.database
-      .prepare(
-        "SELECT position, payload_json FROM history_entries WHERE session_id = ? AND position > ? ORDER BY position LIMIT ?",
-      )
-      .all(input.sessionId, position, selectedCount) as SqlRow[];
-    const last = rows.at(-1);
-    return {
-      session: descriptorFromRow(sessionRow),
-      entries: rows.map((row) => JSON.parse(String(row.payload_json)) as HistoryEntry),
-      ...(candidates.length > selectedCount && last
-        ? { nextCursor: encodePositionCursor(Number(last.position)) }
-        : {}),
-    };
+    return this.transaction(() => {
+      const sessionRow = this.database
+        .prepare(
+          `SELECT s.*, NULL AS snippets, ${CHILD_COUNT_COLUMN} FROM history_sessions s WHERE s.session_id = ?`,
+        )
+        .get(input.sessionId) as SqlRow | undefined;
+      if (!sessionRow) {
+        throw new Error(`history session '${input.sessionId}' was not found`);
+      }
+      let position = 0;
+      if (input.afterEntryId !== undefined) {
+        const anchor = this.database
+          .prepare("SELECT position FROM history_entries WHERE session_id = ? AND entry_id = ?")
+          .get(input.sessionId, input.afterEntryId);
+        if (!anchor) throw new Error("history read anchor was not found");
+        position = Number(anchor.position);
+      } else if (input.cursor !== undefined) {
+        const cursor = decodeReadCursor(input.cursor);
+        const anchor = this.database
+          .prepare("SELECT entry_id FROM history_entries WHERE session_id = ? AND position = ?")
+          .get(input.sessionId, cursor.position);
+        if (!anchor || hashEntryId(String(anchor.entry_id)) !== cursor.entryHash) {
+          throw new Error("history read anchor was not found");
+        }
+        position = cursor.position;
+      }
+      const candidates = this.database
+        .prepare(
+          "SELECT position, octet_length(payload_json) AS payload_bytes FROM history_entries WHERE session_id = ? AND position > ? ORDER BY position LIMIT ?",
+        )
+        .all(input.sessionId, position, input.limit + 1) as SqlRow[];
+      const selectedCount = selectHistoryReadPage(candidates, input.limit);
+      const rows = this.database
+        .prepare(
+          "SELECT position, entry_id, payload_json FROM history_entries WHERE session_id = ? AND position > ? ORDER BY position LIMIT ?",
+        )
+        .all(input.sessionId, position, selectedCount) as SqlRow[];
+      const last = rows.at(-1);
+      return {
+        session: descriptorFromRow(sessionRow),
+        entries: rows.map((row) => JSON.parse(String(row.payload_json)) as HistoryEntry),
+        ...(candidates.length > selectedCount && last
+          ? { nextCursor: `entry:${last.position}:${hashEntryId(String(last.entry_id))}` }
+          : {}),
+      };
+    }, "BEGIN");
   }
 
   listPendingOperations(endpoint: string, limit: number): PendingReplicationOperation[] {
@@ -565,8 +583,11 @@ export class LocalHistoryStore {
       .run(endpoint, operation.sessionId, JSON.stringify(operation));
   }
 
-  private transaction<T>(handler: () => T): T {
-    this.database.exec("BEGIN IMMEDIATE");
+  private transaction<T>(
+    handler: () => T,
+    begin: "BEGIN" | "BEGIN IMMEDIATE" = "BEGIN IMMEDIATE",
+  ): T {
+    this.database.exec(begin);
     try {
       const result = handler();
       this.database.exec("COMMIT");
@@ -666,19 +687,13 @@ function decodeOffsetCursor(cursor: string | undefined): number {
   throw new Error("invalid history search cursor");
 }
 
-function encodePositionCursor(position: number): string {
-  return Buffer.from(JSON.stringify({ position })).toString("base64url");
+function hashEntryId(entryId: string): string {
+  return createHash("sha256").update(entryId).digest("hex");
 }
 
-function decodePositionCursor(cursor: string | undefined): number {
-  if (!cursor) return 0;
-  try {
-    const parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as {
-      position?: unknown;
-    };
-    if (Number.isSafeInteger(parsed.position) && Number(parsed.position) >= 0) {
-      return Number(parsed.position);
-    }
-  } catch {}
-  throw new Error("invalid history read cursor");
+function decodeReadCursor(cursor: string): { position: number; entryHash: string } {
+  const match = /^entry:([1-9][0-9]{0,15}):([0-9a-f]{64})$/.exec(cursor);
+  const position = Number(match?.[1]);
+  if (!match || !Number.isSafeInteger(position)) throw new Error("invalid history read cursor");
+  return { position, entryHash: match[2]! };
 }

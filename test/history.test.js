@@ -2,6 +2,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { setTimeout as delay } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
 import { createHistoryPackage } from "../dist/core/code_mode/history.js";
 import { runHistoryCommand } from "../dist/core/history/cli.js";
@@ -16,6 +17,11 @@ import {
 } from "../dist/core/history/remote_history_client.js";
 import { projectHistoryEntryForRemote } from "../dist/core/history/replication.js";
 import { setupHistoryService } from "../dist/core/history/setup.js";
+
+vi.mock("node:timers/promises", async (importOriginal) => {
+  const timers = await importOriginal();
+  return { ...timers, setTimeout: vi.fn(timers.setTimeout) };
+});
 
 vi.mock("../dist/history/worker/viewer.js", () => ({
   default: readFileSync(new URL("../dist/history/worker/viewer.js", import.meta.url), "utf8"),
@@ -125,13 +131,13 @@ function createD1Harness(options = {}) {
       prepared.push(statement);
       return statement;
     }),
-    batch: vi.fn(async (statements) => statements.map(() => ({ success: true }))),
+    batch: vi.fn(async (statements) => statements.map(() => ({ success: true, results: [] }))),
   };
   return { database, prepared };
 }
 
 function createSqliteD1Harness(options = {}) {
-  const sqlite = new DatabaseSync(":memory:");
+  const sqlite = new DatabaseSync(options.path ?? ":memory:");
   const database = {
     async exec(query) {
       sqlite.exec(query);
@@ -162,10 +168,10 @@ function createSqliteD1Harness(options = {}) {
       return statement;
     },
     async batch(statements) {
-      sqlite.exec("BEGIN IMMEDIATE");
+      sqlite.exec("BEGIN");
       try {
         const results = [];
-        for (const statement of statements) results.push(await statement.run());
+        for (const statement of statements) results.push(await statement.all());
         sqlite.exec("COMMIT");
         return results;
       } catch (error) {
@@ -412,6 +418,7 @@ describe("history search time ranges", () => {
 describe("session history", () => {
   it("stores, searches, reads, and truncates active transcripts", async () => {
     const store = new LocalHistoryStore(":memory:");
+    const assistantId = "a".repeat(2_049);
     try {
       store.createSession({
         sessionId: "session-1",
@@ -425,7 +432,7 @@ describe("session history", () => {
       });
       store.append("session-1", [
         createTextEntry("user-1", "user", "design durable history", 110),
-        createTextEntry("assistant-1", "assistant", "use sqlite locally", 120),
+        createTextEntry(assistantId, "assistant", "use sqlite locally", 120),
         {
           id: "tool-1",
           sourceIds: ["assistant-call", "tool-result"],
@@ -460,16 +467,22 @@ describe("session history", () => {
         }),
       ).resolves.toMatchObject({ sessions: [{ sessionId: "session-1" }] });
       const firstPage = await store.read({ sessionId: "session-1", limit: 2 });
-      expect(firstPage.entries.map((entry) => entry.id)).toEqual(["user-1", "assistant-1"]);
+      expect(firstPage.entries.map((entry) => entry.id)).toEqual(["user-1", assistantId]);
       expect(firstPage.nextCursor).toEqual(expect.any(String));
+      expect(firstPage.nextCursor.length).toBeLessThanOrEqual(2_048);
       await expect(
         store.read({ sessionId: "session-1", limit: 2, cursor: firstPage.nextCursor }),
       ).resolves.toMatchObject({ entries: [{ id: "tool-1", type: "tool" }] });
 
       store.truncateFromSources("session-1", ["assistant-call"]);
       await expect(store.read({ sessionId: "session-1", limit: 10 })).resolves.toMatchObject({
-        entries: [{ id: "user-1" }, { id: "assistant-1" }],
+        entries: [{ id: "user-1" }, { id: assistantId }],
       });
+      store.truncateFromSources("session-1", [assistantId]);
+      store.append("session-1", [createTextEntry("replacement", "user", "new branch", 200)]);
+      await expect(
+        store.read({ sessionId: "session-1", cursor: firstPage.nextCursor, limit: 2 }),
+      ).rejects.toThrow("history read anchor was not found");
     } finally {
       store.close();
     }
@@ -640,6 +653,10 @@ describe("session history", () => {
         query.read({ sessionId: "missing", source: "local", limit: 25 }),
       ).rejects.toThrow();
       expect(remoteRead).not.toHaveBeenCalled();
+      await expect(
+        capability.api.read(["parent", { afterEntryId: "entry", cursor: "cursor" }], context),
+      ).rejects.toThrow();
+      expect(remoteRead).not.toHaveBeenCalled();
       await query.read({ sessionId: "parent", limit: 25 }, context.signal);
       expect(remoteRead).toHaveBeenCalledWith({ sessionId: "parent", limit: 25 }, context.signal);
       await query.search({ limit: 10 }, context.signal);
@@ -652,6 +669,80 @@ describe("session history", () => {
       remoteRead.mockRestore();
       remoteSearch.mockRestore();
     }
+  });
+
+  it.each([false, true])(
+    "drains writes held during replication cooldown (restart: %s)",
+    async (restart) => {
+      const directory = mkdtempSync(join(tmpdir(), "tau-cooldown-"));
+      const path = join(directory, "history.sqlite");
+      const remote = { endpoint: "https://history.example.com", apiKey: "secret" };
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(Response.json({ error: { code: "overloaded" } }, { status: 503 }))
+        .mockImplementation(async () => Response.json({ applied: 2 }));
+      vi.stubGlobal("fetch", fetchMock);
+      vi.useFakeTimers();
+      let manager = new HistoryManager(new LocalHistoryStore(path));
+      try {
+        const writer = manager.openSession(
+          { sessionId: "cooling", attributes: {}, createdAt: 1 },
+          remote,
+        );
+        await manager.flush();
+        writer.append([createTextEntry("queued", "user", "message", 2)]);
+        await manager.flush();
+        await vi.advanceTimersByTimeAsync(9_999);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        if (restart) {
+          manager.close();
+          manager = new HistoryManager(new LocalHistoryStore(path));
+          manager.scheduleReplication(remote);
+        } else {
+          await vi.advanceTimersByTimeAsync(5_001);
+        }
+        await manager.flush();
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(JSON.parse(fetchMock.mock.calls[1][1].body).operations).toMatchObject([
+          { type: "create" },
+          { type: "append", entries: [{ id: "queued" }] },
+        ]);
+      } finally {
+        manager.close();
+        vi.useRealTimers();
+        vi.unstubAllGlobals();
+        rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each([false, true])("bounds retries of a Worker overload (cancel: %s)", async (cancel) => {
+    const harness = createD1Harness({
+      throwOnQuery: "FROM sessions",
+      throwMessage: "D1 DB is overloaded",
+    });
+    const fetchMock = vi.fn(async (url, init) =>
+      callHistoryWorker(new URL(url).pathname, JSON.parse(init.body), harness),
+    );
+    const client = new RemoteHistoryClient(
+      { endpoint: "https://history.example.com", apiKey: "secret" },
+      fetchMock,
+    );
+    const waiting = Promise.withResolvers();
+    const controller = new AbortController();
+    delay.mockImplementationOnce((ms, value, options) => {
+      waiting.resolve();
+      return cancel ? delay.getMockImplementation()(ms, value, options) : Promise.resolve();
+    });
+    if (!cancel) delay.mockResolvedValueOnce();
+    const result = client.search({ limit: 1 }, controller.signal);
+    const rejected = expect(result).rejects.toMatchObject(
+      cancel ? { name: "AbortError" } : { status: 503, code: "overloaded" },
+    );
+    await waiting.promise;
+    if (cancel) controller.abort();
+    await rejected;
+    expect(fetchMock).toHaveBeenCalledTimes(cancel ? 1 : 3);
   });
 
   it("isolates permanent replication failures to one session lane", async () => {
@@ -1603,6 +1694,22 @@ describe("session history", () => {
       ).toEqual(Array.from({ length: 208 }, (_, index) => index));
       expect(html).not.toContain("<script>alert(1)</script>");
 
+      const staleCursor = (await (await callHistoryViewer(endpoint, harness)).json()).nextCursor;
+      await applyOperation(harness.database, {
+        id: "viewer-rewind",
+        sessionId: "viewer/session",
+        type: "truncate",
+        afterEntryId: "viewer-user",
+      });
+      const stale = await callHistoryViewer(
+        `${endpoint}?cursor=${encodeURIComponent(staleCursor)}`,
+        harness,
+      );
+      expect(stale.status).toBe(404);
+      expect(stale.headers.get("content-type")).toContain("application/json");
+      expect(stale.headers.get("cache-control")).toBe("no-store");
+      await expect(stale.json()).resolves.toMatchObject({ error: { code: "anchor_not_found" } });
+
       const missing = await callHistoryViewer("/sessions/missing", harness);
       expect(missing.status).toBe(404);
       await expect(missing.text()).resolves.toContain(
@@ -1729,6 +1836,50 @@ describe("session history", () => {
     ).rejects.toBe(failure);
   });
 
+  it("reads the whole tail from the snapshot that contains the anchor", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "tau-read-snapshot-"));
+    const path = join(directory, "d1.sqlite");
+    const writer = createSqliteD1Harness({ path });
+    let rewind;
+    const reader = createSqliteD1Harness({
+      path,
+      afterQuery() {
+        rewind?.();
+      },
+    });
+    try {
+      writer.sqlite.exec("PRAGMA journal_mode = WAL");
+      initializeHistoryD1(writer);
+      const session = { sessionId: "snapshot", attributes: {}, createdAt: 1 };
+      const tail = createTextEntry("tail", "assistant", "original tail", 3);
+      await applyOperation(writer.database, {
+        id: "create",
+        sessionId: session.sessionId,
+        type: "create",
+        session,
+      });
+      await applyOperation(writer.database, {
+        id: "append",
+        sessionId: session.sessionId,
+        type: "append",
+        entries: [createTextEntry("anchor", "user", "original", 2), tail],
+      });
+      rewind = () => {
+        rewind = undefined;
+        writer.sqlite.exec("DELETE FROM entries WHERE session_id = 'snapshot'");
+      };
+      const input = { sessionId: session.sessionId, afterEntryId: "anchor" };
+      const page = await callHistoryWorker("/v1/read", input, reader);
+      expect(await page.json()).toMatchObject({ entries: [tail] });
+      const afterRewind = await callHistoryWorker("/v1/read", input, reader);
+      expect(await afterRewind.json()).toMatchObject({ error: { code: "anchor_not_found" } });
+    } finally {
+      reader.sqlite.close();
+      writer.sqlite.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("validates text content at both remote history boundaries", async () => {
     const valid = [
       createTextEntry("assistant", "assistant", "response", 1),
@@ -1776,6 +1927,31 @@ describe("session history", () => {
         entries: valid,
       });
 
+      const legacyPage = await client.read({ sessionId: "session-1", limit: 1 });
+      const legacy = new RemoteHistoryClient(
+        { endpoint: "https://history.example.com", apiKey: "secret" },
+        async () => Response.json(legacyPage),
+      );
+      await expect(
+        legacy.read({ sessionId: "session-1", afterEntryId: valid[3].id, limit: 1 }),
+      ).rejects.toThrow();
+      const tail = await client.read({
+        sessionId: "session-1",
+        afterEntryId: valid[3].id,
+        limit: 1,
+      });
+      expect(tail.entries).toEqual([valid[4]]);
+      expect(tail.nextCursor).toBeDefined();
+      const rest = await client.read({
+        sessionId: "session-1",
+        cursor: tail.nextCursor,
+        limit: 10,
+      });
+      expect(rest.entries).toEqual(valid.slice(5));
+      await expect(
+        client.read({ sessionId: "session-1", afterEntryId: "missing", limit: 1 }),
+      ).rejects.toMatchObject({ code: "anchor_not_found" });
+
       await expect(client.search({ query: "ProjectAlpha", limit: 10 })).resolves.toMatchObject({
         sessions: [{ sessionId: "session-1" }],
       });
@@ -1794,6 +1970,21 @@ describe("session history", () => {
         ["user", [{ type: "thinking", thinking: "hidden" }]],
         ["user", [{ type: "text", text: "request", extra: true }]],
       ];
+      await client.applyOperations([
+        { id: "rewind", sessionId: "session-1", type: "truncate", afterEntryId: valid[3].id },
+        {
+          id: "branch",
+          sessionId: "session-1",
+          type: "append",
+          entries: [createTextEntry("replacement", "user", "new branch", 8)],
+        },
+      ]);
+      await expect(
+        client.read({ sessionId: "session-1", cursor: tail.nextCursor, limit: 10 }),
+      ).rejects.toMatchObject({ code: "anchor_not_found" });
+      await expect(
+        client.read({ sessionId: "missing", afterEntryId: "missing", limit: 1 }),
+      ).rejects.toMatchObject({ code: "not_found" });
       const session = (await client.read({ sessionId: "session-1", limit: 1 })).session;
       for (const [type, content] of invalid) {
         const entry = createTextEntry("invalid", type, content, 6);

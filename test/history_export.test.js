@@ -86,6 +86,7 @@ describe("history export", () => {
     const data = {
       session: {
         ...session,
+        lastEntryId: "assistant",
         attributes: { source: "cli", project: "---\n## injected" },
         childSessionIds: [],
       },

@@ -90,8 +90,9 @@ const MAX_READ_LIMIT = 100;
 const MAX_READ_PAGE_PAYLOAD_BYTES = 12 * 1024 * 1024;
 const MAX_TREE_DEPTH = 8;
 const MAX_TREE_DESCENDANTS = 200;
-const CHILD_COUNT_COLUMN =
-  "(SELECT COUNT(*) FROM sessions c WHERE c.parent_session_id = s.session_id) AS child_count";
+const SESSION_METADATA_COLUMNS = `(SELECT COUNT(*) FROM sessions c WHERE c.parent_session_id = s.session_id) AS child_count,
+   (SELECT e.entry_id FROM entries e WHERE e.session_id = s.session_id
+    ORDER BY e.position DESC LIMIT 1) AS last_entry_id`;
 const VIEWER_USERNAME = "tau";
 const VIEWER_SEARCH_PAGE_SIZE = 20;
 const VIEWER_READ_PAGE_PAYLOAD_BYTES = 512 * 1024;
@@ -677,7 +678,7 @@ async function search(
   if (!query) {
     const rows = await database
       .prepare(
-        `SELECT s.*, ${CHILD_COUNT_COLUMN} FROM sessions s
+        `SELECT s.*, ${SESSION_METADATA_COLUMNS} FROM sessions s
          WHERE 1 = 1 ${parentClause} ${attributeClause} ${timeClause}
          ORDER BY ${order} LIMIT ? OFFSET ?`,
       )
@@ -707,7 +708,7 @@ async function search(
          FROM matching_sessions
          GROUP BY session_id
        )
-       SELECT s.*, ${CHILD_COUNT_COLUMN}
+       SELECT s.*, ${SESSION_METADATA_COLUMNS}
        FROM ranked_sessions r
        JOIN sessions s ON s.session_id = r.session_id
        WHERE 1 = 1 ${parentClause} ${attributeClause} ${timeClause}
@@ -796,7 +797,7 @@ async function read(
   // D1 executes a batch in one transaction. Size candidates before fetching payloads.
   const [descriptorRows, page] = await database.batch<Record<string, unknown>>([
     database
-      .prepare(`SELECT s.*, ${CHILD_COUNT_COLUMN}, ${start} AS start_position
+      .prepare(`SELECT s.*, ${SESSION_METADATA_COLUMNS}, ${start} AS start_position
       FROM sessions s WHERE s.session_id = ?1`)
       .bind(sessionId, anchor),
     database
@@ -844,7 +845,7 @@ export async function readSessionTree(
 ): Promise<HistorySessionTree> {
   const parent = session.parentSessionId
     ? await database
-        .prepare(`SELECT s.*, ${CHILD_COUNT_COLUMN} FROM sessions s WHERE s.session_id = ?`)
+        .prepare(`SELECT s.*, ${SESSION_METADATA_COLUMNS} FROM sessions s WHERE s.session_id = ?`)
         .bind(session.parentSessionId)
         .first<Record<string, unknown>>()
     : null;
@@ -860,7 +861,7 @@ export async function readSessionTree(
          ORDER BY 2
          LIMIT ?
        )
-       SELECT s.*, ${CHILD_COUNT_COLUMN}, MIN(t.depth) AS depth
+       SELECT s.*, ${SESSION_METADATA_COLUMNS}, MIN(t.depth) AS depth
        FROM tree t
        JOIN sessions s ON s.session_id = t.session_id
        GROUP BY s.session_id
@@ -917,6 +918,7 @@ function descriptor(row: Record<string, unknown>, origin: string): RemoteHistory
       ? { parentSessionId: row.parent_session_id }
       : {}),
     childCount: Number(row.child_count),
+    lastEntryId: row.last_entry_id === null ? null : String(row.last_entry_id),
     webUrl: `${origin}/sessions/${encodeURIComponent(String(row.session_id))}`,
     ...(title && summary && through
       ? { digest: { title, summary, updatedThroughEntryId: through } }
@@ -1037,7 +1039,7 @@ async function readViewerEntries(database: D1Database, url: URL): Promise<Respon
 async function renderViewerSession(database: D1Database, url: URL): Promise<Response> {
   const sessionId = viewerSessionId(url);
   const row = await database
-    .prepare(`SELECT s.*, ${CHILD_COUNT_COLUMN} FROM sessions s WHERE s.session_id = ?`)
+    .prepare(`SELECT s.*, ${SESSION_METADATA_COLUMNS} FROM sessions s WHERE s.session_id = ?`)
     .bind(sessionId)
     .first<Record<string, unknown>>();
   if (!row)

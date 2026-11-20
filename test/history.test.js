@@ -456,6 +456,7 @@ describe("session history", () => {
         sessions: [
           {
             sessionId: "session-1",
+            lastEntryId: "tool-1",
             attributes: { source: "test", repository: "github.com/example/repo" },
           },
         ],
@@ -467,6 +468,7 @@ describe("session history", () => {
         }),
       ).resolves.toMatchObject({ sessions: [{ sessionId: "session-1" }] });
       const firstPage = await store.read({ sessionId: "session-1", limit: 2 });
+      expect(firstPage.session.lastEntryId).toBe("tool-1");
       expect(firstPage.entries.map((entry) => entry.id)).toEqual(["user-1", assistantId]);
       expect(firstPage.nextCursor).toEqual(expect.any(String));
       expect(firstPage.nextCursor.length).toBeLessThanOrEqual(2_048);
@@ -476,6 +478,7 @@ describe("session history", () => {
 
       store.truncateFromSources("session-1", ["assistant-call"]);
       await expect(store.read({ sessionId: "session-1", limit: 10 })).resolves.toMatchObject({
+        session: { lastEntryId: assistantId },
         entries: [{ id: "user-1" }, { id: assistantId }],
       });
       store.truncateFromSources("session-1", [assistantId]);
@@ -632,6 +635,7 @@ describe("session history", () => {
         createdAt: 1,
         updatedAt: 1,
         childCount: 0,
+        lastEntryId: null,
         snippets: [],
       },
       entries: [],
@@ -1870,9 +1874,14 @@ describe("session history", () => {
       };
       const input = { sessionId: session.sessionId, afterEntryId: "anchor" };
       const page = await callHistoryWorker("/v1/read", input, reader);
-      expect(await page.json()).toMatchObject({ entries: [tail] });
+      expect(await page.json()).toMatchObject({
+        session: { lastEntryId: tail.id },
+        entries: [tail],
+      });
       const afterRewind = await callHistoryWorker("/v1/read", input, reader);
       expect(await afterRewind.json()).toMatchObject({ error: { code: "anchor_not_found" } });
+      const empty = await callHistoryWorker("/v1/read", { sessionId: session.sessionId }, reader);
+      expect(await empty.json()).toMatchObject({ session: { lastEntryId: null }, entries: [] });
     } finally {
       reader.sqlite.close();
       writer.sqlite.close();
@@ -2200,6 +2209,7 @@ describe("session history", () => {
         "session-1",
         "session-2",
       ]);
+      expect(firstPage.sessions[0].lastEntryId).toBe("session-1-entry-250");
       expect(firstPage.sessions[0].webUrl).toBe("https://history.example.com/sessions/session-1");
       expect(firstPage.nextCursor).toEqual(expect.any(String));
 
@@ -2220,7 +2230,7 @@ describe("session history", () => {
       );
       expect(attributeResponse.status).toBe(200);
       await expect(attributeResponse.json()).resolves.toMatchObject({
-        sessions: [{ sessionId: "session-2" }],
+        sessions: [{ sessionId: "session-2", lastEntryId: "session-2-entry-1" }],
       });
     } finally {
       harness.sqlite.close();
@@ -2631,6 +2641,7 @@ describe("session history", () => {
               createdAt: 1,
               updatedAt: 2,
               childCount: 0,
+              lastEntryId: "entry-1",
               webUrl: "https://history.example.com/sessions/remote-session",
               snippets: [],
             },
@@ -2647,6 +2658,7 @@ describe("session history", () => {
       sessions: [
         {
           sessionId: "remote-session",
+          lastEntryId: "entry-1",
           webUrl: "https://history.example.com/sessions/remote-session",
         },
       ],
@@ -2665,6 +2677,8 @@ describe("session history", () => {
                 attributes: {},
                 createdAt: 1,
                 updatedAt: 1,
+                childCount: 0,
+                lastEntryId: "tool-bad",
                 webUrl: "https://history.example.com/sessions/session-1",
                 snippets: [],
               },

@@ -10,6 +10,7 @@ const digestSchema = z
 export const historySessionDescriptorSchema = z
   .object({
     sessionId: z.string(),
+    lastEntryId: z.string().nullable(),
     attributes: z.record(z.string(), z.string()),
     createdAt: z.number(),
     updatedAt: z.number(),

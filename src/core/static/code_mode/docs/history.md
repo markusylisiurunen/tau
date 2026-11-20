@@ -33,6 +33,7 @@ type SearchOptions = {
 
 type Session = {
   sessionId: string;
+  lastEntryId: string | null; // last entry in the session, or null if empty
   attributes: Record<string, string>;
   createdAt: number;
   updatedAt: number;
@@ -74,7 +75,7 @@ Common attributes are `source` (such as `tui` or `telegram`), `repository` (`hos
 
 `timeRange` filters by one timestamp, with `since` inclusive and `until` exclusive, and needs at least one bound. `updatedAt` means last active, so a session that continued after `until` is excluded.
 
-A digest can be missing or stale. `updatedThroughEntryId` is the last entry it covers, so `read` with `afterEntryId` set to it returns only the entries the digest does not cover. If a rewind removes the anchor or a continuation entry, discard the stale digest and restart from the beginning when you need the transcript. A digest or snippet may already answer the question. When the user asks for a conversation link, return `webUrl` if present. Local-only sessions have none.
+When `digest.updatedThroughEntryId` matches `lastEntryId`, the digest covers the whole session as of that response, even on a partial page. If the digest exists but the IDs differ, `read` with `afterEntryId` set to `digest.updatedThroughEntryId` returns the entries that follow the digest. If a rewind removes the anchor or a continuation entry, discard the stale digest and restart from the beginning when you need the transcript. A digest or snippet may already answer the question. When the user asks for a conversation link, return `webUrl` if present. Local-only sessions have none.
 
 ## Workers
 

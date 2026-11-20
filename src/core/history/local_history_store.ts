@@ -21,8 +21,9 @@ const PRIVATE_DIRECTORY_MODE = 0o700;
 const PRIVATE_FILE_MODE = 0o600;
 const HISTORY_READ_PAGE_MAX_BYTES = 12 * 1024 * 1024;
 const MAX_SEARCH_SNIPPETS = 3;
-const CHILD_COUNT_COLUMN =
-  "(SELECT COUNT(*) FROM history_sessions c WHERE c.parent_session_id = s.session_id) AS child_count";
+const SESSION_METADATA_COLUMNS = `(SELECT COUNT(*) FROM history_sessions c WHERE c.parent_session_id = s.session_id) AS child_count,
+   (SELECT e.entry_id FROM history_entries e WHERE e.session_id = s.session_id
+    ORDER BY e.position DESC LIMIT 1) AS last_entry_id`;
 
 type SqlValue = string | number | null;
 type SqlRow = Record<string, SqlValue>;
@@ -285,7 +286,7 @@ export class LocalHistoryStore {
           WHERE history_entries_fts MATCH ?
           GROUP BY e.session_id
         )
-        SELECT s.*, m.snippets, ${CHILD_COUNT_COLUMN}
+        SELECT s.*, m.snippets, ${SESSION_METADATA_COLUMNS}
         FROM history_sessions s
         JOIN matches m ON m.session_id = s.session_id
         ${where}
@@ -293,7 +294,7 @@ export class LocalHistoryStore {
         LIMIT ? OFFSET ?`;
     } else {
       sql = `
-        SELECT s.*, NULL AS snippets, ${CHILD_COUNT_COLUMN}
+        SELECT s.*, NULL AS snippets, ${SESSION_METADATA_COLUMNS}
         FROM history_sessions s
         ${where}
         ORDER BY ${order}
@@ -313,7 +314,7 @@ export class LocalHistoryStore {
     return this.transaction(() => {
       const sessionRow = this.database
         .prepare(
-          `SELECT s.*, NULL AS snippets, ${CHILD_COUNT_COLUMN} FROM history_sessions s WHERE s.session_id = ?`,
+          `SELECT s.*, NULL AS snippets, ${SESSION_METADATA_COLUMNS} FROM history_sessions s WHERE s.session_id = ?`,
         )
         .get(input.sessionId) as SqlRow | undefined;
       if (!sessionRow) {
@@ -629,6 +630,7 @@ function descriptorFromRow(row: SqlRow): HistorySessionDescriptor {
       ? { parentSessionId: row.parent_session_id }
       : {}),
     childCount: Number(row.child_count),
+    lastEntryId: row.last_entry_id === null ? null : String(row.last_entry_id),
     ...(title && summary && updatedThroughEntryId
       ? { digest: { title, summary, updatedThroughEntryId } }
       : {}),

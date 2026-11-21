@@ -674,7 +674,7 @@ if (argv[0] === "history") {
     if (err instanceof HistoryCliError) {
       // eslint-disable-next-line no-console
       console.error(err.message);
-      if (argv[1] !== "read") {
+      if (argv[1] !== "read" && argv[1] !== "import") {
         console.error("");
         printHistoryHelp();
       }

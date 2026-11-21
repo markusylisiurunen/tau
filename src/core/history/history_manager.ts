@@ -152,6 +152,10 @@ export class HistoryManager {
   async retryReplication(target: HistoryRemoteTarget, sessionId: string): Promise<void> {
     await this.replicationRuns.get(target.endpoint);
     await this.local.clearReplicationFailure(target.endpoint, sessionId);
+    await this.syncReplication(target);
+  }
+
+  async syncReplication(target: HistoryRemoteTarget): Promise<void> {
     this.scheduleReplication(target);
     await this.replicationRuns.get(target.endpoint);
   }

@@ -16,7 +16,7 @@ A session has three parts: the client you interact with, the host that runs the 
 - **Run elsewhere.** `tau serve` and `tau attach` run [remote sessions](docs/remote-sessions.md). The [Telegram runner](docs/telegram.md) gives each chat a session in a project workspace. The [Node SDK](docs/sdk.md) and the [session protocol](docs/session-protocol.md) let you build your own clients.
 - **Remember.** Past sessions are [searchable](docs/history.md), locally or through a shared service across machines.
 
-The terminal interface also reviews diffs in the browser and, on macOS, takes dictation and reads answers aloud. Command-line tools cover PDF OCR, image generation, and speech generation.
+The terminal interface also reviews diffs in the browser and, on macOS, takes dictation and reads answers aloud. The agent can also OCR PDFs and generate images and speech.
 
 ## Get started
 

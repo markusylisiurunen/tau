@@ -48,6 +48,7 @@ describe("mistral document ocr", () => {
       .mockResolvedValueOnce(createJsonResponse({ deleted: true }));
 
     const result = await ocrMistralDocument({
+      signal: new AbortController().signal,
       apiKey: "mistral-key",
       document: Buffer.from("%PDF-1.4\n"),
       fileName: "demo.pdf",
@@ -119,6 +120,7 @@ describe("mistral document ocr", () => {
       .mockResolvedValueOnce(createJsonResponse({ detail: "Unauthorized" }, 401));
 
     const result = await ocrMistralDocument({
+      signal: new AbortController().signal,
       apiKey: "mistral-key",
       document: Buffer.from("%PDF-1.4\n"),
       fileName: "demo.pdf",

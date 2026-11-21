@@ -207,7 +207,6 @@ export function printHelp(personas: Persona[]): void {
       "  use `tau models refresh` to force a model catalog refresh.",
       "  use `tau history --help` to manage the history service or retry blocked replication.",
       "  use `tau tool pdf-unpack <file.pdf>` to extract markdown and page image patches from a PDF.",
-      "  use `tau tool image-generate --help` or `tau tool speech-generate --help` to generate assets.",
       "  /diff opens the local diff review tool and delegates review work to the session host.",
       "  you can switch persona during a session with /persona:<id>.",
       "  insert prompt templates with /prompt:<id>.",

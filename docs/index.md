@@ -43,6 +43,4 @@ This is the manual for the Tau version it ships with, for people and agents who 
 ## Command-line tools
 
 - [PDF unpacking](pdf-unpacking.md): OCR a PDF into Markdown and page images.
-- [Image generation](image-generation.md): generate and edit images.
-- [Speech generation](speech-generation.md): narration and dialogue as a WAV file.
 - [OpenRouter](openrouter.md): typed decisions and text or media analysis.

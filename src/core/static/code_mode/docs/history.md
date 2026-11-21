@@ -79,11 +79,11 @@ When `digest.updatedThroughEntryId` matches `lastEntryId`, the digest covers the
 
 ## Workers
 
-A session with `parentSessionId` is the whole conversation of a worker that the parent started, and its `sessionId` is the worker's ID in `@tau/agents`. Its attributes are the parent's, except `cwd`. List a session's workers with `parent: { sessionId }`. `childCount` can lag in a shared collection.
+A session with `parentSessionId` is the whole conversation of a worker that the parent started, and its `sessionId` is the worker's ID in `@tau/agents`. Its attributes are the parent's, except `cwd`. List a session's workers with `parent: { sessionId }`. `childCount` can lag.
 
 ## Reading transcripts
 
-Omit `source` by default, so the read uses the configured collection. Set `source: "local"` only when your instructions ask for it, to read only the history this Tau instance saved.
+Leave `source` unset unless your instructions ask for `"local"`.
 
 Transcripts can span several context windows, and single entries can be very large. Never print whole transcripts or unselected payloads. For a session without a known entry, start with an overview of entry IDs and short excerpts, then read only the relevant entries in detail. Match entries by full `id` or a `sourceIds` reference, because short ID suffixes can collide. Tool entries already pair each call with its result.
 
@@ -99,7 +99,7 @@ for (const entry of entries) {
 if (nextCursor) printText("more entries follow");
 ```
 
-Rewind removes entries, and compaction keeps the original history searchable. In a shared collection, entry payloads over 1 MiB are cut in the middle with a marker.
+Rewind removes entries, and compaction keeps the original history searchable. Entries over 1 MiB can be cut in the middle with a marker.
 
 ## Errors
 

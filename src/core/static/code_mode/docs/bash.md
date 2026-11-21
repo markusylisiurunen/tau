@@ -61,7 +61,7 @@ type JobWithLog = Job & {
 
 ## Jobs
 
-`start` returns at once, and the job keeps running after the program ends. These are the same jobs the Bash job tools manage. `wait` returns the first listed job that has finished, waiting 60 seconds by default and at most 300000 ms, for up to 64 IDs. A timeout leaves the jobs running. `stop` stops the job's process group and returns its final state.
+`start` returns at once, and the job keeps running after the program ends. These are the same jobs the Bash job tools manage. `wait` returns the first listed job that has finished, waiting 60 seconds by default and at most 300000 ms, for up to 64 IDs. A timeout leaves the jobs running. `stop` stops the job and its child processes and returns its final state.
 
 ## Errors
 

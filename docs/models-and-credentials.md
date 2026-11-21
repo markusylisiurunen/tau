@@ -25,11 +25,11 @@ The agent's Bash commands do not inherit variables whose names end in `_KEY`, `_
 | Feature | Environment variable | `apiKeys` entry | Read by |
 | --- | --- | --- | --- |
 | Web search and fetch | `EXA_API_KEY` | `exa` | Host |
-| Google images | `GEMINI_API_KEY` | `google` | Command |
-| `/speak` rewriting, spelling hints, transcript cleanup, OpenAI images | `OPENAI_API_KEY` | `openai` | Client, runner, or command |
-| `/listen`, `/speak`, Telegram transcription and voice, speech generation | `ELEVENLABS_API_KEY` | `elevenlabs` | Client, runner, or command |
-| PDF OCR | `MISTRAL_API_KEY` | `mistral` | Command |
-| `@tau/models`, OpenRouter tool | `OPENROUTER_API_KEY` | `openrouter` | Host or command |
+| Google images | `GEMINI_API_KEY` | `google` | Host |
+| `/speak` rewriting, spelling hints, transcript cleanup, OpenAI images | `OPENAI_API_KEY` | `openai` | Client, runner, or host |
+| `/listen`, `/speak`, Telegram transcription and voice, speech generation | `ELEVENLABS_API_KEY` | `elevenlabs` | Client, runner, or host |
+| PDF OCR | `MISTRAL_API_KEY` | `mistral` | Host or command |
+| `@tau/models` chat and decisions, OpenRouter tool | `OPENROUTER_API_KEY` | `openrouter` | Host or command |
 
 ## ChatGPT subscription
 

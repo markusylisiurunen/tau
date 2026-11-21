@@ -61,6 +61,7 @@ export {
 } from "./config/index.js";
 export { printDebugInfo } from "./debug.js";
 export * from "./diff_review/index.js";
+export { computePdfPatchRegions } from "./media/pdf.js";
 export * from "./modes/index.js";
 export { personas } from "./personas.js";
 export type { PromptTemplate } from "./prompts.js";
@@ -86,7 +87,6 @@ export { composeSessionPrompts } from "./runtime/session_prompt_composer.js";
 export { printTelegramHelp, runTelegramCommand, TelegramCliError } from "./telegram/index.js";
 export type { RunToolCommandOptions } from "./tool/index.js";
 export {
-  computePdfPatchRegions,
   printPdfUnpackHelp,
   printToolHelp,
   runPdfUnpackCommand,

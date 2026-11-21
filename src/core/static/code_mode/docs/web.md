@@ -81,7 +81,7 @@ type Discovery = {
 
 ## Search and fetch
 
-Search ranks by relevance, so the first result is not necessarily the official source. Its highlights are chosen across the whole result set. `category: "company"` and `"people"` cannot be combined with `excludeDomains` or date filters. Leave `maxAgeHours` unset unless the task depends on freshness.
+Search ranks by relevance, so the first result is not necessarily the official source. `category: "company"` and `"people"` cannot be combined with `excludeDomains` or date filters. Leave `maxAgeHours` unset unless the task depends on freshness.
 
 `fetch` takes up to 100 URLs and returns highlights unless you request `text`. You can request both.
 
@@ -97,4 +97,4 @@ A call can succeed while single pages fail. Check each entry in `statuses` befor
 | --- | --- |
 | `unavailable` | Web search and fetch are unavailable to you. `discover` still works. |
 
-Other request-level failures, such as responses over 16 MiB, throw without a `code`.
+Other request-level failures throw without a `code`.

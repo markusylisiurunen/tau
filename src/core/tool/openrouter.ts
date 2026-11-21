@@ -17,12 +17,19 @@ import { parseMediaJson } from "../utils/media_validation.js";
 import { spawnWithCapture } from "../utils/spawn_capture.js";
 import type { RunToolCommandOptions } from "./cli.js";
 import { ToolCliError } from "./errors.js";
-import { requiredArg } from "./media.js";
+
 import {
   probeOpenRouterMedia,
   readOpenRouterFile,
   readOpenRouterStdin,
 } from "./openrouter_input.js";
+
+function requiredArg(value: unknown, name: string): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new ToolCliError(`--${name} is required`);
+  }
+  return value;
+}
 
 function modelHelp(operation: Operation): string[] {
   return openRouterModels[operation].map(

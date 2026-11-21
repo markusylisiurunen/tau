@@ -1,61 +1,16 @@
-import { access, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { computePdfPatchRegions, runPdfUnpackCommand } from "../dist/core/tool/pdf_unpack.js";
-
-function createSpawnResult() {
-  return {
-    stdout: "",
-    stderr: "",
-    output: "",
-    exitCode: 0,
-    captureLimitExceeded: false,
-    timedOut: false,
-    aborted: false,
-    closeSignal: null,
-  };
-}
-
-async function createFixture() {
-  const root = await mkdtemp(join(tmpdir(), "tau-tool-cli-test-"));
-  const inputPdfPath = join(root, "input.pdf");
-  await writeFile(inputPdfPath, Buffer.from("%PDF-1.4\n%fake\n"));
-  return {
-    root,
-    inputPdfPath,
-    cleanup: async () => {
-      await rm(root, { recursive: true, force: true });
-    },
-  };
-}
-
-function createRenderSpawnMock(pageSizes) {
-  return vi.fn(async (_command, args) => {
-    if (args[0] === "-v") {
-      return createSpawnResult();
-    }
-
-    expect(args).toEqual(expect.arrayContaining(["-r", "150", "-png"]));
-
-    const outputPrefix = args.at(-1);
-    for (const [index, page] of pageSizes.entries()) {
-      await sharp({
-        create: {
-          width: page.width,
-          height: page.height,
-          channels: 3,
-          background: { r: 20 + index, g: 40 + index, b: 60 + index },
-        },
-      })
-        .png()
-        .toFile(`${outputPrefix}-${index + 1}.png`);
-    }
-
-    return createSpawnResult();
-  });
-}
+import { runTauCodeMode } from "../dist/code_mode/runtime.js";
+import { createFilesPackage } from "../dist/core/code_mode/files.js";
+import { createPdfPackage } from "../dist/core/code_mode/pdf.js";
+import { computePdfPatchRegions } from "../dist/core/media/pdf.js";
+import {
+  createLocalToolExecutionBackend,
+  scopeToolExecutionBackend,
+} from "../dist/core/tools/execution_backend.js";
 
 describe("pdf-unpack", () => {
   afterEach(() => {
@@ -76,177 +31,56 @@ describe("pdf-unpack", () => {
     ]);
   });
 
-  it("fails fast when pdftoppm is missing", async () => {
-    const fixture = await createFixture();
-
+  it.each([false, true])("keeps OCR readable with a damaged render: %s", async (damaged) => {
+    const root = await mkdtemp(join(tmpdir(), "tau-pdf-test-"));
+    const backend = scopeToolExecutionBackend(createLocalToolExecutionBackend(), root);
     try {
-      const spawnImpl = vi.fn(async () => {
-        const error = new Error("spawn pdftoppm ENOENT");
-        error.code = "ENOENT";
-        throw error;
+      await backend.writeFile("input.pdf", "test PDF");
+      vi.spyOn(backend, "runBash").mockImplementation(async (_command, { args }) => {
+        if (damaged) await backend.writeFile(`${args.at(-1)}-1.png`, "invalid");
+        else
+          await sharp({ create: { width: 200, height: 300, channels: 3, background: "white" } })
+            .png()
+            .toFile(`${args.at(-1)}-1.png`);
+        return { exitCode: 0 };
       });
-
-      const ocrImpl = vi.fn();
-      await expect(
-        runPdfUnpackCommand([fixture.inputPdfPath], {
-          config: { apiKeys: { mistral: "mistral-key" } },
-          cwd: fixture.root,
-          env: {},
-          stdout: () => {},
-          spawnImpl,
-          ocrImpl,
-        }),
-      ).rejects.toThrow();
-      expect(ocrImpl).not.toHaveBeenCalled();
-      expect(await readdir(fixture.root)).toEqual(["input.pdf"]);
-    } finally {
-      await fixture.cleanup();
-    }
-  });
-
-  it("cleans up the temp output directory when pdf-unpack fails", async () => {
-    const fixture = await createFixture();
-    const outputDir = join(fixture.root, "output");
-
-    try {
-      await expect(
-        runPdfUnpackCommand([fixture.inputPdfPath], {
-          config: { apiKeys: { mistral: "mistral-key" } },
-          cwd: fixture.root,
-          env: {},
-          stdout: () => {},
-          mkdtempImpl: async () => {
-            await mkdir(outputDir, { recursive: true });
-            return outputDir;
-          },
-          ocrImpl: async () => {
-            throw new Error("Service unavailable.");
-          },
-          spawnImpl: createRenderSpawnMock([{ width: 400, height: 300 }]),
-        }),
-      ).rejects.toThrow();
-
-      await expect(access(outputDir)).rejects.toThrow();
-    } finally {
-      await fixture.cleanup();
-    }
-  });
-
-  it("rejects output preparation failures without starting OCR", async () => {
-    const fixture = await createFixture();
-    const ocrImpl = vi.fn();
-    try {
-      await expect(
-        runPdfUnpackCommand([fixture.inputPdfPath], {
-          config: { apiKeys: { mistral: "mistral-key" } },
-          env: {},
-          spawnImpl: createRenderSpawnMock([]),
-          mkdtempImpl: async () => {
-            throw Object.assign(new Error("EACCES"), { code: "EACCES", path: fixture.root });
-          },
-          ocrImpl,
-        }),
-      ).rejects.toThrow();
-      expect(ocrImpl).not.toHaveBeenCalled();
-    } finally {
-      await fixture.cleanup();
-    }
-  });
-
-  it("removes artifacts on rendering failure after OCR", async () => {
-    const fixture = await createFixture();
-    const outputDir = join(fixture.root, "output");
-    const ocrImpl = vi.fn(async () => ({ pages: [] }));
-    try {
-      await expect(
-        runPdfUnpackCommand([fixture.inputPdfPath], {
-          config: { apiKeys: { mistral: "mistral-key" } },
-          env: {},
-          mkdtempImpl: async () => {
-            await mkdir(outputDir);
-            return outputDir;
-          },
-          ocrImpl,
-          spawnImpl: async (_command, args) =>
-            args[0] === "-v"
-              ? createSpawnResult()
-              : { ...createSpawnResult(), exitCode: 1, stderr: "damaged PDF" },
-        }),
-      ).rejects.toThrow();
-      expect(ocrImpl).toHaveBeenCalledTimes(1);
-      await expect(access(outputDir)).rejects.toThrow();
-    } finally {
-      await fixture.cleanup();
-    }
-  });
-
-  it("writes markdown and image artifacts on success", async () => {
-    const fixture = await createFixture();
-    const outputDir = join(fixture.root, "output");
-    const stdout = vi.fn();
-
-    try {
-      await runPdfUnpackCommand([fixture.inputPdfPath], {
-        config: { apiKeys: { mistral: "mistral-key" } },
-        cwd: fixture.root,
-        env: {},
-        stdout,
-        mkdtempImpl: async () => {
-          await mkdir(outputDir, { recursive: true });
-          return outputDir;
-        },
-        ocrImpl: async () => ({
-          pages: [
-            {
-              markdown: "# page 1\n\n[tbl-0.md](tbl-0.md)",
-              tables: [{ id: "tbl-0.md", content: "| a | b |", format: "markdown" }],
-              images: [],
-            },
-            {
-              markdown: "# page 2\n\n[tbl-1.md](tbl-1.md)\n\n[img-1.jpeg](img-1.jpeg)",
-              tables: [{ id: "tbl-1.md", content: "| c | d |", format: "markdown" }],
-              images: [{ id: "img-1.jpeg" }],
-            },
-          ],
-          cleanupWarning: "failed to delete the uploaded PDF from Mistral: Unauthorized",
-        }),
-        spawnImpl: createRenderSpawnMock([
-          { width: 400, height: 300 },
-          { width: 400, height: 700 },
-        ]),
+      vi.stubGlobal(
+        "fetch",
+        vi
+          .fn()
+          .mockResolvedValueOnce(Response.json({ id: "12345678-1111-4111-8111-123456789abc" }))
+          .mockResolvedValueOnce(
+            Response.json({
+              pages: [
+                {
+                  index: 0,
+                  markdown: "[tbl](tbl)",
+                  tables: [{ id: "tbl", format: "markdown", content: "table text" }],
+                },
+              ],
+            }),
+          )
+          .mockResolvedValueOnce(new Response(null, { status: 204 })),
+      );
+      const result = await runTauCodeMode({
+        packages: [
+          createPdfPackage(backend, { apiKeys: { mistral: "test" } }),
+          createFilesPackage(backend),
+        ],
+        timeoutMs: 60000,
+        code: `import {unpack} from '@tau/pdf';import * as f from '@tau/files';import {printText} from '@tau/core';const r=await unpack('input.pdf',{outputDir:'ocr'});printText([await f.readText(r.documentPath),r.pages[0].pageNumber,await f.readText(r.pages[0].markdownPath),(await f.readBytes(r.pages[0].patchPaths[0]))[0]].join('/'));`,
       });
-
-      expect(stdout).toHaveBeenCalledTimes(1);
-      const outputText = stdout.mock.calls[0][0];
-      expect(outputText).toContain(`PDF unpacked from: ${fixture.inputPdfPath}`);
-      expect(outputText).toContain(`- ${outputDir}`);
-      expect(outputText).toContain("Paths below are relative to the output directory.");
-      expect(outputText).toContain("- document.md: full document markdown with tables inlined");
-      expect(outputText).toContain("- markdown may include [visual-content: ...] placeholders");
-      expect(outputText).toContain("Warning:");
-      expect(outputText).toContain(
-        "- failed to delete the uploaded PDF from Mistral: Unauthorized",
-      );
-      expect(outputText).toContain("- page markdown files: 2");
-      expect(outputText).toContain("- image patch files: 4");
-      expect(outputText).toContain("- images/page-0002/patch-0003.png");
-
-      expect(await readFile(join(outputDir, "document.md"), "utf8")).toBe(
-        "# page 1\n\n| a | b |\n\n# page 2\n\n| c | d |\n\n[visual-content: img-1.jpeg] not inlined. inspect images/page-0002/patch-*.png",
-      );
-      expect(await readFile(join(outputDir, "pages", "page-0002.md"), "utf8")).toBe(
-        "# page 2\n\n| c | d |\n\n[visual-content: img-1.jpeg] not inlined. inspect images/page-0002/patch-*.png",
-      );
-
-      expect(await readdir(join(outputDir, "images", "page-0001"))).toEqual(["patch-0001.png"]);
-      expect(await readdir(join(outputDir, "images", "page-0002"))).toEqual([
-        "patch-0001.png",
-        "patch-0002.png",
-        "patch-0003.png",
-      ]);
-      await expect(readFile(join(outputDir, ".rendered-pages", "page-1.png"))).rejects.toThrow();
+      if (damaged) {
+        expect((await backend.readFile("ocr/pages/page-0001.md")).content).toBe("table text");
+        expect(JSON.parse((await backend.readFile("ocr/ocr.json")).content)[0].markdown).toBe(
+          "[tbl](tbl)",
+        );
+        await expect(backend.readFile("ocr/document.md")).rejects.toThrow();
+      } else expect(result.result.content[0].text).toBe("table text/1/table text/137");
     } finally {
-      await fixture.cleanup();
+      vi.unstubAllGlobals();
+      await backend.dispose();
+      await rm(root, { recursive: true, force: true });
     }
   });
 });

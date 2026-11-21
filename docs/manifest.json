@@ -22,8 +22,6 @@
     "sdk.md",
     "session-protocol.md",
     "pdf-unpacking.md",
-    "image-generation.md",
-    "speech-generation.md",
     "openrouter.md"
   ]
 }

@@ -88,7 +88,9 @@ export function formatCapabilitiesForPrompt(capabilities: AgentCapabilities): st
     lines.push(`- Web search and fetch in \`@tau/web\`: ${web.reason}. \`discover\` still works.`);
   }
   if (!models.available) {
-    lines.push(`- Model calls in \`@tau/models\`: ${models.reason}. \`list\` still works.`);
+    lines.push(
+      `- Chat and decision calls in \`@tau/models\`: ${models.reason}. \`list\` still works.`,
+    );
   }
   if (!lines.length) return undefined;
   return [

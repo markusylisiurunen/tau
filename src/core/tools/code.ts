@@ -22,6 +22,7 @@ import { createMcpPackage } from "../code_mode/mcp.js";
 import { createModelsPackage } from "../code_mode/models.js";
 import { createNotificationsPackage } from "../code_mode/notifications.js";
 import type { CodeModePackage } from "../code_mode/package.js";
+import { createPdfPackage } from "../code_mode/pdf.js";
 import { createWebPackage } from "../code_mode/web.js";
 import type { SessionRuntimeSettings } from "../config/index.js";
 import type { HistoryQuery } from "../history/types.js";
@@ -100,6 +101,7 @@ export function createCodeToolDefinition(options: {
   const packages: CodeModePackage[] = [
     createBashPackage(options.backend, options.cwd, options.bashJobs),
     createFilesPackage(options.backend),
+    createPdfPackage(options.backend, options.config),
     createWebPackage(options.backend, options.config, capabilities.web),
     createModelsPackage(options.backend, options.config, capabilities.models),
     createHistoryPackage(options.history),

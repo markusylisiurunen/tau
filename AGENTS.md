@@ -206,7 +206,10 @@ Use skill `clear-writing` for all text, including its part on writing for AI mod
 
 Each surface has its own reader, and a true implementation detail is not automatically relevant to it.
 
-- **Agent prompts and tool descriptions.** The agent sees Tau from the inside and knows only its prompt and tools. To it, Bash is a tool that runs commands, and hosts, clients, or execution environments mean nothing. It needs none of them while instructions and behavior agree. Write "send a local file to the current Telegram chat", and not "send a file from the execution environment".
+- **Agent prompts, tool descriptions, and Code Mode references.** The agent sees Tau from the inside and knows only its prompt and tools. To it, Bash is a tool that runs commands, and hosts, clients, or execution environments mean nothing. It needs none of them while instructions and behavior agree. Write "send a local file to the current Telegram chat", and not "send a file from the execution environment".
+  - Give the agent what it needs to use a capability well: the API, choices that change the result, limits that change its approach, and errors it can handle. Leave out how Tau provides the capability, such as the provider or model behind it, credentials, uploads, and helper binaries, because the agent cannot act on them and they change with the implementation.
+  - When something the agent cannot provide is missing, such as a key or a dependency, the call fails with `unavailable` and a message naming what is missing. The error tells the agent at the moment it matters, so the reference does not explain prerequisites.
+- **The manual in `docs/`** is for operating and configuring Tau, so it names the providers, keys, and dependencies each feature needs.
 - **CLI help and diagnostics.** Usage, prerequisites, actionable errors, and public doc links. The person running a command may not be inside Tau, so do not depend on `tau_docs`.
 - **`README.md`** is the landing page for someone who has just opened the repository. Read alone, it gives a coherent picture of what Tau is and can do, links to the docs instead of repeating them, and reads in about a minute.
 - **Code comments.** Constraints and reasons the code cannot show, without narration.

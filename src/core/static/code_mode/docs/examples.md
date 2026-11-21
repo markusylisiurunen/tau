@@ -8,15 +8,13 @@ Each recipe combines several packages for a realistic task. Single-package examp
 
 ```js
 import { input, printText } from "@tau/core";
-import { chat, list } from "@tau/models";
+import { chat } from "@tau/models";
 import { fetch } from "@tau/web";
 
 const { results, statuses } = await fetch(input.urls, { text: { maxCharacters: 8_000 } });
-const { chat: [model] } = await list();
-if (!model) throw new Error("No chat model available");
 const summaries = await Promise.all(results.map(async (page) => {
   const { answer, status } = await chat(`Summarize in three bullets:\n\n${page.text}`, {
-    model: model.id,
+    model: "MODEL_ID", // from list().chat
   });
   return `${page.title} (${page.url})\n${answer ?? `no summary: ${status}`}`;
 }));
@@ -46,15 +44,13 @@ printText(result.exitCode === 0 ? "tests pass" : truncate(result.stdout, { maxLi
 ```js
 import * as bash from "@tau/bash";
 import { input, printText, truncate } from "@tau/core";
-import { chat, list } from "@tau/models";
+import { chat } from "@tau/models";
 
 const log = await bash.text(`gh run view ${Number(input.runId)} --log-failed`);
-const { chat: [model] } = await list();
-if (!model) throw new Error("No chat model available");
 const { status, answer } = await chat(
   `Why did this CI run fail?\n\n${truncate(log, { maxLines: 400, keep: "tail" })}`,
   {
-    model: model.id,
+    model: "MODEL_ID", // from list().chat
     schema: {
       type: "object",
       properties: {
@@ -78,11 +74,9 @@ printText(`${answer.cause}: ${answer.summary}\n${answer.files.join("\n")}`);
 ```js
 import { input, printText } from "@tau/core";
 import { read, search } from "@tau/history";
-import { chat, list } from "@tau/models";
+import { chat } from "@tau/models";
 
 const { sessions } = await search({ query: input.topic, limit: 5 });
-const { chat: [model] } = await list();
-if (!model) throw new Error("No chat model available");
 const decisions = await Promise.all(sessions.map(async ({ sessionId, webUrl }) => {
   const { entries } = await read(sessionId, { limit: 100 });
   const transcript = entries
@@ -92,7 +86,7 @@ const decisions = await Promise.all(sessions.map(async ({ sessionId, webUrl }) =
     .slice(0, 60_000);
   const { answer } = await chat(
     `What did this conversation decide about ${input.topic}? Reply "none" if nothing.\n\n${transcript}`,
-    { model: model.id },
+    { model: "MODEL_ID" }, // from list().chat
   );
   return `${webUrl ?? sessionId}: ${answer ?? "no answer"}`;
 }));

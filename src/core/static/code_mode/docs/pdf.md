@@ -32,7 +32,7 @@ The PDF can be up to 50 MiB. Paths resolve from the working directory, and the r
 
 ## Reading the output
 
-OCR can contain mistakes. Tables appear inline as Markdown. Figures and other images appear as `[visual-content: …]` placeholders that name the page's image directory. Each page image is a strip of the page rendered at 150 DPI, and neighboring strips overlap slightly, so a line cut at the bottom of one strip appears whole in the next.
+OCR can contain mistakes. Tables appear inline as Markdown. Figures and other images appear as `[visual-content: …]` placeholders that name the page's image directory. Each page image is a strip of the page, and neighboring strips overlap slightly, so a line cut at the bottom of one strip appears whole in the next.
 
 For a long document, read only the pages you need:
 

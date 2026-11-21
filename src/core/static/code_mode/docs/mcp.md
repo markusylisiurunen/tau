@@ -106,4 +106,4 @@ Repeat `--scope` for each scope, or use `tau mcp login <server>` when none is re
 | --- | --- |
 | `mcp_authorization_required` | The server needs authorization, as described above. |
 
-Protocol, connection, unknown-tool, and argument failures throw without a `code`. Discovery times out after 30 seconds, and calls and resource reads after five minutes unless the server configures otherwise. Messages over 16 MiB fail instead of being truncated, so use the service's filters and pagination. A failed call is not retried and can still have side effects. Prompts, sampling, elicitation, and subscriptions are unavailable.
+Protocol, connection, unknown-tool, and argument failures throw without a `code`. Messages over 16 MiB fail instead of being truncated, so use the service's filters and pagination. A failed call is not retried and can still have side effects.

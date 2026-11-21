@@ -7,7 +7,7 @@ Some capabilities can be unavailable to an agent, and its instructions say which
 - Starting subagents, for subagents at the depth limit and for side contexts such as diff review. See [subagents](subagents.md).
 - Completion notifications, for subagents and for sessions created with `notifications: false`.
 - Web search and fetch, without an Exa key.
-- Model calls in `@tau/models`, without an OpenRouter key.
+- Chat and decision calls in `@tau/models`, without an OpenRouter key.
 
 A call that needs a missing capability fails with an error instead of disappearing from the tool set.
 
@@ -52,8 +52,6 @@ Each agent can have 64 job records, and each job keeps the last 24 MiB of output
 | Command | Purpose |
 | --- | --- |
 | `tau tool pdf-unpack` | [OCR a PDF](pdf-unpacking.md) with Mistral. |
-| `tau tool image-generate` | [Generate or edit an image](image-generation.md) with Google or OpenAI. |
-| `tau tool speech-generate` | [Generate narration or dialogue](speech-generation.md) with ElevenLabs. |
 | `tau tool openrouter` | [Typed decisions and text or media analysis](openrouter.md). |
 
 `tau tool <command> --help` lists a command's flags.

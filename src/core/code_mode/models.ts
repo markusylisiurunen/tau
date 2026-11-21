@@ -2,6 +2,15 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { type Availability, requireCapability } from "../agent/capabilities.js";
 import type { ApiKeysConfig } from "../config/index.js";
+import { generateImage, imageModels, imageOptions } from "../media/image.js";
+import {
+  generateSpeech,
+  listVoices,
+  speechDocument,
+  speechModels,
+  speechOptions,
+  voiceOptions,
+} from "../media/speech.js";
 import {
   openRouterModels,
   requestOpenRouterChat,
@@ -105,16 +114,31 @@ export function createModelsPackage(
 
   return definePackage(
     "models",
-    "Make one-off LLM calls to analyze text and media, return structured output, and make typed decisions.",
+    "Make one-off LLM calls to analyze text and media, return structured output, and make typed decisions. Generate images and speech.",
     {
-      list: method(z.tuple([]), () =>
-        Object.fromEntries(
+      generateImage: method(
+        z.tuple([z.string().refine((s) => s.trim().length > 0), imageOptions]),
+        ([prompt, opts], { signal }) =>
+          generateImage(prompt, opts, { backend, config, signal, fetchImpl }),
+      ),
+      generateSpeech: method(
+        z.tuple([speechDocument, speechOptions]),
+        ([script, opts], { signal }) =>
+          generateSpeech(script, opts, { backend, config, signal, fetchImpl }),
+      ),
+      listVoices: method(z.tuple([voiceOptions]), ([opts], { signal }) =>
+        listVoices(opts, { backend, config, signal, fetchImpl }),
+      ),
+      list: method(z.tuple([]), () => ({
+        image: imageModels.map((id) => ({ id })),
+        speech: speechModels.map((id) => ({ id })),
+        ...Object.fromEntries(
           Object.entries(openRouterModels).map(([operation, models]) => [
             operation,
             models.map(({ id, inputs, reasoning, role }) => ({ id, inputs, reasoning, role })),
           ]),
         ),
-      ),
+      })),
       chat: method(z.tuple([chatInput, chatOptions]), async ([input, options], context) => {
         requireCapability(availability, "Model inference");
         const turns =

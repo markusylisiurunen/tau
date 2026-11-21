@@ -52,6 +52,7 @@ export type MistralDocumentOcrOptions = {
   apiKey: string;
   document: Buffer;
   fileName: string;
+  signal: AbortSignal;
   model?: string;
   mimeType?: string;
   fetchImpl?: typeof fetch;
@@ -172,7 +173,13 @@ async function deleteMistralFile(args: {
 export async function ocrMistralDocument(
   options: MistralDocumentOcrOptions,
 ): Promise<MistralDocumentOcrResult> {
-  const fetchFn = options.fetchImpl ?? fetch;
+  const providerFetch = options.fetchImpl ?? fetch;
+  const fetchFn: typeof fetch = (url, init) =>
+    providerFetch(url, {
+      ...init,
+      redirect: "error",
+      signal: AbortSignal.any([options.signal, AbortSignal.timeout(600_000)]),
+    });
   const fileId = await uploadMistralFile({
     apiKey: options.apiKey,
     document: options.document,
@@ -241,7 +248,8 @@ export async function ocrMistralDocument(
   const cleanupWarning = await deleteMistralFile({
     apiKey: options.apiKey,
     fileId,
-    fetchImpl: fetchFn,
+    fetchImpl: (url, init) =>
+      providerFetch(url, { ...init, redirect: "error", signal: AbortSignal.timeout(15_000) }),
   });
 
   if (operationError) {

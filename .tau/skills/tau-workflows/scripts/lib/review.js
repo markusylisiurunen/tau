@@ -13,7 +13,8 @@ export const MODELS = {
   focusedReview: "openai-codex/gpt-6.1-terra:medium",
   designReview: "claude-code/claude-opus-5-5:medium",
   designReviewPeer: "openai-codex/gpt-6.2-astra:medium",
-  chooseFindings: "openai-codex/gpt-6.2-sol:medium",
+  chooseFindings: "openai-codex/gpt-6.2-sol:high",
+  gather: "openai-codex/gpt-6.2-sol:medium",
   implement: "openai-codex/gpt-6.2-astra:medium",
   find: "openai-codex/gpt-6.1-terra:medium",
   prune: "claude-code/claude-opus-5-5:medium",
@@ -66,13 +67,18 @@ export const FINDINGS = {
 // inputs are listed in `extra` and returned as given.
 export function readInputs(
   input,
-  { depth: takesDepth = true, commits = "required", extra = [] } = {},
+  {
+    depth: takesDepth = true,
+    context: takesContext = true,
+    commits = "required",
+    extra = [],
+  } = {},
 ) {
   const values = input ?? {};
   const known = [
     "base",
     "head",
-    "context",
+    ...(takesContext ? ["context"] : []),
     "workingDirectory",
     ...(takesDepth ? ["depth"] : []),
     ...extra,

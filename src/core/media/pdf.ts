@@ -1,5 +1,6 @@
 import { basename, join } from "node:path";
 import sharp from "sharp";
+import { unavailableError } from "../agent/capabilities.js";
 import { getMistralApiKey } from "../config/schema.js";
 import { type MistralDocumentOcrPage, ocrMistralDocument } from "../utils/mistral_document_ocr.js";
 import { describeMediaError } from "./media.js";
@@ -117,7 +118,8 @@ export async function unpackPdf(
   ctx: MediaContext,
   apiKey = getMistralApiKey(ctx.config),
 ) {
-  if (!apiKey) throw new Error("missing MISTRAL_API_KEY or apiKeys.mistral");
+  if (!apiKey)
+    throw unavailableError("PDF unpacking", "MISTRAL_API_KEY or apiKeys.mistral is not configured");
   const input = await ctx.backend.readFileBinary(path, { maxBytes: 50 * 1024 * 1024 });
   const renderPages = async (args: string[]) => {
     const result = await ctx.backend.runBash('exec pdftoppm "$@"', {
@@ -125,6 +127,8 @@ export async function unpackPdf(
       signal: ctx.signal,
       timeoutMs: 600000,
     });
+    if (result.exitCode === 127)
+      throw unavailableError("PDF unpacking", "pdftoppm from Poppler is not installed on PATH");
     if (result.exitCode !== 0 || result.timedOut || result.aborted)
       throw new Error(result.stderr || "pdftoppm failed");
   };

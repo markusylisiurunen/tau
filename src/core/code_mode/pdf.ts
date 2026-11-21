@@ -11,7 +11,15 @@ export function createPdfPackage(backend: ToolExecutionBackend, config: ApiKeysC
         z.string().min(1),
         z.strictObject({ outputDir: z.string().min(1).optional() }).optional(),
       ]),
-      ([path, opts], { signal }) => unpackPdf(path, opts?.outputDir, { backend, config, signal }),
+      async ([path, opts], { signal }) => {
+        // Only whoever operates Tau can act on a leftover OCR upload, so the CLI reports it and programs do not.
+        const { cleanupWarning: _, ...unpacked } = await unpackPdf(path, opts?.outputDir, {
+          backend,
+          config,
+          signal,
+        });
+        return unpacked;
+      },
     ),
   });
 }

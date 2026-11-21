@@ -6,6 +6,7 @@ import sharp from "sharp";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createFilesPackage } from "../dist/core/code_mode/files.js";
 import { createModelsPackage } from "../dist/core/code_mode/models.js";
+import { createPdfPackage } from "../dist/core/code_mode/pdf.js";
 import { createFlySpriteToolExecutionBackend } from "../dist/execution/fly_sprite_execution_environment.js";
 
 const context = { signal: new AbortController().signal };
@@ -54,6 +55,34 @@ it("rejects incompatible image settings before creating recovery artifacts", asy
     ),
   ).rejects.toMatchObject({ code: "invalid_arguments" });
   expect((await backend.listDir(".")).entries).toEqual([]);
+  expect(fetchImpl).not.toHaveBeenCalled();
+});
+it("reports operations without a key as unavailable before any request or output", async () => {
+  const unconfigured = createModelsPackage(
+    backend,
+    { apiKeys: {} },
+    { available: false, reason: "no OpenRouter key" },
+    fetchImpl,
+  ).api;
+  const pdf = createPdfPackage(backend, { apiKeys: {} }).api;
+  await backend.writeFile("doc.pdf", "%PDF-1.4");
+  const calls = [
+    () =>
+      unconfigured.generateImage(
+        ["otter", { model: "gpt-image-2.6-flare", outputPath: "a.png" }],
+        context,
+      ),
+    () =>
+      unconfigured.generateImage(
+        ["otter", { model: "gemini-nano-banana-2.1", outputPath: "b.png" }],
+        context,
+      ),
+    () => unconfigured.generateSpeech([script, options], context),
+    () => unconfigured.listVoices([{ model: "eleven_v4" }], context),
+    () => pdf.unpack(["doc.pdf"], context),
+  ];
+  for (const call of calls) await expect(call()).rejects.toMatchObject({ code: "unavailable" });
+  expect((await backend.listDir(".")).entries.map(({ name }) => name)).toEqual(["doc.pdf"]);
   expect(fetchImpl).not.toHaveBeenCalled();
 });
 const script = { voices: { host: "voice" }, chunks: [[{ speaker: "host", text: "one" }]] };

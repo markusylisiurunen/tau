@@ -2,6 +2,7 @@ import { basename, extname, join } from "node:path";
 import { fileTypeFromBuffer } from "file-type";
 import sharp from "sharp";
 import { z } from "zod";
+import { unavailableError } from "../agent/capabilities.js";
 import { getGoogleApiKey, getOpenAIApiKey } from "../config/schema.js";
 import { describeMediaError, mediaRequest, readMediaJsonResponse } from "./media.js";
 import { type MediaContext, prepareOutput, publish, writeNew } from "./target.js";
@@ -294,10 +295,11 @@ export async function generateImage(prompt: string, args: ImageOptions, options:
   const apiKey =
     args.model === googleModel ? getGoogleApiKey(options.config) : getOpenAIApiKey(options.config);
   if (!apiKey) {
-    throw new Error(
+    throw unavailableError(
+      `Image generation with ${args.model}`,
       args.model === googleModel
-        ? "missing GEMINI_API_KEY or apiKeys.google"
-        : "missing OPENAI_API_KEY or apiKeys.openai",
+        ? "GEMINI_API_KEY or apiKeys.google is not configured"
+        : "OPENAI_API_KEY or apiKeys.openai is not configured",
     );
   }
   const generation = await prepareImageGeneration(prompt, args, options);

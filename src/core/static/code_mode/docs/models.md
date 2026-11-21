@@ -4,15 +4,12 @@ Call a model for focused analysis, extraction, or typed judgments, or generate a
 
 ```js
 import { printText } from "@tau/core";
-import { chat, list } from "@tau/models";
+import { chat } from "@tau/models";
 
-const { chat: models } = await list();
-const model = models.find(({ inputs }) => inputs.includes("image"));
-if (!model) throw new Error("No image model available");
 const result = await chat([{ role: "user", content: [
   { type: "text", text: "What error does this screenshot show?" },
   { type: "image", path: "screenshot.png" },
-] }], { model: model.id });
+] }], { model: "MODEL_ID" }); // a chat model whose inputs include "image"
 printText(result.answer ?? result.status);
 ```
 
@@ -76,9 +73,7 @@ type Usage = { inputTokens: number; outputTokens: number; cost?: number };
 
 ## Models and media
 
-Every call needs a model ID from the matching list, and each chat and decision model's `role` says what it suits. Listing runs no model and needs no key.
-
-`chat` and `decisions` need an OpenRouter key. Image models need an OpenAI or Google key, depending on the model, and speech needs an ElevenLabs key.
+Every call needs a model ID from the matching list. Print the list in one program, then choose by each model's `role` and `inputs` in the next. Listing runs no model.
 
 Media paths resolve from the working directory. Prefer paths for large media, because bytes pass through the program. Tau detects each file's format and rejects media the model cannot take.
 
@@ -88,12 +83,10 @@ With `schema`, Tau requests structured output and parses the answer, but does no
 
 ```js
 import { input, printText } from "@tau/core";
-import { decisions, list } from "@tau/models";
+import { decisions } from "@tau/models";
 
-const { decisions: [model] } = await list();
-if (!model) throw new Error("No decision model available");
 const { answers } = await decisions({ ticket: input.ticket }, {
-  model: model.id,
+  model: "MODEL_ID", // from list().decisions
   questions: {
     urgent: { type: "noul", instructions: "The customer cannot use the product at all." },
     area: { type: "choice", instructions: "Which area the ticket is about.", criteria: { billing: null, login: null, other: null } },
@@ -112,11 +105,11 @@ type ImageOptions = {
   model: string; // an ID from list().image
   outputPath: string; // its extension must match settings.format
   references?: string[]; // PNG, JPEG, or WebP images to edit or draw from, in order
-  settings?: OpenAISettings | GoogleSettings; // only the fields of the model's provider
+  settings?: GptImageSettings | NanoBananaSettings; // only the fields for the chosen model
 };
 type ImageResult = { outputPath: string; artifacts: string; usage: JsonValue | null };
 
-type OpenAISettings = { // gpt-image-2.6-flare, gpt-image-2.6-sunburst
+type GptImageSettings = { // gpt-image-2.6-flare, gpt-image-2.6-sunburst
   size?: string; // "auto" or "WIDTHxHEIGHT"
   quality?: "auto" | "low" | "medium" | "high" | "xhigh" | "max";
   complexity?: "low" | "medium" | "high";
@@ -124,7 +117,7 @@ type OpenAISettings = { // gpt-image-2.6-flare, gpt-image-2.6-sunburst
   format?: "png" | "jpeg" | "webp"; // default "png"
   compression?: number; // 0 to 100, jpeg or webp only
 };
-type GoogleSettings = { // gemini-nano-banana-2.1
+type NanoBananaSettings = { // gemini-nano-banana-2.1
   aspectRatio?: string; // such as "1:1", "16:9", "21:9", or "8:1"
   resolution?: "1K" | "2K" | "4K";
   thinking?: "minimal" | "medium" | "high";
@@ -132,7 +125,7 @@ type GoogleSettings = { // gemini-nano-banana-2.1
 };
 ```
 
-Start with `gpt-image-2.6-flare` at `quality: "medium"`. Use `gpt-image-2.6-sunburst` for demanding edits, and `gemini-nano-banana-2.1` for very wide images. OpenAI sizes use multiples of 16, at most 3840 per side, an aspect ratio between 1:3 and 3:1, and 655,360 to 8,294,400 pixels in total, such as `"1024x1024"` or `"1536x1024"`. `complexity: "low"` suits focused edits, and `"medium"` or `"high"` suit dense text and layouts. OpenAI models take up to 16 references, and Google up to 14 references totaling 19 MB.
+Start with `gpt-image-2.6-flare` at `quality: "medium"`. Use `gpt-image-2.6-sunburst` for demanding edits, and `gemini-nano-banana-2.1` for very wide images. `gpt-image-2.6-*` sizes use multiples of 16, at most 3840 per side, an aspect ratio between 1:3 and 3:1, and 655,360 to 8,294,400 pixels in total, such as `"1024x1024"` or `"1536x1024"`. `complexity: "low"` suits focused edits, and `"medium"` or `"high"` suit dense text and layouts. `gpt-image-2.6-*` models take up to 16 references, and `gemini-nano-banana-2.1` up to 14 references totaling 19 MB.
 
 The model sees only the prompt and references, so describe what to keep when editing:
 
@@ -152,7 +145,7 @@ const { outputPath } = await generateImage(
 printText(outputPath);
 ```
 
-At 1024x1024, an OpenAI image costs about $0.03 at `low`, $0.04 at `medium`, $0.05 at `high`, and $0.21 at `max`. A Google image costs about $0.03 at 1K, $0.05 at 2K, and $0.11 at 4K. Input and thinking cost extra.
+At 1024x1024, a `gpt-image-2.6-*` image costs about $0.03 at `low`, $0.04 at `medium`, $0.05 at `high`, and $0.21 at `max`. A `gemini-nano-banana-2.1` image costs about $0.03 at 1K, $0.05 at 2K, and $0.11 at 4K. Input and thinking cost extra.
 
 ## Speech
 
@@ -205,13 +198,13 @@ Neither `outputPath` nor `<outputPath>.parts` may exist yet, so a generation nev
 
 When generation fails, the error names the `.parts` directory and what it holds. Recover from it instead of generating again:
 
-- Image: `original.bin` is the provider's image. If the request succeeded and only saving failed, convert or copy that file.
+- Image: `original.bin` is the generated image as received. If the request succeeded and only saving failed, convert or copy that file.
 - Speech: a `batch-0001.pcm` or later numbered file holds a completed batch, even if its manifest metadata is missing. Generate only the unfinished chunks to a new path. Then join the PCM files in order with Bash, leaving out `.partial` files, and convert the result with `ffmpeg -f s16le -ar 24000 -ac 1 -i complete.pcm complete.wav`.
 
 ## Errors
 
 | `code` | Meaning |
 | --- | --- |
-| `unavailable` | `chat` or `decisions` without an OpenRouter key. |
+| `unavailable` | The operation cannot be used in this session. The message says why. |
 
-Settings that the chosen model does not support fail with `invalid_arguments` before Tau sends a request, such as `resolution` for an OpenAI image model. Other failures throw without a `code`, such as a missing image or speech key, a provider response Tau cannot use, or an answer that is missing or not valid JSON. Tau never retries a request. The provider may have charged for a request that failed, so calling again can be charged again.
+Settings that the chosen model does not support fail with `invalid_arguments` before Tau sends a request, such as `resolution` for `gpt-image-2.6-flare`. Other failures throw without a `code`, such as a response Tau cannot use, or an answer that is missing or not valid JSON. Tau never retries a request. A failed request may already have been charged, so calling again can be charged again.

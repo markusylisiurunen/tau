@@ -1,5 +1,6 @@
 import { extname, join } from "node:path";
 import { z } from "zod";
+import { unavailableError } from "../agent/capabilities.js";
 import { getElevenLabsApiKey } from "../config/schema.js";
 import { describeMediaError, mediaRequest, readMediaJsonResponse } from "./media.js";
 import {
@@ -76,7 +77,11 @@ function planSpeechBatches(document: z.infer<typeof speechDocument>): SpeechBatc
 export const speechModels = ["eleven_v4_turbo", "eleven_v4"] as const;
 function elevenKey(ctx: MediaContext) {
   const key = getElevenLabsApiKey(ctx.config);
-  if (!key) throw new Error("missing ELEVENLABS_API_KEY or apiKeys.elevenlabs");
+  if (!key)
+    throw unavailableError(
+      "Speech generation",
+      "ELEVENLABS_API_KEY or apiKeys.elevenlabs is not configured",
+    );
   return key;
 }
 export const voiceOptions = z.strictObject({

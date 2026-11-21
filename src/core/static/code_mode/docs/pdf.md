@@ -7,7 +7,7 @@ import { printText, truncate } from "@tau/core";
 import * as files from "@tau/files";
 import { unpack } from "@tau/pdf";
 
-const { outputDir, documentPath, pages } = await unpack("specs/design review.pdf");
+const { outputDir, documentPath, pages } = await unpack("specs/report.pdf");
 const text = await files.readText(documentPath);
 printText(`${outputDir}: ${pages.length} pages\n\n${truncate(text, { maxLines: 200, keep: "head" })}`);
 ```
@@ -25,13 +25,10 @@ type Unpacked = {
     markdownPath: string; // this page's Markdown
     patchPaths: string[]; // PNG images of this page, in strips from top to bottom
   }>;
-  cleanupWarning?: string; // set when the uploaded copy could not be deleted
 };
 ```
 
-Paths resolve from the working directory, and the result's paths are absolute. Later programs can find the files by their names in `outputDir`: `document.md`, `pages/page-0001.md`, and `images/page-0001/patch-0001.png`. `outputDir` must not exist yet, and its parent must. Without it, Tau creates a temporary directory that stays until you delete it. If processing fails after OCR, inspect the reported directory for `ocr.json` and any completed Markdown and images before calling `unpack` again.
-
-The PDF can be up to 50 MiB. Tau uploads it to Mistral for OCR and deletes the uploaded copy afterwards when it can. Unpacking needs a Mistral key and `pdftoppm` from Poppler on the Bash `PATH`.
+The PDF can be up to 50 MiB. Paths resolve from the working directory, and the result's paths are absolute. Later programs can find the files by their names in `outputDir`: `document.md`, `pages/page-0001.md`, and `images/page-0001/patch-0001.png`. `outputDir` must not exist yet, and its parent must. Without it, Tau creates a temporary directory that stays until you delete it.
 
 ## Reading the output
 
@@ -50,24 +47,8 @@ for (const page of pages.filter(({ pageNumber }) => pageNumber >= 3 && pageNumbe
 }
 ```
 
-When a table, figure, or number looks uncertain, check the page images. To see a strip yourself, pass `await files.readBytes(path)` to `printImage` from `@tau/core`. To check a whole page without loading its images into your context, ask a model to compare the OCR with the page:
-
-```js
-import { input, printText } from "@tau/core";
-import * as files from "@tau/files";
-import { chat, list } from "@tau/models";
-
-const page = input.page; // one entry of pages from an earlier unpack
-const { chat: models } = await list();
-const model = models.find(({ inputs }) => inputs.includes("image"));
-if (!model) throw new Error("No image model available");
-const result = await chat([{ role: "user", content: [
-  { type: "text", text: `Correct this OCR of the pictured page. Reply with the corrected Markdown only.\n\n${await files.readText(page.markdownPath)}` },
-  ...page.patchPaths.map((path) => ({ type: "image", path })),
-] }], { model: model.id });
-printText(result.answer ?? result.status);
-```
+When a table, figure, or number looks uncertain, check the page images. To see a strip yourself, pass `await files.readBytes(path)` to `printImage` from `@tau/core`. To check a whole page without loading its images into your context, send its Markdown and its `patchPaths` as image parts to `chat` from `@tau/models`, and ask for corrected Markdown.
 
 ## Errors
 
-Failures throw with a message, for example when the Mistral key or `pdftoppm` is missing or OCR fails. Tau does not retry OCR. Mistral may have charged for a failed request, so calling `unpack` again may incur another charge.
+Failures throw with a message. When something unpacking needs is missing, the call fails with `code: "unavailable"`, and the message says what. If processing fails partway, the error names the directory that holds the completed output, so inspect it before calling `unpack` again. Tau does not retry OCR, and a failed call may already have been charged, so calling `unpack` again can be charged again.

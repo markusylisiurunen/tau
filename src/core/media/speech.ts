@@ -117,23 +117,34 @@ async function savePcm(ctx: MediaContext, response: Response, path: string): Pro
   if (!response.body) throw new Error("missing PCM response body");
   await writeNew(ctx, path, Buffer.alloc(0));
   let bytes = 0;
+  let buffered = 0;
+  const buffer = Buffer.alloc(PCM_TRANSFER_BYTES);
   const reader = response.body.getReader();
   try {
     while (true) {
-      const { value, done } = await reader.read();
+      const { value, done } = await reader.read().catch(async (error: unknown) => {
+        if (buffered) {
+          await appendBytes(ctx, path, buffer.subarray(0, buffered)).catch(() => {});
+        }
+        throw error;
+      });
       if (done) break;
       bytes += value.length;
       if (bytes > 128 * 1024 * 1024) throw new Error("PCM response exceeds size limit");
-      for (let offset = 0; offset < value.length; offset += PCM_TRANSFER_BYTES) {
-        await appendBytes(
-          ctx,
-          path,
-          Buffer.from(value.subarray(offset, offset + PCM_TRANSFER_BYTES)),
-        );
+      let offset = 0;
+      while (offset < value.length) {
+        const length = Math.min(buffer.length - buffered, value.length - offset);
+        buffer.set(value.subarray(offset, offset + length), buffered);
+        buffered += length;
+        offset += length;
+        if (buffered === buffer.length) {
+          await appendBytes(ctx, path, buffer);
+          buffered = 0;
+        }
       }
     }
+    if (buffered) await appendBytes(ctx, path, buffer.subarray(0, buffered));
   } finally {
-    await reader.cancel().catch(() => {});
     reader.releaseLock();
   }
   if (!bytes || bytes % 2) throw new Error("provider returned empty or unaligned PCM audio");
@@ -175,7 +186,6 @@ export async function generateSpeech(
     await replaceFile(ctx, temporary, join(destination.parts, "manifest.json"));
   };
   let stage = "saving the batch plan";
-  let requestStarted = false;
   try {
     await writeNew(
       ctx,
@@ -193,7 +203,6 @@ export async function generateSpeech(
           return previous.requestId;
         });
       stage = `requesting batch ${index + 1} of ${manifest.batches.length}`;
-      requestStarted = true;
       const response = await mediaRequest(
         ctx,
         "https://api.elevenlabs.io/v1/text-to-dialogue?output_format=pcm_24000",
@@ -211,10 +220,17 @@ export async function generateSpeech(
       batch.requestId = response.headers.get("request-id");
       batch.characterCost = response.headers.get("character-cost");
       const path = join(destination.parts, batch.file);
-      batch.bytes = await savePcm(ctx, response, `${path}.partial`);
+      let bytes: number;
+      try {
+        await saveManifest();
+        bytes = await savePcm(ctx, response, `${path}.partial`);
+      } finally {
+        await response.body?.cancel().catch(() => {});
+      }
       await publish(ctx, `${path}.partial`, path);
-      await removeFile(ctx, `${path}.partial`);
+      batch.bytes = bytes;
       await saveManifest();
+      await removeFile(ctx, `${path}.partial`);
     }
     stage = "assembling the WAV";
     const artifact = join(destination.parts, "assembled.wav");
@@ -230,7 +246,7 @@ export async function generateSpeech(
     return { outputPath: destination.path, artifacts: destination.parts, batches: batches.length };
   } catch (error) {
     throw new Error(
-      `speech generation failed while ${stage}: ${describeMediaError(error)}; retained artifacts: ${destination.parts} (any saved manifest, completed .pcm batches, .partial downloads, and assembled.wav); inspect the manifest before recovery and do not reuse .partial files; ${requestStarted ? "no automatic retry; another generation request may incur another charge" : "no generation request was sent"}`,
+      `speech generation failed while ${stage}: ${describeMediaError(error)}; retained artifacts: ${destination.parts} (any saved manifest, completed .pcm batches, .partial downloads, and assembled.wav); inspect the manifest before recovery and do not reuse .partial files`,
     );
   }
 }

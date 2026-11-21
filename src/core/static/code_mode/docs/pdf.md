@@ -1,6 +1,6 @@
 # @tau/pdf
 
-OCR a PDF into Markdown and page images. Unpack a document once, print its `outputDir`, and read the files in later programs, because every `unpack` call is a new paid OCR request.
+OCR a PDF into Markdown and page images. Unpack a document once, print its `outputDir`, and read the files in later programs.
 
 ```js
 import { printText, truncate } from "@tau/core";
@@ -29,7 +29,7 @@ type Unpacked = {
 };
 ```
 
-Paths resolve from the working directory, and the result's paths are absolute. Later programs can find the files by their names in `outputDir`: `document.md`, `pages/page-0001.md`, and `images/page-0001/patch-0001.png`. `outputDir` must not exist yet, and its parent must. Without it, Tau creates a temporary directory that stays until you delete it. If processing fails after OCR, inspect the reported directory for `ocr.json` and any completed Markdown and images before paying for another request.
+Paths resolve from the working directory, and the result's paths are absolute. Later programs can find the files by their names in `outputDir`: `document.md`, `pages/page-0001.md`, and `images/page-0001/patch-0001.png`. `outputDir` must not exist yet, and its parent must. Without it, Tau creates a temporary directory that stays until you delete it. If processing fails after OCR, inspect the reported directory for `ocr.json` and any completed Markdown and images before calling `unpack` again.
 
 The PDF can be up to 50 MiB. Tau uploads it to Mistral for OCR and deletes the uploaded copy afterwards when it can. Unpacking needs a Mistral key and `pdftoppm` from Poppler on the Bash `PATH`.
 
@@ -70,4 +70,4 @@ printText(result.answer ?? result.status);
 
 ## Errors
 
-Failures throw with a message, for example when the Mistral key or `pdftoppm` is missing or OCR fails. Tau does not retry OCR, and calling `unpack` again is charged again.
+Failures throw with a message, for example when the Mistral key or `pdftoppm` is missing or OCR fails. Tau does not retry OCR. Mistral may have charged for a failed request, so calling `unpack` again may incur another charge.

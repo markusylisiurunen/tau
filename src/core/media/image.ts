@@ -313,7 +313,7 @@ export async function generateImage(prompt: string, args: ImageOptions, options:
     return { outputPath: destination.path, artifacts: destination.parts, usage: image.usage };
   } catch (error) {
     throw new Error(
-      `image generation failed while ${stage}: ${describeMediaError(error)}; retained artifacts: ${destination.parts} (may be incomplete; inspect original.bin, manifest.json, and image.${generation.settings.format} if present); no automatic retry; another generation request may incur another charge`,
+      `image generation failed while ${stage}: ${describeMediaError(error)}; retained artifacts: ${destination.parts} (may be incomplete; inspect original.bin, manifest.json, and image.${generation.settings.format} if present)`,
     );
   }
 }

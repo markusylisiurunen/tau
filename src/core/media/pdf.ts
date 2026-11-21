@@ -205,7 +205,7 @@ export async function unpackPdf(
   } catch (error) {
     if (ocr)
       throw new Error(
-        `PDF output incomplete: ${describeMediaError(error)}; inspect ${dir} for ocr.json and completed pages; another OCR request may incur another charge${ocr.cleanupWarning ? `; ${ocr.cleanupWarning}` : ""}`,
+        `PDF output incomplete: ${describeMediaError(error)}; inspect ${dir} for ocr.json and completed pages${ocr.cleanupWarning ? `; ${ocr.cleanupWarning}` : ""}`,
       );
     try {
       await removeTree({ ...ctx, signal: AbortSignal.timeout(10000) }, dir);

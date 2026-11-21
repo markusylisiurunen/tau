@@ -214,4 +214,4 @@ When generation fails, the error names the `.parts` directory and what it holds.
 | --- | --- |
 | `unavailable` | `chat` or `decisions` without an OpenRouter key. |
 
-Other failures throw without a `code`, such as a missing image or speech key, settings the model does not support, or an answer that is missing or not valid JSON. Tau rejects invalid arguments and settings before sending a request. It never retries a request, because the provider may already have charged for it, and calling again may be charged again.
+Settings that the chosen model does not support fail with `invalid_arguments` before Tau sends a request, such as `resolution` for an OpenAI image model. Other failures throw without a `code`, such as a missing image or speech key, a provider response Tau cannot use, or an answer that is missing or not valid JSON. Tau never retries a request. The provider may have charged for a request that failed, so calling again can be charged again.

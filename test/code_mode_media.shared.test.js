@@ -52,19 +52,38 @@ it("rejects incompatible image settings before creating recovery artifacts", asy
       ],
       context,
     ),
-  ).rejects.toThrow();
+  ).rejects.toMatchObject({ code: "invalid_arguments" });
   expect((await backend.listDir(".")).entries).toEqual([]);
   expect(fetchImpl).not.toHaveBeenCalled();
 });
 const script = { voices: { host: "voice" }, chunks: [[{ speaker: "host", text: "one" }]] };
 const options = { model: "eleven_v4", outputPath: "speech.wav" };
 it("writes mono PCM to a WAV in the session directory", async () => {
-  fetchImpl.mockResolvedValueOnce(new Response(Uint8Array.of(1, 2)));
+  const chunk = Buffer.alloc(64 * 1024, 1);
+  const pcm = Buffer.concat([...Array(17).fill(chunk), Buffer.from([2, 3])]);
+  const writes = vi.spyOn(backend, "runNodeScript");
+  fetchImpl.mockResolvedValueOnce(
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          for (let offset = 0; offset < pcm.length; offset += chunk.length) {
+            controller.enqueue(pcm.subarray(offset, offset + chunk.length));
+          }
+          controller.close();
+        },
+      }),
+    ),
+  );
   const result = await models.generateSpeech([script, options], context);
   const wav = Buffer.from(await files.readBytes([result.outputPath], context));
   expect(wav.toString("ascii", 0, 4)).toBe("RIFF");
   expect(wav.readUInt32LE(24)).toBe(24000);
-  expect([...wav.subarray(44)]).toEqual([1, 2]);
+  expect(wav.subarray(44).equals(pcm)).toBe(true);
+  expect(
+    writes.mock.calls
+      .filter(([script]) => script.includes("fs.appendFileSync"))
+      .map(([, , options]) => options.stdin.length),
+  ).toEqual([1024 * 1024, chunk.length + 2]);
 });
 it("retains completed speech batches after a later provider failure", async () => {
   fetchImpl
@@ -84,12 +103,13 @@ it("retains completed speech batches after a later provider failure", async () =
   expect(fetchImpl).toHaveBeenCalledTimes(2);
   expect(JSON.parse(fetchImpl.mock.calls[1][1].body).previous_request_ids).toEqual(["first"]);
   const manifest = JSON.parse(await files.readText(["speech.wav.parts/manifest.json"], context));
+  expect(manifest.batches[0]).toMatchObject({ requestId: "first", bytes: 2 });
   expect([
     ...(await files.readBytes([`speech.wav.parts/${manifest.batches[0].file}`], context)),
   ]).toEqual([1, 2]);
   await expect(files.readBytes(["speech.wav"], context)).rejects.toThrow();
 });
-it("keeps downloaded PCM bytes when a batch stream fails", async () => {
+it("keeps downloaded PCM bytes and provider metadata when a batch stream fails", async () => {
   let sent = false;
   fetchImpl.mockResolvedValueOnce(
     new Response(
@@ -105,6 +125,7 @@ it("keeps downloaded PCM bytes when a batch stream fails", async () => {
         },
         { highWaterMark: 0 },
       ),
+      { headers: { "request-id": "interrupted", "character-cost": "3" } },
     ),
   );
   await expect(models.generateSpeech([script, options], context)).rejects.toThrow();
@@ -112,6 +133,12 @@ it("keeps downloaded PCM bytes when a batch stream fails", async () => {
     ...(await files.readBytes(["speech.wav.parts/batch-0001.pcm.partial"], context)),
   ]).toEqual([4, 5]);
   await expect(files.readBytes(["speech.wav.parts/batch-0001.pcm"], context)).rejects.toThrow();
+  const manifest = JSON.parse(await files.readText(["speech.wav.parts/manifest.json"], context));
+  expect(manifest.batches[0]).toMatchObject({
+    requestId: "interrupted",
+    characterCost: "3",
+    bytes: 0,
+  });
 });
 it("returns one page of provider voices", async () => {
   fetchImpl.mockResolvedValueOnce(

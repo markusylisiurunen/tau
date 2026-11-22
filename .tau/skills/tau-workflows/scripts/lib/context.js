@@ -26,9 +26,6 @@ const EXCLUDED_SESSIONS = [
 ];
 
 const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
-const SESSION_ID =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-
 const REASON = {
   type: "string",
   description:
@@ -133,10 +130,10 @@ export async function gatherContext(run, { base, head, repo }) {
       reason: item.reason,
       export: () => exportGitHub(folder, item),
     })),
-    ...selection.sessions.map((item) => ({
+    ...selection.sessions.map((item, index) => ({
       name: `session ${item.sessionId}`,
       reason: item.reason,
-      export: () => exportSession(folder, item),
+      export: () => exportSession(folder, item, index + 1),
     })),
   ];
   for (const { name, reason, export: exportSource } of exports) {
@@ -250,13 +247,11 @@ function login(item) {
 
 // Write a session in the same compact form the gathering agent's helpers
 // give, with its summary first.
-async function exportSession(folder, { sessionId, title }) {
-  ensure(SESSION_ID.test(sessionId), `invalid session ID ${sessionId}`);
+async function exportSession(folder, { sessionId, title }, number) {
   const { session, text } = await transcript(sessionId);
   const { attributes, createdAt, updatedAt, webUrl, digest } = session;
   const created = new Date(createdAt).toISOString();
-  const source = attributes.source?.replace(/[^A-Za-z0-9_-]/g, "");
-  const file = `sessions/${created.slice(0, 10)}-${source ? `${source}-` : ""}${sessionId.slice(0, 8)}.md`;
+  const file = `sessions/${number}.md`;
   const details = [
     `- Session: ${sessionId}`,
     `- Attributes: ${Object.entries(attributes)
@@ -330,7 +325,7 @@ Work read-only. Do not change files, the repository, Git, or GitHub, and do not 
 Start with the commits and diff from base to head. Use commit messages, dates, and paths to identify the change and work out where it may have been discussed. The range may be a pull request, a branch with no pull request, or a single local commit.
 
 - If a pull request covers the range, include its discussion. Look for related issues and pull requests when the commits, GitHub discussion, or sessions give you a lead. Follow relevant links across repositories, and leave out discussions that only mention the change in passing. There may be no pull request or issue.
-- Search Tau history even when there is no GitHub discussion. Keep sessions where the user asked for the change, set a requirement, helped plan it, or made or confirmed a decision that bears on the reviewed range. Planning can happen weeks or months before the commits. Skip runs that only carried out or reported on the work. In the reason, say what the session contributes.
+- Search Tau history across sources, including Claude Code, even when there is no GitHub discussion. Keep sessions where the user asked for the change, set a requirement, helped plan it, or made or confirmed a decision that bears on the reviewed range. Planning can happen weeks or months before the commits. Skip runs that only carried out or reported on the work. In the reason, say what the session contributes.
 
 Follow credible leads and finish paging through the listings you use. Finding no relevant source is a valid result. Use \`gaps\` for sources or searches you could not check, including when the budget stops you.
 

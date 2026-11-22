@@ -57,7 +57,7 @@ export const historyEntrySchema = z.discriminatedUnion("type", [
   entryBaseSchema
     .extend({
       type: z.literal("tool"),
-      name: z.string(),
+      name: z.string().min(1).max(256),
       arguments: jsonValueSchema,
       result: jsonValueSchema,
       outcome: z.enum(["succeeded", "failed", "blocked", "cancelled"]),

@@ -59,6 +59,10 @@ it("imports before an upload is possible, retries its outbox, and appends on res
     await expect(ingest([{ session, entries: [first, first] }])).rejects.toThrow(
       "duplicate entry ID",
     );
+    const oversized = { ...first, sourceIds: Array(2100).fill("x".repeat(512)) };
+    await expect(ingest([{ session, entries: [oversized] }])).rejects.toThrow(
+      "cannot fit the remote entry limit",
+    );
     expect(calls).toEqual([]);
     expect(await ingest([{ session, entries: [first] }])).toMatchObject({
       data: { sessions: 1, appended: 1 },
@@ -73,7 +77,9 @@ it("imports before an upload is possible, retries its outbox, and appends on res
     expect(offlineOperations.map(({ type }) => type)).toEqual(["create", "append"]);
     expect((await ingest([{ session, entries: [first, second] }])).data.appended).toBe(1);
     expect(calls[2]).toMatchObject([{ type: "append", entries: [second] }]);
-    expect((await run(["read", session.sessionId])).data.entries).toEqual([first, second]);
+    const { data: transcript } = await run(["read", session.sessionId]);
+    expect(transcript.entries).toEqual([first, second]);
+    expect(transcript.session.updatedAt).toBe(second.timestamp);
     expect((await ingest([{ session, entries: [first, second] }])).data.appended).toBe(0);
     expect(calls).toHaveLength(3);
   } finally {

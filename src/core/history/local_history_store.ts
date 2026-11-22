@@ -127,7 +127,12 @@ export class LocalHistoryStore {
     });
   }
 
-  append(sessionId: string, entries: HistoryEntry[], remote?: HistoryRemoteTarget): HistoryEntry[] {
+  append(
+    sessionId: string,
+    entries: HistoryEntry[],
+    remote?: HistoryRemoteTarget,
+    { preserveTimestamps = false } = {},
+  ): HistoryEntry[] {
     if (entries.length === 0) return [];
     return this.transaction(() => {
       this.requireSession(sessionId);
@@ -175,7 +180,10 @@ export class LocalHistoryStore {
           insertSource.run(sessionId, entry.id, sourceId);
         }
       }
-      const updatedAt = Math.max(...inserted.map((entry) => entry.timestamp), Date.now());
+      const updatedAt = Math.max(
+        ...inserted.map((entry) => entry.timestamp),
+        preserveTimestamps ? 0 : Date.now(),
+      );
       this.database
         .prepare("UPDATE history_sessions SET updated_at = MAX(updated_at, ?) WHERE session_id = ?")
         .run(updatedAt, sessionId);

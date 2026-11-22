@@ -6,16 +6,15 @@ import { loadHostConfig } from "../config/ownership.js";
 import { resolveHistoryRemoteTarget } from "./config.js";
 import { HistoryManager } from "./history_manager.js";
 import { getDefaultHistoryDatabasePath, LocalHistoryStore } from "./local_history_store.js";
+import { HISTORY_REMOTE_ENTRY_MAX_BYTES, projectHistoryEntryForRemote } from "./replication.js";
 import { historyEntrySchema } from "./schema.js";
 
 const entryId = z.string().min(1).max(512);
 const timestamp = z.number().nonnegative().max(8.64e15);
 const sessionId = z.string().min(1).max(256);
-const importEntrySchema = historyEntrySchema
-  .and(z.object({ id: entryId, sourceIds: z.array(entryId).min(1), timestamp }))
-  .refine((entry) => entry.type !== "tool" || (entry.name.length > 0 && entry.name.length <= 256), {
-    message: "tool names must be 1 to 256 characters",
-  });
+const importEntrySchema = historyEntrySchema.and(
+  z.object({ id: entryId, sourceIds: z.array(entryId).min(1), timestamp }),
+);
 const historyImportSchema = z.array(
   z.strictObject({
     session: z.strictObject({
@@ -23,7 +22,8 @@ const historyImportSchema = z.array(
       createdAt: timestamp,
       attributes: z
         .record(z.string().min(1).max(64), z.string().max(1024))
-        .refine((value) => Object.keys(value).length <= 32, "at most 32 attributes are allowed"),
+        .refine((value) => Object.keys(value).length <= 32, "at most 32 attributes are allowed")
+        .meta({ maxProperties: 32 }),
     }),
     entries: z.array(importEntrySchema),
   }),
@@ -91,9 +91,28 @@ export async function runHistoryImportCommand(
   const target = resolveHistoryRemoteTarget(loadHostConfig(process.cwd(), deps), options.env);
   if (values["require-remote"] && !target)
     throw new Error("remote history is not configured on this host");
+  if (target) {
+    for (const { session, entries } of parsed.data) {
+      for (const entry of entries) {
+        if (
+          Buffer.byteLength(JSON.stringify(entry)) > HISTORY_REMOTE_ENTRY_MAX_BYTES &&
+          Buffer.byteLength(JSON.stringify(projectHistoryEntryForRemote(entry))) >
+            HISTORY_REMOTE_ENTRY_MAX_BYTES
+        ) {
+          throw new Error(
+            `history import entry '${entry.id}' in session '${session.sessionId}' cannot fit the remote entry limit`,
+          );
+        }
+      }
+    }
+  }
   const store = new LocalHistoryStore(getDefaultHistoryDatabasePath(deps.env.home()));
+  const reported = new Set<string>();
   const manager = new HistoryManager(store, {
-    reportReplicationFailure: (diagnostic) => console.error(JSON.stringify(diagnostic)),
+    reportReplicationFailure: (diagnostic) => {
+      if (diagnostic.quarantined && diagnostic.sessionId) reported.add(diagnostic.sessionId);
+      console.error(JSON.stringify(diagnostic));
+    },
   });
   let appended = 0;
   try {
@@ -101,14 +120,21 @@ export async function runHistoryImportCommand(
       store.createSession(session, target);
       // Keep each SQLite statement below its parameter limit.
       for (let index = 0; index < entries.length; index += 250) {
-        appended += store.append(
-          session.sessionId,
-          entries.slice(index, index + 250),
-          target,
-        ).length;
+        appended += store.append(session.sessionId, entries.slice(index, index + 250), target, {
+          preserveTimestamps: true,
+        }).length;
       }
     }
-    if (target) await manager.syncReplication(target);
+    if (target) {
+      await manager.syncReplication(target);
+      for (const failure of store.listReplicationFailures(target.endpoint)) {
+        if (!reported.has(failure.sessionId)) {
+          console.error(
+            JSON.stringify({ event: "history_replication_failed", quarantined: true, ...failure }),
+          );
+        }
+      }
+    }
     options.stdout(JSON.stringify({ sessions: parsed.data.length, appended }));
   } finally {
     manager.close();

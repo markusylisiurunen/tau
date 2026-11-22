@@ -30,6 +30,10 @@ export class ThreadedHistoryStore implements HistoryStore {
     return this.request("createSession", args);
   }
 
+  hasEntry(...args: Parameters<LocalHistoryStore["hasEntry"]>) {
+    return this.request("hasEntry", args);
+  }
+
   append(...args: Parameters<LocalHistoryStore["append"]>) {
     return this.request("append", args);
   }

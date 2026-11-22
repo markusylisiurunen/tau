@@ -11,19 +11,50 @@ import { historyEntrySchema } from "./schema.js";
 
 const entryId = z.string().min(1).max(512);
 const timestamp = z.number().nonnegative().max(8.64e15);
-const sessionId = z.string().min(1).max(256);
-const importEntrySchema = historyEntrySchema.and(
-  z.object({ id: entryId, sourceIds: z.array(entryId).min(1), timestamp }),
+const sessionId = z
+  .string()
+  .min(1)
+  .max(256)
+  .regex(/^\S(?:[\s\S]*\S)?$/u, "session IDs cannot start or end with whitespace");
+// Zod's record parser would silently drop this key.
+function hasProtoKey(value: unknown): boolean {
+  return typeof value === "object" && value !== null && Object.hasOwn(value, "__proto__");
+}
+
+const importEntrySchema = z.preprocess(
+  (value, ctx) => {
+    if (typeof value === "object" && value !== null && "type" in value && value.type === "tool") {
+      for (const field of ["arguments", "result"] as const) {
+        if (hasProtoKey((value as Record<string, unknown>)[field])) {
+          ctx.addIssue({
+            code: "custom",
+            path: [field],
+            message: "__proto__ is not allowed as a record key",
+          });
+        }
+      }
+    }
+    return value;
+  },
+  historyEntrySchema.and(z.object({ id: entryId, sourceIds: z.array(entryId).min(1), timestamp })),
 );
 const historyImportSchema = z.array(
   z.strictObject({
     session: z.strictObject({
       sessionId,
       createdAt: timestamp,
-      attributes: z
-        .record(z.string().min(1).max(64), z.string().max(1024))
-        .refine((value) => Object.keys(value).length <= 32, "at most 32 attributes are allowed")
-        .meta({ maxProperties: 32 }),
+      attributes: z.preprocess(
+        (value, ctx) => {
+          if (hasProtoKey(value)) {
+            ctx.addIssue({ code: "custom", message: "__proto__ is not allowed as a record key" });
+          }
+          return value;
+        },
+        z
+          .record(z.string().min(1).max(64), z.string().max(1024))
+          .refine((value) => Object.keys(value).length <= 32, "at most 32 attributes are allowed")
+          .meta({ maxProperties: 32 }),
+      ),
     }),
     entries: z.array(importEntrySchema),
   }),
@@ -91,21 +122,6 @@ export async function runHistoryImportCommand(
   const target = resolveHistoryRemoteTarget(loadHostConfig(process.cwd(), deps), options.env);
   if (values["require-remote"] && !target)
     throw new Error("remote history is not configured on this host");
-  if (target) {
-    for (const { session, entries } of parsed.data) {
-      for (const entry of entries) {
-        if (
-          Buffer.byteLength(JSON.stringify(entry)) > HISTORY_REMOTE_ENTRY_MAX_BYTES &&
-          Buffer.byteLength(JSON.stringify(projectHistoryEntryForRemote(entry))) >
-            HISTORY_REMOTE_ENTRY_MAX_BYTES
-        ) {
-          throw new Error(
-            `history import entry '${entry.id}' in session '${session.sessionId}' cannot fit the remote entry limit`,
-          );
-        }
-      }
-    }
-  }
   const store = new LocalHistoryStore(getDefaultHistoryDatabasePath(deps.env.home()));
   const reported = new Set<string>();
   const manager = new HistoryManager(store, {
@@ -116,6 +132,22 @@ export async function runHistoryImportCommand(
   });
   let appended = 0;
   try {
+    if (target) {
+      for (const { session, entries } of parsed.data) {
+        for (const entry of entries) {
+          if (
+            Buffer.byteLength(JSON.stringify(entry)) > HISTORY_REMOTE_ENTRY_MAX_BYTES &&
+            Buffer.byteLength(JSON.stringify(projectHistoryEntryForRemote(entry))) >
+              HISTORY_REMOTE_ENTRY_MAX_BYTES &&
+            !store.hasEntry(session.sessionId, entry.id)
+          ) {
+            throw new Error(
+              `history import entry '${entry.id}' in session '${session.sessionId}' cannot fit the remote entry limit`,
+            );
+          }
+        }
+      }
+    }
     for (const { session, entries } of parsed.data) {
       store.createSession(session, target);
       // Keep each SQLite statement below its parameter limit.

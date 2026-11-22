@@ -127,6 +127,14 @@ export class LocalHistoryStore {
     });
   }
 
+  hasEntry(sessionId: string, entryId: string): boolean {
+    return (
+      this.database
+        .prepare("SELECT 1 FROM history_entries WHERE session_id = ? AND entry_id = ?")
+        .get(sessionId, entryId) !== undefined
+    );
+  }
+
   append(
     sessionId: string,
     entries: HistoryEntry[],

@@ -31,6 +31,7 @@ it("imports before an upload is possible, retries its outbox, and appends on res
         [cli, "history", ...args],
         {
           cwd: home,
+          maxBuffer: 2 * 1024 * 1024,
           env: { ...process.env, HOME: home, TAU_OFFLINE: "1", TAU_HISTORY_API_KEY: "test" },
         },
         (error, stdout, stderr) => {
@@ -46,6 +47,35 @@ it("imports before an upload is possible, retries its outbox, and appends on res
     await expect(ingest([{ session, entries: [first] }])).rejects.toThrow(
       "remote history is not configured",
     );
+    for (const sessionId of [" ", " example", "example\n"]) {
+      await expect(
+        run(["import"], [{ session: { ...session, sessionId }, entries: [first] }]),
+      ).rejects.toThrow();
+    }
+    const protoRecord = { ["__proto__"]: "example" };
+    const tool = {
+      id: first.id,
+      sourceIds: first.sourceIds,
+      timestamp: first.timestamp,
+      type: "tool",
+      name: "example",
+      arguments: {},
+      result: {},
+      outcome: "succeeded",
+    };
+    for (const invalid of [
+      { session: { ...session, attributes: protoRecord }, entries: [first] },
+      { session, entries: [{ ...tool, arguments: protoRecord }] },
+      { session, entries: [{ ...tool, result: protoRecord }] },
+    ]) {
+      await expect(run(["import"], [invalid])).rejects.toThrow();
+    }
+    const oversized = { ...first, sourceIds: Array(2100).fill("x".repeat(512)) };
+    const localSession = { ...session, sessionId: "external:local" };
+    expect(
+      (await run(["import"], [{ session: localSession, entries: [oversized] }])).data.appended,
+    ).toBe(1);
+
     await new Promise((resolve) => remote.listen(0, "127.0.0.1", resolve));
     const configDir = join(home, ".config", "tau");
     await mkdir(configDir, { recursive: true });
@@ -59,7 +89,6 @@ it("imports before an upload is possible, retries its outbox, and appends on res
     await expect(ingest([{ session, entries: [first, first] }])).rejects.toThrow(
       "duplicate entry ID",
     );
-    const oversized = { ...first, sourceIds: Array(2100).fill("x".repeat(512)) };
     await expect(ingest([{ session, entries: [oversized] }])).rejects.toThrow(
       "cannot fit the remote entry limit",
     );
@@ -82,8 +111,14 @@ it("imports before an upload is possible, retries its outbox, and appends on res
     expect(transcript.session.updatedAt).toBe(second.timestamp);
     expect((await ingest([{ session, entries: [first, second] }])).data.appended).toBe(0);
     expect(calls).toHaveLength(3);
+
+    expect(
+      (await ingest([{ session: localSession, entries: [oversized, second] }])).data.appended,
+    ).toBe(1);
+    expect(calls[3].flatMap((operation) => operation.entries ?? [])).toEqual([second]);
+    expect((await run(["read", localSession.sessionId])).data.entries).toEqual([oversized, second]);
   } finally {
     await new Promise((resolve) => remote.close(resolve));
     await rm(home, { recursive: true, force: true });
   }
-}, 20_000);
+}, 40_000);

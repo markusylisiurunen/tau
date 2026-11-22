@@ -5,6 +5,7 @@ import { loadHostConfig } from "../config/ownership.js";
 import { resolveHistoryRemoteTarget } from "./config.js";
 import { historyExportSchema, readHistoryExport, renderHistoryMarkdown } from "./export.js";
 import { HistoryManager } from "./history_manager.js";
+import { runHistoryImportCommand } from "./import.js";
 import { getDefaultHistoryDatabasePath, LocalHistoryStore } from "./local_history_store.js";
 import { RemoteHistoryClient } from "./remote_history_client.js";
 import { destroyHistoryService, setupHistoryService } from "./setup.js";
@@ -25,6 +26,8 @@ export function printHistoryHelp(log: (line: string) => void = console.log): voi
       "  tau history destroy --yes",
       "  tau history read <id> [--source local|remote] [--format json|markdown-compact|markdown-full]",
       "  tau history read --schema",
+      "  tau history import [--require-remote] < transcripts.json",
+      "  tau history import --schema",
       "  tau history status",
       "  tau history retry --session <session-id>",
     ].join("\n"),
@@ -45,6 +48,10 @@ export async function runHistoryCommand(
   try {
     if (subcommand === "read") {
       await runHistoryReadCommand(args, { ...options, stdout });
+      return;
+    }
+    if (subcommand === "import") {
+      await runHistoryImportCommand(args, { ...options, stdout });
       return;
     }
     if (subcommand === "status" || subcommand === "retry") {

@@ -26,6 +26,14 @@ Search covers main sessions by default. It can filter on creation attributes suc
 
 `tau history read <id>` prints a session's whole recorded transcript from this host's history database as JSON. `--format markdown-compact` gives readable text with tool payloads shortened, and `markdown-full` keeps them in full. The JSON lists child sessions in `session.childSessionIds`. `--schema` prints the JSON Schema, and `--source remote` reads from the shared service described below.
 
+## Import transcripts
+
+`tau history import` adds sessions recorded by other tools, so they can be searched and read like Tau sessions. It reads a JSON array of sessions with their entries from stdin, and `--schema` prints its format. Entries use the same shape as `tau history read` output.
+
+Give each session and entry a stable ID, and rerun the import with the whole transcript when it grows. Entries already in history are skipped, and new ones are appended in input order. A session's `createdAt` and `attributes` cannot change after the first import. Set an attribute such as `source` to tell imported sessions apart in search.
+
+With the shared service configured, imported entries replicate like any other. Entries imported without it stay local. A later import skips them as existing entries, so configuring the service afterwards does not upload them. `--require-remote` prevents this by failing before it writes anything when this host has no remote configured.
+
 ## Shared remote service
 
 Tau can deploy a Cloudflare service, owned by one person or team, that collects history from several hosts. It adds search across hosts, generated titles and summaries, and a web viewer. It needs the Cloudflare Workers Paid plan, Wrangler on `PATH`, and a zone for the hostname.

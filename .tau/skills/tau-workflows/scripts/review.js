@@ -321,7 +321,7 @@ How to weigh what the sources say:
 - Earlier automated review findings in the sources do not show that a problem exists. A finding that was declined stays declined, unless the code has changed in a way that undermines the reason given.
 - A decision says what was intended, not that the code does it, so a finding that the code falls short of a decision stands.
 
-When the sources decide whether you drop a finding or lower its priority, cite the file and entry numbers that show the decision, such as \`sessions/2026-11-02-cowork-1a2b3c4d.md\` entries 14–16, in the dropped reason or the finding. A decision you cannot point to in an entry does not count, even when the manifest suggests it.
+When the sources decide whether you drop a finding or lower its priority, cite the file and entry numbers that show the decision, such as \`sessions/2.md\` entries 14–16, in the dropped reason or the finding. A decision you cannot point to in an entry does not count, even when the manifest suggests it.
 
 ${manifest}
 `;

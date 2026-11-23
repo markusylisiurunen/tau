@@ -31,6 +31,7 @@ Pass `since`, `sessionIds`, or both. Subagent sessions are included only by ID. 
 | Telegram conversations                        | `{ "source": "telegram" }`                                               |
 | One assistant, such as Ada                    | `{ "source": "telegram", "project": "ada" }`                             |
 | Terminal sessions                             | `{ "source": "tui" }`                                                    |
+| Claude Code sessions                          | `{ "source": "claude-code" }`                                            |
 | Cowork sessions                               | `{ "source": "cowork" }`                                                 |
 | One Cowork workflow, such as PR conversations | `{ "source": "cowork", "cowork_workflow": "pull-request-conversation" }` |
 | Sessions run in a repository                  | `{ "repository": { "contains": "github.com/markusylisiurunen/tau" } }`   |

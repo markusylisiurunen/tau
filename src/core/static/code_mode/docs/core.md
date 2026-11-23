@@ -59,7 +59,12 @@ type TruncateLimit = ({ maxChars: number } | { maxLines: number }) & {
 };
 ```
 
-- `printText` accepts only strings, so select the fields you need and format them as short lines. Include the IDs you will use in later calls. Use `JSON.stringify` on selected values only when their structure matters.
+- `printText` accepts only strings. Any other value, such as an object, array, or number, throws a `TypeError`. Select the fields you need and format them as short lines, including the IDs you will use in later calls. Use `JSON.stringify` on selected values only when their structure matters.
+
+  ```js
+  printText(issues.map((issue) => `${issue.number} ${issue.title}`).join("\n")); // works
+  printText(issues); // throws
+  ```
 - `printImage` forwards JPEG, PNG, or WebP bytes, or a block with base64 `data` such as MCP tools return. Await it. Text and images come back in the order you print them. Never print base64 data as text.
 - `truncate` shortens text to a positive number of characters or lines. The `…` marker does not count toward the limit, and in line mode it takes its own line. Text that fits comes back unchanged.
 - `docs()` returns this page. `docs(name)` returns the reference of an available package, or another page the tool description names.

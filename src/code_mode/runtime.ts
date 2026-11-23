@@ -173,7 +173,14 @@ export function describeTauCodeModePackages(
       `- ${CORE_PACKAGE}: Read program input, print text and images, truncate long text, and load package references.`,
       ...packages.map(({ name, description }) => `- ${name}: ${description}`),
     ].join("\n"),
-    `Before you first use a package, read its reference unless it is already in the conversation. Load references in a program of their own: \`import { docs, printText } from "${CORE_PACKAGE}"; printText(await docs());\` prints the general guide and the ${CORE_PACKAGE} reference, and \`docs(${JSON.stringify(example)})\` returns the reference of that package. Load only the pages you need.`,
+    `Read the general guide before you write any other program, unless it is already in the conversation. It holds the rules every program follows, such as what printText accepts, and the package references do not repeat them. Load it in a program of its own: \`import { docs, printText } from "${CORE_PACKAGE}"; printText(await docs());\`. Before you first use another package, read its reference unless it is already in the conversation. Load it in its own program, for example with \`docs(${JSON.stringify(example)})\`. Load only the pages you need.`,
+    [
+      "One of those rules: printText accepts only strings, so passing an object or array throws.",
+      "```js",
+      `printText(\`\${name}: \${count}\`); // works`,
+      "printText({ name, count }); // throws",
+      "```",
+    ].join("\n"),
   ].join("\n\n");
 }
 

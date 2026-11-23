@@ -138,7 +138,8 @@ export function createCodeTool(options: {
     name: TOOL_NAME_CODE,
     description: [
       "Run a JavaScript program that imports Tau packages, either inline or from a saved .js file. Use it to pass results between dependent calls, run independent work in parallel, or reduce large results before printing a short answer. A direct tool call is simpler when a program adds nothing.",
-      `${describeTauCodeModePackages(options.summaries)} \`docs("examples")\` returns recipes that combine packages.`,
+      describeTauCodeModePackages(options.summaries),
+      '`docs("examples")` returns recipes that combine packages.',
       "Only printed output comes back. Side effects are not rolled back, and programs are not retried automatically.",
     ].join("\n\n"),
     parameters: Type.Object(
@@ -153,7 +154,7 @@ export function createCodeTool(options: {
         ),
         maxOutputTokens: Type.Optional(
           Type.Integer({
-            description: CODE_MODE_MAX_OUTPUT_TOKENS_DESCRIPTION,
+            description: `${CODE_MODE_MAX_OUTPUT_TOKENS_DESCRIPTION} Cannot be combined with background: true.`,
             minimum: 1,
             maximum: TAU_CODE_MODE_MAX_OUTPUT_TOKENS,
           }),

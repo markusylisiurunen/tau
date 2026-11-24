@@ -223,19 +223,19 @@
     },
     ".cowork/workflows/implement.md": {
       "type": "file",
-      "hash": "9f1a3555eadd6389be846823d74613aef560ece3f04c5cba0c0360944f733a06"
+      "hash": "ecaf6acc1d685114b0b988b7dda60abc520735f2ff777413db0cb872970ef316"
     },
     ".cowork/workflows/improve.md": {
       "type": "file",
-      "hash": "702aafc3ee96ffa5ad93760a7ed1babcb29b4eb799e0bcca1cd14be31a348ff6"
+      "hash": "60d5d7aa83ef9116cac367c344d7b72bf6b97eec7c9fb563a49985025d3b270d"
     },
     ".cowork/workflows/prune.md": {
       "type": "file",
-      "hash": "43a1371ff7fbc2a4be39f5195c8c395ecce6e18a084ebf4b277c6c0e48c9b038"
+      "hash": "de5a61ad2dcb626fc0dcac83d62cbccaf6f70f3a56e90bef1c1bca3312f0fba7"
     },
     ".cowork/workflows/review-and-improve.md": {
       "type": "file",
-      "hash": "2f13d411fa6582a35e968856f3818a5a30ec2170dd48a95d6886b41cc5e76099"
+      "hash": "5825739524eb5f49e2cb54ac1d86ddb0a37283126aa88a0925d8a14d89accd4a"
     },
     ".cowork/workflows/review.md": {
       "type": "file",
@@ -279,11 +279,11 @@
     },
     ".tau/prompts/implement.md": {
       "type": "file",
-      "hash": "ce23f9ccd01c0369367ba91d05b788a8c2fef98a17015d6ad86b06e3796b6b25"
+      "hash": "39d55df8cb58a6d5602e9cd3db9d0aa9976d803f9fd2c2f78842a7d1f0d2a165"
     },
     ".tau/prompts/improve-branch.md": {
       "type": "file",
-      "hash": "ac7baabdb3b5a09d61ae1032548a2fea13d2efd6100454309ad1b7e0d7242649"
+      "hash": "d3389809405f7a5f24f8ab7edf7160ef2dfcfc5fd4437de207d19ca6b9a71037"
     },
     ".tau/prompts/iterate-ui.md": {
       "type": "file",
@@ -299,15 +299,15 @@
     },
     ".tau/prompts/prune-branch.md": {
       "type": "file",
-      "hash": "da128d7e6e4444ef18f42e234edc722b827401c61bb6f7698d5c80b76e06d3b8"
+      "hash": "0f7f1bd4021f4f8c09cfe3d5ff77063b24bae6544c7e1e87520862b03d5f5f22"
     },
     ".tau/prompts/review-and-improve-branch.md": {
       "type": "file",
-      "hash": "7acac653e4bad2abdf43913fe62837df099290bece8a7bdbfd5a347cf78c1ffa"
+      "hash": "0ac744bb085b6d0909b6bbba3a2b4ccd36bf0b7f8b70ae0e745b8834016dac04"
     },
     ".tau/prompts/review-branch.md": {
       "type": "file",
-      "hash": "82337f134dd2ecfb1685a001fa3a0567e376abd034fb4b367c2cf80be2fd35ad"
+      "hash": "b8b2bb411fefd7150ab7e5180fc983da819a4f8e04dff7fcae2d432f941293e9"
     },
     ".tau/prompts/rewrite-branch.md": {
       "type": "file",

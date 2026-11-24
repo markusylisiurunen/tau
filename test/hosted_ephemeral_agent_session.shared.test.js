@@ -81,7 +81,12 @@ async function createSession(recordUsage = vi.fn(), config = {}, reasoning = "me
     emitUpdate,
     recordUsage,
     session: await HostedEphemeralAgentSession.create({
-      cwd: "/repo",
+      promptContext: {
+        cwd: "/repo",
+        home: "/home/user",
+        platform: "linux",
+        includeAgentContext: false,
+      },
       jobs,
       contextId: "ephemeral-1",
       sessionId: "session-1",

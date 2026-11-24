@@ -4,7 +4,8 @@ import { isDeepStrictEqual } from "node:util";
 import type { Api, AssistantMessage, Message, Model, ToolCall } from "@earendil-works/pi-ai";
 import type { AgentStateRecovery, AgentSubturnResult } from "../core/agent/agent_runtime.js";
 import type { AgentEvent, AgentTurnFailure } from "../core/agent/events.js";
-import { resolvePromptTemplateWithBackend, type SessionConfig } from "../core/config/index.js";
+import { parsePrompt } from "../core/config/content_loader.js";
+import type { SessionConfig } from "../core/config/index.js";
 import { AgentHistoryRecorder } from "../core/history/agent_history_recorder.js";
 import type { HistoryManager } from "../core/history/history_manager.js";
 import { HistoryRecorder } from "../core/history/recorder.js";
@@ -14,14 +15,13 @@ import type { RemoteModelCatalogSnapshot } from "../core/models/remote_catalog.j
 import { resolvePersonaSelection } from "../core/persona_selection.js";
 import { ChatRuntime, type ChatRuntimeEnvironment } from "../core/runtime/chat_runtime.js";
 import type { CoreDeps } from "../core/runtime/deps.js";
-import type { RuntimePromptBootstrap } from "../core/runtime/runtime_bootstrap.js";
-import type { SessionPromptComposition } from "../core/runtime/session_prompt_composer.js";
 import {
   type AutoCompactDefaults,
   getEffectiveAutoCompactThresholdTokens,
 } from "../core/session/auto_compaction_threshold.js";
 import type { SubagentEvent } from "../core/subagents/types.js";
 import type { ToolActivity } from "../core/tools/activity.js";
+import { MAX_COMMAND_CAPTURE_BYTES } from "../core/tools/execution_backend.js";
 import { buildToolRunPresentation, TOOL_UI_FACET_VERSION } from "../core/tools/presentation.js";
 import type { Persona, ReasoningEffort } from "../core/types.js";
 import {
@@ -107,9 +107,12 @@ import {
 import { LEGACY_SESSION_MODEL_CONTEXT_KEY } from "../store/session_snapshot_migrations.js";
 import type { SessionStore } from "../store/session_store.js";
 import { ClientToolBroker } from "./client_tool_broker.js";
-import { createExecutionEnvironmentSubagentPromptResolver } from "./execution_runtime.js";
+import {
+  createExecutionEnvironmentSubagentPromptResolver,
+  resolveDirectoryPromptContext,
+} from "./execution_runtime.js";
 import { HostedEphemeralAgentSession } from "./hosted_ephemeral_agent_session.js";
-import type { SessionBootstrap } from "./session_bootstrap.js";
+import { promptReferences, type SessionBootstrap } from "./session_bootstrap.js";
 import {
   SessionExecBusyError,
   SessionRetryUnavailableError,
@@ -158,7 +161,6 @@ export type LocalSessionHostOptions = LocalSessionHostSessionOptions & {
 export type LocalHostedSession = TauHostedSession & {
   runtime: ChatRuntime;
   session: ChatRuntime;
-  promptBootstrap: RuntimePromptBootstrap;
 };
 
 export class LocalSessionHost implements TauSessionHost {
@@ -391,7 +393,6 @@ export class LocalSessionHost implements TauSessionHost {
       bootstrap,
       catalog,
       mcp,
-      remoteCatalog,
       committedSnapshot,
       createParams,
       forceNextSnapshotRevision,
@@ -406,7 +407,6 @@ export class LocalSessionHost implements TauSessionHost {
     bootstrap: LocalSessionResolvedBootstrap,
     catalog: SessionProtocolContentCatalogSnapshot,
     mcp: McpManager,
-    remoteCatalog: RemoteModelCatalogSnapshot,
     committedSnapshot?: SessionProtocolSnapshot,
     createParams?: SessionProtocolCreateParams,
     forceNextSnapshotRevision = false,
@@ -424,14 +424,6 @@ export class LocalSessionHost implements TauSessionHost {
       sessionStartedAt: createdAt,
       mcpServers: mcp.listServers(),
     });
-    const initialPromptComposition = committedSnapshot
-      ? await promptCompositionFromSnapshot(committedSnapshot, async () =>
-          resolveSubagentPrompt({
-            cwd: executionEnvironment.snapshot().cwd,
-            persona: bootstrap.persona,
-          }),
-        )
-      : undefined;
     const runtime = ChatRuntime.create({
       sessionId,
       createdAt,
@@ -465,7 +457,6 @@ export class LocalSessionHost implements TauSessionHost {
         };
       },
       mcp,
-      initialPromptComposition,
       config: bootstrap.config,
       recordUsage: this.sessionOptions.recordUsage,
       deps: this.sessionOptions.deps,
@@ -485,11 +476,9 @@ export class LocalSessionHost implements TauSessionHost {
     );
     hostedSession = new LocalHostedSessionHandle(
       runtime,
-      runtimeContext.promptBootstrap,
       catalog,
       mcp,
       bootstrap,
-      remoteCatalog,
       this.sessionOptions.getRemoteModelCatalog,
       this.sessionOptions.includeAgentContext,
       executionEnvironment,
@@ -1001,11 +990,9 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
   constructor(
     readonly runtime: ChatRuntime,
-    readonly promptBootstrap: RuntimePromptBootstrap,
     private catalog: SessionProtocolContentCatalogSnapshot,
     private readonly mcp: McpManager,
     private bootstrap: LocalSessionResolvedBootstrap,
-    private remoteCatalog: RemoteModelCatalogSnapshot,
     private readonly getLatestRemoteModelCatalog: () => RemoteModelCatalogSnapshot,
     private readonly includeAgentContext: boolean,
     private readonly executionEnvironment: ExecutionEnvironment,
@@ -1637,44 +1624,24 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     overrides?: SessionProtocolPersonaOverrides,
   ): Promise<SessionProtocolSnapshot> {
     this.assertActive();
-    return await this.trackActiveWork(async () => {
-      const runtimeConfig = await this.executionEnvironment.resolveRuntimeConfig(
-        this.executionEnvironment.snapshot().cwd,
-        { remoteCatalog: this.remoteCatalog },
-      );
-      const personas = runtimeConfig.personas.map(clonePersona);
+    return await this.enqueueMutation(async () => {
       const selectedPersona = resolvePersonaSelection(
-        personas,
-        runtimeConfig.config.defaultPersona,
+        this.bootstrap.personas,
+        this.bootstrap.config.defaultPersona,
         personaId,
         overrides,
       );
-      const runtimeContext = await this.executionEnvironment.resolveRuntimeContext({
-        cwd: this.executionEnvironment.snapshot().cwd,
-        discoveredSkills: runtimeConfig.skills,
-        includeAgentContext: this.includeAgentContext,
-      });
-      return await this.enqueueConfigurationMutation(async () => {
-        this.runtime.setRuntimeConfig(
-          runtimeConfig.config,
-          runtimeConfig.bootstrap.modelResolver.resolveModel,
-        );
-        this.runtime.updatePromptContext(runtimeContext.promptBootstrap.promptContext);
+      try {
         this.runtime.setPersona(selectedPersona);
         this.runtime.setAutoCompactThreshold(overrides?.autoCompactThresholdTokens ?? null);
-        this.bootstrap = {
-          persona: clonePersona(selectedPersona),
-          discoveredSkills: structuredClone(runtimeConfig.skills),
-          personas: personas.map(clonePersona),
-          prompts: structuredClone(runtimeConfig.prompts),
-          modelResolver: runtimeConfig.bootstrap.modelResolver.resolveModel,
-          config: runtimeConfig.config,
-        };
-        this.catalog = createContentCatalogSnapshot(this.bootstrap, this.catalog.mcp);
+        this.bootstrap = { ...this.bootstrap, persona: clonePersona(selectedPersona) };
         const snapshot = await this.commitSnapshot();
         this.emitSnapshotReset("configuration", snapshot);
         return snapshot;
-      });
+      } catch (error) {
+        this.invalidateProjection(error);
+        throw error;
+      }
     });
   }
 
@@ -1691,13 +1658,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       }
 
       const personas = runtimeConfig.personas.map(clonePersona);
-      const currentPersonaId = this.runtime.persona.id.toLowerCase();
-      const nextPersona = clonePersona(
-        personas.find((persona) => persona.id.toLowerCase() === currentPersonaId) ?? personas[0]!,
-      );
-      if (nextPersona.id.toLowerCase() === currentPersonaId) {
-        nextPersona.settings = structuredClone(this.runtime.persona.settings);
-      }
       const runtimeContext = await this.executionEnvironment.resolveRuntimeContext({
         cwd: this.executionEnvironment.snapshot().cwd,
         discoveredSkills: runtimeConfig.skills,
@@ -1705,18 +1665,24 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       });
 
       return await this.enqueueConfigurationMutation(async () => {
+        const currentPersonaId = this.runtime.persona.id.toLowerCase();
+        const nextPersona = clonePersona(
+          personas.find((persona) => persona.id.toLowerCase() === currentPersonaId) ?? personas[0]!,
+        );
+        if (nextPersona.id.toLowerCase() === currentPersonaId) {
+          nextPersona.settings = structuredClone(this.runtime.persona.settings);
+        }
         this.runtime.setRuntimeConfig(
           runtimeConfig.config,
           runtimeConfig.bootstrap.modelResolver.resolveModel,
         );
         this.runtime.updatePromptContext(runtimeContext.promptBootstrap.promptContext);
         this.runtime.setPersona(nextPersona);
-        this.remoteCatalog = remoteCatalog;
         this.bootstrap = {
           persona: clonePersona(nextPersona),
           discoveredSkills: structuredClone(runtimeConfig.skills),
           personas: personas.map(clonePersona),
-          prompts: structuredClone(runtimeConfig.prompts),
+          prompts: promptReferences(runtimeConfig.prompts),
           modelResolver: runtimeConfig.bootstrap.modelResolver.resolveModel,
           config: runtimeConfig.config,
         };
@@ -1751,15 +1717,16 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   ): Promise<SessionProtocolResolvePromptResult> {
     this.assertActive();
     return await this.trackActiveWork(async () => {
-      const executionSnapshot = this.executionEnvironment.snapshot();
-      const prompt = await resolvePromptTemplateWithBackend({
-        backend: this.executionEnvironment.getToolExecutionBackend(),
-        cwd: executionSnapshot.cwd,
-        home: executionSnapshot.home,
-        promptId,
-      });
+      const entry = this.bootstrap.prompts.find(
+        (p) => p.id.toLowerCase() === promptId.toLowerCase(),
+      );
+      if (!entry) throw new Error(`unknown prompt '${promptId}'`);
+      const file = await this.executionEnvironment
+        .getToolExecutionBackend()
+        .readFileBinary(entry.path, { maxBytes: MAX_COMMAND_CAPTURE_BYTES });
+      const { prompt, error } = parsePrompt(entry.path, file.content.toString("utf8"));
       if (!prompt) {
-        throw new Error(`unknown prompt '${promptId}'`);
+        throw new Error(error);
       }
       return { promptId: prompt.id, text: prompt.template };
     });
@@ -1909,15 +1876,22 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     this.assertActive();
     return await this.runActiveWork(async (signal) => {
       const contextId = `ephemeral-${randomUUID()}`;
-      const session = await HostedEphemeralAgentSession.create({
-        cwd: resolve(this.executionEnvironment.snapshot().cwd, options.workingDirectory ?? "."),
+      const cwd = resolve(this.runtime.promptContext.cwd, options.workingDirectory ?? ".");
+      const session = HostedEphemeralAgentSession.create({
+        promptContext:
+          cwd === this.runtime.promptContext.cwd
+            ? this.runtime.promptContext
+            : await resolveDirectoryPromptContext(
+                this.executionEnvironment,
+                cwd,
+                this.includeAgentContext,
+              ),
         jobs: this.runtime.jobs,
         contextId,
         sessionId: this.sessionId,
         sessionStartedAt: this.createdAt,
         persona: this.runtime.persona,
         config: this.runtime.config,
-        includeAgentContext: this.includeAgentContext,
         executionEnvironment: this.executionEnvironment,
         instructions: options.instructions,
         history: this.runtime.historyQuery,
@@ -3660,23 +3634,6 @@ function normalizeRecoveredSnapshot(snapshot: SessionProtocolSnapshot): {
   return { snapshot: recovered, changed, legacyAgentState };
 }
 
-async function promptCompositionFromSnapshot(
-  snapshot: SessionProtocolSnapshot,
-  composeSubagentPrompt: () => Promise<string>,
-): Promise<SessionPromptComposition> {
-  const systemMessage = snapshot.messages[0];
-  if (systemMessage?.message.role !== "system") {
-    throw new Error(`session snapshot '${snapshot.sessionId}' is missing its system message`);
-  }
-  return {
-    baseSystemPrompt: systemMessage.message.content,
-    environmentTag: snapshot.bootstrap.prompt.environmentTag,
-    // Sessions whose persona could not delegate stored no worker prompt, so compose one now.
-    subagentSystemPrompt:
-      snapshot.bootstrap.prompt.subagentSystemPrompt ?? (await composeSubagentPrompt()),
-  };
-}
-
 function isCoreMessage(
   message: SessionProtocolMessage["message"] | Message,
 ): message is Exclude<Message, { role: "system" }> | IntermediateSystemMessage {
@@ -3771,7 +3728,7 @@ function cloneResolvedBootstrap(
     persona: clonePersona(bootstrap.persona),
     discoveredSkills: structuredClone(bootstrap.discoveredSkills),
     personas: bootstrap.personas.map(clonePersona),
-    prompts: structuredClone(bootstrap.prompts),
+    prompts: promptReferences(bootstrap.prompts),
     modelResolver: bootstrap.modelResolver,
     config: structuredClone(bootstrap.config),
   };

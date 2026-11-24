@@ -76,8 +76,9 @@ describe("runtime config snapshot", () => {
   });
 
   it("keeps host and client settings on the target out of the result", async () => {
-    await withTempHome(async (home) => {
-      const repo = join(home, "repo");
+    await withTempHome(async (root) => {
+      const home = join(root, "personal");
+      const repo = join(root, "repo");
       await mkdir(join(home, ".config", "tau"), { recursive: true });
       await mkdir(repo, { recursive: true });
       await writeFile(

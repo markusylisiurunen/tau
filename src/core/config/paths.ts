@@ -1,4 +1,4 @@
-import { dirname, join, parse, resolve, sep } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type { ConfigDeps } from "./deps.js";
 
 export type ConfigLevelScope = "global" | "project";
@@ -40,38 +40,26 @@ function isDirectory(deps: ConfigDeps, path: string): boolean {
   }
 }
 
+function projectRoots(cwd: string): string[] {
+  const roots: string[] = [];
+  for (let dir = resolve(cwd); ; dir = dirname(dir)) {
+    roots.push(dir);
+    if (dirname(dir) === dir) return roots.reverse();
+  }
+}
+
+export function configLevels(home: string, cwd: string): ConfigLevel[] {
+  return [
+    buildLevel(home, join(home, ".config", "tau"), "global"),
+    ...projectRoots(cwd).map((root) => buildLevel(root, join(root, ".tau"), "project")),
+  ];
+}
+
 export function resolveConfigLevels(deps: ConfigDeps, options: { cwd: string }): ConfigLevel[] {
-  const cwdAbs = resolve(options.cwd);
-  const homeAbs = resolve(deps.env.home());
-
-  const withinHome = cwdAbs === homeAbs || cwdAbs.startsWith(homeAbs + sep);
-  const stopAbs = withinHome ? homeAbs : parse(cwdAbs).root;
-
-  const levels: ConfigLevel[] = [];
-  if (withinHome) {
-    levels.push(buildLevel(homeAbs, join(homeAbs, ".config", "tau"), "global"));
-  }
-
-  const projectLevels: ConfigLevel[] = [];
-  let dir = cwdAbs;
-
-  while (true) {
-    const configDir = join(dir, ".tau");
-    const agentsSkillsDir = join(dir, ".agents", "skills");
-    if (isDirectory(deps, configDir) || isDirectory(deps, agentsSkillsDir)) {
-      projectLevels.push(buildLevel(dir, configDir, "project"));
-    }
-
-    if (dir === stopAbs) break;
-
-    const parent = dirname(dir);
-    if (parent === dir) break;
-
-    dir = parent;
-  }
-
-  projectLevels.reverse();
-  levels.push(...projectLevels);
-
-  return levels;
+  return configLevels(deps.env.home(), options.cwd).filter(
+    (level) =>
+      level.scope === "global" ||
+      isDirectory(deps, level.configDir) ||
+      isDirectory(deps, level.agentsSkillsDir),
+  );
 }

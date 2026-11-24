@@ -163,6 +163,33 @@ describe("sdk client integration", () => {
     });
   }, 20000);
 
+  it("keeps the selected prompt file until reload while reading body edits live", async () => {
+    await withTempHome(async (home) => {
+      const cwd = await mkdtemp(join(tmpdir(), "tau-sdk-project-"));
+      const writePrompt = async (dir, text) => {
+        await mkdir(dir, { recursive: true });
+        await writeFile(join(dir, "review.md"), `---\nlabel: Review\n---\n${text}`);
+      };
+      const global = join(home, ".config", "tau", "prompts");
+      const client = await createTauSdkClient({ cwd, refreshModelCatalog: false });
+      try {
+        await writePrompt(global, "original");
+        const session = await client.sessions.create({
+          ...localCreateInput,
+          executionEnvironment: { kind: "local", cwd },
+        });
+        await writePrompt(join(cwd, ".tau", "prompts"), "project");
+        await writePrompt(global, "edited");
+        await session.setPersona(null);
+        expect((await session.resolvePrompt("review")).text).toBe("edited");
+        await session.reload();
+        expect((await session.resolvePrompt("review")).text).toBe("project");
+      } finally {
+        await client.close();
+        await rm(cwd, { recursive: true, force: true });
+      }
+    });
+  });
   it("applies startup presets atomically and recovers session-owned settings independently", async () => {
     await withTempHome(async (home) => {
       const directory = join(home, ".tau", "personas");

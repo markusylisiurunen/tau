@@ -49,8 +49,8 @@ Tau looks in these locations on the execution environment, and later ones win. A
 
 ```text
 built-in personas
-~/.config/tau/personas/<id>.md       only when cwd is inside home
-<ancestor>/.tau/personas/<id>.md     from broadest to nearest
+~/.config/tau/personas/<id>.md
+<dir>/.tau/personas/<id>.md          each directory from the filesystem root to cwd
 ```
 
 ## Selecting a persona

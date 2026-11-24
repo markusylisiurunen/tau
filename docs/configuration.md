@@ -3,11 +3,11 @@
 Tau reads `config.json` from these levels, and nearer levels win:
 
 ```text
-~/.config/tau/config.json            global, only when cwd is inside home
-<ancestor>/.tau/config.json          each project level, from broadest to nearest
+~/.config/tau/config.json            global, always
+<dir>/.tau/config.json               each directory from the filesystem root to cwd
 ```
 
-When the working directory is inside home, the search stops at home. Otherwise it continues to the filesystem root and skips the global level. A session reads these files on its execution environment, and a client reads them from its own startup directory. See [how Tau works](how-tau-works.md).
+The search ignores repository boundaries, so `/srv/.tau/config.json` applies to every project under `/srv`. A session reads these files on its execution environment, and a client reads them from its own home and startup directory. See [how Tau works](how-tau-works.md).
 
 ## Fields
 
@@ -20,7 +20,7 @@ type Config = {
   modelSystemNotices?: Record<string, string>; // keyed by "<provider>/<model>"
   mcpServers?: Record<string, McpServer>; // see mcp.md
   clientTools?: CommandClientTool[]; // global only, see client-tools.md
-  enabledClientTools?: string[]; // project only, [] selects none
+  enabledClientTools?: string[]; // selects from clientTools, [] selects none
   speech?: {
     voiceId?: string; // ElevenLabs voice for /speak and Telegram /tts_on
     recordingShortcut?: {
@@ -43,7 +43,7 @@ type Config = {
     apiKeyEnv?: string;
   };
   flySprites?: {
-    // see remote-sessions.md
+    // global only, see remote-sessions.md
     baseURL?: string; // default "https://api.sprites.dev"
     token?: string;
     tokenEnv?: string;
@@ -73,12 +73,11 @@ The nearest level replaces the whole field, with these exceptions:
 
 | Field | Behavior |
 | --- | --- |
-| `speech` | Merges by field. `vocabulary` lists add up, nearest first. |
+| `speech` | Merges by field. `vocabulary` lists add up, nearest first, and transcription adds the client's global vocabulary after the session's. |
 | `modelSystemNotices` | Merges by key. |
-| `flySprites` | Merges by field. |
 | `mcpServers` | Merges by server name. A nearer entry replaces the whole server, including its credentials. |
 
-`apiKeys`, `clientTools`, `history`, and `markdownExport` are read from global configuration only. Tau rejects them in project files, so a cloned repository cannot set them.
+`apiKeys`, `clientTools`, `flySprites`, `history`, and `markdownExport` are read from global configuration only. Tau rejects them in project files, so a cloned repository cannot set them.
 
 ## Invalid and unknown fields
 

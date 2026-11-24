@@ -113,7 +113,7 @@ function createTestExecutionEnvironment(
           output: "execution-machine",
           truncated: false,
         })
-      : args[2] === "skills"
+      : args[0] === "skills"
         ? Promise.resolve({ exitCode: 0, output: JSON.stringify({ files: [] }), truncated: false })
         : runNodeScript(script, args, options);
   return {
@@ -411,7 +411,12 @@ describe("HostedEphemeralAgentSession", () => {
       dispose: vi.fn(),
     };
     const session = await HostedEphemeralAgentSession.create({
-      cwd: "/repo",
+      promptContext: {
+        cwd: "/repo",
+        home: "/home/user",
+        platform: "linux",
+        includeAgentContext: false,
+      },
       contextId: "context-1",
       sessionId: "session-1",
       sessionStartedAt: 0,
@@ -996,6 +1001,40 @@ describe("LocalSessionHost", () => {
     }
   });
 
+  it("keeps a persona selected while reload reads instructions", async () => {
+    const environment = createTestExecutionEnvironment();
+    const second = { ...personas[0], id: "second" };
+    const catalog = [personas[0], second];
+    const resolveConfig = environment.resolveRuntimeConfig;
+    environment.resolveRuntimeConfig = async () => ({
+      ...(await resolveConfig()),
+      personas: catalog,
+    });
+    const host = createHostForEnvironment(new MemorySessionStore(), environment, {
+      personas: catalog,
+    });
+    const finish = deferred();
+    try {
+      const session = await host.createSession(localCreateInput);
+      const started = deferred();
+      const resolveContext = environment.resolveRuntimeContext;
+      environment.resolveRuntimeContext = async (options) => {
+        started.resolve();
+        await finish.promise;
+        return resolveContext(options);
+      };
+      const reload = session.reload();
+      await started.promise;
+      await expect(session.setPersona("missing")).rejects.toThrow();
+      await session.setPersona(second.id);
+      finish.resolve();
+      expect((await reload).snapshot.settings.personaId).toBe(second.id);
+    } finally {
+      finish.resolve();
+      await host.shutdown();
+    }
+  });
+
   it.each([false, true])(
     "recovers the auto-compaction setting from disk (legacy: %s)",
     async (legacy) => {
@@ -1199,11 +1238,19 @@ describe("LocalSessionHost", () => {
       });
 
       await originalHost.shutdown();
-      recoveredHost = createHost(new FileSessionStore({ directory }));
+      const environment = createTestExecutionEnvironment();
+      const resolveContext = environment.resolveRuntimeContext;
+      environment.resolveRuntimeContext = async (options) => {
+        const context = await resolveContext(options);
+        context.promptBootstrap.promptContext.projectContextBlock =
+          "instructions changed while unloaded";
+        return context;
+      };
+      recoveredHost = createHostForEnvironment(new FileSessionStore({ directory }), environment);
       const recoveredSession = await recoveredHost.observeSession(session.sessionId);
       expect(recoveredSession).toBeDefined();
       const recoveredSnapshot = await recoveredSession.snapshot();
-      expect(recoveredSnapshot.messages).toEqual(snapshot.messages);
+      expect(recoveredSnapshot.messages.slice(1)).toEqual(snapshot.messages.slice(1));
       expect(recoveredSession.runtime.rawHistoryEntries).toEqual(
         snapshot.messages.slice(1).map(({ id, message }) => ({ id, message })),
       );
@@ -1222,7 +1269,7 @@ describe("LocalSessionHost", () => {
       await expect(recoveredSession.runTurn()).resolves.toMatchObject({ status: "completed" });
       expect(contexts).toHaveLength(1);
       expect(contexts[0].systemPrompt).toBe(recoveredSession.runtime.agent.spec.systemPrompt);
-      expect(contexts[0].systemPrompt).toContain(snapshot.messages[0].message.content);
+      expect(contexts[0].systemPrompt).toContain("instructions changed while unloaded");
       expect(contexts[0].messages.map((message) => message.role)).toEqual([
         "user",
         "system",
@@ -3845,10 +3892,21 @@ describe("LocalSessionHost", () => {
     expect(persisted).toEqual({
       ...storedSnapshot,
       revision: 5,
-      // The stored session predates worker prompts for every persona, so recovery composes one.
+      messages: [
+        {
+          ...storedSnapshot.messages[0],
+          message: {
+            ...storedSnapshot.messages[0].message,
+            content: recoveredSession.runtime.promptComposition.baseSystemPrompt,
+          },
+        },
+      ],
       bootstrap: {
         ...storedSnapshot.bootstrap,
-        prompt: { ...storedSnapshot.bootstrap.prompt, subagentSystemPrompt: expect.any(String) },
+        prompt: {
+          environmentTag: recoveredSession.runtime.promptComposition.environmentTag,
+          subagentSystemPrompt: recoveredSession.runtime.promptComposition.subagentSystemPrompt,
+        },
       },
       agentState: {
         ...storedSnapshot.agentState,

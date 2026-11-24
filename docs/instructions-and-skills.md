@@ -11,7 +11,7 @@ All of these are read on the execution environment. Run `/reload` while idle aft
 
 ## `AGENTS.md`
 
-Tau includes every `AGENTS.md` from the working directory up to home, or up to the filesystem root when outside home. Nearer files come first, and more specific guidance takes priority.
+Tau includes `~/AGENTS.md` first, then every `AGENTS.md` from the filesystem root down to the working directory. When two files conflict, the agent follows the one listed later.
 
 Nested files below the working directory are listed by path only, so the agent can read the right one before working in that directory. The scan skips common build and dependency directories such as `node_modules` and `dist`.
 
@@ -47,10 +47,10 @@ The description also sets when the agent activates the skill. Quote it, because 
 Tau looks in these locations, and later ones win:
 
 ```text
-~/.agents/skills/<name>/                 only when cwd is inside home
+~/.agents/skills/<name>/
 ~/.config/tau/skills/<name>/
-<level>/.agents/skills/<name>/           from broadest to nearest project level
-<level>/.tau/skills/<name>/
+<dir>/.agents/skills/<name>/             each directory from the filesystem root to cwd
+<dir>/.tau/skills/<name>/
 ```
 
 At the same level, `.tau/skills` wins over `.agents/skills`. Every persona can use every discovered skill. `allowed-tools` in frontmatter is ignored, because tools come from the persona. An invalid skill is skipped with a warning.

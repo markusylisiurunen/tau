@@ -12,17 +12,11 @@ export function createExecutionEnvironmentSubagentPromptResolver(options: {
   mcpServers: readonly McpServerSummary[];
 }): ResolveSubagentPrompt {
   return async ({ cwd, persona }) => {
-    const { skills } = await loadSkillsFromToolBackend({
-      backend: options.executionEnvironment.getToolExecutionBackend(),
+    const promptContext = await resolveDirectoryPromptContext(
+      options.executionEnvironment,
       cwd,
-      home: options.executionEnvironment.snapshot().home,
-    });
-    const runtimeContext = await options.executionEnvironment.resolveRuntimeContext({
-      cwd,
-      discoveredSkills: skills,
-      includeAgentContext: options.includeAgentContext,
-    });
-    const promptContext = runtimeContext.promptBootstrap.promptContext;
+      options.includeAgentContext,
+    );
     return composeSubagentSystemPrompt({
       persona,
       sessionId: options.sessionId,
@@ -36,4 +30,22 @@ export function createExecutionEnvironmentSubagentPromptResolver(options: {
       mcpServers: options.mcpServers,
     });
   };
+}
+
+export async function resolveDirectoryPromptContext(
+  environment: ExecutionEnvironment,
+  cwd: string,
+  includeAgentContext: boolean,
+) {
+  const { skills } = await loadSkillsFromToolBackend({
+    backend: environment.getToolExecutionBackend(),
+    cwd,
+    home: environment.snapshot().home,
+  });
+  const runtimeContext = await environment.resolveRuntimeContext({
+    cwd,
+    discoveredSkills: skills,
+    includeAgentContext,
+  });
+  return runtimeContext.promptBootstrap.promptContext;
 }

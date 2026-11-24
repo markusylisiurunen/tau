@@ -1,3 +1,4 @@
+import { configLevels } from "../config/paths.js";
 import {
   MAX_COMMAND_CAPTURE_BYTES,
   type ToolExecutionBackend,
@@ -53,7 +54,6 @@ function isSameOrParent(parent, child) {
 
 const cwdReal = realpath(cwd) || cwd;
 const homeReal = realpath(home) || home;
-const cwdWithinHome = isSameOrParent(homeReal, cwdReal);
 
 function resolveContextFile(pathname) {
   const resolved = path.resolve(pathname);
@@ -69,24 +69,10 @@ function resolveContextFile(pathname) {
     return undefined;
   }
   if (!stat.isFile()) return undefined;
-  if (cwdWithinHome && !isSameOrParent(homeReal, canonical)) return undefined;
-  const fileDir = path.dirname(canonical);
-  if (!isSameOrParent(fileDir, cwdReal) && !isSameOrParent(cwdReal, fileDir)) return undefined;
-  return { path: resolved, canonical };
-}
 
-function ancestorCandidates() {
-  const stop = cwdWithinHome ? home : path.parse(cwd).root;
-  const candidates = [];
-  let dir = cwd;
-  while (true) {
-    candidates.push(path.join(dir, "AGENTS.md"));
-    if (dir === stop) break;
-    const parent = path.dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-  return candidates;
+  const fileDir = path.dirname(canonical);
+  if (fileDir !== homeReal && !isSameOrParent(fileDir, cwdReal) && !isSameOrParent(cwdReal, fileDir)) return undefined;
+  return { path: resolved, canonical };
 }
 
 const agentsFiles = [];
@@ -100,8 +86,8 @@ function addContextFile(pathname) {
 
 const childAgentsFiles = [];
 if (includeAgentContext) {
-  for (const candidate of ancestorCandidates()) {
-    addContextFile(candidate);
+  for (const root of JSON.parse(fs.readFileSync(0, "utf8"))) {
+    addContextFile(path.join(root, "AGENTS.md"));
   }
 
   const queuedDirs = new Set([cwdReal]);
@@ -299,6 +285,11 @@ async function inspectRuntimePromptContext(
     ],
     {
       cwd: args.cwd,
+      stdin: Buffer.from(
+        JSON.stringify([
+          ...new Set(configLevels(args.home, args.cwd).map((level) => level.levelRoot)),
+        ]),
+      ),
       timeoutMs: RUNTIME_PROMPT_CONTEXT_TIMEOUT_MS,
       maxCaptureBytes: MAX_COMMAND_CAPTURE_BYTES,
     },

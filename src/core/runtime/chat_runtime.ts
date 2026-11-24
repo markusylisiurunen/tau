@@ -66,7 +66,6 @@ export type CreateChatRuntimeOptions = {
   openSubagentHistory: OpenSubagentHistory;
   mcp: McpManager;
   recordUsage?: UsageRecorder;
-  initialPromptComposition?: SessionPromptComposition;
   config: SessionRuntimeSettings;
   deps?: CoreDeps;
 };
@@ -85,7 +84,7 @@ export class ChatRuntime {
   private currentConfig: SessionRuntimeSettings;
   private readonly hostApiKeys: SessionRuntimeSettings["apiKeys"];
   private currentModelResolver: ModelResolver;
-  private promptContext: ChatRuntimePromptContext;
+  private currentPromptContext: ChatRuntimePromptContext;
   private readonly sessionIdValue: string;
   private readonly createdAt: number;
   private readonly backend: ToolExecutionBackend;
@@ -98,24 +97,22 @@ export class ChatRuntime {
   private latestPromptComposition: SessionPromptComposition;
 
   static create(options: CreateChatRuntimeOptions): ChatRuntime {
-    const promptComposition =
-      options.initialPromptComposition ??
-      composeSessionPrompts({
-        persona: options.persona,
-        capabilities: mainAgentCapabilities({
-          notifications: options.notifications,
-          config: options.config,
-        }),
-        sessionId: options.sessionId,
-        cwd: options.promptContext.cwd,
-        repoRoot: options.promptContext.repoRoot,
-        repository: options.promptContext.repository,
-        sessionStartedAt: new Date(options.createdAt).toISOString(),
-        platform: options.promptContext.platform,
-        skillsBlock: options.promptContext.skillsBlock,
-        projectContextBlock: options.promptContext.projectContextBlock,
-        mcpServers: options.mcp.listServers(),
-      });
+    const promptComposition = composeSessionPrompts({
+      persona: options.persona,
+      capabilities: mainAgentCapabilities({
+        notifications: options.notifications,
+        config: options.config,
+      }),
+      sessionId: options.sessionId,
+      cwd: options.promptContext.cwd,
+      repoRoot: options.promptContext.repoRoot,
+      repository: options.promptContext.repository,
+      sessionStartedAt: new Date(options.createdAt).toISOString(),
+      platform: options.promptContext.platform,
+      skillsBlock: options.promptContext.skillsBlock,
+      projectContextBlock: options.promptContext.projectContextBlock,
+      mcpServers: options.mcp.listServers(),
+    });
     return new ChatRuntime(options, promptComposition);
   }
 
@@ -126,7 +123,7 @@ export class ChatRuntime {
     this.currentConfig = options.config;
     this.hostApiKeys = structuredClone(options.config.apiKeys);
     this.currentModelResolver = options.modelResolver;
-    this.promptContext = { ...options.promptContext };
+    this.currentPromptContext = { ...options.promptContext };
     this.sessionIdValue = options.sessionId;
     this.createdAt = options.createdAt;
     this.backend = options.backend;
@@ -184,6 +181,10 @@ export class ChatRuntime {
 
   get isTurnRunning(): boolean {
     return this.agent.status === "running";
+  }
+
+  get promptContext(): Readonly<ChatRuntimePromptContext> {
+    return this.currentPromptContext;
   }
 
   get promptComposition(): SessionPromptComposition {
@@ -364,8 +365,8 @@ export class ChatRuntime {
     this.rebuildSystemPrompts();
   }
 
-  updatePromptContext(context: Partial<ChatRuntimePromptContext>): void {
-    this.promptContext = { ...this.promptContext, ...context };
+  updatePromptContext(context: ChatRuntimePromptContext): void {
+    this.currentPromptContext = { ...context };
     this.rebuildSystemPrompts();
   }
 

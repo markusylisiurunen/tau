@@ -135,9 +135,8 @@ describe("config paths", () => {
         apiKeyEnv: "HISTORY_KEY",
       });
       expect(config.flySprites).toEqual({
-        baseURL: "https://repo.sprites.example",
-        tokenEnv: "REPO_SPRITES_TOKEN",
-        home: "/home/sprite",
+        baseURL: "https://api.sprites.dev",
+        tokenEnv: "GLOBAL_SPRITES_TOKEN",
       });
       expect(config.modelSystemNotices).toEqual({
         "openai/gpt-5.4": "repo codex notice",

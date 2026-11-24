@@ -17,10 +17,9 @@ No command prints the complete effective configuration.
 Check these in order:
 
 1. You edited the file on the machine that reads it.
-2. The working directory is inside home if you edited global configuration.
-3. A nearer project level does not override the field.
-4. You spelled the field correctly, because Tau removes unknown fields without a warning.
-5. You applied the change. See [configuration](configuration.md).
+2. A nearer project level does not override the field.
+3. You spelled the field correctly, because Tau removes unknown fields without a warning.
+4. You applied the change. See [configuration](configuration.md).
 
 An invalid value is skipped with a warning, so a value from a broader level may still apply.
 

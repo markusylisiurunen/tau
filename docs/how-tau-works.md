@@ -47,7 +47,7 @@ Never edit Tau's own state by hand: `~/.config/tau/auth.json`, `models-store.jso
 
 ## Global configuration and home
 
-Tau reads global configuration (`~/.config/tau`) only when the working directory is the home directory or below it, on that same machine. A project outside home therefore gets project levels only.
+Each part always reads global configuration from its own home, wherever the working directory is. A session reads `~/.config/tau`, `~/.agents/skills`, and `~/AGENTS.md` in the execution environment's home, so a session on a Fly Sprite uses the Sprite's files and not the laptop's.
 
 ## What the agent's documentation covers
 

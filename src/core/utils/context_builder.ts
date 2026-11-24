@@ -152,15 +152,19 @@ export function buildProjectContextBlock(args: {
   const lines: string[] = [
     "## Project instructions",
     "",
-    agentsFiles.length > 0
-      ? "AGENTS.md files hold instructions for this project. The ones that apply at the working directory follow in full."
-      : "AGENTS.md files hold instructions for this project.",
+    "AGENTS.md files give standing instructions for their directory and everything below it. The one in the home directory is the broadest.",
   ];
+  if (agentsFiles.length > 0) {
+    lines.push(
+      "",
+      "The files that apply at the working directory follow in full, from broadest to most specific. If they conflict, follow the one listed later.",
+    );
+  }
 
   if (childAgentsFiles.length > 0) {
     lines.push(
       "",
-      "These AGENTS.md files below the working directory are listed by path only. Read the one that covers a directory before you work there:",
+      "These AGENTS.md files below the working directory are listed by path only. Read the ones that apply before you work in their directories. Within each directory, its instructions take precedence:",
       "",
       ...childAgentsFiles.map((filePath) => `- ${inlineCode(filePath)}`),
     );

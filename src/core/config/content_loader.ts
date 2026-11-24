@@ -207,6 +207,7 @@ export function parsePrompt(
   }
 
   const prompt: PromptTemplate = {
+    path: file,
     id: basename(file, ".md"),
     label: parsedFrontMatter.data.label,
     template: markdownResult.body,

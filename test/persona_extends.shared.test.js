@@ -133,7 +133,14 @@ describe("custom personas", () => {
         "/prompts/review.md",
         "---\nlabel: Review\nid: ignored\ndescription: ignored\n---\nreview code",
       ),
-    ).toEqual({ prompt: { id: "review", label: "Review", template: "review code" } });
+    ).toEqual({
+      prompt: {
+        path: "/prompts/review.md",
+        id: "review",
+        label: "Review",
+        template: "review code",
+      },
+    });
     for (const content of ["plain markdown", "---\nlabel: ''\n---\nbody"]) {
       expect(parsePrompt("/prompts/review.md", content).prompt).toBeUndefined();
     }

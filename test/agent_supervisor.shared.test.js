@@ -107,11 +107,11 @@ describe("AgentSupervisor", () => {
     record.runtime.agent.spec.model.stream = () => createStream(createAssistant("done"));
     await supervisor.waitForAgents([child.id]);
     expect(completions.map((state) => state.run.revision)).toEqual([1]);
-    supervisor.setCompletionNotification("main", child.id, false);
+    await supervisor.setCompletionNotification("main", child.id, false);
     supervisor.sendInput({ id: child.id, prompt: "again", mode: "queue" });
     await supervisor.waitForAgents([child.id]);
     expect(completions).toHaveLength(1);
-    supervisor.setCompletionNotification("main", child.id, true);
+    await supervisor.setCompletionNotification("main", child.id, true);
     supervisor.sendInput({ id: child.id, prompt: "again", mode: "queue" });
     await supervisor.waitForAgents([child.id]);
     expect(completions.map((state) => state.run.revision)).toEqual([1, 3]);
@@ -146,7 +146,7 @@ describe("AgentSupervisor", () => {
     supervisor.dispose();
   });
 
-  it("keeps a worker and its child recoverable after a checkpoint read fails", async () => {
+  it("keeps workers recoverable after their parent checkpoint cannot be read", async () => {
     const store = createMemoryWorkerStore();
     const options = { store, mainAgentId: "main", onEvent: () => {} };
     const supervisor = new AgentSupervisor(options);
@@ -165,7 +165,9 @@ describe("AgentSupervisor", () => {
     const agents = { ...launch, ...launch.agents };
     await expect(retry.restore(agents, members)).rejects.toBe(unavailable);
     expect(read).toHaveBeenCalledWith(parent.id);
-    expect(await store.ids()).toHaveLength(2);
+    read.mockResolvedValueOnce(undefined);
+    await expect(retry.restore(agents, members)).resolves.toEqual([]);
+    await expect(store.read(child.id)).resolves.toBeDefined();
     expect(await retry.restore(agents, members)).toEqual([members[1], members[0]]);
     retry.dispose();
   });
@@ -456,9 +458,16 @@ describe("AgentSupervisor", () => {
 
     const followup = supervisor.sendInput({ id: spawned.id, prompt: "again", mode: "queue" });
     expect(supervisor.read(spawned.id).pending.queue).toBe(0);
+    const rejected = expect(followup).rejects.toMatchObject({ code: "operation_failed" });
+    const interrupt = supervisor.interrupt(spawned.id);
     releaseFinished();
-    await expect(followup).resolves.toMatchObject({ status: "working" });
+    await rejected;
+    await interrupt;
     await waiting;
+    expect(record.runtime.agent.spec.model.stream).toHaveBeenCalledTimes(1);
+    await expect(
+      supervisor.sendInput({ id: spawned.id, prompt: "later", mode: "queue" }),
+    ).resolves.toMatchObject({ status: "working" });
     await supervisor.waitForIdle();
     expect(supervisor.read(spawned.id)).toMatchObject({ status: "idle", reason: "completed" });
   });
@@ -641,8 +650,8 @@ describe("worker conversation scheduling", () => {
     record.runtime.agent.spec.model.stream = vi.fn(() =>
       createStream(createAssistant(answers.shift()), gate),
     );
-    supervisor.sendInput({ id: record.id, prompt: "second input", mode: "queue" });
-    supervisor.sendInput({ id: record.id, prompt: "third input", mode: "queue" });
+    await supervisor.sendInput({ id: record.id, prompt: "second input", mode: "queue" });
+    await supervisor.sendInput({ id: record.id, prompt: "third input", mode: "queue" });
     expect(supervisor.read(record.id).pending.queue).toBe(2);
     const wait = supervisor.waitForAgents([record.id]);
     release();
@@ -659,6 +668,40 @@ describe("worker conversation scheduling", () => {
         .entries.map((entry) => supervisor.getTrace(record.id).readText(entry.seq).text),
     ).toEqual(["first", "second", "third"]);
     supervisor.dispose();
+  });
+
+  it("does not deliver input or change completion notifications when admission cannot be saved", async () => {
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const store = createMemoryWorkerStore();
+    const supervisor = new AgentSupervisor({ store, mainAgentId: "main", onEvent: () => {} });
+    const { id } = launchForSetup(supervisor, createSpawnOptions());
+    const record = getRecord(supervisor, id);
+    const stream = vi.fn(() => createStream(createAssistant("done"), gate));
+    record.runtime.agent.spec.model.stream = stream;
+    try {
+      await vi.waitFor(() => expect(stream).toHaveBeenCalled());
+      const failure = new Error("checkpoint write failed");
+      const save = vi.spyOn(store, "save");
+      for (const mode of ["queue", "steer"]) {
+        save.mockRejectedValueOnce(failure);
+        await expect(supervisor.sendInput({ id, mode, prompt: "rejected" })).rejects.toBe(failure);
+      }
+      save.mockRejectedValueOnce(failure);
+      await expect(supervisor.setCompletionNotification("main", id, true)).rejects.toBe(failure);
+      expect(supervisor.read(id)).toMatchObject({
+        pending: { queue: 0, steer: 0 },
+        notifyOnCompletion: false,
+      });
+      release();
+      await supervisor.waitForIdle();
+      expect(stream).toHaveBeenCalledTimes(1);
+    } finally {
+      release();
+      supervisor.dispose();
+    }
   });
 
   it("steers at a native boundary and settles with the continuation answer", async () => {
@@ -679,7 +722,7 @@ describe("worker conversation scheduling", () => {
       createStream(createAssistant(answers.shift()), gate),
     );
     await vi.waitFor(() => expect(record.runtime.agent.status).toBe("running"));
-    supervisor.sendInput({ id: record.id, prompt: "change focus", mode: "steer" });
+    await supervisor.sendInput({ id: record.id, prompt: "change focus", mode: "steer" });
     release();
     await supervisor.waitForAgents([record.id]);
     expect(record.run.response).toBe("steered answer");
@@ -953,7 +996,9 @@ describe("nested supervision", () => {
       await supervisor.interrupt(a.id, undefined, false, "subtree");
       expect(supervisor.read(b.id).status).toBe("stopping");
       expect(() => spawn(a.id)).toThrow(expect.objectContaining({ code: "operation_failed" }));
-      expect(() => supervisor.sendInput({ id: a.id, mode: "queue", prompt: "retry" })).toThrow();
+      await expect(
+        supervisor.sendInput({ id: a.id, mode: "queue", prompt: "retry" }),
+      ).rejects.toMatchObject({ code: "operation_failed" });
       release();
       await supervisor.interrupt(a.id, undefined, true, "subtree");
       expect(supervisor.read(b.id)).toMatchObject({ status: "idle", reason: "interrupted" });
@@ -998,9 +1043,9 @@ describe("nested supervision", () => {
       );
       expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(15);
       expect(supervisor.scope(parent.id).getCapacity()).toEqual({ running: 16, limit: 16 });
-      expect(() => supervisor.sendInput({ id: idle.id, mode: "queue", prompt: "more" })).toThrow(
-        expect.objectContaining({ code: "operation_failed" }),
-      );
+      await expect(
+        supervisor.sendInput({ id: idle.id, mode: "queue", prompt: "more" }),
+      ).rejects.toMatchObject({ code: "operation_failed" });
       release();
       await Promise.all(supervisor.list().map(({ id }) => supervisor.waitForAgents([id])));
       expect(

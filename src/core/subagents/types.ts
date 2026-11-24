@@ -20,7 +20,7 @@ export type SubagentUsageSnapshot = {
 export type SubagentRunFailure =
   | { kind: "interrupted"; message: string }
   | {
-      kind: "auto-compaction-failed" | "model-subturn-limit" | "runtime-error";
+      kind: "auto-compaction-failed" | "model-subturn-limit" | "runtime-error" | "checkpoint-error";
       message: string;
     }
   | {

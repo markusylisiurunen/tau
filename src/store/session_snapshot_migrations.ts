@@ -19,7 +19,7 @@ import {
 } from "../protocol/session_protocol.js";
 
 export const STORED_SESSION_DOCUMENT_FORMAT = "tau-session" as const;
-export const STORED_SESSION_DOCUMENT_VERSION = 17 as const;
+export const STORED_SESSION_DOCUMENT_VERSION = 18 as const;
 export const LEGACY_SESSION_MODEL_CONTEXT_KEY = "legacy-v3";
 
 export type StoredSessionDocument = {
@@ -48,6 +48,7 @@ const storedSessionMigrations = new Map<number, StoredSessionMigration>([
   [14, migrateStoredSessionV14ToV15],
   [15, migrateStoredSessionV15ToV16],
   [16, migrateStoredSessionV16ToV17],
+  [17, migrateStoredSessionV17ToV18],
 ]);
 
 export class UnsupportedStoredSessionVersionError extends Error {
@@ -113,6 +114,36 @@ function decodeStoredSessionDocument(value: unknown): {
   return {
     version: value.version as number,
     snapshot: value.snapshot,
+  };
+}
+
+function migrateStoredSessionV17ToV18(value: unknown): unknown {
+  if (
+    !isRecord(value) ||
+    !isRecord(value.facets) ||
+    !isRecord(value.timeline) ||
+    !Array.isArray(value.timeline.items)
+  )
+    return value;
+  const isAgentSubject = (subject: unknown) => isRecord(subject) && subject.type === "agent";
+  return {
+    ...value,
+    agents: {},
+    facets: Object.fromEntries(
+      Object.entries(value.facets).filter(
+        ([, facet]) => !isRecord(facet) || !isAgentSubject(facet.subject),
+      ),
+    ),
+    timeline: {
+      ...value.timeline,
+      items: value.timeline.items.filter(
+        (item) =>
+          !isRecord(item) ||
+          item.type !== "notice" ||
+          !isRecord(item.notice) ||
+          !isAgentSubject(item.notice.subject),
+      ),
+    },
   };
 }
 

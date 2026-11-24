@@ -276,6 +276,7 @@ describe("Claude Code supervised lifecycle", () => {
     const store = new MemorySessionStore().workers("main");
     const f = fixture(
       async (_input, options) => {
+        emit(options, { type: "session", id: sessionId });
         emit(options, result());
         return ok;
       },
@@ -292,13 +293,22 @@ describe("Claude Code supervised lifecycle", () => {
     expect(f.supervisor.read(id)).toMatchObject({
       status: "idle",
       reason: "failed",
-      error: { code: "runtime-error" },
+      error: { code: "checkpoint-error" },
     });
     expect(f.events.at(-1)).toMatchObject({
       type: "subagent_finished",
       state: { id, run: { status: "failed" } },
     });
     expect(f.onCompletion).toHaveBeenCalledTimes(1);
+    expect(f.supervisor.getLastResponse(id)).toBeUndefined();
+    const reopened = fixture(() => {
+      throw new Error("unexpected worker execution");
+    }, store);
+    await reopened.supervisor.restore({ backend: reopened.backend }, [
+      f.supervisor.getSnapshot(id),
+    ]);
+    expect(reopened.supervisor.read(id)).toEqual(f.supervisor.read(id));
+    expect(reopened.supervisor.getLastResponse(id)).toBeUndefined();
   });
 
   it("deduplicates message usage across blocks, interruption, and resumed results", async () => {

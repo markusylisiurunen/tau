@@ -500,6 +500,21 @@ describe("FileSessionStore", () => {
     });
   });
 
+  it("drops pre-checkpoint worker projections without discarding session history", async () => {
+    await withTempStore(async (store, directory) => {
+      const snapshot = createSnapshot("session-1", "hello");
+      const legacy = structuredClone(snapshot);
+      legacy.agents.child = {};
+      legacy.facets.child = { subject: { type: "agent", id: "child" } };
+      await mkdir(directory, { recursive: true });
+      await writeFile(
+        join(directory, "c2Vzc2lvbi0x.json"),
+        JSON.stringify({ format: STORED_SESSION_DOCUMENT_FORMAT, version: 17, snapshot: legacy }),
+      );
+      await expect(store.loadSession("session-1")).resolves.toEqual(snapshot);
+    });
+  });
+
   it("rejects noncanonical current-version snapshots", async () => {
     await withTempStore(async (store, directory) => {
       const legacy = createVersionFiveSnapshot(createSnapshot("session-1", "hello"));

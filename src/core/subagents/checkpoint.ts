@@ -30,7 +30,6 @@ export type WorkerCheckpoint = WorkerRuntimeState & {
 
 /** Scoped to a single leased parent session. */
 export interface WorkerStore {
-  ids(): Promise<string[]>;
   read(id: string): Promise<WorkerCheckpoint | undefined>;
   save(id: string, worker: WorkerCheckpoint): Promise<void>;
   remove(id: string): Promise<void>;
@@ -39,7 +38,6 @@ export interface WorkerStore {
 export function createMemoryWorkerStore(): WorkerStore {
   const workers = new Map<string, WorkerCheckpoint>();
   return {
-    ids: async () => [...workers.keys()],
     read: async (id) => structuredClone(workers.get(id)),
     save: async (id, worker) => {
       workers.set(id, structuredClone(worker));

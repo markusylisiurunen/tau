@@ -3787,7 +3787,7 @@ describe("LocalSessionHost", () => {
     }
   });
 
-  it("loads version 14 worker ancestry and prompt context before recovering live-only workers", async () => {
+  it("loads version 14 prompt context without recovering live-only workers", async () => {
     const directory = mkdtempSync(join(tmpdir(), "tau-nested-recovery-"));
     const host = createHost(new FileSessionStore({ directory }));
     let recoveredHost;
@@ -3810,7 +3810,7 @@ describe("LocalSessionHost", () => {
       );
       const store = new FileSessionStore({ directory });
       const loaded = await store.loadSession(snapshot.sessionId);
-      expect(loaded.agents[agent.id]).toMatchObject({ parentId: snapshot.sessionId, depth: 1 });
+      expect(loaded.agents).toEqual({});
       expect(loaded.bootstrap.prompt.subagentSystemPrompt).toBe(basePrompt);
       recoveredHost = createHost(store);
       const recovered = await recoveredHost.observeSession(snapshot.sessionId);
@@ -3825,7 +3825,7 @@ describe("LocalSessionHost", () => {
     }
   });
 
-  it("discards and persists unrecoverable subagent presentation on every recovery", async () => {
+  it("preserves unavailable worker membership without warning again on every recovery", async () => {
     const store = new MemorySessionStore();
     const storedSnapshot = createStoredSnapshot({
       sessionId: "stored-subagent",
@@ -3836,7 +3836,7 @@ describe("LocalSessionHost", () => {
           id: "agent-1",
 
           title: "stale child",
-          parentId: "main",
+          parentId: "stored-subagent",
           depth: 1,
           availability: "idle",
           model: {
@@ -3912,8 +3912,6 @@ describe("LocalSessionHost", () => {
         ...storedSnapshot.agentState,
         modelContextKey: recoveredSession.runtime.snapshot().modelContextKey,
       },
-      agents: {},
-      facets: { "session-facet": storedSnapshot.facets["session-facet"] },
       timeline: {
         epoch: 1,
         sequence: 1,
@@ -3929,6 +3927,14 @@ describe("LocalSessionHost", () => {
     });
     await expect(recoveredSession.snapshot()).resolves.toEqual(persisted);
     expect(recoveredSession.session.hasSubagent("agent-1")).toBe(false);
+    await host.shutdown();
+    const reopenedHost = createHost(store);
+    try {
+      const reopened = await reopenedHost.observeSession(storedSnapshot.sessionId);
+      expect((await reopened.snapshot()).timeline).toEqual(persisted.timeline);
+    } finally {
+      await reopenedHost.shutdown();
+    }
   });
 
   it("lists and canonicalizes unversioned sessions before recovery returns", async () => {
@@ -4752,7 +4758,7 @@ describe("LocalSessionHost", () => {
           },
         };
       };
-      workers.sendInput({ id: child.id, prompt: "follow-up", mode: "queue" });
+      await workers.sendInput({ id: child.id, prompt: "follow-up", mode: "queue" });
       await workers.waitForIdle();
       expect(JSON.stringify(contexts[0].messages)).toContain("done");
       expect(workers.getLastResponse(child.id)?.text).toBe("second");

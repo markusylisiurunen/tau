@@ -58,6 +58,10 @@ type SubagentRecord = {
   launchEpoch: number;
   canDelegate: boolean;
   notifyOnCompletion: boolean;
+  requestedNotification?: { enabled: boolean };
+  inputEpoch: number;
+  // Save the restart discard counts before making in-flight inputs available to the worker.
+  admitting: { queue: number; steer: number };
   /** The main agent interrupted this run itself, so its completion is not news to it. */
   interruptedByMain: boolean;
   subtreeStops: number;
@@ -314,6 +318,8 @@ export class AgentSupervisor {
       launchEpoch: 0,
       notifyOnCompletion: options.notifyOnCompletion,
       interruptedByMain: false,
+      inputEpoch: 0,
+      admitting: { queue: 0, steer: 0 },
       canDelegate: runtimeConfig.kind === "native" && delegation.available,
       subtreeStops: 0,
       kind: "delegated",
@@ -350,10 +356,8 @@ export class AgentSupervisor {
   }
 
   async restore(agents: AgentsPackageOptions, members: readonly SubagentStateSnapshot[]) {
-    const stored = new Set(await this.options.store.ids());
     const restored: SubagentStateSnapshot[] = [];
     for (const state of members.toSorted((a, b) => a.depth - b.depth)) {
-      stored.delete(state.id);
       if (state.parentId !== this.mainAgentId && !this.records.has(state.parentId)) continue;
       let worker: WorkerCheckpoint | undefined;
       try {
@@ -393,7 +397,6 @@ export class AgentSupervisor {
       }
       restored.push(this.toSnapshot(record));
     }
-    for (const id of stored) await this.options.store.remove(id);
     return restored;
   }
 
@@ -405,12 +408,16 @@ export class AgentSupervisor {
 
   private save(record: SubagentRecord) {
     const id = record.id;
+    const pending = this.read(id).pending;
     return this.options.store.save(id, {
       ...record.runtime.checkpoint(),
-      pending: this.read(id).pending,
+      pending: {
+        queue: pending.queue + record.admitting.queue,
+        steer: pending.steer + record.admitting.steer,
+      },
       originHistoryEntryId: record.originHistoryEntryId,
       personaId: record.personaId,
-      notifyOnCompletion: record.notifyOnCompletion,
+      notifyOnCompletion: record.requestedNotification?.enabled ?? record.notifyOnCompletion,
       traceSequence: record.trace.lastSequence,
       lastAssistantSeq: record.lastAssistantSeq,
       assistant: record.trace.savedAssistant(record.lastAssistantSeq),
@@ -433,41 +440,71 @@ export class AgentSupervisor {
     const record = this.requireRecord(id);
     if (callerId !== this.mainAgentId || record.parentId !== callerId)
       throw new AgentRequestError("unknown_agent", `Unknown subagent ID: ${id}`);
-    record.notifyOnCompletion = enabled;
-    return this.checkpoint(id);
+    const request = { enabled };
+    record.requestedNotification = request;
+    return this.checkpoint(id)
+      .then(() => {
+        record.notifyOnCompletion = enabled;
+      })
+      .finally(() => {
+        if (record.requestedNotification === request) record.requestedNotification = undefined;
+      });
   }
 
-  sendInput(options: {
+  async sendInput(options: {
     id: string;
     prompt: string;
     mode: "queue" | "steer";
   }): Promise<SubagentConversationState> {
     const record = this.requireRecord(options.id);
-    if (record.settling) return record.completion.then(() => this.sendInput(options));
+    const epoch = record.inputEpoch;
+    const assertCanAccept = () => {
+      this.requireRecord(record.id);
+      if (
+        record.inputEpoch !== epoch ||
+        record.subtreeStops > 0 ||
+        (record.run.interruptRequested && record.run.status === "running")
+      )
+        throw new AgentRequestError("operation_failed", "Subagent is stopping");
+    };
+    assertCanAccept();
+    if (record.settling) await record.completion;
+    assertCanAccept();
     if (
-      record.subtreeStops > 0 ||
-      (record.run.interruptRequested && record.run.status === "running")
+      record.pending.length +
+        record.runtime.pendingSteering +
+        record.admitting.queue +
+        record.admitting.steer >=
+      64
     )
-      throw new AgentRequestError("operation_failed", "Subagent is stopping");
+      throw new AgentRequestError("operation_failed", "Subagent input queue is full");
+
+    if (record.run.status === "running") {
+      record.admitting[options.mode]++;
+      try {
+        await this.checkpoint(record.id);
+        if (record.settling) await record.completion;
+        assertCanAccept();
+      } finally {
+        record.admitting[options.mode]--;
+      }
+    }
     if (record.run.status !== "running" && this.getActiveCount() >= MAX_ACTIVE_SUBAGENTS)
       throw new AgentRequestError("operation_failed", "Subagent capacity reached");
-    if (record.pending.length + record.runtime.pendingSteering >= 64)
-      throw new AgentRequestError("operation_failed", "Subagent input queue is full");
     record.trace.append({
       kind: "input",
       mode: options.mode,
       content: [{ type: "text", text: options.prompt }],
     });
-    let saved: Promise<void>;
     if (record.run.status === "running") {
       if (options.mode === "steer") record.runtime.steer(options.prompt);
       else record.pending.push({ prompt: options.prompt, mode: options.mode });
-      saved = this.checkpoint(record.id);
-    } else {
-      saved = this.beginFollowup(record, options.prompt);
+      return this.read(record.id);
     }
+    const saved = this.beginFollowup(record, options.prompt);
     const accepted = this.read(record.id);
-    return saved.then(() => accepted);
+    await saved;
+    return accepted;
   }
 
   private beginFollowup(record: SubagentRecord, prompt: string) {
@@ -573,6 +610,7 @@ export class AgentSupervisor {
       else void stopping.catch(() => {});
       return this.read(id);
     }
+    record.inputEpoch++;
     if (record.run.status === "running") {
       if (record.pending.length || record.runtime.pendingSteering)
         record.trace.append({
@@ -593,7 +631,12 @@ export class AgentSupervisor {
   getLastResponse(id: string): { seq: number; text: string; complete: boolean } | undefined {
     const record = this.requireRecord(id);
     const seq = record.lastAssistantSeq;
-    if (record.run.status === "running" || seq === undefined) return undefined;
+    if (
+      record.run.status === "running" ||
+      (record.run.status === "failed" && record.run.failure.kind === "checkpoint-error") ||
+      seq === undefined
+    )
+      return undefined;
     try {
       return { seq, ...record.trace.readText(seq, Number.POSITIVE_INFINITY) };
     } catch (error) {
@@ -671,15 +714,15 @@ export class AgentSupervisor {
           await this.checkpoint(record.id);
         } catch (error) {
           this.finishFailed(record, {
-            kind: "runtime-error",
+            kind: "checkpoint-error",
             message: `Failed to save worker: ${error instanceof Error ? error.message : String(error)}`,
           });
         }
         try {
+          await this.emit({ type: "subagent_finished", state: this.toSnapshot(record) });
           if (record.notifyOnCompletion && !interruptedByMain) {
             this.options.onCompletion(this.toSnapshot(record));
           }
-          await this.emit({ type: "subagent_finished", state: this.toSnapshot(record) });
         } finally {
           record.settling = false;
         }

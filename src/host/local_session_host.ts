@@ -441,7 +441,6 @@ export class LocalSessionHost implements TauSessionHost {
       subagentEventSink: async (event) => await hostedSession.recordSubagentEvent(event),
       history: this.history.query(this.historyRemote),
       workerStore: {
-        ids: workerStore.ids,
         read: workerStore.read,
         save: (id, worker) => hostedSession.persistWorker(() => workerStore.save(id, worker)),
         remove: (id) => hostedSession.persistWorker(() => workerStore.remove(id)),
@@ -1956,18 +1955,34 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
   async reconcileRecoveredState(recovery: AgentStateRecovery): Promise<void> {
     this.assertActive();
-    const members = new Set(this.agents.keys());
-    const restored = await this.runtime.restoreWorkers([...this.agents.values()]);
+    const members = new Map(this.agents);
+    const restored = await this.runtime.restoreWorkers([...members.values()]);
     await this.enqueueMutation(async () => {
       for (const worker of restored) {
         if (this.agents.get(worker.id)?.run.status === "running")
           this.agents.set(worker.id, worker);
         members.delete(worker.id);
       }
-      for (const id of members) {
-        this.agents.delete(id);
-        this.agentCostTotals.delete(id);
-        this.appendNoticeTimelineItem(`worker-unavailable-${id}`, Date.now(), {
+      for (const [id, worker] of members) {
+        if (worker.run.status === "running") {
+          this.agents.set(id, {
+            ...worker,
+            availability: "idle",
+            run: {
+              ...worker.run,
+              status: "interrupted",
+              interruptRequested: true,
+              finishedAt: Date.now(),
+              failure: {
+                kind: "interrupted",
+                message: "Worker checkpoint unavailable after restart.",
+              },
+            },
+          });
+        }
+        const noticeId = `worker-unavailable-${id}`;
+        if (this.timeline.items.some((item) => item.id === noticeId)) continue;
+        this.appendNoticeTimelineItem(noticeId, Date.now(), {
           kind: "tau.worker.unavailable",
           version: 1,
           severity: "warn",

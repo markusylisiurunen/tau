@@ -68,16 +68,6 @@ export class FileSessionStore implements SessionStore {
     const directory = `${this.snapshotPath(sessionId)}.workers`;
     const pathFor = (id: string) => join(directory, snapshotFilename(id));
     return {
-      ids: async () => {
-        let files: string[];
-        try {
-          files = await readdir(directory);
-        } catch (error) {
-          if (isNotFound(error)) return [];
-          throw error;
-        }
-        return files.filter(isSnapshotFilename).map(sessionIdFromSnapshotFilename);
-      },
       read: async (id) => {
         let raw: string;
         try {

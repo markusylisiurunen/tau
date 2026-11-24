@@ -997,7 +997,7 @@ export type SessionProtocolToolRun =
 export type SessionProtocolAgentRunFailure =
   | { kind: "interrupted"; message: string }
   | {
-      kind: "auto-compaction-failed" | "model-subturn-limit" | "runtime-error";
+      kind: "auto-compaction-failed" | "model-subturn-limit" | "runtime-error" | "checkpoint-error";
       message: string;
     }
   | {
@@ -2487,7 +2487,12 @@ const sessionProtocolAgentUsageSchema = z
 const sessionProtocolAgentFailedRunFailureSchema = z.discriminatedUnion("kind", [
   z
     .object({
-      kind: z.enum(["auto-compaction-failed", "model-subturn-limit", "runtime-error"]),
+      kind: z.enum([
+        "auto-compaction-failed",
+        "model-subturn-limit",
+        "runtime-error",
+        "checkpoint-error",
+      ]),
       message: z.string(),
     })
     .strip(),

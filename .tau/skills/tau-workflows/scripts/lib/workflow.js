@@ -184,14 +184,62 @@ ${response}`,
   return { result: parsed.answer.result, cost: parsed.usage?.cost ?? 0 };
 }
 
+// The response shape as a TypeScript-like type with descriptions as
+// comments, which reads far shorter than the JSON Schema. The parser still
+// checks the response against the schema itself.
 export function responseFormat(output) {
+  const optional = hasOptional(output.schema);
   return `## Response
 
-End with your final response as one JSON value that matches this JSON Schema:
+End with your final response as one JSON value of this type. ${optional ? "Fields marked `?` are optional, every other field is required, and no others are allowed." : "Every field is required, and no others are allowed."}
 
-\`\`\`json
-${JSON.stringify(output.schema, null, 2)}
+\`\`\`ts
+${typeText(output.schema, "")}
 \`\`\``;
+}
+
+function typeText(schema, indent) {
+  if (schema.enum) return schema.enum.map((v) => JSON.stringify(v)).join(" | ");
+  if (schema.anyOf) {
+    return schema.anyOf.map((s) => typeText(s, indent)).join(" | ");
+  }
+  if (Array.isArray(schema.type)) {
+    return schema.type
+      .map((type) => typeText({ ...schema, type }, indent))
+      .join(" | ");
+  }
+  if (schema.type === "array") {
+    const item = typeText(schema.items, indent);
+    return schema.items.type === "object" || schema.items.enum
+      ? `Array<${item}>`
+      : `${item}[]`;
+  }
+  if (schema.type !== "object") return schema.type;
+  const inner = `${indent}  `;
+  const required = new Set(schema.required ?? []);
+  const lines = Object.entries(schema.properties).flatMap(
+    ([name, property]) => [
+      ...(property.description ? [`${inner}// ${property.description}`] : []),
+      `${inner}${name}${required.has(name) ? "" : "?"}: ${typeText(property, inner)};`,
+    ],
+  );
+  return `{\n${lines.join("\n")}\n${indent}}`;
+}
+
+function hasOptional(schema) {
+  if (schema.type === "object" || schema.properties) {
+    const required = new Set(schema.required ?? []);
+    if (
+      Object.keys(schema.properties ?? {}).some((name) => !required.has(name))
+    ) {
+      return true;
+    }
+  }
+  return [
+    ...Object.values(schema.properties ?? {}),
+    ...(schema.items ? [schema.items] : []),
+    ...(schema.anyOf ?? []),
+  ].some(hasOptional);
 }
 
 // A JSON Schema object whose properties are all required.
@@ -277,6 +325,19 @@ export function byteLength(text) {
 // Tau estimates one token per six bytes of UTF-8.
 export function tokens(text) {
   return Math.ceil(byteLength(text) / 6);
+}
+
+// Cut text to at most `maxTokens` tokens, marking the cut.
+export function truncateTokens(text, maxTokens) {
+  const maxBytes = maxTokens * 6;
+  let bytes = 0;
+  let end = 0;
+  for (const char of text) {
+    bytes += byteLength(char);
+    if (bytes > maxBytes) return `${text.slice(0, end)} [cut]`;
+    end += char.length;
+  }
+  return text;
 }
 
 export function ensure(condition, message) {

@@ -1,16 +1,16 @@
 // Shared selection, reading, screening, and classification for the history
 // workflows.
 
-import { docs, truncate } from "@tau/core";
+import { docs } from "@tau/core";
 import * as history from "@tau/history";
 import { decisions } from "@tau/models";
 import {
   bash,
-  byteLength,
   ensure,
   inParallel,
   logStart,
   tokens,
+  truncateTokens,
 } from "./workflow.js";
 
 const DECISION_MODEL = "typesafe/jev-1.14";
@@ -19,6 +19,9 @@ const DECISION_MODEL = "typesafe/jev-1.14";
 const MAX_TAIL_TOKENS = 8192;
 const MAX_SCREEN_BATCH_TOKENS = 65_536;
 const CHUNK_TOKENS = 65_536;
+const MAX_ENTRY_TOKENS = 32_768;
+const MAX_TOOL_ARGUMENTS_TOKENS = 64;
+const MAX_TOOL_RESULT_TOKENS = 128;
 
 // For 512 summarized candidates, one tail page, one full page, their waits,
 // and one classification each use at most 2,560 calls before selection and
@@ -26,15 +29,22 @@ const CHUNK_TOKENS = 65_536;
 // Background jobs have no time limit. Leave room for setup and the final agent.
 const MAX_SESSIONS = 512;
 const HISTORY_AND_MODEL_CALLS = 4096 - 64;
-const MAX_SCREEN_BATCH_SESSIONS = 32;
+const MAX_SCREEN_BATCH_SESSIONS = 16;
 
 // History reads coincided with database overload (tau#769). Limit both
-// the rate of request starts and the number of requests in flight.
-const HISTORY_READ_INTERVAL_MS = 250;
-const HISTORY_READ_CONCURRENCY = 2;
+// the rate of request starts and the number of requests in flight. The
+// overload came from full-text search, while listing by time and reading a
+// session by ID are indexed lookups, so several of those can run at once.
+const HISTORY_READ_INTERVAL_MS = 200;
+const HISTORY_READ_CONCURRENCY = 6;
 
-// At most 262,144 bytes, so a single entry always fits in one chunk.
-const MAX_ENTRY_CHARS = 65_536;
+// Jev calls go to the model service, not the history service, so more of
+// them can run at once.
+const JEV_CONCURRENCY = 10;
+
+// Tells Jev what a screened session's fields are.
+const SESSION_FIELDS =
+  "Each session is one conversation between the user and an agent. `summary` was written automatically and covers the conversation up to a point. `unsummarizedTail` lists the conversation entries after that point, in order, or is null when the summary covers the whole conversation. Judge each session only by its own title, summary, and tail.";
 
 // Jev probabilities. Screening keeps uncertain sessions.
 const SCREEN_THRESHOLD = 0.15;
@@ -259,30 +269,35 @@ async function* readEntries(sessionId, options = {}) {
         ...(cursor ? { cursor } : options),
       }),
     );
-    yield page.entries.map(formatEntry);
+    yield page.entries;
     cursor = page.nextCursor;
   } while (cursor);
 }
 
 async function readTranscript(sessionId) {
   const entries = [];
-  for await (const page of readEntries(sessionId)) entries.push(...page);
+  for await (const page of readEntries(sessionId)) {
+    entries.push(...page.map(formatEntry));
+  }
   return entries;
 }
 
+// The entries after a session's summary as tail entries, or null when they
+// are longer than MAX_TAIL_TOKENS.
 async function readTail(session) {
-  let text = "";
-  let bytes = 0;
+  const tail = [];
+  let size = 0;
   for await (const page of readEntries(session.sessionId, {
     afterEntryId: session.digest.updatedThroughEntryId,
   })) {
     for (const entry of page) {
-      bytes += byteLength(entry.text);
-      if (bytes > 6 * MAX_TAIL_TOKENS) return null;
-      text += entry.text;
+      const item = tailEntry(entry);
+      size += tokens(JSON.stringify(item));
+      if (size > MAX_TAIL_TOKENS) return null;
+      tail.push(item);
     }
   }
-  return text;
+  return tail;
 }
 
 export async function readSessions(run, sessions) {
@@ -319,27 +334,56 @@ export async function readSessions(run, sessions) {
 function formatEntry(entry) {
   const time = new Date(entry.timestamp).toISOString().slice(0, 16);
   if (entry.type === "tool") {
-    const args = truncate(JSON.stringify(entry.arguments) ?? "", {
-      maxChars: 256,
-    });
-    const result = truncate(JSON.stringify(entry.result) ?? "", {
-      maxChars: 512,
-    });
     return {
       id: entry.id,
-      text: `\n[${time} tool ${entry.name}, ${entry.outcome}, id=${entry.id}]\n${args}\n${result}\n`,
+      text: `\n[${time} tool ${entry.name}, ${entry.outcome}, id=${entry.id}]\n${toolArguments(entry)}\n${toolResult(entry)}\n`,
     };
   }
-  const content =
-    typeof entry.content === "string"
-      ? entry.content
-      : entry.content
-          .map((part) => (part.type === "text" ? part.text : "[image]"))
-          .join("\n");
   return {
     id: entry.id,
-    text: `\n[${time} ${entry.type}, id=${entry.id}]\n${truncate(content, { maxChars: MAX_ENTRY_CHARS })}\n`,
+    text: `\n[${time} ${entry.type}, id=${entry.id}]\n${truncateTokens(messageText(entry), MAX_ENTRY_TOKENS)}\n`,
   };
+}
+
+// A tail entry for screening, with only the fields Jev needs and the same
+// cuts as transcript chunks.
+function tailEntry(entry) {
+  if (entry.type === "tool") {
+    return {
+      type: "tool",
+      name: entry.name,
+      outcome: entry.outcome,
+      arguments: toolArguments(entry),
+      result: toolResult(entry),
+    };
+  }
+  return {
+    type: entry.type,
+    text: truncateTokens(messageText(entry), MAX_ENTRY_TOKENS),
+  };
+}
+
+function toolArguments(entry) {
+  return truncateTokens(
+    JSON.stringify(entry.arguments) ?? "",
+    MAX_TOOL_ARGUMENTS_TOKENS,
+  );
+}
+
+function toolResult(entry) {
+  return truncateTokens(
+    JSON.stringify(entry.result) ?? "",
+    MAX_TOOL_RESULT_TOKENS,
+  );
+}
+
+// A message's text, with images as placeholders.
+function messageText(entry) {
+  return typeof entry.content === "string"
+    ? entry.content
+    : entry.content
+        .map((part) => (part.type === "text" ? part.text : "[image]"))
+        .join("\n");
 }
 
 // ── Screening ───────────────────────────────────────────────────────────
@@ -365,7 +409,7 @@ export async function screen(run, sessions, { state, question }) {
       if (!session.digest?.summary || !session.digest.updatedThroughEntryId)
         return { session, tail: null };
       if (session.digest.updatedThroughEntryId === session.lastEntryId)
-        return { session, tail: "", current: true };
+        return { session, tail: [], current: true };
       try {
         return { session, tail: await readTail(session) };
       } catch (error) {
@@ -400,31 +444,35 @@ export async function screen(run, sessions, { state, question }) {
   let failedBatches = 0;
   const groups = batches(screenable);
   reserveCalls(groups.length);
-  const passed = await inParallel(groups, async (batch) => {
-    const questions = {};
-    const summaries = batch.map(({ session, tail }, index) => {
-      questions[`s${index}`] = question(`s${index}`);
-      return {
-        id: `s${index}`,
-        title: session.digest.title,
-        summary: session.digest.summary,
-        unsummarizedTail: tail || null,
-      };
-    });
-    try {
-      const result = await decisions(
-        { ...state, sessions: summaries },
-        { model: DECISION_MODEL, questions },
-      );
-      cost += result.usage.cost ?? 0;
-      return batch.filter(
-        (_, index) => result.answers[`s${index}`].noul >= SCREEN_THRESHOLD,
-      );
-    } catch {
-      failedBatches++;
-      return batch;
-    }
-  });
+  const passed = await inParallel(
+    groups,
+    async (batch) => {
+      const questions = {};
+      const summaries = batch.map(({ session, tail }, index) => {
+        questions[`s${index}`] = question(`s${index}`, session.digest.title);
+        return {
+          id: `s${index}`,
+          title: session.digest.title,
+          summary: session.digest.summary,
+          unsummarizedTail: tail.length ? tail : null,
+        };
+      });
+      try {
+        const result = await decisions(
+          { ...state, sessionFields: SESSION_FIELDS, sessions: summaries },
+          { model: DECISION_MODEL, questions },
+        );
+        cost += result.usage.cost ?? 0;
+        return batch.filter(
+          (_, index) => result.answers[`s${index}`].noul >= SCREEN_THRESHOLD,
+        );
+      } catch {
+        failedBatches++;
+        return batch;
+      }
+    },
+    JEV_CONCURRENCY,
+  );
   if (failedBatches) {
     run.warn(
       `${failedBatches} screening batches failed, and their sessions went to transcript classification.`,
@@ -446,10 +494,12 @@ function batches(items) {
   let batch = [];
   let batchTokens = 0;
   for (const item of items) {
-    const size = tokens(item.session.digest.summary + item.tail);
+    const size = tokens(
+      item.session.digest.summary + JSON.stringify(item.tail),
+    );
     if (
       batch.length === MAX_SCREEN_BATCH_SESSIONS ||
-      batchTokens + size > MAX_SCREEN_BATCH_TOKENS
+      (batch.length && batchTokens + size > MAX_SCREEN_BATCH_TOKENS)
     ) {
       result.push(batch);
       batch = [];
@@ -480,20 +530,24 @@ export async function classify(run, sessions, { state, question }) {
   const failed = new Set();
   let failedChunks = 0;
   reserveCalls(chunks.length);
-  const passed = await inParallel(chunks, async (chunk) => {
-    try {
-      const result = await decisions(
-        { ...state, transcript: chunk.text },
-        { model: DECISION_MODEL, questions: { relevant: question } },
-      );
-      cost += result.usage.cost ?? 0;
-      return result.answers.relevant.noul >= CLASSIFY_THRESHOLD;
-    } catch {
-      failed.add(chunk.session.sessionId);
-      failedChunks++;
-      return false;
-    }
-  });
+  const passed = await inParallel(
+    chunks,
+    async (chunk) => {
+      try {
+        const result = await decisions(
+          { ...state, transcript: chunk.text },
+          { model: DECISION_MODEL, questions: { relevant: question } },
+        );
+        cost += result.usage.cost ?? 0;
+        return result.answers.relevant.noul >= CLASSIFY_THRESHOLD;
+      } catch {
+        failed.add(chunk.session.sessionId);
+        failedChunks++;
+        return false;
+      }
+    },
+    JEV_CONCURRENCY,
+  );
   if (failedChunks) {
     run.warn(
       `${failedChunks} transcript chunks from ${failed.size} sessions failed classification and were excluded: ${[...failed].join(", ")}.`,

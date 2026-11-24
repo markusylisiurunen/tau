@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -55,6 +55,12 @@ describe("sdk npm pack types", () => {
         { cwd: consumerDir },
       );
       expect(extractResult.status).toBe(0);
+
+      symlinkSync(
+        join(repoRoot, "node_modules", "zod"),
+        join(consumerDir, "node_modules", "zod"),
+        "dir",
+      );
 
       const piAiDir = join(consumerDir, "node_modules", "@earendil-works", "pi-ai");
       mkdirSync(piAiDir, { recursive: true });

@@ -5,15 +5,16 @@ persona: gpt-6.2-sol-chatgpt-coder
 reasoning: medium
 ---
 
-Review the pull request and improve it based on the reviews without changing what it is meant to do, and push the result to its branch. Use `gh` to read the pull request and its discussion. Then check out its head branch. The comment that started this run may add guidance, such as what to focus on. Follow it, because it is the user's latest word.
+Review the pull request and improve it based on the reviews without changing what it is meant to do, and push the result to its branch. Use `gh` to read the pull request metadata and the triggering request, then check out its head branch. Let the workflow gather the discussion itself. The comment that started this run may add guidance, such as what to focus on. Follow it, because it is the user's latest word.
 
-Run the review and improvement with the `review-and-improve` workflow from skill `tau-workflows`. This workflow authorizes its delegation and its edits. The workflow plans and runs the code and design reviews, fixes the findings worth fixing, and implements the design recommendations, so do not launch reviewers of your own or make a separate pass over the code.
+Run the review and improvement with the `review-and-improve` workflow from skill `tau-workflows`. This workflow authorizes its delegation, edits, and the history access its context gathering needs. The workflow plans and runs the code and design reviews, fixes the findings worth fixing, and implements the design recommendations, so do not launch reviewers of your own or make a separate pass over the code.
 
 Pass these inputs:
 
 - `base`: the merge base of the pull request's target branch and its head, as a full commit ID.
 - `head`: the pull request's head commit, as a full commit ID. It must match the checked-out `HEAD`.
-- `context`: written as the skill describes, usually just `Read issue #120 for context.` with the actual issue number. Add any guidance from the triggering comment.
+- `gatherContext`: `true` unless the triggering comment asks to skip context gathering.
+- `focus`: only when the triggering comment asks to limit the workflow to something specific, in the comment's own words. Leave it unset otherwise.
 
 Set `depth` only when the user asks for one.
 

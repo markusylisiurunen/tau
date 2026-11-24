@@ -13,8 +13,8 @@ Pass these inputs:
 
 - `base`: the merge base of the pull request's target branch and its head, as a full commit ID.
 - `head`: the pull request's head commit, as a full commit ID. It must match the checked-out `HEAD`.
-- `gatherContext`: `true`.
-- `focus`: only when the triggering comment asks for a review of something specific, in the comment's own words. Leave it unset otherwise.
+- `gatherContext`: `true` unless the triggering comment asks to skip context gathering.
+- `focus`: only when the triggering comment asks to limit the workflow to something specific, in the comment's own words. Leave it unset otherwise.
 
 Set `depth` only when the user asks for one.
 

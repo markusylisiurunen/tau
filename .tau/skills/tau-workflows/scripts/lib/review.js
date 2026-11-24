@@ -23,6 +23,7 @@ export const MODELS = {
 };
 
 const COMMIT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+const MAX_FOCUS_TOKENS = 1024;
 const MAX_CONTEXT_TOKENS = 4096;
 
 export const FINDINGS = {
@@ -103,6 +104,39 @@ export function readInputs(
   );
   const extras = Object.fromEntries(extra.map((key) => [key, values[key]]));
   return { base, head, context, depth, workingDirectory, ...extras };
+}
+
+export function readReviewInputs(input, { depth = true } = {}) {
+  const {
+    focus,
+    gatherContext: gather = false,
+    ...inputs
+  } = readInputs(input, {
+    depth,
+    context: false,
+    extra: ["focus", "gatherContext"],
+  });
+  ensure(
+    focus === undefined ||
+      (typeof focus === "string" && tokens(focus) <= MAX_FOCUS_TOKENS),
+    `focus must be a string of at most ${MAX_FOCUS_TOKENS} tokens`,
+  );
+  ensure(typeof gather === "boolean", "gatherContext must be true or false");
+  return { ...inputs, focus, gather };
+}
+
+export function reviewCoverage(focus) {
+  return focus === undefined ? "the whole change" : "the focus";
+}
+
+export function reviewFocus(focus) {
+  return focus === undefined
+    ? ""
+    : `\nThe caller narrowed this task to a focus: ${JSON.stringify(focus)}. Stay within that focus. Follow the code beyond it where needed to understand the change.\n`;
+}
+
+export function independentReview() {
+  return `Work read-only. Do not change files, Git, or GitHub, and do not launch other agents. Do not read GitHub issues or pull request discussions, and do not search or read Tau session history.`;
 }
 
 export async function repositoryRoot(workingDirectory) {

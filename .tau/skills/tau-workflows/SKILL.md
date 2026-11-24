@@ -46,9 +46,9 @@ The review, improvement, prune, and rewrite workflows work on a repository's com
 
 - `base` and `head`: full commit IDs, which rewrite needs only when its target is a committed change. For a branch, use `git merge-base <target branch> HEAD` as `base`, because a target branch that has moved on would show its newer changes as reversions. `HEAD` must match `head`.
 - `workingDirectory`: the repository to work in, such as a clone in an assistant workspace. It defaults to the session's working directory.
-- `context`: optional, up to 4,096 tokens. Review and Gather context take none.
+- `context`: optional, up to 4,096 tokens. Review, Improve, Review and Improve, and Gather context do not take it.
 
-The agents read the diff and the repository themselves, so the context carries only what they cannot find there, such as why the change exists and the decisions behind it. Point to where that is recorded, or state it in a sentence or two. A summary of what the change does adds nothing they cannot see, and it anchors their judgment to yours. The agents cannot read Tau history, so put anything they need from earlier sessions in the context. Good contexts look like these:
+For workflows that take `context`, the agents read the diff and the repository themselves, so it carries only what they cannot find there, such as why the change exists and the decisions behind it. Point to where that is recorded, or state it in a sentence or two. A summary of what the change does adds nothing they cannot see, and it anchors their judgment to yours. Put anything those workflows need from earlier sessions in the context. Good contexts look like these:
 
 - `Read issue #123 for context.`
 - `Read issue #123 for context. We chose to drop the v1 config format, so code that reads it can go.`
@@ -64,26 +64,20 @@ Review requires authorization to delegate, and the other workflows require autho
 
 The improvement workflows list the changes, the suggestions they rejected and why, and what they left unresolved.
 
-In Improve and Review and Improve, a classifier reads the context, writes a brief of what the diff cannot show, and plans the reviews. In Review, the classifier plans the reviews from the diff alone. Review and Review and Improve run code reviews at a depth the classifier chooses: light runs one general code review, standard two on different models, and deep adds up to three focused reviews of specific risks. Pass `depth` as `light`, `standard`, or `deep` only to override that choice. Review and Improve also chooses zero to two design reviews, and Improve one or two.
+The classifier plans the reviews from the diff alone. Review and Review and Improve run code reviews at a depth the classifier chooses: light runs one general code review, standard two on different models, and deep adds up to three focused reviews of specific risks. Pass `depth` as `light`, `standard`, or `deep` only to override that choice. Review and Improve also chooses zero to two design reviews, and Improve one or two.
 
-The reviewers work read-only in parallel. A failed reviewer leaves its coverage missing, which the result reports as a warning, and the workflow stops before the final agent only when no reviewer completed. In Review, the final agent merges the findings and decides which to raise. In the improvement workflows, it implements the design recommendations. When two conflict, it chooses one, and it leaves unresolved any recommendation that contradicts a decision in the context brief. Review and Improve also filters the code-review findings and fixes those worth fixing.
+The reviewers work read-only in parallel. A failed reviewer leaves its coverage missing, which the result reports as a warning, and the workflow stops before the final agent only when no reviewer completed. In Review, the final agent merges the findings and decides which to raise. In the improvement workflows, it implements the design recommendations. When two recommendations conflict, it chooses one. Review and Improve also filters the code-review findings and fixes those worth fixing.
 
-Review's reviewers judge the code without issues, pull request discussions, or history, so these cannot anchor them. By default Review covers the whole change. Pass `focus` only when the user asks for a review of something specific, such as `Only the retry logic in src/sync/.`, and every step then covers only that focus. Pass `gatherContext: true` to gather the conversations behind the change while the reviewers work, as described under Gather context. Its final agent then consults them where a finding depends on intent, for example to tell a deliberate change from a mistake or to drop a finding that was already declined. Without it, the final agent judges the findings against the code and the repository alone. Gathering reads Tau history, so the request must authorize history access.
+All three scripts take the same optional inputs:
+
+- `focus`: set only when the user asks to limit the work, for example `Only the retry logic in src/sync/.`. It scopes planning, reviews, and any edits. With no focus, the workflow covers the whole change.
+- `gatherContext`: defaults to `false` when calling a script directly. Tau branch prompts and Cowork set it to `true` unless the user asks to skip it. Gathering reads Tau history, so the request must authorize that access.
+
+When enabled, context gathering starts alongside classification. The reviewers still judge the code without issues, pull request discussions, or Tau history. Only the final agent consults the gathered sources, where a finding or proposed edit depends on intent. It rejects suggestions that contradict settled decisions. If a suggestion reveals a concrete consequence the decision did not account for, it raises a question and leaves the code unchanged.
 
 Agents in the reviewed repository need the `clear-writing` skill, `code-review` for code reviews, and `deslop` and `design-afresh` for design reviews.
 
-For example, Improve or Review and Improve:
-
-```json
-{
-  "base": "<full merge-base commit ID>",
-  "head": "<full implementation commit ID>",
-  "workingDirectory": "repos/tau",
-  "context": "Read issue #123 for context."
-}
-```
-
-And Review with context gathering:
+For example, any of the three:
 
 ```json
 {
@@ -96,7 +90,7 @@ And Review with context gathering:
 
 ### Gather context
 
-`scripts/gather-context.js` collects the conversations behind a commit range, the same step Review runs with `gatherContext`. The range can be a pull request, an unpublished branch, or a single local commit. A Sol agent starts from the commits, selects the pull request and the issues behind the change, and searches Tau history for sessions where the user shaped the change. It looks only at the user's Tau terminal, Claude Code, and Telegram assistant sessions in a short window around the commits. A helper screens them by summary and tail with Jev and classifies the remaining transcripts in chunks. Changes with no decisions behind them, such as dependency upgrades, skip the history search. The log shows each search with its window, its cost, and how many sessions matched the filters, passed screening, and passed classification.
+`scripts/gather-context.js` collects the conversations behind a commit range, the same step Review, Improve, and Review and Improve run with `gatherContext`. The range can be a pull request, an unpublished branch, or a single local commit. A Sol agent starts from the commits, selects the pull request and the issues behind the change, and searches Tau history for sessions where the user shaped the change. It looks only at the user's Tau terminal, Claude Code, and Telegram assistant sessions in a short window around the commits. A helper screens them by summary and tail with Jev and classifies the remaining transcripts in chunks. Changes with no decisions behind them, such as dependency upgrades, skip the history search. The log shows each search with its window, its cost, and how many sessions matched the filters, passed screening, and passed classification.
 
 The workflow exports the selected discussions and sessions as numbered entries in time order. It writes `manifest.md` with sources in start-time order, their active dates in UTC, why each was included, and any gaps.
 

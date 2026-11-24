@@ -107,10 +107,10 @@ if (preview) {
 
 // ── Prompts ─────────────────────────────────────────────────────────────
 
-function screenQuestion(id) {
+function screenQuestion(id, title) {
   return {
     type: "noul",
-    instructions: `Could session ${id} be a conversation that fits the description? Keep the session when its summary or unsummarized tail suggests it might, or when you cannot tell.`,
+    instructions: `Could session ${id} (${JSON.stringify(title)}) be a conversation that fits the description? Keep the session when its summary or unsummarized tail suggests it might, or when you cannot tell.`,
     criteria: {
       true: "The summary or tail suggests the conversation may fit the description, or it is unclear.",
       false: "The summary and tail clearly describe a different conversation.",

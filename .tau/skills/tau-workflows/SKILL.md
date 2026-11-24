@@ -96,7 +96,7 @@ And Review with context gathering:
 
 ### Gather context
 
-`scripts/gather-context.js` collects the conversations behind a commit range, the same step Review runs with `gatherContext`. The range can be a pull request, an unpublished branch, or a single local commit. A Sol agent starts from the commits, follows relevant GitHub discussions where they exist, and searches Tau history for sessions where the user shaped the change. It lists candidates by time window to avoid expensive full-text searches, then uses Jev to screen them by summary and tail and to classify the remaining transcripts in chunks. It stops searching when its model calls reach $3.
+`scripts/gather-context.js` collects the conversations behind a commit range, the same step Review runs with `gatherContext`. The range can be a pull request, an unpublished branch, or a single local commit. A Sol agent starts from the commits, selects the pull request and the issues behind the change, and searches Tau history for sessions where the user shaped the change. It looks only at the user's Tau terminal, Claude Code, and Telegram assistant sessions in a short window around the commits. A helper screens them by summary and tail with Jev and classifies the remaining transcripts in chunks. Changes with no decisions behind them, such as dependency upgrades, skip the history search. The log shows each search with its window, its cost, and how many sessions matched the filters, passed screening, and passed classification.
 
 The workflow exports the selected discussions and sessions as numbered entries in time order. It writes `manifest.md` with sources in start-time order, their active dates in UTC, why each was included, and any gaps.
 

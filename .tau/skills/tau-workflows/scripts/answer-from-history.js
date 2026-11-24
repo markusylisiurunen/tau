@@ -108,10 +108,10 @@ if (preview) {
 
 // ── Prompts ─────────────────────────────────────────────────────────────
 
-function screenQuestion(id) {
+function screenQuestion(id, title) {
   return {
     type: "noul",
-    instructions: `Could session ${id} contain information relevant to the question, even if its summary does not answer it? Keep the session when its summary or unsummarized tail suggests it might, or when you cannot tell.`,
+    instructions: `Could session ${id} (${JSON.stringify(title)}) contain information relevant to the question, even if its summary does not answer it? Keep the session when its summary or unsummarized tail suggests it might, or when you cannot tell.`,
     criteria: {
       true: "The summary or tail suggests relevant information may be present, or it is unclear.",
       false:

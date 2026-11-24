@@ -335,11 +335,11 @@
     },
     ".tau/skills/tau-workflows/scripts/answer-from-history.js": {
       "type": "file",
-      "hash": "e1055cc71f39ec58f36863d1a09381e933960566aea37367f06015cf3dc85742"
+      "hash": "e7df70f81403db456a149d50f87155e6a73ed03d21a774d18347ebe260d12291"
     },
     ".tau/skills/tau-workflows/scripts/find-sessions.js": {
       "type": "file",
-      "hash": "f57373c5a5c65fc9d7613a63b653abb4ad1cf697c51c63a694093199b0a56a97"
+      "hash": "c7356959b12dd1b90e0e66297c2bab231e7ece3e4d9784b86d923bda4683bc7f"
     },
     ".tau/skills/tau-workflows/scripts/gather-context.js": {
       "type": "file",
@@ -351,15 +351,15 @@
     },
     ".tau/skills/tau-workflows/scripts/lib/context-helpers.js": {
       "type": "file",
-      "hash": "7f3c712996bac15cab9a88476a18e6dc327cb6b184eeb0dedb3bc3c879fcaa1b"
+      "hash": "fd06f9a8d61df402d61681ca76349608bb56ff98c6b80b5bd89fb841b543373b"
     },
     ".tau/skills/tau-workflows/scripts/lib/context.js": {
       "type": "file",
-      "hash": "b3a6e193cc2937c9badf56e368adb38007def82a19017327a9d519436b762738"
+      "hash": "d77cd3377ac89693f4971feac703d3ce1e3cb2549cce25a5811a6e3531e13920"
     },
     ".tau/skills/tau-workflows/scripts/lib/history.js": {
       "type": "file",
-      "hash": "f51034668be76633502d0814ffd41a94a97dfb9458cbeb58aa63d74866cc7a43"
+      "hash": "3c977a1de3c09985d1f674c055a93bffc0b38801757e50fd54982d44ee6ff7a3"
     },
     ".tau/skills/tau-workflows/scripts/lib/review.js": {
       "type": "file",
@@ -367,7 +367,7 @@
     },
     ".tau/skills/tau-workflows/scripts/lib/workflow.js": {
       "type": "file",
-      "hash": "5e7109f563bcaf5c18fb763e7edcb559bf01a5b2f27eaa3f364f5378d8b22e63"
+      "hash": "9399ef1ace0839717f0138e4ccfdd7672213a8103ab81d20490aa1128d3bc771"
     },
     ".tau/skills/tau-workflows/scripts/prune.js": {
       "type": "file",
@@ -387,7 +387,7 @@
     },
     ".tau/skills/tau-workflows/SKILL.md": {
       "type": "file",
-      "hash": "e0e7e5eefcbe622041c80b7186cf9d1ac789f7f9f0ab504fc1dba07b2c80ca68"
+      "hash": "a448eb5880a4da31f6c693e33e64063e929ef4e35bb67b249cee8d7a88c22b3b"
     },
     "AGENTS.md": {
       "type": "section",

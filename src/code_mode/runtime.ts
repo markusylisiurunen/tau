@@ -122,7 +122,7 @@ export type BuildTauCodeModeToolDescriptionOptions = {
   timeoutMs?: number;
 };
 
-/** Where relative `.js` imports load from. Without it, programs cannot import local files. */
+/** Where local `.js` imports load from. Without it, programs cannot import local files. */
 export type CodeModeSources = {
   cwd: string;
   entryPath?: string;

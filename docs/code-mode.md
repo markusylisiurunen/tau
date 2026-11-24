@@ -16,7 +16,7 @@ The agent loads the reference for each package when it needs it, so you do not n
 
 ## Saved programs
 
-A skill can ship a reviewed program, which the agent runs with `file` in place of inline code and a JSON `input` of up to 16 KiB. Programs share code through relative `.js` imports:
+A skill can ship a reviewed program, which the agent runs with `file` in place of inline code and a JSON `input` of up to 16 KiB. Programs share code through absolute or relative `.js` imports:
 
 ```js
 // .agents/skills/audit/audit.js

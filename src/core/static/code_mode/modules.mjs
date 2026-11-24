@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { dirname, resolve } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
 import { build } from "esbuild";
 
 const MAX_SOURCE_BYTES = 8 * 1024 * 1024;
@@ -35,7 +35,7 @@ export async function compileModules({ code, cwd, entryPath, packages, readSourc
           }
           if (importer === wrapper) return { path: entry, namespace: "tau-source" };
           if (Object.hasOwn(packages, path)) return { path, namespace: "tau-package" };
-          if ((path.startsWith("./") || path.startsWith("../")) && path.endsWith(".js") && !path.includes("\0")) {
+          if ((isAbsolute(path) || path.startsWith("./") || path.startsWith("../")) && path.endsWith(".js") && !path.includes("\0")) {
             return { path: resolve(importer === "<inline>" ? cwd : dirname(importer), path), namespace: "tau-source" };
           }
           throw new Error(`Unavailable Code Mode module: ${path}`);

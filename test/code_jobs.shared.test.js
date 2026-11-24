@@ -94,12 +94,12 @@ it("loads saved JavaScript once through the backend and exposes JSON input witho
 });
 
 it.each([false, true])(
-  "runs relative imports in the same sandbox for saved foreground and inline background programs (background: %s)",
+  "runs local imports in the same sandbox for saved foreground and inline background programs (background: %s)",
   async (background) => {
     const backend = createLocalToolExecutionBackend();
     const files = {
       "/remote/workflow.js":
-        'import { input, printText } from "@tau/core"; import { format } from "./lib/helpers.js"; printText(format(input));',
+        'import { input, printText } from "@tau/core"; import { format } from "/remote/lib/helpers.js"; printText(format(input));',
       "/remote/lib/helpers.js":
         'import { suffix } from "./shared.js"; await Promise.resolve(); export const format = value => value + suffix;',
       "/remote/lib/shared.js":
@@ -118,7 +118,9 @@ it.each([false, true])(
       codeJobs: jobs,
     });
     try {
-      const source = background ? { code: files["/remote/workflow.js"] } : { file: "workflow.js" };
+      const source = background
+        ? { code: files["/remote/workflow.js"] }
+        : { file: "/remote/workflow.js" };
       const success = await call(tool, { ...source, background, input: "result" });
       expect(success.outcome).toBe("succeeded");
       if (background) await jobs.waitForIdle();

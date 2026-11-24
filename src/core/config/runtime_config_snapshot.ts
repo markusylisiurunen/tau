@@ -7,7 +7,7 @@ import {
   type ToolExecutionBackend,
 } from "../tools/execution_backend.js";
 import type { ConfigDeps } from "./deps.js";
-import { resolveConfigLevels } from "./paths.js";
+import { configLevels, resolveConfigLevels } from "./paths.js";
 import {
   loadRuntimeConfig,
   type SessionRuntimeConfigResult,
@@ -28,10 +28,9 @@ const COLLECT_RUNTIME_CONFIG_SCRIPT = `
 const fs = require("node:fs");
 const path = require("node:path");
 
-const cwd = path.resolve(process.argv[1]);
-const home = path.resolve(process.argv[2]);
+const levels = JSON.parse(fs.readFileSync(0, "utf8"));
 const files = new Map();
-const skillsOnly = process.argv[3] === "skills";
+const skillsOnly = process.argv[1] === "skills";
 
 function stat(pathname) {
   try {
@@ -84,37 +83,16 @@ function addSkills(dir) {
   }
 }
 
-function addLevel(root, configDir) {
+for (const level of levels) {
   if (!skillsOnly) {
-    addFile(path.join(configDir, "config.json"));
-    addFiles(path.join(configDir, "personas"), ".md");
-    addFiles(path.join(configDir, "prompts"), ".md");
+    addFile(level.configPath);
+    addFiles(level.personasDir, ".md");
+    addFiles(level.promptsDir, ".md");
   }
-  addSkills(path.join(configDir, "skills"));
-  addSkills(path.join(root, ".agents", "skills"));
+  addSkills(level.skillsDir);
+  addSkills(level.agentsSkillsDir);
 }
 
-const withinHome = cwd === home || cwd.startsWith(home + path.sep);
-if (withinHome) {
-  addLevel(home, path.join(home, ".config", "tau"));
-}
-
-const stop = withinHome ? home : path.parse(cwd).root;
-const roots = [];
-let dir = cwd;
-while (true) {
-  if (isDirectory(path.join(dir, ".tau")) || isDirectory(path.join(dir, ".agents", "skills"))) {
-    roots.push(dir);
-  }
-  if (dir === stop) break;
-  const parent = path.dirname(dir);
-  if (parent === dir) break;
-  dir = parent;
-}
-roots.reverse();
-for (const root of roots) {
-  addLevel(root, path.join(root, ".tau"));
-}
 
 process.stdout.write(JSON.stringify({
   files: [...files.entries()].map(([filePath, content]) => ({ path: filePath, content }))
@@ -149,11 +127,12 @@ async function collectRuntimeConfigDeps(
   options: { backend: ToolExecutionBackend; cwd: string; home: string },
   scope: "runtime" | "skills",
 ): Promise<ConfigDeps> {
-  const result = await options.backend.runNodeScript(
-    COLLECT_RUNTIME_CONFIG_SCRIPT,
-    [options.cwd, options.home, scope],
-    { cwd: options.cwd, timeoutMs: 30_000, maxCaptureBytes: MAX_COMMAND_CAPTURE_BYTES },
-  );
+  const result = await options.backend.runNodeScript(COLLECT_RUNTIME_CONFIG_SCRIPT, [scope], {
+    stdin: Buffer.from(JSON.stringify(configLevels(options.home, options.cwd))),
+    cwd: options.cwd,
+    timeoutMs: 30_000,
+    maxCaptureBytes: MAX_COMMAND_CAPTURE_BYTES,
+  });
   if (result.exitCode !== 0) {
     throw new Error(formatConfigSnapshotCommandFailure(result));
   }

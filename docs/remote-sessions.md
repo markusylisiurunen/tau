@@ -38,7 +38,7 @@ The first form opens a selector and needs a terminal. `--new` needs an absolute 
 
 ## Fly Sprites
 
-A session can work on an existing Fly Sprite while the host stays on its own machine. Configure the connection in the host's configuration before starting it:
+A session can work on an existing Fly Sprite while the host stays on its own machine. Configure the connection in the host's global configuration before starting it:
 
 ```json
 {

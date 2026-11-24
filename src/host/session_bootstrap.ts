@@ -10,12 +10,18 @@ import type { Persona, ReasoningEffort, Skill } from "../core/types.js";
 import type { ExecutionEnvironment } from "../execution/execution_environment.js";
 import type { SessionProtocolPersonaOverrides } from "../protocol/session_protocol.js";
 
+type PromptReference = Pick<PromptTemplate, "id" | "label" | "path">;
+
+export function promptReferences(prompts: PromptReference[]): PromptReference[] {
+  return prompts.map(({ id, label, path }) => ({ id, label, path }));
+}
+
 export type SessionBootstrap = {
   persona: Persona;
   initialAutoCompactThresholdTokens?: number;
   discoveredSkills: Skill[];
   personas: Persona[];
-  prompts: PromptTemplate[];
+  prompts: PromptReference[];
   modelResolver: ModelResolver;
   config: SessionConfig;
 };
@@ -78,7 +84,7 @@ export async function resolveSessionBootstrap(options: {
       : {}),
     discoveredSkills: runtime.skills,
     personas: runtime.personas.map((persona) => structuredClone(persona)),
-    prompts: runtime.prompts,
+    prompts: promptReferences(runtime.prompts),
     modelResolver: runtime.bootstrap.modelResolver.resolveModel,
     config: { ...runtime.config, apiKeys: options.hostApiKeys },
   };

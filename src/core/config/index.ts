@@ -23,7 +23,6 @@ export type {
 export {
   loadRuntimeBootstrap,
   loadRuntimeConfig,
-  resolvePromptTemplateWithBackend,
 } from "./runtime.js";
 export type {
   ApiKeysConfig,

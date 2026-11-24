@@ -388,21 +388,17 @@ function validateConfigData(
     );
   }
 
-  if (data.enabledClientTools !== undefined && options.scope !== "project") {
-    errors.push(`${sourceLabel}: 'enabledClientTools' may only be configured in project config.`);
-  } else {
-    const enabledClientToolsResult = parseEnabledClientToolsConfig(
-      data.enabledClientTools,
-      sourceLabel,
-    );
-    assignParsedConfigValue(
-      config,
-      errors,
-      "enabledClientTools",
-      enabledClientToolsResult.config,
-      enabledClientToolsResult.errors,
-    );
-  }
+  const enabledClientToolsResult = parseEnabledClientToolsConfig(
+    data.enabledClientTools,
+    sourceLabel,
+  );
+  assignParsedConfigValue(
+    config,
+    errors,
+    "enabledClientTools",
+    enabledClientToolsResult.config,
+    enabledClientToolsResult.errors,
+  );
 
   const subagentsResult = parseSubagentsConfig(data.subagents, sourceLabel, options.resolveModel);
   assignParsedConfigValue(
@@ -426,15 +422,18 @@ function validateConfigData(
     modelSystemNoticesResult.errors,
   );
 
-  const flySpritesResult = parseFlySpritesConfig(data.flySprites, sourceLabel);
-  assignParsedConfigValue(
-    config,
-    errors,
-    "flySprites",
-    flySpritesResult.config,
-    flySpritesResult.errors,
-  );
-
+  if (data.flySprites !== undefined && options.scope !== "global") {
+    errors.push(`${sourceLabel}: 'flySprites' may only be configured in the global config.`);
+  } else {
+    const flySpritesResult = parseFlySpritesConfig(data.flySprites, sourceLabel);
+    assignParsedConfigValue(
+      config,
+      errors,
+      "flySprites",
+      flySpritesResult.config,
+      flySpritesResult.errors,
+    );
+  }
   if (data.history !== undefined && options.scope !== "global") {
     errors.push(`${sourceLabel}: 'history' may only be configured in the global config.`);
   } else {

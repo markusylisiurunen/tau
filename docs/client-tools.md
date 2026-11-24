@@ -32,7 +32,7 @@ Define commands in global configuration on the client machine, so a repository c
 ```ts
 type CommandClientTool = {
   name: string;
-  defaultEnabled: boolean; // used when no project sets enabledClientTools
+  defaultEnabled: boolean; // used when no level sets enabledClientTools
   description: string;
   parameters: JsonSchema; // root type must be "object"
   command: string; // on PATH, or relative to home if it contains "/"
@@ -41,7 +41,7 @@ type CommandClientTool = {
 };
 ```
 
-The command runs directly without a shell, with the client's full environment. A project can select tools from this list with `enabledClientTools`, where the nearest list wins and `[]` selects none:
+The command runs directly without a shell, with the client's full environment. Any configuration level, including a project, can select tools from this list with `enabledClientTools`. The nearest list wins, and `[]` selects none:
 
 ```json
 { "enabledClientTools": ["notify_desktop"] }

@@ -45,7 +45,7 @@ type McpServer = {
 
 ## Where servers run
 
-Servers come from the global and project configuration of the session's working directory, and server names add up across levels. Stdio servers run on the host with the host's full environment and permissions, so a project's `.tau/config.json` can start commands there. See [security](security.md).
+Servers come from global configuration and every `.tau/config.json` from the filesystem root to the session's working directory, and server names add up across levels. Stdio servers run on the host with the host's full environment and permissions, so any of those files can start commands there, including one in a directory above the repository. See [security](security.md).
 
 Sessions on a remote execution environment, such as a Fly Sprite, have no MCP servers. Subagents use the servers of their parent session.
 

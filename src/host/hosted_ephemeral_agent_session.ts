@@ -14,10 +14,10 @@ import {
 import type { AgentEvent } from "../core/agent/events.js";
 import { NotificationInbox } from "../core/agent/notification_inbox.js";
 import type { SessionRuntimeSettings } from "../core/config/index.js";
-import { loadSkillsFromToolBackend } from "../core/config/runtime_config_snapshot.js";
 import type { HistoryQuery } from "../core/history/types.js";
 import type { McpManager } from "../core/mcp/manager.js";
 import { resolveAgentModel } from "../core/runtime/agent_model.js";
+import type { ChatRuntimePromptContext } from "../core/runtime/chat_runtime.js";
 import { createDefaultCoreDeps } from "../core/runtime/deps.js";
 import { composeSessionPrompts } from "../core/runtime/session_prompt_composer.js";
 import { createAutoCompactionArchiver } from "../core/session/auto_compaction_archive.js";
@@ -67,14 +67,13 @@ type EphemeralAgentThreadForkSource = {
 };
 
 export type HostedEphemeralAgentSessionOptions = {
-  cwd: string;
+  promptContext: ChatRuntimePromptContext;
   jobs: AgentJobRegistry;
   contextId: string;
   sessionId: string;
   sessionStartedAt: number;
   persona: Persona;
   config: SessionRuntimeSettings;
-  includeAgentContext: boolean;
   executionEnvironment: ExecutionEnvironment;
   instructions: string;
   history: HistoryQuery;
@@ -97,21 +96,8 @@ export class HostedEphemeralAgentSession {
     private readonly spec: AgentSpec,
   ) {}
 
-  static async create(
-    options: HostedEphemeralAgentSessionOptions,
-  ): Promise<HostedEphemeralAgentSession> {
-    const environment = options.executionEnvironment;
-    const { skills } = await loadSkillsFromToolBackend({
-      backend: environment.getToolExecutionBackend(),
-      cwd: options.cwd,
-      home: environment.snapshot().home,
-    });
-    const { promptBootstrap } = await environment.resolveRuntimeContext({
-      cwd: options.cwd,
-      discoveredSkills: skills,
-      includeAgentContext: options.includeAgentContext,
-    });
-    const promptContext = promptBootstrap.promptContext;
+  static create(options: HostedEphemeralAgentSessionOptions): HostedEphemeralAgentSession {
+    const { promptContext } = options;
     const composition = composeSessionPrompts({
       persona: options.persona,
       capabilities: ephemeralCapabilities(options.config),
@@ -136,7 +122,7 @@ export class HostedEphemeralAgentSession {
       systemPrompt,
       tools: new ToolRegistry([]),
     });
-    return new HostedEphemeralAgentSession({ ...options, cwd: promptContext.cwd }, spec);
+    return new HostedEphemeralAgentSession(options, spec);
   }
 
   async submitThreadMessage(
@@ -215,7 +201,7 @@ export class HostedEphemeralAgentSession {
         ...spec,
         tools: ToolCatalog.createSubagentRegistry({
           backend: this.options.executionEnvironment.getToolExecutionBackend(),
-          cwd: this.options.cwd,
+          cwd: this.options.promptContext.cwd,
           config: this.options.config,
           bashJobs: jobs.bashJobs,
           codeJobs: jobs.codeJobs,

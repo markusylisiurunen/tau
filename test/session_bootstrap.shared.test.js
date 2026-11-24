@@ -104,7 +104,7 @@ describe("config ownership", () => {
     }
   });
 
-  it("keeps the global level out of directories outside home", () => {
+  it("includes the global level in directories outside home", () => {
     const fx = createFixture();
     try {
       writeConflictingProjects(fx);
@@ -112,10 +112,10 @@ describe("config ownership", () => {
       fx.write(join(outside, ".tau"), { speech: { vocabulary: ["Outside"] } });
       const deps = fx.deps(outside);
 
-      expect(loadClientConfig(outside, deps).speech.personalVocabulary).toEqual([]);
+      expect(loadClientConfig(outside, deps).speech.personalVocabulary).toEqual(["Personal"]);
       expect(loadSessionConfig(outside, deps)).toMatchObject({
         mcpServers: {},
-        speechVocabulary: ["Outside"],
+        speechVocabulary: ["Outside", "Personal"],
       });
     } finally {
       fx.cleanup();

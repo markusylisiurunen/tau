@@ -338,7 +338,6 @@ export class ClaudeCodeRuntime implements SubagentRuntime {
   }
   private async recordEvent(event: ClaudeCodeEvent): Promise<void> {
     if (event.type === "session" && this.sessionId !== event.id) {
-      if (this.sessionId) throw new Error("Claude Code returned a different session ID");
       this.sessionId = event.id;
       await this.options.checkpoint();
     }

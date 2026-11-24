@@ -982,15 +982,9 @@ export function createWorkerDocument(worker: WorkerCheckpoint) {
   const { kind: _kind, ...config } = worker.config;
   return { version: 1, worker: { ...worker, config } };
 }
-export function parseWorkerDocument(id: string, value: unknown): WorkerCheckpoint {
+export function parseWorkerDocument(value: unknown): WorkerCheckpoint {
   const header = workerHeader.parse(value);
   if (header.version !== 1) throw new UnsupportedStoredSessionVersionError(header.version);
   const worker = workerSchema.parse(header.worker);
-  if (
-    (worker.kind === "native" && worker.context.agentId !== id) ||
-    (worker.lastAssistantSeq ?? 0) > worker.traceSequence ||
-    (worker.assistant && worker.assistant.seq !== worker.lastAssistantSeq)
-  )
-    throw new Error("Invalid worker checkpoint identity or sequence");
   return { ...worker, config: { ...worker.config, kind: worker.kind } } as WorkerCheckpoint;
 }

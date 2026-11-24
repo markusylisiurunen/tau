@@ -58,7 +58,6 @@ type SubagentRecord = {
   launchEpoch: number;
   canDelegate: boolean;
   notifyOnCompletion: boolean;
-  requestedNotification?: { enabled: boolean };
   inputEpoch: number;
   // Save the restart discard counts before making in-flight inputs available to the worker.
   admitting: { queue: number; steer: number };
@@ -417,7 +416,7 @@ export class AgentSupervisor {
       },
       originHistoryEntryId: record.originHistoryEntryId,
       personaId: record.personaId,
-      notifyOnCompletion: record.requestedNotification?.enabled ?? record.notifyOnCompletion,
+      notifyOnCompletion: record.notifyOnCompletion,
       traceSequence: record.trace.lastSequence,
       lastAssistantSeq: record.lastAssistantSeq,
       assistant: record.trace.savedAssistant(record.lastAssistantSeq),
@@ -440,15 +439,12 @@ export class AgentSupervisor {
     const record = this.requireRecord(id);
     if (callerId !== this.mainAgentId || record.parentId !== callerId)
       throw new AgentRequestError("unknown_agent", `Unknown subagent ID: ${id}`);
-    const request = { enabled };
-    record.requestedNotification = request;
-    return this.checkpoint(id)
-      .then(() => {
-        record.notifyOnCompletion = enabled;
-      })
-      .finally(() => {
-        if (record.requestedNotification === request) record.requestedNotification = undefined;
-      });
+    const previous = record.notifyOnCompletion;
+    record.notifyOnCompletion = enabled;
+    return this.checkpoint(id).catch((error) => {
+      if (record.notifyOnCompletion === enabled) record.notifyOnCompletion = previous;
+      throw error;
+    });
   }
 
   async sendInput(options: {

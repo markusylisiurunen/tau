@@ -77,7 +77,7 @@ export class FileSessionStore implements SessionStore {
           throw error;
         }
         try {
-          return parseWorkerDocument(id, JSON.parse(raw));
+          return parseWorkerDocument(JSON.parse(raw));
         } catch (cause) {
           if (cause instanceof UnsupportedStoredSessionVersionError) throw cause;
           throw new InvalidWorkerCheckpointError(`invalid worker checkpoint: ${id}`, { cause });

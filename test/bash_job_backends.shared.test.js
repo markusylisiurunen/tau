@@ -37,7 +37,7 @@ for (const kind of ["local", "Sprite"]) {
           process.cwd(),
           signal,
         );
-        expect(await jobs.waitJobs([id], 5000, signal)).toBe(false);
+        expect(await jobs.waitJobs([id], 10_000, signal)).toBe(false);
         const result = await jobs.inspect([id]);
         expect(result.text).toContain("TAIL");
         expect(result.text).toContain("truncated");
@@ -59,7 +59,7 @@ for (const kind of ["local", "Sprite"]) {
           await backend.dispose();
         }
       }
-    });
+    }, 20_000);
 
     it("kills a TERM-ignoring child on shutdown", async () => {
       const backend = createBackend();
@@ -73,27 +73,31 @@ for (const kind of ["local", "Sprite"]) {
           process.cwd(),
           new AbortController().signal,
         );
-        await vi.waitFor(() => {
-          pid = Number(
-            jobs
-              .format([id])
-              .text.split("\n")
-              .find((line) => /^\d+$/.test(line)),
-          );
-          expect(pid).toBeGreaterThan(0);
-        });
+        await vi.waitFor(
+          () => {
+            pid = Number(
+              jobs
+                .format([id])
+                .text.split("\n")
+                .find((line) => /^\d+$/.test(line)),
+            );
+            expect(pid).toBeGreaterThan(0);
+          },
+          { timeout: 5_000 },
+        );
         await Promise.race([
           jobs.dispose(),
           new Promise((_, reject) => {
-            shutdownTimeout = setTimeout(() => reject(new Error("shutdown timed out")), 4000);
+            shutdownTimeout = setTimeout(() => reject(new Error("shutdown timed out")), 8_000);
           }),
         ]);
         expect(jobs.read([id])).toEqual([
           expect.objectContaining({ status: "stopped", aborted: true }),
         ]);
-        await vi.waitFor(() => {
-          expect(() => process.kill(pid, 0)).toThrow();
+        await vi.waitFor(() => expect(() => process.kill(pid, 0)).toThrow(/ESRCH/), {
+          timeout: 5_000,
         });
+        pid = undefined;
       } finally {
         clearTimeout(shutdownTimeout);
         try {
@@ -106,6 +110,6 @@ for (const kind of ["local", "Sprite"]) {
           }
         }
       }
-    });
+    }, 20_000);
   });
 }

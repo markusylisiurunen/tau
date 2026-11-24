@@ -148,7 +148,7 @@ describe("Claude Code supervised lifecycle", () => {
       emit(options, result(`answer ${count}`, count * 10));
       return ok;
     });
-    const spawned = f.spawn();
+    const spawned = await f.spawn();
 
     const id = spawned.id;
     const [first] = await f.supervisor.waitForAgents([id]);
@@ -188,7 +188,7 @@ describe("Claude Code supervised lifecycle", () => {
       workingDirectory: "/remote/workspace",
       createdAt: expect.any(Number),
     });
-    f.supervisor.reset();
+    f.supervisor.dispose();
   });
 
   it("reopens the same Claude session on a new supervisor without delivering an old completion", async () => {
@@ -198,16 +198,17 @@ describe("Claude Code supervised lifecycle", () => {
       emit(options, result("first answer", 10));
       return ok;
     }, store);
-    const { id } = first.spawn(true);
+    const { id } = await first.spawn(true);
     await first.supervisor.waitForIdle();
     const reply = first.supervisor.getLastResponse(id);
     expect(first.onCompletion).toHaveBeenCalledTimes(1);
+    const member = first.supervisor.getSnapshot(id);
     first.supervisor.dispose();
     const reopened = fixture(async (_input, options) => {
       emit(options, result("second answer", 15));
       return ok;
     }, store);
-    await reopened.supervisor.restore({ backend: reopened.backend }, new Set([id]));
+    await reopened.supervisor.restore({ backend: reopened.backend }, [member]);
     expect(reopened.onCompletion).not.toHaveBeenCalled();
     expect(reopened.supervisor.getLastResponse(id)).toEqual(reply);
     expect(reopened.calls).toEqual([]);
@@ -231,19 +232,21 @@ describe("Claude Code supervised lifecycle", () => {
       await gate.promise;
       return { ...ok, aborted: true };
     }, store);
-    const { id } = first.spawn(true);
+    const { id } = await first.spawn(true);
     try {
       const entries = () => first.supervisor.getTrace(id).trace({ kinds: ["assistant"] }).entries;
       await vi.waitFor(() => expect(entries()).toHaveLength(1));
       const [{ seq, timestamp }] = entries();
       await first.supervisor.sendInput({ id, mode: "queue", prompt: "do not replay" });
       const saved = new MemorySessionStore().workers("main");
-      for (const worker of await store.list()) await saved.save(worker);
+      await saved.save(id, await store.read(id));
       const reopened = fixture(async (_input, options) => {
         emit(options, result());
         return ok;
       }, saved);
-      await reopened.supervisor.restore({ backend: reopened.backend }, new Set([id]));
+      await reopened.supervisor.restore({ backend: reopened.backend }, [
+        first.supervisor.getSnapshot(id),
+      ]);
       expect(reopened.calls).toEqual([]);
       expect(reopened.onCompletion).not.toHaveBeenCalled();
       expect(reopened.supervisor.read(id)).toMatchObject({
@@ -278,13 +281,13 @@ describe("Claude Code supervised lifecycle", () => {
       },
       {
         ...store,
-        async save(worker) {
-          if (worker.state.run.status !== "running") throw new Error("disk full");
-          await store.save(worker);
+        async save(id, worker) {
+          if (f.supervisor.getSnapshot(id).run.status !== "running") throw new Error("disk full");
+          await store.save(id, worker);
         },
       },
     );
-    const { id } = f.spawn(true);
+    const { id } = await f.spawn(true);
     await f.supervisor.waitForIdle();
     expect(f.supervisor.read(id)).toMatchObject({
       status: "idle",
@@ -321,7 +324,7 @@ describe("Claude Code supervised lifecycle", () => {
       }
       return ok;
     });
-    const id = f.spawn().id;
+    const id = (await f.spawn()).id;
     const [interrupted] = await f.supervisor.waitForAgents([id]);
     expect(interrupted.reason).toBe("interrupted");
     expect(interrupted.usage).toMatchObject({ input: 5, output: 3, contextTokens: 8 });
@@ -343,7 +346,7 @@ describe("Claude Code supervised lifecycle", () => {
     expect(f.recordUsage.mock.calls.reduce((total, [entry]) => total + entry.cost.total, 0)).toBe(
       0.15,
     );
-    f.supervisor.reset();
+    f.supervisor.dispose();
   });
 
   it("interrupts through the backend signal and permits a follow-up on the same session", async () => {
@@ -363,7 +366,7 @@ describe("Claude Code supervised lifecycle", () => {
       );
       return { ...ok, aborted: true };
     });
-    const id = f.spawn().id;
+    const id = (await f.spawn()).id;
     await ready;
     expect((await f.supervisor.sendInput({ mode: "queue", id, prompt: "queued" })).status).toBe(
       "working",
@@ -376,7 +379,7 @@ describe("Claude Code supervised lifecycle", () => {
     );
     expect((await f.supervisor.waitForAgents([id]))[0].reason).toBe("completed");
     expect(f.calls[1].input.sessionId).toBe(sessionId);
-    f.supervisor.reset();
+    f.supervisor.dispose();
   });
 
   it("disposes running Claude children when their origins are removed", async () => {
@@ -391,7 +394,7 @@ describe("Claude Code supervised lifecycle", () => {
       );
       return { ...ok, aborted: true };
     });
-    f.spawn();
+    await f.spawn();
     await ready;
     f.supervisor.retainOrigins(new Set());
     expect(f.calls[0].options.signal.aborted).toBe(true);
@@ -449,14 +452,14 @@ describe("Claude Code supervised lifecycle", () => {
       return ok;
     });
     f.openHistory.mockReturnValue(async (event) => history.push(event));
-    const id = f.spawn().id;
+    const id = (await f.spawn()).id;
     const [state] = await f.supervisor.waitForAgents([id]);
     expect(state.reason).toBe("failed");
     expect(history.map((event) => event.type)).toEqual(["message", "endTurn"]);
     expect(history[0]).toMatchObject({ type: "message", entry: { id: "answer" } });
     expect(history[0].entry.timestamp).toBeGreaterThanOrEqual(startedAt);
     expect(history[0].entry.timestamp).toBeLessThanOrEqual(Date.now());
-    f.supervisor.reset();
+    f.supervisor.dispose();
   });
 
   it("pairs a replayed unfinished call after interruption", async () => {
@@ -496,7 +499,7 @@ describe("Claude Code supervised lifecycle", () => {
     f.openHistory.mockReturnValue(async (event) => {
       expect(recorder.record(event)).toBeUndefined();
     });
-    const id = f.spawn().id;
+    const id = (await f.spawn()).id;
     await f.supervisor.waitForAgents([id]);
     expect(entries).toEqual([]);
     f.supervisor.sendInput({ id, prompt: "resume", mode: "queue" });
@@ -506,7 +509,7 @@ describe("Claude Code supervised lifecycle", () => {
     ]);
     expect(entries[0].timestamp).toBeGreaterThanOrEqual(startedAt);
     expect(entries[0].timestamp).toBeLessThanOrEqual(Date.now());
-    f.supervisor.reset();
+    f.supervisor.dispose();
   });
 
   it.each(["malformed", "exit"])("fails closed on %s results", async (kind) => {
@@ -516,11 +519,11 @@ describe("Claude Code supervised lifecycle", () => {
       if (kind === "provider") emit(options, { ...result("provider rejected"), failed: true });
       return kind === "exit" ? { ...ok, exitCode: 1 } : ok;
     });
-    const id = f.spawn().id;
+    const id = (await f.spawn()).id;
     const [state] = await f.supervisor.waitForAgents([id]);
     expect(state.reason).toBe("failed");
     expect(f.calls).toHaveLength(1);
-    f.supervisor.reset();
+    f.supervisor.dispose();
   });
 
   it("preserves queued input when steering delivery fails", async () => {
@@ -542,7 +545,7 @@ describe("Claude Code supervised lifecycle", () => {
       return ok;
     });
     try {
-      const id = f.spawn().id;
+      const id = (await f.spawn()).id;
       await ready;
       f.supervisor.sendInput({ id, prompt: "queued task", mode: "queue" });
       f.supervisor.sendInput({ id, prompt: "uncertain steering", mode: "steer" });
@@ -557,7 +560,7 @@ describe("Claude Code supervised lifecycle", () => {
         expect.arrayContaining([expect.objectContaining({ code: "input.discarded" })]),
       );
     } finally {
-      f.supervisor.reset();
+      f.supervisor.dispose();
     }
   });
 
@@ -567,10 +570,10 @@ describe("Claude Code supervised lifecycle", () => {
       for (const byte of bytes) options.onOutput(Buffer.from([byte]));
       return { ...ok, truncated: true };
     });
-    const id = f.spawn().id;
+    const id = (await f.spawn()).id;
     await f.supervisor.waitForAgents([id]);
     expect(f.supervisor.getSnapshot(id).run.response).toBe("valmista: ää 漢");
-    f.supervisor.reset();
+    f.supervisor.dispose();
   });
 });
 

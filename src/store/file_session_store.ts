@@ -15,7 +15,7 @@ import {
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
-import type { WorkerCheckpoint, WorkerStore } from "../core/subagents/checkpoint.js";
+import { InvalidWorkerCheckpointError, type WorkerStore } from "../core/subagents/checkpoint.js";
 import type { SessionProtocolSnapshot } from "../protocol/session_protocol.js";
 import {
   createStoredSessionDocument,
@@ -68,7 +68,7 @@ export class FileSessionStore implements SessionStore {
     const directory = `${this.snapshotPath(sessionId)}.workers`;
     const pathFor = (id: string) => join(directory, snapshotFilename(id));
     return {
-      list: async () => {
+      ids: async () => {
         let files: string[];
         try {
           files = await readdir(directory);
@@ -76,22 +76,26 @@ export class FileSessionStore implements SessionStore {
           if (isNotFound(error)) return [];
           throw error;
         }
-        const workers: WorkerCheckpoint[] = [];
-        for (const file of files.filter(isSnapshotFilename)) {
-          try {
-            const worker = parseWorkerDocument(
-              JSON.parse(await readFile(join(directory, file), "utf8")),
-            );
-            if (snapshotFilename(worker.state.id) === file) workers.push(worker);
-          } catch {
-            // Recovery reports missing members. Preserve unreadable files for inspection.
-          }
-        }
-        return workers;
+        return files.filter(isSnapshotFilename).map(sessionIdFromSnapshotFilename);
       },
-      save: async (worker) => {
+      read: async (id) => {
+        let raw: string;
+        try {
+          raw = await readFile(pathFor(id), "utf8");
+        } catch (error) {
+          if (isNotFound(error)) return undefined;
+          throw error;
+        }
+        try {
+          return parseWorkerDocument(id, JSON.parse(raw));
+        } catch (cause) {
+          if (cause instanceof UnsupportedStoredSessionVersionError) throw cause;
+          throw new InvalidWorkerCheckpointError(`invalid worker checkpoint: ${id}`, { cause });
+        }
+      },
+      save: async (id, worker) => {
         await mkdir(directory, { recursive: true, mode: PRIVATE_DIRECTORY_MODE });
-        const path = pathFor(worker.state.id),
+        const path = pathFor(id),
           temp = `${path}.${randomUUID()}.tmp`;
         try {
           await writeFile(temp, JSON.stringify(createWorkerDocument(worker)), {

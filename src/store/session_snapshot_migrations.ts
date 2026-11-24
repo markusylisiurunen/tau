@@ -14,7 +14,6 @@ import type { SessionProtocolSnapshot } from "../protocol/session_protocol.js";
 import {
   modelMessageSchema,
   projectSessionProtocolNoticePresentation,
-  sessionProtocolAgentRunSchema,
   sessionProtocolAgentStateSnapshotSchema,
   validateSessionProtocolResult,
 } from "../protocol/session_protocol.js";
@@ -897,9 +896,6 @@ function migrateStoredSessionV14ToV15(value: unknown): unknown {
 const workerHeader = z.object({ version: z.number().int(), worker: z.unknown() });
 const seq = z.number().int().nonnegative();
 const workerFields = z.object({
-  state: z
-    .object({ ...sessionProtocolAgentRunSchema.shape })
-    .omit({ availability: true, workingDirectory: true, model: true }),
   pending: z.object({ queue: seq, steer: seq }),
   originHistoryEntryId: z.string().min(1),
   personaId: z.string().optional(),
@@ -955,13 +951,12 @@ export function createWorkerDocument(worker: WorkerCheckpoint) {
   const { kind: _kind, ...config } = worker.config;
   return { version: 1, worker: { ...worker, config } };
 }
-export function parseWorkerDocument(value: unknown): WorkerCheckpoint {
+export function parseWorkerDocument(id: string, value: unknown): WorkerCheckpoint {
   const header = workerHeader.parse(value);
   if (header.version !== 1) throw new UnsupportedStoredSessionVersionError(header.version);
   const worker = workerSchema.parse(header.worker);
   if (
-    (worker.kind === "native" && worker.context.agentId !== worker.state.id) ||
-    worker.state.id === worker.state.parentId ||
+    (worker.kind === "native" && worker.context.agentId !== id) ||
     (worker.lastAssistantSeq ?? 0) > worker.traceSequence ||
     (worker.assistant && worker.assistant.seq !== worker.lastAssistantSeq)
   )

@@ -189,7 +189,7 @@ describe("bundled Claude Agent SDK runner", () => {
       });
       try {
         const marker = fakeClaude(directory, true, "steering", outcome);
-        const state = supervisor.spawn({
+        const state = await supervisor.spawn({
           parentId: supervisor.mainAgentId,
           launchEpoch: supervisor.prepareSpawn(supervisor.mainAgentId),
           runtimeConfig: options.config,
@@ -218,7 +218,7 @@ describe("bundled Claude Agent SDK runner", () => {
             .entries.map((entry) => supervisor.getTrace(state.id).readText(entry.seq).text),
         ).toEqual(["working", outcome === "success" ? "updated instruction" : "finished"]);
       } finally {
-        supervisor.reset();
+        supervisor.dispose();
         rmSync(directory, { recursive: true, force: true });
       }
     },
@@ -440,7 +440,7 @@ describe("bundled Claude Agent SDK runner", () => {
     let id;
     try {
       fakeClaude(directory, true, "after-usage");
-      const spawned = supervisor.spawn({
+      const spawned = await supervisor.spawn({
         parentId: supervisor.mainAgentId,
         launchEpoch: supervisor.prepareSpawn(supervisor.mainAgentId),
         runtimeConfig: options.config,
@@ -479,7 +479,7 @@ describe("bundled Claude Agent SDK runner", () => {
       expect(readFileSync(join(directory, "terminated"), "utf8")).toBe("yes");
     } finally {
       if (id) await supervisor.interrupt(id);
-      supervisor.reset();
+      supervisor.dispose();
       rmSync(directory, { recursive: true, force: true });
     }
   }, 20_000);

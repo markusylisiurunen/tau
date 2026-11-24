@@ -1,4 +1,3 @@
-import { MemorySessionStore } from "../../store/memory_session_store.js";
 import { type AgentCapabilities, mainAgentCapabilities } from "../agent/capabilities.js";
 import { NotificationInbox } from "../agent/notification_inbox.js";
 import type { AgentsPackageOptions } from "../code_mode/agents.js";
@@ -7,6 +6,7 @@ import type { HistoryQuery } from "../history/types.js";
 import { McpManager } from "../mcp/manager.js";
 import type { ModelResolver } from "../models/catalog.js";
 import { AgentSupervisor } from "../subagents/agent_supervisor.js";
+import { createMemoryWorkerStore } from "../subagents/checkpoint.js";
 import type { ResolveSubagentPrompt } from "../subagents/types.js";
 import type { Persona } from "../types.js";
 import { AgentJobRegistry } from "./agent_jobs.js";
@@ -81,7 +81,7 @@ export const ToolCatalog = {
       subagentSystemPrompt: "",
       autoCompactThresholdTokens: options.persona.autoCompactThresholdTokens ?? null,
       supervisor: new AgentSupervisor({
-        store: new MemorySessionStore().workers("main"),
+        store: createMemoryWorkerStore(),
         mainAgentId: "main",
         onEvent: () => {},
         onCompletion: () => {},

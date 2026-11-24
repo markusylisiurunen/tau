@@ -122,11 +122,7 @@ export class NativeSubagentRuntime implements SubagentRuntime {
         }),
       }),
       eventSink: async (event) => {
-        if (
-          "revision" in event &&
-          event.type !== "assistant_final" &&
-          event.revision !== this.savedRevision
-        )
+        if ("revision" in event && event.revision !== this.savedRevision)
           await options.checkpoint();
         await this.recordEvent(event);
         if (this.historySink) {

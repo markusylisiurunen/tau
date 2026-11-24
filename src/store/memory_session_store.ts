@@ -1,4 +1,4 @@
-import type { WorkerCheckpoint, WorkerStore } from "../core/subagents/checkpoint.js";
+import { createMemoryWorkerStore, type WorkerStore } from "../core/subagents/checkpoint.js";
 import type { SessionProtocolSnapshot } from "../protocol/session_protocol.js";
 import {
   assertExpectedSessionRevision,
@@ -11,19 +11,11 @@ export class MemorySessionStore implements SessionStore {
   private readonly snapshots = new Map<string, SessionProtocolSnapshot>();
   private readonly leases = new Set<string>();
 
-  private readonly children = new Map<string, Map<string, WorkerCheckpoint>>();
+  private readonly children = new Map<string, WorkerStore>();
   workers(sessionId: string): WorkerStore {
-    const workers = this.children.get(sessionId) ?? new Map<string, WorkerCheckpoint>();
+    const workers = this.children.get(sessionId) ?? createMemoryWorkerStore();
     this.children.set(sessionId, workers);
-    return {
-      list: async () => structuredClone([...workers.values()]),
-      save: async (worker) => {
-        workers.set(worker.state.id, structuredClone(worker));
-      },
-      remove: async (id) => {
-        workers.delete(id);
-      },
-    };
+    return workers;
   }
 
   async acquireSession(sessionId: string): Promise<() => Promise<void>> {

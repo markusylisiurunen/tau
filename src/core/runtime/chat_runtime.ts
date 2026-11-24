@@ -167,10 +167,12 @@ export class ChatRuntime {
       }),
       eventSink: async (event) => {
         if (event.type === "history_rewound") {
-          return await this.supervisor.retainOrigins(
+          const removed = this.supervisor.retainOrigins(
             new Set(this.agent.rawHistoryEntriesSnapshot.map((entry) => entry.id)),
-            async () => await options.eventSink(event),
           );
+          // Commit membership before deleting checkpoints that recovery might need.
+          await options.eventSink(event);
+          return await this.supervisor.forget(removed);
         }
         await options.eventSink(event);
       },
@@ -394,7 +396,7 @@ export class ChatRuntime {
     return ToolCatalog.createSessionRegistry(this.toolOptions(composition));
   }
 
-  restoreWorkers(members: ReadonlySet<string>) {
+  restoreWorkers(members: Parameters<AgentSupervisor["restore"]>[1]) {
     return this.supervisor.restore(
       {
         ...this.toolOptions(this.latestPromptComposition),

@@ -4680,7 +4680,7 @@ describe("LocalSessionHost", () => {
       const session = await host.createSession(localCreateInput);
       const origin = await session.record({ text: "delegate" });
       const supervisor = session.runtime.supervisor;
-      const child = supervisor.spawn({
+      const acceptance = supervisor.spawn({
         parentId: supervisor.mainAgentId,
         notifyOnCompletion: false,
         launchEpoch: supervisor.prepareSpawn(supervisor.mainAgentId),
@@ -4703,16 +4703,19 @@ describe("LocalSessionHost", () => {
         mcp: new McpManager(),
         agents: { persona: personas[0] },
       });
-      const agent = supervisor.records.get(child.id).runtime.agent;
+      const agent = [...supervisor.records.values()].at(-1).runtime.agent;
       agent.spec.model.stream = () => ({
         async *[Symbol.asyncIterator]() {
           await gate.promise;
           yield* [];
         },
         async result() {
-          return fauxAssistantMessage("done");
+          const message = fauxAssistantMessage("done");
+          message.usage.cost.input = message.usage.cost.total = 0.01;
+          return message;
         },
       });
+      const child = await acceptance;
       await vi.waitFor(() => expect(agent.status).toBe("running"));
       host.setRetention(session.sessionId, 60_000);
       host.releaseSession(session);
@@ -4725,25 +4728,18 @@ describe("LocalSessionHost", () => {
       expect(await host.observeSession(session.sessionId)).toBe(session);
       expect(supervisor.read(child.id).status).toBe("idle");
       const priorTotal = (await session.snapshot()).costTotal;
+      expect(priorTotal).toBe(0.01);
       // A failed parent rewind leaves the committed worker recoverable.
-      await expect(
-        supervisor.retainOrigins(new Set(), async () => {
-          throw new Error("parent commit failed");
-        }),
-      ).rejects.toThrow();
+      expect(supervisor.retainOrigins(new Set())).toEqual([child.id]);
       host.setRetention(session.sessionId, null);
       host.releaseSession(session);
       expect(await host.collectSession(session.sessionId)).toEqual({ disposed: true });
       await host.shutdown();
-      const workerStore = store.workers(session.sessionId);
-      const [worker] = await workerStore.list();
-      // The worker usage write succeeded but the corresponding parent commit did not.
-      worker.state.costTotal += 1;
-      await workerStore.save(worker);
       reopenedHost = createHost(new FileSessionStore({ directory }));
       const reopened = await reopenedHost.observeSession(session.sessionId);
-      expect((await reopened.snapshot()).costTotal).toBe(priorTotal + 1);
+      expect((await reopened.snapshot()).costTotal).toBe(priorTotal);
       const workers = reopened.runtime.supervisor;
+      expect(workers.read(child.id).usage.cost).toBe(priorTotal);
       expect(workers.getLastResponse(child.id)?.text).toBe("done");
       const resumed = workers.records.get(child.id).runtime.agent;
       const contexts = [];
@@ -4776,7 +4772,7 @@ describe("LocalSessionHost", () => {
       const parent = await host.createSession(localCreateInput);
       const origin = await parent.record({ text: "delegate work" });
       const supervisor = parent.runtime.supervisor;
-      const child = supervisor.spawn({
+      const acceptance = supervisor.spawn({
         parentId: supervisor.mainAgentId,
         launchEpoch: supervisor.prepareSpawn(supervisor.mainAgentId),
         runtimeConfig: {
@@ -4798,7 +4794,7 @@ describe("LocalSessionHost", () => {
         mcp: new McpManager(),
         agents: { persona: personas[0] },
       });
-      const agent = supervisor.records.get(child.id).runtime.agent;
+      const agent = [...supervisor.records.values()].at(-1).runtime.agent;
       const replies = ["first answer", "steered answer", "follow-up answer"];
       agent.spec.model.stream = () => ({
         async *[Symbol.asyncIterator]() {
@@ -4809,6 +4805,7 @@ describe("LocalSessionHost", () => {
           return fauxAssistantMessage(replies.shift());
         },
       });
+      const child = await acceptance;
       await vi.waitFor(() => expect(agent.status).toBe("running"));
       supervisor.sendInput({ id: child.id, mode: "steer", prompt: "change focus" });
       gate.resolve();

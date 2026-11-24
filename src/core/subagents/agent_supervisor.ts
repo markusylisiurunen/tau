@@ -10,7 +10,12 @@ import { type CoreDeps, createDefaultCoreDeps } from "../runtime/deps.js";
 import type { AgentJobRegistry } from "../tools/agent_jobs.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
 import { appendUsageLogEntry, type UsageRecorder } from "../usage/logs.js";
-import type { WorkerCheckpoint, WorkerStore } from "./checkpoint.js";
+import {
+  InvalidWorkerCheckpointError,
+  type WorkerCheckpoint,
+  WorkerCheckpointWriter,
+  type WorkerStore,
+} from "./checkpoint.js";
 import { AgentRequestError } from "./errors.js";
 import type { SubagentRuntimeEvent } from "./events.js";
 import { formatActiveSubagentsForCompaction } from "./format.js";
@@ -63,8 +68,8 @@ type SubagentRecord = {
   createdAt: number;
   originHistoryEntryId: string;
   personaId?: string;
-  saving?: Promise<void>;
-  dirty?: boolean;
+  writer: WorkerCheckpointWriter;
+  // The run is terminal, but its finish event has not been committed yet.
   settling?: boolean;
   runtime: SubagentRuntime;
   run: SubagentRunSnapshot;
@@ -102,6 +107,7 @@ export class AgentSupervisor {
     string,
     SubagentRecord | { kind: "main"; id: string; parentId: null; depth: 0; runtime: AgentRuntime }
   >();
+  private readonly removedWrites = new Map<string, Promise<void>>();
   private readonly deps: CoreDeps;
   private mainLaunchEpoch = 0;
   private disposed = false;
@@ -168,30 +174,37 @@ export class AgentSupervisor {
   dispose(): void {
     this.disposed = true;
     this.mainLaunchEpoch++;
-    for (const record of this.records.values()) record.runtime.dispose();
+    for (const record of this.records.values()) {
+      if (record.kind === "delegated") record.writer.close();
+      record.runtime.dispose();
+    }
     this.records.clear();
   }
 
-  reset() {
-    return this.retainOrigins(new Set());
-  }
-
-  retainOrigins(originHistoryEntryIds: ReadonlySet<string>, commit = async () => {}) {
-    const removed: SubagentRecord[] = [];
+  retainOrigins(originHistoryEntryIds: ReadonlySet<string>) {
+    const removed: string[] = [];
     this.mainLaunchEpoch++;
     for (const record of this.delegatedRecords()) {
       const id = record.id;
       if (originHistoryEntryIds.has(record.originHistoryEntryId)) continue;
-      removed.push(record);
+      record.writer.close();
+      this.removedWrites.set(
+        id,
+        record.writer.flush().catch(() => {}),
+      );
+      removed.push(id);
       this.records.delete(id);
       record.runtime.dispose();
     }
-    return commit().then(async () => {
-      for (const record of removed) {
-        await record.saving?.catch(() => {});
-        await this.options.store.remove(record.id);
-      }
-    });
+    return removed;
+  }
+
+  async forget(ids: string[]) {
+    for (const id of ids) {
+      await this.removedWrites.get(id);
+      await this.options.store.remove(id);
+      this.removedWrites.delete(id);
+    }
   }
 
   getCapacity(): SubagentCapacitySnapshot {
@@ -219,7 +232,7 @@ export class AgentSupervisor {
     return `<active-subagents>\n${state}\n</active-subagents>`;
   }
 
-  spawn(options: SpawnOptions): SubagentConversationState {
+  spawn(options: SpawnOptions): Promise<SubagentConversationState> {
     if (options.notifyOnCompletion && options.parentId !== this.mainAgentId)
       throw new AgentRequestError("invalid_arguments", "Only main can subscribe to completions");
     if (this.getActiveCount() >= MAX_ACTIVE_SUBAGENTS) {
@@ -239,13 +252,13 @@ export class AgentSupervisor {
       mode: "initial",
       content: [{ type: "text", text: options.prompt }],
     });
-    this.startRun(record, options.prompt, "subagent_spawned");
-    return this.read(record.id);
+    const accepted = this.read(record.id);
+    return this.startRun(record, options.prompt, "subagent_spawned").then(() => accepted);
   }
 
   private register(
     options: Omit<SpawnOptions, "launchEpoch" | "prompt">,
-    saved?: WorkerCheckpoint,
+    restored?: { worker: WorkerCheckpoint; state: SubagentStateSnapshot },
   ) {
     const parentId = options.parentId;
     const parent = parentId === this.mainAgentId ? undefined : this.requireRecord(parentId);
@@ -258,7 +271,8 @@ export class AgentSupervisor {
       );
     }
 
-    const id = saved?.state.id ?? randomUUID();
+    const saved = restored?.worker;
+    const id = restored?.state.id ?? randomUUID();
     const runtimeConfig = { ...options.runtimeConfig, workingDirectory };
     const delegation =
       depth < MAX_DELEGATION_DEPTH
@@ -271,7 +285,7 @@ export class AgentSupervisor {
       ancestorId = this.requireRecord(ancestorId).parentId;
     }
     sessionIds.unshift(this.mainAgentId);
-    const createdAt = saved?.state.createdAt ?? this.deps.clock.now();
+    const createdAt = restored?.state.createdAt ?? this.deps.clock.now();
     const openHistory = this.options.openHistory;
     const launch =
       saved ??
@@ -328,24 +342,27 @@ export class AgentSupervisor {
       completion: Promise.resolve(),
       trace: new AgentTrace(saved?.traceSequence, saved?.assistant),
       lastAssistantSeq: saved?.lastAssistantSeq,
+      writer: new WorkerCheckpointWriter(() => this.save(record)),
       pending: [],
     };
     this.records.set(id, record);
     return record;
   }
 
-  async restore(agents: AgentsPackageOptions, members: ReadonlySet<string>) {
-    const saved = await this.options.store.list();
+  async restore(agents: AgentsPackageOptions, members: readonly SubagentStateSnapshot[]) {
+    const stored = new Set(await this.options.store.ids());
     const restored: SubagentStateSnapshot[] = [];
-    for (const worker of saved.sort((a, b) => a.state.depth - b.state.depth)) {
-      const { state } = worker;
-      if (
-        !members.has(state.id) ||
-        (state.parentId !== this.mainAgentId && !this.records.has(state.parentId))
-      ) {
-        await this.options.store.remove(state.id);
-        continue;
+    for (const state of members.toSorted((a, b) => a.depth - b.depth)) {
+      stored.delete(state.id);
+      if (state.parentId !== this.mainAgentId && !this.records.has(state.parentId)) continue;
+      let worker: WorkerCheckpoint | undefined;
+      try {
+        worker = await this.options.store.read(state.id);
+      } catch (error) {
+        if (error instanceof InvalidWorkerCheckpointError) continue;
+        throw error;
       }
+      if (!worker) continue;
       let record: SubagentRecord;
       try {
         record = this.register(
@@ -359,7 +376,7 @@ export class AgentSupervisor {
             originHistoryEntryId: worker.originHistoryEntryId,
             notifyOnCompletion: worker.notifyOnCompletion,
           },
-          worker,
+          { worker, state },
         );
       } catch {
         // The host reports committed members that could not be opened.
@@ -373,44 +390,31 @@ export class AgentSupervisor {
           record,
           `Worker interrupted by restart. Discarded ${worker.pending.queue} queued inputs. Delivery of ${worker.pending.steer} steering inputs was unconfirmed.`,
         );
-        await this.checkpoint(record.id);
       }
       restored.push(this.toSnapshot(record));
     }
+    for (const id of stored) await this.options.store.remove(id);
     return restored;
   }
 
   private async checkpoint(id: string): Promise<void> {
     const record = this.records.get(id);
     if (record?.kind !== "delegated") return;
-    record.dirty = true;
-    record.saving ??= Promise.resolve().then(async () => {
-      try {
-        while (record.dirty && this.records.get(id) === record) {
-          record.dirty = false;
-          const {
-            availability: _availability,
-            workingDirectory: _cwd,
-            model: _model,
-            ...state
-          } = this.toSnapshot(record);
-          await this.options.store.save({
-            ...record.runtime.checkpoint(),
-            state,
-            pending: this.read(id).pending,
-            originHistoryEntryId: record.originHistoryEntryId,
-            personaId: record.personaId,
-            notifyOnCompletion: record.notifyOnCompletion,
-            traceSequence: record.trace.lastSequence,
-            lastAssistantSeq: record.lastAssistantSeq,
-            assistant: record.trace.savedAssistant(record.lastAssistantSeq),
-          });
-        }
-      } finally {
-        record.saving = undefined;
-      }
+    await record.writer.request();
+  }
+
+  private save(record: SubagentRecord) {
+    const id = record.id;
+    return this.options.store.save(id, {
+      ...record.runtime.checkpoint(),
+      pending: this.read(id).pending,
+      originHistoryEntryId: record.originHistoryEntryId,
+      personaId: record.personaId,
+      notifyOnCompletion: record.notifyOnCompletion,
+      traceSequence: record.trace.lastSequence,
+      lastAssistantSeq: record.lastAssistantSeq,
+      assistant: record.trace.savedAssistant(record.lastAssistantSeq),
     });
-    await record.saving;
   }
 
   /** Only a direct child of main can notify, and only while it runs. */
@@ -433,8 +437,13 @@ export class AgentSupervisor {
     return this.checkpoint(id);
   }
 
-  sendInput(options: { id: string; prompt: string; mode: "queue" | "steer" }) {
+  sendInput(options: {
+    id: string;
+    prompt: string;
+    mode: "queue" | "steer";
+  }): Promise<SubagentConversationState> {
     const record = this.requireRecord(options.id);
+    if (record.settling) return record.completion.then(() => this.sendInput(options));
     if (
       record.subtreeStops > 0 ||
       (record.run.interruptRequested && record.run.status === "running")
@@ -450,19 +459,18 @@ export class AgentSupervisor {
       content: [{ type: "text", text: options.prompt }],
     });
     let saved: Promise<void>;
-    if (record.run.status === "running" || record.settling) {
-      if (options.mode === "steer" && !record.settling) record.runtime.steer(options.prompt);
+    if (record.run.status === "running") {
+      if (options.mode === "steer") record.runtime.steer(options.prompt);
       else record.pending.push({ prompt: options.prompt, mode: options.mode });
       saved = this.checkpoint(record.id);
     } else {
-      this.beginFollowup(record, options.prompt);
-      saved = record.saving!;
+      saved = this.beginFollowup(record, options.prompt);
     }
     const accepted = this.read(record.id);
     return saved.then(() => accepted);
   }
 
-  private beginFollowup(record: SubagentRecord, prompt: string): void {
+  private beginFollowup(record: SubagentRecord, prompt: string) {
     record.lastAssistantSeq = undefined;
     record.run = {
       revision: record.run.revision + 1,
@@ -470,7 +478,7 @@ export class AgentSupervisor {
       startedAt: this.deps.clock.now(),
       interruptRequested: false,
     };
-    this.startRun(record, prompt, "subagent_run_started");
+    return this.startRun(record, prompt, "subagent_run_started");
   }
 
   read(id: string): SubagentConversationState {
@@ -603,12 +611,20 @@ export class AgentSupervisor {
     record: SubagentRecord,
     prompt: string,
     eventType: "subagent_spawned" | "subagent_run_started",
-  ): void {
+  ): Promise<void> {
     record.trace.append({ kind: "status", status: "working" });
+    const acceptance = this.checkpoint(record.id)
+      .then(() => this.emit({ type: eventType, state: this.toSnapshot(record) }))
+      .catch((error) => {
+        if (eventType === "subagent_spawned" && this.records.delete(record.id)) {
+          record.writer.close();
+          record.runtime.dispose();
+        }
+        throw error;
+      });
     record.completion = (async () => {
       try {
-        await this.checkpoint(record.id);
-        await this.emit({ type: eventType, state: this.toSnapshot(record) });
+        await acceptance;
         if (this.records.get(record.id) !== record || record.run.interruptRequested) {
           this.finishInterrupted(record);
         } else {
@@ -667,14 +683,10 @@ export class AgentSupervisor {
         } finally {
           record.settling = false;
         }
-        const queued = record.pending.shift();
-        if (queued && this.records.get(record.id) === record) {
-          this.beginFollowup(record, queued.prompt);
-          return await record.completion;
-        }
       }
     })();
     void record.completion.catch(() => {});
+    return acceptance;
   }
 
   private finishSucceeded(record: SubagentRecord, response: string): void {
@@ -749,7 +761,6 @@ export class AgentSupervisor {
         contextWindowUsageTokens: event.contextTokens,
         contextWindow: event.contextWindow,
       };
-      await this.checkpoint(id);
       (this.options.recordUsage ?? appendUsageLogEntry)({
         ...event.entry,
         sessionId: record.id,

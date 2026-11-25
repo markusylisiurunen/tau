@@ -29,11 +29,11 @@ const REVIEW_BOOTSTRAP_PROMPT = [
 ].join("\n");
 
 const REVIEW_GUIDE_PROMPT = [
-  "Use the initial diff context as a starting point, inspect the complete selected change and relevant live repo context, then create a change guide for a technically competent reviewer with no prior knowledge of this change. Make it concise but complete.",
+  "Use the initial diff context as a starting point, inspect the complete selected change and relevant live repo context, then create a change guide for a technically competent reviewer with no prior knowledge of this change. Describe the net selected change as one coherent whole, as if nothing happened in between, without narrating intermediate commits or how the branch evolved.",
   "",
-  "The goal is to reduce review effort. After reading the full guide, the reviewer should understand the change at every level that materially affects behavior or design, while still relying on the diff for function-level implementation detail.",
+  "The goal is to reduce review effort. The guide sits between a short summary and the raw diff: after reading it, the diff should confirm what the reviewer expects and show them where to look closely, without making them read the diff twice. Keep the guide as short as the change allows without losing clarity, and stop as soon as the mental model is complete.",
   "",
-  "Write in clear, natural, slightly narrative prose. Lead the reader through why the change is needed, what changes, how the important pieces connect, and what follows from those choices. Prefer complete sentences and causal transitions over compressed technical shorthand, dense bullet lists, or specification-like fragments. Define necessary repo-specific terms at first use and use the simplest precise language rather than jargon. The writing should feel like an experienced teammate explaining the change, not a reference manual.",
+  "Write like a sharp teammate explaining the change at a whiteboard: clear, natural, slightly narrative prose for reasoning and flow, balanced with short lists, tables, and formatting where they make a topic easier to scan while reading the diff. Speak in concepts, behavior, and cause so the reviewer never has to translate function names back into meaning. Define necessary repo-specific terms at first use and use the simplest precise language rather than jargon.",
   "",
   "Start with an orientation that explains the established problem or limitation, the intended outcome, the broad approach, and the approximate scope. Mention important unchanged behavior or non-goals when they prevent a likely misunderstanding. Keep this to a few short paragraphs and stop before the detailed walkthrough.",
   "",
@@ -41,9 +41,9 @@ const REVIEW_GUIDE_PROMPT = [
   "",
   "Order topics by explanatory dependency: establish behavior before the contracts, ownership, lifecycle, or implementation choices that produce it. Each topic should cover one coherent concern without repeating the orientation or another topic. Explain the relevant before-and-after behavior, flow or contract, owner, supported rationale, and practical consequence. Include failure, compatibility, recovery, or validation details only when they change how the design should be understood or reviewed.",
   "",
-  "Give every topic a distinct, specific one-to-three-word button label, a clear heading, and a Markdown body containing the complete explanation. Use paths and symbols sparingly as evidence anchors, never as a file or function walkthrough.",
+  "Give every topic a distinct, specific one-to-three-word button label, a clear heading, and a Markdown body containing the complete explanation. Use paths and symbols sparingly as signposts to where an idea lives, never as a file or function walkthrough.",
   "",
-  "Keep the guide prose-first, but follow show, don't tell whenever a small concrete artifact communicates behavior more clearly or precisely. For example, show a representative before-and-after RPC request, response, event, SDK call, type signature, configuration shape, state transition, data-flow sketch, or behaviorally important prompt excerpt instead of describing the same contract abstractly. Use the smallest artifact that preserves the material detail, take it faithfully from the current code, omit irrelevant fields, and label any abbreviation or pseudocode. Introduce the artifact with enough context to read it, then briefly explain the consequence that is not already obvious from it. Do not include decorative snippets, large code dumps, or prose that merely repeats what the artifact shows.",
+  "Spare the reviewer from simulating behavior in their head. Show the change itself whenever a small concrete example communicates faster or more precisely than prose, such as a before-and-after RPC request, response, event, SDK call, type signature, configuration shape, state transition, data-flow sketch, behaviorally important prompt excerpt, or a short illustrative case with realistic values. Keep examples small, make sure they accurately reflect the behavior in the current code, omit irrelevant fields, and label any abbreviation or pseudocode. Introduce the example with enough context to read it, then briefly explain the consequence that is not already obvious from it. Do not include decorative snippets, large code dumps, or prose that merely repeats what the example shows.",
   "",
   "Generate a small set of likely reviewer questions as a skimmable second pass. Use them for material rationale, boundaries, edge behavior, alternatives, accepted limitations, or remaining uncertainty that would otherwise interrupt the main narrative. Make each question understandable on its own and answer it directly. Do not duplicate the topics, ask for approval, or produce a generic review checklist.",
   "",
@@ -59,8 +59,8 @@ const REVIEW_GUIDE_PROMPT = [
 
 const REVIEW_GUIDE_FORK_SYSTEM_PROMPT = wrapForkSystemPrompt([
   "From now on in this conversation, your job is to maintain a concise change guide for a human reviewer.",
-  "The guide should reduce review effort by explaining materially relevant behavior, contracts, ownership, lifecycle, model-facing behavior, decisions, and risks without narrating functions or files.",
-  "Write in natural, low-jargon narrative prose, and show precise behavior with the smallest useful code, data, protocol, state, or prompt artifact when that is clearer than description.",
+  "The guide sits between a summary and the raw diff: it explains the net change as one coherent whole so the diff confirms what the reviewer expects, covering materially relevant behavior, contracts, ownership, lifecycle, model-facing behavior, decisions, and risks without narrating functions, files, or intermediate commits.",
+  "Write like a sharp teammate at a whiteboard: natural, low-jargon narrative prose balanced with skimmable structure where helpful, and small concrete or illustrative examples when showing is faster or more precise than description.",
   "Treat the earlier conversation as background context only.",
   "Do not mention the earlier conversation, hidden setup, or how you were prepared for this task.",
   "Trust the current code and diff when they differ from earlier context.",

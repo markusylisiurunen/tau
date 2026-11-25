@@ -23,6 +23,7 @@ export const MODELS = {
 };
 
 const COMMIT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+const MAX_FOCUS_TOKENS = 1024;
 const MAX_CONTEXT_TOKENS = 4096;
 
 export const FINDINGS = {
@@ -44,11 +45,11 @@ export const FINDINGS = {
         explanation: {
           type: "string",
           description:
-            "What goes wrong, when, and why it matters, in Markdown. Include a short example where it helps.",
+            "When the problem happens, what goes wrong, and why it matters, in Markdown.",
         },
         suggestedFix: {
           type: "string",
-          description: "The recommended fix, as one Markdown paragraph.",
+          description: "The recommended fix, concrete enough to decide on, in Markdown.",
         },
       }),
     },
@@ -105,6 +106,39 @@ export function readInputs(
   return { base, head, context, depth, workingDirectory, ...extras };
 }
 
+export function readReviewInputs(input, { depth = true } = {}) {
+  const {
+    focus,
+    gatherContext: gather = false,
+    ...inputs
+  } = readInputs(input, {
+    depth,
+    context: false,
+    extra: ["focus", "gatherContext"],
+  });
+  ensure(
+    focus === undefined ||
+      (typeof focus === "string" && tokens(focus) <= MAX_FOCUS_TOKENS),
+    `focus must be a string of at most ${MAX_FOCUS_TOKENS} tokens`,
+  );
+  ensure(typeof gather === "boolean", "gatherContext must be true or false");
+  return { ...inputs, focus, gather };
+}
+
+export function reviewCoverage(focus) {
+  return focus === undefined ? "the whole change" : "the focus";
+}
+
+export function reviewFocus(focus) {
+  return focus === undefined
+    ? ""
+    : `\nThe caller narrowed this task to a focus: ${JSON.stringify(focus)}. Stay within that focus. Follow the code beyond it where needed to understand the change.\n`;
+}
+
+export function independentReview() {
+  return `Work read-only. Do not change files, Git, or GitHub, and do not launch other agents. Do not read GitHub issues or pull request discussions, and do not search or read Tau session history.`;
+}
+
 export async function repositoryRoot(workingDirectory) {
   return (await bash("git rev-parse --show-toplevel", workingDirectory)).trim();
 }
@@ -142,15 +176,13 @@ export function formatFindings(findings) {
   return byPriority(findings).map(formatFinding).join("\n\n") || "No findings.";
 }
 
-function formatFinding({
-  priority,
-  title,
-  location,
-  explanation,
-  suggestedFix,
-}) {
+// Numbered, so the user can refer to a finding in a follow-up.
+function formatFinding(
+  { priority, title, location, explanation, suggestedFix },
+  index,
+) {
   const where = location === null ? "" : `**Location:** \`${location}\`\n\n`;
-  return `**[${priority}] ${title}**\n\n${where}${explanation}\n\n**Suggested fix:** ${suggestedFix}`;
+  return `### ${index + 1}. [${priority}] ${title}\n\n${where}${explanation}\n\n**Suggested fix:** ${suggestedFix}`;
 }
 
 // One log detail line for a finding.

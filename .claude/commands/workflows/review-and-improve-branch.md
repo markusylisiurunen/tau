@@ -7,4 +7,4 @@ Review the current branch against `main`, then improve it without changing what 
 
 Then fix the findings worth fixing yourself, and use skill `design-afresh` to reconsider the design and skill `deslop` for the details in the code.
 
-Leave your changes uncommitted, and tell me which findings you fixed and which you left and why, what else changed and why it's better, and what's still open. Don't commit, push, or post anything on GitHub.
+Leave your changes uncommitted, and tell me which findings you fixed and which you left and why, what else changed and why it's better, and what's still open. Number the open findings, and explain each the way skill `code-review` explains a finding. Don't commit, push, or post anything on GitHub.

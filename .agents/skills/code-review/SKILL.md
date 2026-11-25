@@ -74,17 +74,17 @@ Base the priority on the demonstrated consequence. How complicated the implement
 
 ## Explain each finding
 
-Follow `clear-writing` for voice, wording, and examples. Assume the reader knows the project but does not have this subsystem or this change in mind, so each finding must stand on its own.
+Write each finding for the person who will act on it. They know the product, its data, and the decisions behind the change, but not the code you traced to find the problem, and they may read the finding on its own. After one read, they should know when the problem happens, what goes wrong, and what you ask them to decide or change. Follow `clear-writing` for voice and wording.
 
-Use a title that states what goes wrong in plain words. Then explain the intended behavior where needed, the condition that breaks it, the consequence, and the recommended correction. Define project terms the reader may not know. State the harm directly, so the reader does not have to infer it from a description of how the code works.
+Use a title that states what goes wrong in plain words.
 
-Keep each finding short while still complete. Use more paragraphs when the explanation needs them, and do not cut necessary context just to make the finding look compact.
+Describe the problem in the reader's terms: what the product does and the data it handles, named the way the issue, the pull request, the project's documentation, or the user's own messages name them. A name you met while tracing the code, such as a helper, a flag, or an internal mode, tells the reader little, so say what it does instead. Point to code where the reader needs it to find or fix the problem.
 
-Use a small example when it makes the problem or the fix easier to follow. Choose the example that makes the issue easiest to understand: a few lines of code, a before-and-after data shape, actual input values, or a short sequence of events. Show the proposed fix too when that makes its effect clearer.
+Show the problem through a concrete case: the input, state of the data, or sequence of events that triggers it, and what happens as a result. Small, specific values often make the case easiest to follow. For instance, instead of saying that a retry is not idempotent, show that the first request saves the payment, its response is lost, and the retry with a new request ID saves a second payment. For a design problem, show its concrete cost the same way. State the conditions precisely enough that the reader can tell which cases are affected and which are not.
 
-For instance, instead of only saying that a retry is not idempotent, show the sequence: the first request saves the payment, its response is lost, and retrying with a new request ID saves a second payment. Then explain which ID must remain stable and why.
+Make the suggested fix concrete enough to decide on without a follow-up question. Say what the code should do instead, with the details the decision depends on, such as where a new output goes and what it contains. Recommend one fix when the evidence supports a clear correction. Present alternatives only when they reflect a real choice of product, architecture, compatibility, or implementation, explain the practical consequences of each, and recommend one when you can. When the problem is a case the change does not handle, rejecting that case with a clear error is often a real alternative to supporting it.
 
-Recommend one fix when the evidence supports a clear correction. Present alternatives only when they reflect a real choice of product, architecture, compatibility, or implementation. Explain the practical consequences of each, and recommend one when you can. Do not invent cosmetic alternatives.
+A finding can be short and still complete. Do not cut the triggering case, its conditions, or an example to make a finding look compact.
 
 Keep location ranges focused on the relevant code. In replacement snippets, preserve the original leading whitespace unless changing indentation is part of the fix.
 

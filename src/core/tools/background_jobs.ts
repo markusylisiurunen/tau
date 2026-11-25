@@ -166,7 +166,7 @@ export function createJobToolDefinitions(
             Type.Integer({
               minimum: 1,
               maximum: JOB_WAIT_MAX_MS,
-              description: "Wait timeout in milliseconds. Defaults to 60000.",
+              description: `Wait timeout in milliseconds. Defaults to 60000. Omit it when you need the job result, because the wait returns as soon as a requested job finishes. Set it only if you need control back by a specific time. To check progress, use read_${kind}_job instead of repeated short waits.`,
             }),
           ),
         },

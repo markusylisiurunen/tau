@@ -121,7 +121,7 @@ const IMPROVEMENT = {
         description: {
           type: "string",
           description:
-            "What is left and what decision or work it needs, briefly, in Markdown.",
+            "What is left and what decision or work it needs, in Markdown.",
         },
       }),
       description:
@@ -134,7 +134,7 @@ const IMPROVEMENT = {
     [
       `## Changes\n\n${formatBlocks(changes, "description") || "No changes."}`,
       `## Rejected suggestions\n\n${rejected.map(({ suggestion, reason }) => `- ${suggestion}: ${reason}`).join("\n") || "None."}`,
-      `## Unresolved\n\n${formatBlocks(unresolved, "description") || "None."}`,
+      `## Unresolved\n\n${unresolved.map(({ title, description }, index) => `### ${index + 1}. ${title}\n\n${description}`).join("\n\n") || "None."}`,
     ].join("\n\n"),
 };
 
@@ -342,7 +342,7 @@ Implement the design recommendations. The design reviewers have already weighed 
 
 Plan the fixes and design changes together as one coherent set of edits. A design change can fix a finding or make it obsolete, and a fix can fit the structure a recommendation introduces. Keep the fixes simple: added checks, special cases, and recovery paths must justify their complexity, and a clear error or an intentionally unsupported case can be appropriate. Beyond the recommended changes, preserve the intended behavior and established guarantees. Do not start a new review of your own.
 
-Follow repository guidance and run appropriate checks. Do not commit, push, or change anything on GitHub, do not launch other agents. ${sources ? "Use the context folder as described below." : "Work from the code and repository alone. Do not look for other context, such as issues, pull request discussions, or Tau session history."} Use skill \`clear-writing\` for the text in your response. Account for every finding and recommendation: each one you did not act on belongs in rejected or unresolved, so no decision is lost.
+Follow repository guidance and run appropriate checks. Do not commit, push, or change anything on GitHub, do not launch other agents. ${sources ? "Use the context folder as described below." : "Work from the code and repository alone. Do not look for other context, such as issues, pull request discussions, or Tau session history."} Use skill \`clear-writing\` for the text in your response. The unresolved items reach the user as you write them, so explain each one the way skill \`code-review\` explains a finding. Account for every finding and recommendation: each one you did not act on belongs in rejected or unresolved, so no decision is lost.
 
 ${sources ? contextSection(sources, { editing: true }) : ""}
 Reviews, as JSON grouped by reviewer:

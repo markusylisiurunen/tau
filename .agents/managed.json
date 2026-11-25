@@ -19,7 +19,7 @@
     },
     ".agents/skills/code-review/SKILL.md": {
       "type": "file",
-      "hash": "c45ec0492687049d8db7ef7de31721295a23082805fb33b30aa96231c2bd67e5"
+      "hash": "04cc058a710619c6cb25acfa78b0df92920f42b809bbd82e8867a84ec4c68951"
     },
     ".agents/skills/cowork/references/configuration.md": {
       "type": "file",
@@ -139,11 +139,11 @@
     },
     ".claude/commands/workflows/review-and-improve-branch.md": {
       "type": "file",
-      "hash": "3f2e94975fdcce3199f20b972ef5aaec8bbeba8cea20b66cc09183df1d3096bf"
+      "hash": "f6c9edf401f030e3566208b7c455df997899648ab4f4aa0168c0c7057e9b9c27"
     },
     ".claude/commands/workflows/review-branch.md": {
       "type": "file",
-      "hash": "9e0573e02c6ed9001e0a52a68b7609e7ab9519c027c7d671db515b5ca02357a3"
+      "hash": "de825ea1d570a0d078a1dc7a2b66784a16c81fa1fa241c5c4e89657d225dade5"
     },
     ".claude/commands/workflows/rewrite-branch.md": {
       "type": "file",
@@ -235,11 +235,11 @@
     },
     ".cowork/workflows/review-and-improve.md": {
       "type": "file",
-      "hash": "01fd1e89fccf3589b9d44e96b8b21e685624cf4c944e806fcc2f4684cee112c2"
+      "hash": "8fb00c7b93bbcb42615a91bf19f78a9f2e1b3f2d919a179557a15f5a8e01055e"
     },
     ".cowork/workflows/review.md": {
       "type": "file",
-      "hash": "adc565040f6cfd63598761d0047d88f81f5a504f385162cbe0b3e8fdec09de95"
+      "hash": "b18b95714941eaa0f82f53e7ec86a559ecbe50ea9ab9add5253303b6b89a06c3"
     },
     ".cowork/workflows/rewrite.md": {
       "type": "file",
@@ -303,11 +303,11 @@
     },
     ".tau/prompts/review-and-improve-branch.md": {
       "type": "file",
-      "hash": "2b17ddc524087d1bdb4ee572d49210bf61cf872819eba054eb7cc3564bae0ca2"
+      "hash": "aadf7e8ba25d548e37eaf607ae3074c099889bb3d166a04f789d2c07dd9d314e"
     },
     ".tau/prompts/review-branch.md": {
       "type": "file",
-      "hash": "c95021d52dfffb2a78f3475b79aee97e37c88b44c2717bafa6e4d20d4fb65b07"
+      "hash": "baab6aae5468f36909467cad0123698d10b22178db4b864eea18e325d13a60e6"
     },
     ".tau/prompts/rewrite-branch.md": {
       "type": "file",
@@ -355,7 +355,7 @@
     },
     ".tau/skills/tau-workflows/scripts/lib/context.js": {
       "type": "file",
-      "hash": "df147d5e4ca6fb28035660714be46789d5625ad4ce7f4a5e21f6a6c280c17d82"
+      "hash": "0a38173d2a2dddc8632b895ee350305b945cb214a53dfe70243515f51a2fc2fa"
     },
     ".tau/skills/tau-workflows/scripts/lib/history.js": {
       "type": "file",
@@ -363,7 +363,7 @@
     },
     ".tau/skills/tau-workflows/scripts/lib/review.js": {
       "type": "file",
-      "hash": "c7795b395de33a1da0a7c25a382d8b2cd91f8b5b712868f40c55babde5ee7418"
+      "hash": "1e3a9270591415e8f5dc8fd35e7d280f5fc682dcf60d609c6b9987daa66e1303"
     },
     ".tau/skills/tau-workflows/scripts/lib/workflow.js": {
       "type": "file",
@@ -375,11 +375,11 @@
     },
     ".tau/skills/tau-workflows/scripts/review-and-improve.js": {
       "type": "file",
-      "hash": "127b2631db519378db2cf981abd190c780621863a4f5e1b57ae6e19f1577ff47"
+      "hash": "e9960ddb086ad471d8bdb30d9f24a323aa69360733d2ea39dd3bb180f744051e"
     },
     ".tau/skills/tau-workflows/scripts/review.js": {
       "type": "file",
-      "hash": "f9bb010870448b883475362d3674f5e93f58d2aca0caccd6d9dd2a9c191a084b"
+      "hash": "97d470b51b681e62c183f02ef5b400f96f214a01aec046bf0da76b3280d00f2d"
     },
     ".tau/skills/tau-workflows/scripts/rewrite.js": {
       "type": "file",
@@ -387,7 +387,7 @@
     },
     ".tau/skills/tau-workflows/SKILL.md": {
       "type": "file",
-      "hash": "ce9ab2588c6abcb32d5363aac410f3d0553d2d5838b831dbf73b125cbe10378e"
+      "hash": "4fcb7a33907ef2a864cd1d13697b978aea1445731b685dc3e93943d6830d4f7a"
     },
     "AGENTS.md": {
       "type": "section",

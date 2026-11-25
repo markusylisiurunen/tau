@@ -45,11 +45,11 @@ export const FINDINGS = {
         explanation: {
           type: "string",
           description:
-            "What goes wrong, when, and why it matters, in Markdown. Include a short example where it helps.",
+            "When the problem happens, what goes wrong, and why it matters, in Markdown.",
         },
         suggestedFix: {
           type: "string",
-          description: "The recommended fix, as one Markdown paragraph.",
+          description: "The recommended fix, concrete enough to decide on, in Markdown.",
         },
       }),
     },
@@ -176,15 +176,13 @@ export function formatFindings(findings) {
   return byPriority(findings).map(formatFinding).join("\n\n") || "No findings.";
 }
 
-function formatFinding({
-  priority,
-  title,
-  location,
-  explanation,
-  suggestedFix,
-}) {
+// Numbered, so the user can refer to a finding in a follow-up.
+function formatFinding(
+  { priority, title, location, explanation, suggestedFix },
+  index,
+) {
   const where = location === null ? "" : `**Location:** \`${location}\`\n\n`;
-  return `**[${priority}] ${title}**\n\n${where}${explanation}\n\n**Suggested fix:** ${suggestedFix}`;
+  return `### ${index + 1}. [${priority}] ${title}\n\n${where}${explanation}\n\n**Suggested fix:** ${suggestedFix}`;
 }
 
 // One log detail line for a finding.

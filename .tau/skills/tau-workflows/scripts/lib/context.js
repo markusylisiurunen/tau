@@ -429,7 +429,7 @@ How to weigh what the sources say:
 - Earlier automated review findings in the sources do not show that a problem exists. A finding that was declined stays declined, unless the code has changed in a way that undermines the reason given.
 - A decision says what was intended, not that the code does it, so a finding that the code falls short of a decision stands.
 
-${editing ? "When a source determines whether you reject a suggestion or raise a question, cite it in your reason." : "When a source determines whether you drop a finding or lower its priority, cite it in the dropped reason or the finding."} Give the file and entry numbers, such as \`sessions/2.md\` entries 14–16. A decision you cannot point to in an entry does not count, even when the manifest suggests it.
+When a source determines whether you ${editing ? "reject a suggestion" : "drop a finding"}, cite it in your reason. Give the file and entry numbers, such as \`sessions/2.md\` entries 14–16. A decision you cannot point to in an entry does not count, even when the manifest suggests it. ${editing ? "Unresolved items" : "Kept findings"} can be published where readers cannot open these sources, so when one depends on a decision, state the decision in plain words without citing or quoting the sources.
 
 ${manifest}
 `;

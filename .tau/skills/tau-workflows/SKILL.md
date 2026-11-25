@@ -64,6 +64,8 @@ Review requires authorization to delegate, and the other workflows require autho
 
 The improvement workflows list the changes, the suggestions they rejected and why, and what they left unresolved.
 
+The final agents write the findings and unresolved items for the person who acts on them, and the result formats them for reading. Show them to the user as the result has them, without summarizing, rewording, or dropping any, unless the user asks otherwise.
+
 The classifier plans the reviews from the diff alone. Review and Review and Improve run code reviews at a depth the classifier chooses: light runs one general code review, standard two on different models, and deep adds up to three focused reviews of specific risks. Pass `depth` as `light`, `standard`, or `deep` only to override that choice. Review and Improve also chooses zero to two design reviews, and Improve one or two.
 
 The reviewers work read-only in parallel. A failed reviewer leaves its coverage missing, which the result reports as a warning, and the workflow stops before the final agent only when no reviewer completed. In Review, the final agent merges the findings and decides which to raise. In the improvement workflows, it implements the design recommendations. When two recommendations conflict, it chooses one. Review and Improve also filters the code-review findings and fixes those worth fixing.

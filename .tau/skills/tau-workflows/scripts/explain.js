@@ -90,14 +90,22 @@ function formatWidgets(widgets) {
 
 // ── Inputs ──────────────────────────────────────────────────────────────
 
-const { base, head, context, workingDirectory, output } = readInputs(input, {
-  depth: false,
-  extra: ["output"],
-});
+const { base, head, context, workingDirectory, output, model } = readInputs(
+  input,
+  {
+    depth: false,
+    extra: ["output", "model"],
+  },
+);
 ensure(
   typeof output === "string" && output.trim(),
   'output must be a Markdown file path, "inko" for a new Inko document, or an Inko document URL',
 );
+ensure(
+  model === undefined || (typeof model === "string" && model.trim()),
+  "model must be a non-empty provider/model:effort string",
+);
+const explainModel = model?.trim() ?? MODELS.explain;
 const target =
   output === INKO
     ? { kind: "inko" }
@@ -111,7 +119,7 @@ ensure(
 
 // ── Workflow ────────────────────────────────────────────────────────────
 
-await preflightModels([MODELS.explain]);
+await preflightModels([explainModel]);
 
 const repo = await repositoryRoot(workingDirectory);
 log(`Explain: ${base.slice(0, 7)}..${head.slice(0, 7)} in ${repo}`);
@@ -130,7 +138,7 @@ const stepOutput = resultOutput(
 );
 const result = await run.step({
   name: "explain",
-  model: MODELS.explain,
+  model: explainModel,
   prompt: writerPrompt({ destination, output: stepOutput }),
   output: stepOutput,
 });

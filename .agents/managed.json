@@ -219,7 +219,7 @@
     },
     ".cowork/workflows/explain.md": {
       "type": "file",
-      "hash": "2a35b2e1d0822dfc0ea175fea9fd527aa3ac75a5025cc0a3809b8c0fd36b459b"
+      "hash": "15e5ec15b73ee711291ee9c05b94ad8ad8c566f4a0994062cd6f0576a5d3e98b"
     },
     ".cowork/workflows/implement.md": {
       "type": "file",
@@ -264,6 +264,10 @@
     ".tau/prompts/decision-review-changes.md": {
       "type": "file",
       "hash": "3a692eaa3ec7ec912ee10fb7e40df564d2f42f1762f363598fae35f3ff2d0448"
+    },
+    ".tau/prompts/explain-branch.md": {
+      "type": "file",
+      "hash": "9a53a568288b35df744b34de5c49f8790b521140fdec9ef524a855385bcc5854"
     },
     ".tau/prompts/finalize-ui.md": {
       "type": "file",
@@ -337,6 +341,10 @@
       "type": "file",
       "hash": "e7df70f81403db456a149d50f87155e6a73ed03d21a774d18347ebe260d12291"
     },
+    ".tau/skills/tau-workflows/scripts/explain.js": {
+      "type": "file",
+      "hash": "05e2e69d341ad615789514ed2ffbb7121e6cb03f8f552564d722987ee65d628c"
+    },
     ".tau/skills/tau-workflows/scripts/find-sessions.js": {
       "type": "file",
       "hash": "c7356959b12dd1b90e0e66297c2bab231e7ece3e4d9784b86d923bda4683bc7f"
@@ -363,7 +371,7 @@
     },
     ".tau/skills/tau-workflows/scripts/lib/review.js": {
       "type": "file",
-      "hash": "1e3a9270591415e8f5dc8fd35e7d280f5fc682dcf60d609c6b9987daa66e1303"
+      "hash": "227c58e89d94f27733da8572b89c43a4750e22ef8a534aee93566c6372e9a7c4"
     },
     ".tau/skills/tau-workflows/scripts/lib/workflow.js": {
       "type": "file",
@@ -387,7 +395,7 @@
     },
     ".tau/skills/tau-workflows/SKILL.md": {
       "type": "file",
-      "hash": "4fcb7a33907ef2a864cd1d13697b978aea1445731b685dc3e93943d6830d4f7a"
+      "hash": "2355ec27074b9ecd1dc8ba27846338b7f907296eb24c2343fa186eeeba70c48c"
     },
     "AGENTS.md": {
       "type": "section",

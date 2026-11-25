@@ -1,5 +1,5 @@
 // Shared helpers for the workflows that work on a repository's changes:
-// review, improve, review-and-improve, prune, and rewrite.
+// review, improve, review-and-improve, prune, rewrite, and explain.
 
 import { truncate } from "@tau/core";
 import { bash, ensure, object, tokens } from "./workflow.js";
@@ -20,6 +20,7 @@ export const MODELS = {
   prune: "claude-code/claude-opus-5-5:medium",
   write: "claude-code/claude-opus-5-5:medium",
   readText: "claude-code/claude-opus-5-5:low",
+  explain: "openai-codex/gpt-6.2-sol:medium",
 };
 
 const COMMIT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;

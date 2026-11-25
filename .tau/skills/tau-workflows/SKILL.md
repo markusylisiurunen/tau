@@ -1,6 +1,6 @@
 ---
 name: "tau-workflows"
-description: "Run reusable JavaScript workflows through Tau's code tool: `find-sessions` finds past sessions, `answer-from-history` answers questions from them, `review` reviews committed changes, `gather-context` collects the conversations behind them, `improve` improves their design, `review-and-improve` combines code review and improvement, `prune` removes what they add that does not earn its place, and `rewrite` rewrites text for its readers. Use only when the user explicitly names this skill or active repository or skill instructions explicitly require it; do not activate merely because a task is related. Trigger: explicit."
+description: "Run reusable JavaScript workflows through Tau's code tool: `find-sessions` finds past sessions, `answer-from-history` answers questions from them, `review` reviews committed changes, `gather-context` collects the conversations behind them, `improve` improves their design, `review-and-improve` combines code review and improvement, `prune` removes what they add that does not earn its place, `rewrite` rewrites text for its readers, and `explain` explains a change in a Markdown file or an Inko document and keeps it up to date. Use only when the user explicitly names this skill or active repository or skill instructions explicitly require it; do not activate merely because a task is related. Trigger: explicit."
 ---
 
 Each workflow is a script in `scripts/`. Its header comment lists its steps, and its prompts show what each agent is asked to do. Read the script when you need more detail than this file gives.
@@ -42,7 +42,7 @@ The request must authorize history access and delegation.
 
 ## Work on committed changes
 
-The review, improvement, prune, and rewrite workflows work on a repository's committed changes or text. Each needs a clean working tree, including untracked files, and they share these inputs:
+The review, improvement, prune, rewrite, and explain workflows work on a repository's committed changes or text. Each needs a clean working tree, including untracked files, except that Explain allows untracked files. They share these inputs:
 
 - `base` and `head`: full commit IDs, which rewrite needs only when its target is a committed change. For a branch, use `git merge-base <target branch> HEAD` as `base`, because a target branch that has moved on would show its newer changes as reversions. `HEAD` must match `head`.
 - `workingDirectory`: the repository to work in, such as a clone in an assistant workspace. It defaults to the session's working directory.
@@ -54,7 +54,7 @@ For workflows that take `context`, the agents read the diff and the repository t
 - `Read issue #123 for context. We chose to drop the v1 config format, so code that reads it can go.`
 - `This is the first version of the setup guide, for people who have never used the CLI.`
 
-Review requires authorization to delegate, and the other workflows require authorization to delegate and edit. Edits are left uncommitted. If a workflow is interrupted, inspect the printed agent IDs, the run folder, and the working tree before retrying.
+Review requires authorization to delegate, Explain to delegate and write its output, and the other workflows to delegate and edit. Edits are left uncommitted. If a workflow is interrupted, inspect the printed agent IDs, the run folder, and the working tree before retrying.
 
 ### Review and improve
 
@@ -109,3 +109,15 @@ Pass an optional `focus` to narrow the run, such as `Only tests.` or `Only src/s
 `scripts/rewrite.js` rewrites text for its readers. Text means anything written for a reader, wherever it lives, such as documentation, agent instructions, prompts and tool descriptions in code, or interface copy. An Opus writer works out what each text is for and who reads it, rewrites it in place, and writes a short, high-level brief. Two Opus readers then look at the draft, one as its intended reader and one comparing what it says with the original. The writer weighs their feedback as signals and revises in the same session. A rewrite weighs whether each point belongs as well as how it is worded, so it may remove content the readers do not need. It may also change what the text asks its reader to do when that serves its purpose, and it may change code where the text needs it. The result notes where the text now says something different that is worth checking.
 
 Pass `target`, a description of the text to rewrite, such as file paths, "the README's setup section", or "the text this branch changes".
+
+### Explain
+
+`scripts/explain.js` explains a committed change to someone about to review or work with it, sitting between a pull request description and the raw diff. The workflow ensures the destination exists, creating an empty Markdown file or empty Inko document when needed, then hands that explicit target to a single Sol agent. The agent studies the change, plans a top-to-bottom structure around the ideas the reader needs, and writes or updates the destination directly in plain narrative prose, using small concrete examples where they communicate faster than prose and leaving low-level mechanics to the diff.
+
+Pass `output` as one of these:
+
+- A Markdown file path, absolute or relative to the session's working directory. Plain Markdown only, with no widgets.
+- `"inko"`, to create a new empty Inko document and write into it. Inko explanations can optionally embed HTML visualisation widgets when seeing a structure, flow, state lifecycle, or before-and-after layout makes an idea clearer than prose or text diagrams alone. Requires the Inko MCP server.
+- An Inko document URL, to write into or refresh that document in place.
+
+When the target already holds an explanation, the agent compares it against the full current `base..head` change (so it works across force-pushes and rebases) and updates only what is now wrong, incomplete, or obsolete, keeping accurate structure and wording intact for returning readers and Inko comments. Leaving the document unchanged is a valid outcome when it is already accurate.

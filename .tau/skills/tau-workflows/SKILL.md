@@ -120,4 +120,6 @@ Pass `output` as one of these:
 - `"inko"`, to create a new empty Inko document and write into it. Inko explanations can optionally embed HTML visualisation widgets when seeing a structure, flow, state lifecycle, or before-and-after layout makes an idea clearer than prose or text diagrams alone. Requires the Inko MCP server.
 - An Inko document URL, to write into or refresh that document in place.
 
+Pass `model` (a `provider/model:effort` string from the session's allowed subagent models) only when the caller explicitly asks for a different model; otherwise omit it to use the default (Sol at medium effort).
+
 When the target already holds an explanation, the agent compares it against the full current `base..head` change (so it works across force-pushes and rebases) and updates only what is now wrong, incomplete, or obsolete, keeping accurate structure and wording intact for returning readers and Inko comments. Leaving the document unchanged is a valid outcome when it is already accurate.

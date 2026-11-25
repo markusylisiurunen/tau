@@ -267,7 +267,7 @@
     },
     ".tau/prompts/explain-branch.md": {
       "type": "file",
-      "hash": "9a53a568288b35df744b34de5c49f8790b521140fdec9ef524a855385bcc5854"
+      "hash": "f61dcc0ab8db73040aa2f3ed2b02e27ca3a77ea3526765f3edf2a86704ed2d40"
     },
     ".tau/prompts/finalize-ui.md": {
       "type": "file",
@@ -343,7 +343,7 @@
     },
     ".tau/skills/tau-workflows/scripts/explain.js": {
       "type": "file",
-      "hash": "05e2e69d341ad615789514ed2ffbb7121e6cb03f8f552564d722987ee65d628c"
+      "hash": "009961e0931c1b3637f20d2f5edde8e0633d0ef4f41a16671de5ba1a1961532c"
     },
     ".tau/skills/tau-workflows/scripts/find-sessions.js": {
       "type": "file",
@@ -395,7 +395,7 @@
     },
     ".tau/skills/tau-workflows/SKILL.md": {
       "type": "file",
-      "hash": "2355ec27074b9ecd1dc8ba27846338b7f907296eb24c2343fa186eeeba70c48c"
+      "hash": "8f4f7c1feb22214670c005eeb9d1724ef1fd5d990e6a79b285583ba9f658cd07"
     },
     "AGENTS.md": {
       "type": "section",

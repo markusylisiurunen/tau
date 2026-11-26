@@ -343,7 +343,7 @@
     },
     ".tau/skills/tau-workflows/scripts/explain.js": {
       "type": "file",
-      "hash": "009961e0931c1b3637f20d2f5edde8e0633d0ef4f41a16671de5ba1a1961532c"
+      "hash": "bdc9a70f5aead12ded083601e6d546766ace94d15f8f1db0f521830179e41efe"
     },
     ".tau/skills/tau-workflows/scripts/find-sessions.js": {
       "type": "file",

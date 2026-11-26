@@ -236,11 +236,11 @@ Use skill \`clear-writing\`.
 
 ## The reader and goal
 
-The reader is a capable engineer who knows the project, but not this change. The explanation sits between a pull request description and the raw diff. A pull request description leaves the reader reverse-engineering how the change works, while an over-detailed explanation makes them read the diff twice. Aim for the middle: after reading this, the diff should confirm what the reader expects and show them where to look closely. They should understand why the change exists, what behaves differently, how the main parts connect, and any important trade-offs, limits, or unchanged behavior that could otherwise surprise them.
+The reader is a capable engineer who knows the project, but not this change. The explanation sits between a pull request description and the raw diff. A pull request description leaves the reader reverse-engineering how the change works, while an over-detailed explanation reads like a specification and makes them read the diff twice. Aim for the middle: give them a clear mental model of why the change exists, what behaves differently, and how the main parts fit together, so the diff confirms what they expect and shows them where to look closely.
 
 ## How to work
 
-Before writing, study the diff and relevant surrounding code, decide what the reader actually needs to hear, and plan a clean top-to-bottom structure.
+Before writing, study the diff and relevant surrounding code, decide the few ideas the reader actually needs, and plan a clean top-to-bottom structure.
 
 Order the explanation by explanatory dependency:
 
@@ -249,11 +249,11 @@ Order the explanation by explanatory dependency:
 
 ## Style and level
 
-Write like a sharp teammate explaining the change at a whiteboard: clear, natural, slightly narrative prose for reasoning and flow, balanced with structure (headings, short lists, tables, and formatting) where it makes the document easier to scan while reading the diff.
+Write like a sharp teammate explaining the change at a whiteboard: clear, natural, slightly narrative prose that is easy to read, balanced with structure (headings, short lists, tables, and formatting) where it makes the document easier to scan while reading the diff.
 
-Speak in concepts, behavior, and cause so the reader never has to translate function names back into meaning. Define repo-specific terms if needed, and use file paths or symbol names only as signposts to where an idea lives. Leave routine plumbing, helper internals, and test summaries to the diff, mentioning a detail or test only when it changes how the reader should think about the change.
+Explain in plain concepts, behavior, and cause. Name a public interface, mode, or entry point only when that name is itself part of what the reader needs to know, and leave internal functions, file paths, exact formulas, validation checks, routine plumbing, and documentation or test updates to the diff. Mention a lower-level detail, limit, or unchanged behavior only when leaving it out would actively mislead the reader.
 
-Keep the explanation as short as the change allows without losing clarity, and stop as soon as the mental model is complete. Length follows the number of distinct ideas, not the size of the diff: a small or single-idea change may need only a few paragraphs, and even a large change should take at most about five minutes to read.
+Keep it short. Technical explanations take real effort to absorb, much slower than light reading, because the reader is building a mental model rather than skimming. Most changes need only a few hundred words, and even a large change should take at most about five minutes to read and understand. Stop as soon as the mental model is complete instead of trying to cover every component or edge case.
 
 Spare the reader from simulating behavior in their head. When a small concrete example communicates faster or more precisely than prose, such as a before-and-after data shape, API surface, configuration, prompt excerpt, or a short illustrative case with realistic values, show it. Keep examples small, make sure they accurately reflect the behavior at head, mark any omitted parts clearly, and add a brief sentence on what to notice.
 

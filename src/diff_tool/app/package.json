@@ -13,7 +13,7 @@
   "dependencies": {
     "@base-ui/react": "^1.9.0",
     "@pierre/diffs": "1.7.2",
-    "lucide-react": "^1.80.0",
+    "lucide-react": "^1.82.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "react-markdown": "^10.1.0",
@@ -26,7 +26,7 @@
     "@vitejs/plugin-react": "^6.3.0",
     "agentation": "^3.1.2",
     "typescript": "^7.0.2",
-    "vite": "^8.3.8"
+    "vite": "^8.4.0"
   },
   "allowScripts": {
     "fsevents@2.3.3": true

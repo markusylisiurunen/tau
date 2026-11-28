@@ -74,9 +74,9 @@ const SELECTION = {
 };
 
 // Gathering starts before classification and only the final agent needs its result.
-export async function planWithContext(run, { gather, base, head, repo }, step) {
+export async function planWithContext(run, { gather, base, head }, step) {
   const context = gather
-    ? gatherContext(run, { base, head, repo }).catch((error) => {
+    ? gatherContext(run, { base, head }).catch((error) => {
         run.warn(
           `Context gathering failed. The final agent will proceed without the conversations behind the change: ${error.message}`,
         );
@@ -94,27 +94,22 @@ export async function planWithContext(run, { gather, base, head, repo }, step) {
 }
 
 // Gather the context into the run's `context` folder and return the folder,
-// its manifest, and the helpers' path and import path for the final agent. `repo` is the gathering agent's working directory. A
-// source that cannot be exported is left out of the manifest, listed as a
-// gap, and reported as a warning.
-export async function gatherContext(run, { base, head, repo }) {
+// its manifest, and the helpers' path for the final agent. A source that
+// cannot be exported is left out of the manifest and reported as a gap.
+export async function gatherContext(run, { base, head }) {
   const folder = `${run.folder}/context`;
   await bash(
     `mkdir -p "${folder}/github" "${folder}/sessions" "${run.folder}/helpers"`,
   );
 
-  // Code Mode imports only relative paths, which resolve from the agent's
-  // working directory in inline programs.
   const helpers = `${run.folder}/helpers/context.js`;
   const statsPath = `${run.folder}/find-sessions.jsonl`;
   await run.save("helpers/context.js", helperSource(statsPath));
-  const importPath =
-    "../".repeat(repo.split("/").filter(Boolean).length) + helpers.slice(1);
 
   const selection = await run.step({
     name: "gather-context",
     model: MODELS.gather,
-    prompt: gathererPrompt({ base, head, helpers, importPath }),
+    prompt: gathererPrompt({ base, head, helpers }),
     output: SELECTION,
   });
   await logSearches(run, statsPath);
@@ -145,7 +140,7 @@ export async function gatherContext(run, { base, head, repo }) {
   }
   const manifest = manifestText(sources, gaps);
   await run.save("context/manifest.md", manifest);
-  return { folder, manifest, helpers, importPath };
+  return { folder, manifest, helpers };
 }
 
 // Log each `findSessions` call the gathering agent made, from the stats the
@@ -354,13 +349,13 @@ function manifestText(sources, gaps) {
 
 // ── Prompt ──────────────────────────────────────────────────────────────
 
-function gathererPrompt({ base, head, helpers, importPath }) {
+function gathererPrompt({ base, head, helpers }) {
   return `Find the conversations behind the committed change from base ${base} to head ${head}, and select the ones that belong in its context. A later agent will check findings or proposed changes against them, for example to tell a deliberate change from a mistake or to see that a finding was already declined.
 
 Work read-only, and read the relevant \`code\` tool docs before using the helpers. Read \`${helpers}\` to learn what its helpers do. They find the Tau sessions behind a change and read sessions as compact text. Import them in a program with:
 
 \`\`\`js
-import { findSessions, read, transcript } from "${importPath}";
+import { findSessions, read, transcript } from "${helpers}";
 \`\`\`
 
 1. Read the commits and diff only far enough to tell whether a conversation is about this change, including when it was made. Do not review it.
@@ -401,7 +396,7 @@ ${responseFormat(SELECTION)}`;
 }
 
 export function contextSection(
-  { folder, manifest, helpers, importPath },
+  { folder, manifest, helpers },
   { editing = false } = {},
 ) {
   return `
@@ -416,7 +411,7 @@ Give the model the question you need answered. Use Jev for quick decisions acros
 Read the \`@tau/models\` docs and \`${helpers}\` before you use them. The helpers' \`decide(items, { questions, context })\` asks Jev the same questions about many texts in parallel, where each item is \`{ id, text }\`. Import it in a program with:
 
 \`\`\`js
-import { decide } from "${importPath}";
+import { decide } from "${helpers}";
 \`\`\`
 
 For open questions, use GPT-6 Luna (\`${QUESTION_MODEL}\`) through \`@tau/models\`.

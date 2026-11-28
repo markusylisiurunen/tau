@@ -20,6 +20,6 @@ await preflightModels([MODELS.gather]);
 const repo = await repositoryRoot(workingDirectory);
 log(`Gather context: ${base.slice(0, 7)}..${head.slice(0, 7)} in ${repo}`);
 const run = await startRun({ prefix: "tau-context", workingDirectory: repo });
-const { folder, manifest } = await gatherContext(run, { base, head, repo });
+const { folder, manifest } = await gatherContext(run, { base, head });
 
 run.finish(`Context folder: ${folder}\n\n${manifest}`);

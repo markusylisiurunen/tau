@@ -180,7 +180,7 @@ const run = await startRun({
 // 1. Plan the reviews. A requested depth overrides the classifier's choice.
 const { plan, context } = await planWithContext(
   run,
-  { gather, base, head, repo },
+  { gather, base, head },
   {
     name: "classify",
     model: MODELS.classifier,

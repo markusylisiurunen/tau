@@ -156,7 +156,7 @@ const run = await startRun({
 // 1. Plan the design reviews.
 const { plan, context } = await planWithContext(
   run,
-  { gather, base, head, repo },
+  { gather, base, head },
   {
     name: "classify",
     model: MODELS.classifier,

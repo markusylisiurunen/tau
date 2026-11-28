@@ -351,11 +351,11 @@
     },
     ".tau/skills/tau-workflows/scripts/gather-context.js": {
       "type": "file",
-      "hash": "fca987c8e51ec3d56e1198f416859153104d4cddbca2e312d675be33a41528ea"
+      "hash": "a3a66290420a2cc311bef7455039b043074a8bd94f76dd600d43b44c95663406"
     },
     ".tau/skills/tau-workflows/scripts/improve.js": {
       "type": "file",
-      "hash": "f3cb65742ffb8b15b8259d9319f85538440dedd9e6111bbe1c39b14eacd5f111"
+      "hash": "76b50869dfa54523bcdc5be3be3f439a3d5d19a4591ed8ee857b933f41e130d6"
     },
     ".tau/skills/tau-workflows/scripts/lib/context-helpers.js": {
       "type": "file",
@@ -363,7 +363,7 @@
     },
     ".tau/skills/tau-workflows/scripts/lib/context.js": {
       "type": "file",
-      "hash": "0a38173d2a2dddc8632b895ee350305b945cb214a53dfe70243515f51a2fc2fa"
+      "hash": "ad44f5119c98a2e07befdfe4861df2650acf96179cd0ecb05a0dae8b264065a4"
     },
     ".tau/skills/tau-workflows/scripts/lib/history.js": {
       "type": "file",
@@ -383,11 +383,11 @@
     },
     ".tau/skills/tau-workflows/scripts/review-and-improve.js": {
       "type": "file",
-      "hash": "e9960ddb086ad471d8bdb30d9f24a323aa69360733d2ea39dd3bb180f744051e"
+      "hash": "e027c3f6085907422df71d92b93c11259072eb5f90eaa7bd3143f493d3acc65c"
     },
     ".tau/skills/tau-workflows/scripts/review.js": {
       "type": "file",
-      "hash": "97d470b51b681e62c183f02ef5b400f96f214a01aec046bf0da76b3280d00f2d"
+      "hash": "bff19e7a99f9ca932fada5632340633562a88a15aa4ff32748f248bf86418198"
     },
     ".tau/skills/tau-workflows/scripts/rewrite.js": {
       "type": "file",

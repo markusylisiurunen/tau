@@ -130,7 +130,7 @@ const run = await startRun({ prefix: "tau-review", workingDirectory: repo });
 // 1. Plan the review. A requested depth overrides the classifier's choice.
 const { plan, context } = await planWithContext(
   run,
-  { gather, base, head, repo },
+  { gather, base, head },
   {
     name: "classify",
     model: MODELS.classifier,

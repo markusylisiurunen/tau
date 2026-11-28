@@ -10,6 +10,7 @@ import {
   LEGACY_SESSION_MODEL_CONTEXT_KEY,
   STORED_SESSION_DOCUMENT_FORMAT,
   STORED_SESSION_DOCUMENT_VERSION,
+  UnsupportedStoredSessionVersionError,
 } from "../dist/store/session_snapshot_migrations.js";
 import { SessionStoreConflictError } from "../dist/store/session_store.js";
 import { createProtocolSnapshot } from "./helpers/session_protocol_fixtures.js";
@@ -59,6 +60,17 @@ async function withTempStore(test) {
 }
 
 describe("FileSessionStore", () => {
+  it("reports an unsupported worker checkpoint version to recovery", async () => {
+    await withTempStore(async (store, directory) => {
+      const workers = join(directory, "c2Vzc2lvbi0x.json.workers");
+      await mkdir(workers, { recursive: true });
+      await writeFile(join(workers, "Y2hpbGQ.json"), JSON.stringify({ version: 999, worker: {} }));
+      await expect(store.workers("session-1").read("child")).rejects.toBeInstanceOf(
+        UnsupportedStoredSessionVersionError,
+      );
+    });
+  });
+
   it("excludes another process and recovers ownership after its exit", async () => {
     await withTempStore(async (store, directory) => {
       const child = spawn(
@@ -484,6 +496,21 @@ describe("FileSessionStore", () => {
         state: "settled",
         outcome: legacy.messages.find((message) => message.id === "entry-1").turn,
       };
+      await expect(store.loadSession("session-1")).resolves.toEqual(snapshot);
+    });
+  });
+
+  it("drops pre-checkpoint worker projections without discarding session history", async () => {
+    await withTempStore(async (store, directory) => {
+      const snapshot = createSnapshot("session-1", "hello");
+      const legacy = structuredClone(snapshot);
+      legacy.agents.child = {};
+      legacy.facets.child = { subject: { type: "agent", id: "child" } };
+      await mkdir(directory, { recursive: true });
+      await writeFile(
+        join(directory, "c2Vzc2lvbi0x.json"),
+        JSON.stringify({ format: STORED_SESSION_DOCUMENT_FORMAT, version: 17, snapshot: legacy }),
+      );
       await expect(store.loadSession("session-1")).resolves.toEqual(snapshot);
     });
   });

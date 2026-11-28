@@ -15,10 +15,13 @@ import {
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
+import { InvalidWorkerCheckpointError, type WorkerStore } from "../core/subagents/checkpoint.js";
 import type { SessionProtocolSnapshot } from "../protocol/session_protocol.js";
 import {
   createStoredSessionDocument,
+  createWorkerDocument,
   parseStoredSessionDocument,
+  parseWorkerDocument,
   UnsupportedStoredSessionVersionError,
 } from "./session_snapshot_migrations.js";
 import {
@@ -59,6 +62,43 @@ export class FileSessionStore implements SessionStore {
 
   constructor(options: FileSessionStoreOptions) {
     this.directory = options.directory;
+  }
+
+  workers(sessionId: string): WorkerStore {
+    const directory = `${this.snapshotPath(sessionId)}.workers`;
+    const pathFor = (id: string) => join(directory, snapshotFilename(id));
+    return {
+      read: async (id) => {
+        let raw: string;
+        try {
+          raw = await readFile(pathFor(id), "utf8");
+        } catch (error) {
+          if (isNotFound(error)) return undefined;
+          throw error;
+        }
+        try {
+          return parseWorkerDocument(JSON.parse(raw));
+        } catch (cause) {
+          if (cause instanceof UnsupportedStoredSessionVersionError) throw cause;
+          throw new InvalidWorkerCheckpointError(`invalid worker checkpoint: ${id}`, { cause });
+        }
+      },
+      save: async (id, worker) => {
+        await mkdir(directory, { recursive: true, mode: PRIVATE_DIRECTORY_MODE });
+        const path = pathFor(id),
+          temp = `${path}.${randomUUID()}.tmp`;
+        try {
+          await writeFile(temp, JSON.stringify(createWorkerDocument(worker)), {
+            mode: PRIVATE_FILE_MODE,
+            flag: "wx",
+          });
+          await rename(temp, path);
+        } finally {
+          await rm(temp, { force: true });
+        }
+      },
+      remove: (id) => rm(pathFor(id), { force: true }),
+    };
   }
 
   async acquireSession(sessionId: string): Promise<() => Promise<void>> {

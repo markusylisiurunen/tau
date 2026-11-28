@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createEditToolDefinition } from "../dist/core/tools/edit.js";
 import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
+import { replaceExactText } from "../dist/core/tools/file_edits.js";
 import { TOOL_NAME_EDIT } from "../dist/core/tools/tool_names.js";
 
 function setupFixture() {
@@ -122,50 +123,10 @@ describe("edit tool", () => {
     }
   });
 
-  it("treats $ sequences as literal replacements", async () => {
-    const fx = setupFixture();
-
-    try {
-      const filePath = join(fx.dir, "example.ts");
-      const originalLines = [
-        `const cost = \`\${formatAdaptiveNumber(entry.costTotal, 2, 5)}\`;`,
-        'const label = "price";',
-      ];
-      writeFileSync(filePath, `${originalLines.join("\n")}\n`);
-
-      const backend = createLocalToolExecutionBackend();
-      const editTool = createEditToolDefinition(backend);
-
-      await runTool(editTool, {
-        id: "tool-1",
-        name: TOOL_NAME_EDIT,
-        arguments: {
-          path: filePath,
-          oldText: originalLines[0],
-          newText: "const cost = `$${formatAdaptiveNumber(entry.costTotal, 2, 5)}`;",
-        },
-      });
-
-      await runTool(editTool, {
-        id: "tool-2",
-        name: TOOL_NAME_EDIT,
-        arguments: {
-          path: filePath,
-          oldText: originalLines[1],
-          newText: 'const label = "$1";',
-        },
-      });
-
-      const updated = readFileSync(filePath, "utf-8");
-      expect(updated).toBe(
-        [
-          "const cost = `$${formatAdaptiveNumber(entry.costTotal, 2, 5)}`;",
-          'const label = "$1";',
-          "",
-        ].join("\n"),
-      );
-    } finally {
-      fx.cleanup();
-    }
+  it.each([
+    ['const label = "price";', 'const label = "$1";'],
+    [`const cost = \`\${format(value)}\`;`, `const cost = \`$\${format(value)}\`;`],
+  ])("inserts the replacement literally (%#)", (oldText, newText) => {
+    expect(replaceExactText(`${oldText}\n`, oldText, newText)).toBe(`${newText}\n`);
   });
 });

@@ -8,7 +8,7 @@ import type {
 
 type NativeSubagentSettings = Omit<
   NativeSubagentConfig,
-  "systemPrompt" | "workingDirectory" | "autoCompactThresholdTokens"
+  "delegationPolicy" | "systemPrompt" | "workingDirectory" | "autoCompactThresholdTokens"
 >;
 export type SubagentEffectiveSettings =
   | NativeSubagentSettings

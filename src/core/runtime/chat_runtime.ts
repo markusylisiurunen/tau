@@ -23,6 +23,7 @@ import type { ModelResolver } from "../models/catalog.js";
 import { createAutoCompactionArchiver } from "../session/auto_compaction_archive.js";
 import type { AutoCompactDefaults } from "../session/auto_compaction_threshold.js";
 import { AgentSupervisor } from "../subagents/agent_supervisor.js";
+import type { WorkerStore } from "../subagents/checkpoint.js";
 import type { ResolveSubagentPrompt, SubagentEvent } from "../subagents/types.js";
 import { AgentJobRegistry } from "../tools/agent_jobs.js";
 import { ToolCatalog } from "../tools/catalog.js";
@@ -63,6 +64,7 @@ export type CreateChatRuntimeOptions = {
   eventSink: AgentEventSink;
   subagentEventSink: (event: SubagentEvent) => void | Promise<void>;
   history: HistoryQuery;
+  workerStore: WorkerStore;
   openSubagentHistory: OpenSubagentHistory;
   mcp: McpManager;
   recordUsage?: UsageRecorder;
@@ -148,6 +150,7 @@ export class ChatRuntime {
             : state.run.status;
         this.notifications?.add(`subagent ${state.id} is idle (${status})`);
       },
+      store: options.workerStore,
       openHistory: options.openSubagentHistory,
       ...(options.recordUsage ? { recordUsage: options.recordUsage } : {}),
       deps: this.deps,
@@ -164,9 +167,12 @@ export class ChatRuntime {
       }),
       eventSink: async (event) => {
         if (event.type === "history_rewound") {
-          this.supervisor.retainOrigins(
+          const removed = this.supervisor.retainOrigins(
             new Set(this.agent.rawHistoryEntriesSnapshot.map((entry) => entry.id)),
           );
+          // Commit membership before deleting checkpoints that recovery might need.
+          await options.eventSink(event);
+          return await this.supervisor.forget(removed);
         }
         await options.eventSink(event);
       },
@@ -387,7 +393,21 @@ export class ChatRuntime {
   }
 
   private buildToolRegistry(composition: SessionPromptComposition): ToolRegistry {
-    return ToolCatalog.createSessionRegistry({
+    return ToolCatalog.createSessionRegistry(this.toolOptions(composition));
+  }
+
+  restoreWorkers(members: Parameters<AgentSupervisor["restore"]>[1]) {
+    return this.supervisor.restore(
+      {
+        ...this.toolOptions(this.latestPromptComposition),
+        callerId: this.sessionId,
+      },
+      members,
+    );
+  }
+
+  private toolOptions(composition: SessionPromptComposition) {
+    return {
       backend: this.backend,
       cwd: this.promptContext.cwd,
       config: this.config,
@@ -404,7 +424,7 @@ export class ChatRuntime {
       clientTools: this.clientTools,
       mcp: this.mcp,
       ...(this.resolveSubagentPrompt ? { resolveSubagentPrompt: this.resolveSubagentPrompt } : {}),
-    });
+    };
   }
 
   private get capabilities(): AgentCapabilities {

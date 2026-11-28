@@ -1,4 +1,10 @@
+import { z } from "zod";
+import { ModelSchema } from "../core/models/remote_catalog.js";
 import { getEffectiveAutoCompactThresholdTokens } from "../core/session/auto_compaction_threshold.js";
+import type { WorkerCheckpoint } from "../core/subagents/checkpoint.js";
+import { claudeCodeInputSchema, tokenUsageSchema } from "../core/subagents/claude_code_protocol.js";
+import { contentBlockSchema } from "../core/subagents/events.js";
+import { ReasoningEffortSchema } from "../core/types.js";
 import {
   normalizeSpeechToTextKeywords,
   SPEECH_TO_TEXT_MAX_VOCABULARY_CHARACTERS,
@@ -6,12 +12,14 @@ import {
 import { formatTauHiddenSystemBlock } from "../core/utils/user_metadata.js";
 import type { SessionProtocolSnapshot } from "../protocol/session_protocol.js";
 import {
+  modelMessageSchema,
   projectSessionProtocolNoticePresentation,
+  sessionProtocolAgentStateSnapshotSchema,
   validateSessionProtocolResult,
 } from "../protocol/session_protocol.js";
 
 export const STORED_SESSION_DOCUMENT_FORMAT = "tau-session" as const;
-export const STORED_SESSION_DOCUMENT_VERSION = 17 as const;
+export const STORED_SESSION_DOCUMENT_VERSION = 18 as const;
 export const LEGACY_SESSION_MODEL_CONTEXT_KEY = "legacy-v3";
 
 export type StoredSessionDocument = {
@@ -40,6 +48,7 @@ const storedSessionMigrations = new Map<number, StoredSessionMigration>([
   [14, migrateStoredSessionV14ToV15],
   [15, migrateStoredSessionV15ToV16],
   [16, migrateStoredSessionV16ToV17],
+  [17, migrateStoredSessionV17ToV18],
 ]);
 
 export class UnsupportedStoredSessionVersionError extends Error {
@@ -105,6 +114,36 @@ function decodeStoredSessionDocument(value: unknown): {
   return {
     version: value.version as number,
     snapshot: value.snapshot,
+  };
+}
+
+function migrateStoredSessionV17ToV18(value: unknown): unknown {
+  if (
+    !isRecord(value) ||
+    !isRecord(value.facets) ||
+    !isRecord(value.timeline) ||
+    !Array.isArray(value.timeline.items)
+  )
+    return value;
+  const isAgentSubject = (subject: unknown) => isRecord(subject) && subject.type === "agent";
+  return {
+    ...value,
+    agents: {},
+    facets: Object.fromEntries(
+      Object.entries(value.facets).filter(
+        ([, facet]) => !isRecord(facet) || !isAgentSubject(facet.subject),
+      ),
+    ),
+    timeline: {
+      ...value.timeline,
+      items: value.timeline.items.filter(
+        (item) =>
+          !isRecord(item) ||
+          item.type !== "notice" ||
+          !isRecord(item.notice) ||
+          !isAgentSubject(item.notice.subject),
+      ),
+    },
   };
 }
 
@@ -883,4 +922,69 @@ function migrateStoredSessionV14ToV15(value: unknown): unknown {
     }
   }
   return snapshot;
+}
+
+const workerHeader = z.object({ version: z.number().int(), worker: z.unknown() });
+const seq = z.number().int().nonnegative();
+const workerFields = z.object({
+  pending: z.object({ queue: seq, steer: seq }),
+  originHistoryEntryId: z.string().min(1),
+  personaId: z.string().optional(),
+  notifyOnCompletion: z.boolean(),
+  traceSequence: seq,
+  lastAssistantSeq: seq.optional(),
+  assistant: z
+    .object({ seq, timestamp: z.number(), content: z.array(contentBlockSchema) })
+    .optional(),
+});
+const cwd = z.string().trim().min(1);
+const workerSchema = z.discriminatedUnion("kind", [
+  workerFields.extend({
+    kind: z.literal("native"),
+    config: z.object({
+      workingDirectory: cwd,
+      systemPrompt: z.string(),
+      autoCompactThresholdTokens: z.number(),
+      model: ModelSchema,
+      settings: z.looseObject({ reasoning: ReasoningEffortSchema.optional() }),
+      delegationPolicy: z.object({
+        subagentLaunchModels: z.array(z.string()),
+        subagentAutoCompactThresholdTokens: z.record(z.string(), z.number()).optional(),
+      }),
+    }),
+    context: sessionProtocolAgentStateSnapshotSchema.extend({
+      agentId: z.string(),
+      historyEntries: z.array(z.object({ id: z.string(), message: modelMessageSchema })),
+    }),
+  }),
+  workerFields.extend({
+    kind: z.literal("claude-code"),
+    config: z.object({
+      workingDirectory: cwd,
+      relay: z.boolean(),
+      effort: claudeCodeInputSchema.shape.effort,
+      model: z.object({
+        provider: z.literal("claude-code"),
+        id: claudeCodeInputSchema.shape.model,
+      }),
+    }),
+    context: z.object({
+      sessionId: claudeCodeInputSchema.shape.sessionId,
+      usage: tokenUsageSchema,
+      cost: z.number(),
+      messages: z.array(z.tuple([z.string(), tokenUsageSchema.nullable()])),
+      contextTokens: z.number(),
+      contextSize: z.number(),
+    }),
+  }),
+]);
+export function createWorkerDocument(worker: WorkerCheckpoint) {
+  const { kind: _kind, ...config } = worker.config;
+  return { version: 1, worker: { ...worker, config } };
+}
+export function parseWorkerDocument(value: unknown): WorkerCheckpoint {
+  const header = workerHeader.parse(value);
+  if (header.version !== 1) throw new UnsupportedStoredSessionVersionError(header.version);
+  const worker = workerSchema.parse(header.worker);
+  return { ...worker, config: { ...worker.config, kind: worker.kind } } as WorkerCheckpoint;
 }

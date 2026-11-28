@@ -6,6 +6,7 @@ import { claudeCodeOptions } from "../dist/core/subagents/claude_code_runner.js"
 import { ClaudeCodeRuntime } from "../dist/core/subagents/claude_code_runtime.js";
 import { parseSubagentLaunchModel } from "../dist/core/subagents/launch_model.js";
 import { boundedHistoryText, boundedHistoryValue } from "../dist/core/subagents/trace.js";
+import { MemorySessionStore } from "../dist/store/memory_session_store.js";
 
 const sessionId = "ce4518fa-4b3f-44ef-a1a3-2f7edc024b8d";
 const prefix = "tau-claude-code:";
@@ -41,9 +42,10 @@ function emit(options, event) {
   options.onOutput(Buffer.from(`${prefix}${JSON.stringify(event)}\n`));
 }
 
-function fixture(run) {
+function fixture(run, store = new MemorySessionStore().workers("main")) {
   const calls = [];
   const events = [];
+  const onCompletion = vi.fn();
   const recordUsage = vi.fn();
   const backend = {
     runNodeScript: vi.fn(async (script, args, options) => {
@@ -54,6 +56,8 @@ function fixture(run) {
   };
   const openHistory = vi.fn();
   const supervisor = new AgentSupervisor({
+    store,
+    onCompletion,
     mainAgentId: "main",
     onEvent: (event) => events.push(event),
     recordUsage,
@@ -61,8 +65,9 @@ function fixture(run) {
   });
   const model = parseSubagentLaunchModel("claude-code/claude-sonnet-5-5:medium", { resolveModel })
     .launchModel.model;
-  const spawn = () =>
+  const spawn = (notifyOnCompletion = false) =>
     supervisor.spawn({
+      notifyOnCompletion,
       parentId: supervisor.mainAgentId,
       launchEpoch: supervisor.prepareSpawn(supervisor.mainAgentId),
       runtimeConfig: {
@@ -78,7 +83,7 @@ function fixture(run) {
       config: {},
       backend,
     });
-  return { supervisor, spawn, calls, events, recordUsage, backend, openHistory };
+  return { onCompletion, supervisor, spawn, calls, events, recordUsage, backend, openHistory };
 }
 
 describe("Claude Code launch models", () => {
@@ -143,7 +148,7 @@ describe("Claude Code supervised lifecycle", () => {
       emit(options, result(`answer ${count}`, count * 10));
       return ok;
     });
-    const spawned = f.spawn();
+    const spawned = await f.spawn();
 
     const id = spawned.id;
     const [first] = await f.supervisor.waitForAgents([id]);
@@ -165,7 +170,7 @@ describe("Claude Code supervised lifecycle", () => {
         activity: expect.objectContaining({ type: "tool", outcome: "failed", toolName: "Bash" }),
       }),
     );
-    expect(f.supervisor.sendInput({ mode: "queue", id, prompt: "follow up" }).status).toBe(
+    expect((await f.supervisor.sendInput({ mode: "queue", id, prompt: "follow up" })).status).toBe(
       "working",
     );
     const [second] = await f.supervisor.waitForAgents([id]);
@@ -183,7 +188,127 @@ describe("Claude Code supervised lifecycle", () => {
       workingDirectory: "/remote/workspace",
       createdAt: expect.any(Number),
     });
-    f.supervisor.reset();
+    f.supervisor.dispose();
+  });
+
+  it("reopens the same Claude session on a new supervisor without delivering an old completion", async () => {
+    const store = new MemorySessionStore().workers("main");
+    const first = fixture(async (_input, options) => {
+      emit(options, { type: "session", id: sessionId });
+      emit(options, result("first answer", 10));
+      return ok;
+    }, store);
+    const { id } = await first.spawn(true);
+    await first.supervisor.waitForIdle();
+    const reply = first.supervisor.getLastResponse(id);
+    expect(first.onCompletion).toHaveBeenCalledTimes(1);
+    const member = first.supervisor.getSnapshot(id);
+    first.supervisor.dispose();
+    const reopened = fixture(async (_input, options) => {
+      emit(options, result("second answer", 15));
+      return ok;
+    }, store);
+    await reopened.supervisor.restore({ backend: reopened.backend }, [member]);
+    expect(reopened.onCompletion).not.toHaveBeenCalled();
+    expect(reopened.supervisor.getLastResponse(id)).toEqual(reply);
+    expect(reopened.calls).toEqual([]);
+    expect(reopened.events).toEqual([]);
+    expect(reopened.supervisor.getLastResponse(id)?.text).toBe("first answer");
+    reopened.supervisor.sendInput({ id, prompt: "follow up", mode: "queue" });
+    await reopened.supervisor.waitForIdle();
+    expect(reopened.calls[0].input).toMatchObject({ sessionId, cwd: "/remote/workspace" });
+    expect(reopened.supervisor.read(id).usage.input).toBe(15);
+  });
+
+  it("recovers a partial reply and discards queued input without waking either agent", async () => {
+    const store = new MemorySessionStore().workers("main");
+    const gate = Promise.withResolvers();
+    const first = fixture(async (_input, options) => {
+      emit(options, { type: "session", id: sessionId });
+      emit(options, {
+        type: "trace",
+        event: { kind: "assistant", content: [{ type: "text", text: "partial reply" }] },
+      });
+      await gate.promise;
+      return { ...ok, aborted: true };
+    }, store);
+    const { id } = await first.spawn(true);
+    try {
+      const entries = () => first.supervisor.getTrace(id).trace({ kinds: ["assistant"] }).entries;
+      await vi.waitFor(() => expect(entries()).toHaveLength(1));
+      const [{ seq, timestamp }] = entries();
+      await first.supervisor.sendInput({ id, mode: "queue", prompt: "do not replay" });
+      const saved = new MemorySessionStore().workers("main");
+      await saved.save(id, await store.read(id));
+      const reopened = fixture(async (_input, options) => {
+        emit(options, result());
+        return ok;
+      }, saved);
+      await reopened.supervisor.restore({ backend: reopened.backend }, [
+        first.supervisor.getSnapshot(id),
+      ]);
+      expect(reopened.calls).toEqual([]);
+      expect(reopened.onCompletion).not.toHaveBeenCalled();
+      expect(reopened.supervisor.read(id)).toMatchObject({
+        status: "idle",
+        reason: "interrupted",
+        pending: { queue: 0, steer: 0 },
+      });
+      expect(reopened.supervisor.getLastResponse(id)).toEqual({
+        seq,
+        text: "partial reply",
+        complete: true,
+      });
+      expect(
+        reopened.supervisor.getTrace(id).trace({ kinds: ["assistant"] }).entries[0],
+      ).toMatchObject({ timestamp, seq });
+      await reopened.supervisor.sendInput({ id, mode: "queue", prompt: "continue" });
+      await reopened.supervisor.waitForIdle();
+      expect(reopened.calls.map((call) => call.input.prompt)).toEqual(["continue"]);
+      expect(reopened.onCompletion).toHaveBeenCalledTimes(1);
+    } finally {
+      first.supervisor.dispose();
+      gate.resolve();
+    }
+  });
+
+  it("reports a failed final save to the parent and finishes the worker", async () => {
+    const store = new MemorySessionStore().workers("main");
+    const f = fixture(
+      async (_input, options) => {
+        emit(options, { type: "session", id: sessionId });
+        emit(options, result());
+        return ok;
+      },
+      {
+        ...store,
+        async save(id, worker) {
+          if (f.supervisor.getSnapshot(id).run.status !== "running") throw new Error("disk full");
+          await store.save(id, worker);
+        },
+      },
+    );
+    const { id } = await f.spawn(true);
+    await f.supervisor.waitForIdle();
+    expect(f.supervisor.read(id)).toMatchObject({
+      status: "idle",
+      reason: "failed",
+      error: { code: "checkpoint-error" },
+    });
+    expect(f.events.at(-1)).toMatchObject({
+      type: "subagent_finished",
+      state: { id, run: { status: "failed" } },
+    });
+    expect(f.onCompletion).toHaveBeenCalledTimes(1);
+    expect(f.supervisor.getLastResponse(id)).toBeUndefined();
+    const reopened = fixture(() => {
+      throw new Error("unexpected worker execution");
+    }, store);
+    await reopened.supervisor.restore({ backend: reopened.backend }, [
+      f.supervisor.getSnapshot(id),
+    ]);
+    expect(reopened.supervisor.read(id)).toEqual(f.supervisor.read(id));
+    expect(reopened.supervisor.getLastResponse(id)).toBeUndefined();
   });
 
   it("deduplicates message usage across blocks, interruption, and resumed results", async () => {
@@ -209,7 +334,7 @@ describe("Claude Code supervised lifecycle", () => {
       }
       return ok;
     });
-    const id = f.spawn().id;
+    const id = (await f.spawn()).id;
     const [interrupted] = await f.supervisor.waitForAgents([id]);
     expect(interrupted.reason).toBe("interrupted");
     expect(interrupted.usage).toMatchObject({ input: 5, output: 3, contextTokens: 8 });
@@ -231,7 +356,7 @@ describe("Claude Code supervised lifecycle", () => {
     expect(f.recordUsage.mock.calls.reduce((total, [entry]) => total + entry.cost.total, 0)).toBe(
       0.15,
     );
-    f.supervisor.reset();
+    f.supervisor.dispose();
   });
 
   it("interrupts through the backend signal and permits a follow-up on the same session", async () => {
@@ -251,18 +376,20 @@ describe("Claude Code supervised lifecycle", () => {
       );
       return { ...ok, aborted: true };
     });
-    const id = f.spawn().id;
+    const id = (await f.spawn()).id;
     await ready;
-    expect(f.supervisor.sendInput({ mode: "queue", id, prompt: "queued" }).status).toBe("working");
+    expect((await f.supervisor.sendInput({ mode: "queue", id, prompt: "queued" })).status).toBe(
+      "working",
+    );
     const stopped = await f.supervisor.interrupt(id);
     expect(stopped.reason).toBe("interrupted");
     expect(f.calls[0].options.signal.aborted).toBe(true);
-    expect(f.supervisor.sendInput({ mode: "queue", id, prompt: "continue" }).status).toBe(
+    expect((await f.supervisor.sendInput({ mode: "queue", id, prompt: "continue" })).status).toBe(
       "working",
     );
     expect((await f.supervisor.waitForAgents([id]))[0].reason).toBe("completed");
     expect(f.calls[1].input.sessionId).toBe(sessionId);
-    f.supervisor.reset();
+    f.supervisor.dispose();
   });
 
   it("disposes running Claude children when their origins are removed", async () => {
@@ -277,7 +404,7 @@ describe("Claude Code supervised lifecycle", () => {
       );
       return { ...ok, aborted: true };
     });
-    f.spawn();
+    await f.spawn();
     await ready;
     f.supervisor.retainOrigins(new Set());
     expect(f.calls[0].options.signal.aborted).toBe(true);
@@ -335,14 +462,14 @@ describe("Claude Code supervised lifecycle", () => {
       return ok;
     });
     f.openHistory.mockReturnValue(async (event) => history.push(event));
-    const id = f.spawn().id;
+    const id = (await f.spawn()).id;
     const [state] = await f.supervisor.waitForAgents([id]);
     expect(state.reason).toBe("failed");
     expect(history.map((event) => event.type)).toEqual(["message", "endTurn"]);
     expect(history[0]).toMatchObject({ type: "message", entry: { id: "answer" } });
     expect(history[0].entry.timestamp).toBeGreaterThanOrEqual(startedAt);
     expect(history[0].entry.timestamp).toBeLessThanOrEqual(Date.now());
-    f.supervisor.reset();
+    f.supervisor.dispose();
   });
 
   it("pairs a replayed unfinished call after interruption", async () => {
@@ -382,7 +509,7 @@ describe("Claude Code supervised lifecycle", () => {
     f.openHistory.mockReturnValue(async (event) => {
       expect(recorder.record(event)).toBeUndefined();
     });
-    const id = f.spawn().id;
+    const id = (await f.spawn()).id;
     await f.supervisor.waitForAgents([id]);
     expect(entries).toEqual([]);
     f.supervisor.sendInput({ id, prompt: "resume", mode: "queue" });
@@ -392,7 +519,7 @@ describe("Claude Code supervised lifecycle", () => {
     ]);
     expect(entries[0].timestamp).toBeGreaterThanOrEqual(startedAt);
     expect(entries[0].timestamp).toBeLessThanOrEqual(Date.now());
-    f.supervisor.reset();
+    f.supervisor.dispose();
   });
 
   it.each(["malformed", "exit"])("fails closed on %s results", async (kind) => {
@@ -402,11 +529,11 @@ describe("Claude Code supervised lifecycle", () => {
       if (kind === "provider") emit(options, { ...result("provider rejected"), failed: true });
       return kind === "exit" ? { ...ok, exitCode: 1 } : ok;
     });
-    const id = f.spawn().id;
+    const id = (await f.spawn()).id;
     const [state] = await f.supervisor.waitForAgents([id]);
     expect(state.reason).toBe("failed");
     expect(f.calls).toHaveLength(1);
-    f.supervisor.reset();
+    f.supervisor.dispose();
   });
 
   it("preserves queued input when steering delivery fails", async () => {
@@ -428,7 +555,7 @@ describe("Claude Code supervised lifecycle", () => {
       return ok;
     });
     try {
-      const id = f.spawn().id;
+      const id = (await f.spawn()).id;
       await ready;
       f.supervisor.sendInput({ id, prompt: "queued task", mode: "queue" });
       f.supervisor.sendInput({ id, prompt: "uncertain steering", mode: "steer" });
@@ -443,7 +570,7 @@ describe("Claude Code supervised lifecycle", () => {
         expect.arrayContaining([expect.objectContaining({ code: "input.discarded" })]),
       );
     } finally {
-      f.supervisor.reset();
+      f.supervisor.dispose();
     }
   });
 
@@ -453,10 +580,10 @@ describe("Claude Code supervised lifecycle", () => {
       for (const byte of bytes) options.onOutput(Buffer.from([byte]));
       return { ...ok, truncated: true };
     });
-    const id = f.spawn().id;
+    const id = (await f.spawn()).id;
     await f.supervisor.waitForAgents([id]);
     expect(f.supervisor.getSnapshot(id).run.response).toBe("valmista: ää 漢");
-    f.supervisor.reset();
+    f.supervisor.dispose();
   });
 });
 
@@ -473,6 +600,7 @@ it.each([false, true])(
     });
     let deliverySignal;
     const runtime = new ClaudeCodeRuntime({
+      checkpoint: async () => {},
       config: {
         kind: "claude-code",
         relay: false,

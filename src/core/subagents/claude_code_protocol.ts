@@ -3,7 +3,7 @@ import { CLAUDE_CODE_MODEL_IDS } from "./claude_code_models.js";
 import { observableEventSchema } from "./events.js";
 
 const tokenCount = z.number().finite().nonnegative();
-const tokenUsageSchema = z.object({
+export const tokenUsageSchema = z.object({
   input: tokenCount,
   output: tokenCount,
   cacheRead: tokenCount,

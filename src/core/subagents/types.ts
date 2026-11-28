@@ -20,7 +20,7 @@ export type SubagentUsageSnapshot = {
 export type SubagentRunFailure =
   | { kind: "interrupted"; message: string }
   | {
-      kind: "auto-compaction-failed" | "model-subturn-limit" | "runtime-error";
+      kind: "auto-compaction-failed" | "model-subturn-limit" | "runtime-error" | "checkpoint-error";
       message: string;
     }
   | {
@@ -118,6 +118,7 @@ export type SubagentEvent =
 
 export type NativeSubagentConfig = {
   kind: "native";
+  delegationPolicy: Pick<Persona, "subagentLaunchModels" | "subagentAutoCompactThresholdTokens">;
   autoCompactThresholdTokens: number;
   systemPrompt: string;
   model: Model<Api>;
@@ -158,6 +159,6 @@ export type SubagentConversationState = {
   };
 } & (
   | { status: "working" | "stopping" }
-  | { status: "idle"; reason: "completed" | "interrupted" }
-  | { status: "idle"; reason: "failed"; error: { code: string; message: string } }
+  | { status: "idle"; reason: "completed" }
+  | { status: "idle"; reason: "failed" | "interrupted"; error: { code: string; message: string } }
 );

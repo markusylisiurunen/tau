@@ -3,6 +3,7 @@ import { StringDecoder } from "node:string_decoder";
 import type { HistoryRecordSink } from "../history/recorder.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
 import { getUsageTotals } from "../usage/logs.js";
+import type { ClaudeCodeContext } from "./checkpoint.js";
 import {
   type ClaudeCodeEvent,
   type ClaudeCodeResult,
@@ -69,12 +70,39 @@ export class ClaudeCodeRuntime implements SubagentRuntime {
   constructor(
     private readonly options: {
       config: ClaudeCodeSubagentConfig;
+      restored?: ClaudeCodeContext;
+      checkpoint: () => Promise<void>;
       backend: ToolExecutionBackend;
       onEvent: (event: SubagentRuntimeEvent) => Promise<void>;
       now: () => number;
       history?: HistoryRecordSink;
     },
-  ) {}
+  ) {
+    if (options.restored) {
+      const { sessionId, usage, cost, messages, contextTokens, contextSize } = options.restored;
+      this.sessionId = sessionId;
+      this.usage = usage;
+      this.cost = cost;
+      this.messageUsage = new Map(messages);
+      this.contextTokens = contextTokens;
+      this.contextSize = contextSize;
+    }
+  }
+
+  checkpoint() {
+    return {
+      kind: "claude-code" as const,
+      config: this.options.config,
+      context: {
+        sessionId: this.sessionId,
+        usage: this.usage,
+        cost: this.cost,
+        messages: [...this.messageUsage],
+        contextTokens: this.contextTokens,
+        contextSize: this.contextSize,
+      },
+    };
+  }
 
   private async deliverInput(message: string): Promise<boolean> {
     if (!this.controlPath || !this.controller || this.controller.signal.aborted) return false;
@@ -212,6 +240,8 @@ export class ClaudeCodeRuntime implements SubagentRuntime {
   private async run(
     prompt: string,
   ): Promise<{ status: "interrupted" } | { status: "completed"; result: ClaudeCodeResult }> {
+    if (this.options.restored && !this.sessionId)
+      throw new Error("Claude Code did not save a session ID before interruption");
     if (this.disposed) throw new Error("Claude Code subagent is disposed");
     if (this.controller) throw new Error("Claude Code subagent is already running");
     const config = this.options.config;
@@ -240,7 +270,6 @@ export class ClaudeCodeRuntime implements SubagentRuntime {
         throw new Error("Claude Code event backlog exceeds the limit");
       const event = claudeCodeEventSchema.parse(JSON.parse(line.slice(EVENT_PREFIX.length)));
       if (event.type === "control") this.controlPath = event.path;
-      if (event.type === "session") this.sessionId = event.id;
       if (event.type === "result") finalResult = event;
       queuedEventBytes += bytes;
       events = events
@@ -308,6 +337,10 @@ export class ClaudeCodeRuntime implements SubagentRuntime {
     }
   }
   private async recordEvent(event: ClaudeCodeEvent): Promise<void> {
+    if (event.type === "session" && this.sessionId !== event.id) {
+      this.sessionId = event.id;
+      await this.options.checkpoint();
+    }
     if (event.type === "error") throw new Error(event.message);
     if (event.type === "history") {
       const history = event.event;

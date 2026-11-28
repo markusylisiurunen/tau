@@ -1,3 +1,4 @@
+import { createMemoryWorkerStore, type WorkerStore } from "../core/subagents/checkpoint.js";
 import type { SessionProtocolSnapshot } from "../protocol/session_protocol.js";
 import {
   assertExpectedSessionRevision,
@@ -9,6 +10,13 @@ import {
 export class MemorySessionStore implements SessionStore {
   private readonly snapshots = new Map<string, SessionProtocolSnapshot>();
   private readonly leases = new Set<string>();
+
+  private readonly children = new Map<string, WorkerStore>();
+  workers(sessionId: string): WorkerStore {
+    const workers = this.children.get(sessionId) ?? createMemoryWorkerStore();
+    this.children.set(sessionId, workers);
+    return workers;
+  }
 
   async acquireSession(sessionId: string): Promise<() => Promise<void>> {
     if (this.leases.has(sessionId)) throw new Error(`session is already in use: ${sessionId}`);

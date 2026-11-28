@@ -68,8 +68,8 @@ type Worker = {
   };
 } & (
   | { status: "working" | "stopping" }
-  | { status: "idle"; reason: "completed" | "interrupted" }
-  | { status: "idle"; reason: "failed"; error: { code: string; message: string } }
+  | { status: "idle"; reason: "completed" }
+  | { status: "idle"; reason: "failed" | "interrupted"; error: { code: string; message: string } }
 );
 
 type TraceOptions = {

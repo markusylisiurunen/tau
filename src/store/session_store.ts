@@ -1,3 +1,4 @@
+import type { WorkerStore } from "../core/subagents/checkpoint.js";
 import type { SessionProtocolSnapshot } from "../protocol/session_protocol.js";
 import { validateSessionProtocolResult } from "../protocol/session_protocol.js";
 
@@ -6,6 +7,7 @@ export type SessionStoreCommitOptions = {
 };
 
 export interface SessionStore {
+  workers(sessionId: string): WorkerStore;
   acquireSession(sessionId: string): Promise<() => Promise<void>>;
   commitSessionSnapshot(
     snapshot: SessionProtocolSnapshot,

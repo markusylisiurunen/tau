@@ -6,6 +6,7 @@ import type { HistoryQuery } from "../history/types.js";
 import { McpManager } from "../mcp/manager.js";
 import type { ModelResolver } from "../models/catalog.js";
 import { AgentSupervisor } from "../subagents/agent_supervisor.js";
+import { createMemoryWorkerStore } from "../subagents/checkpoint.js";
 import type { ResolveSubagentPrompt } from "../subagents/types.js";
 import type { Persona } from "../types.js";
 import { AgentJobRegistry } from "./agent_jobs.js";
@@ -80,6 +81,7 @@ export const ToolCatalog = {
       subagentSystemPrompt: "",
       autoCompactThresholdTokens: options.persona.autoCompactThresholdTokens ?? null,
       supervisor: new AgentSupervisor({
+        store: createMemoryWorkerStore(),
         mainAgentId: "main",
         onEvent: () => {},
         onCompletion: () => {},

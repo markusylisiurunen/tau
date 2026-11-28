@@ -997,7 +997,7 @@ export type SessionProtocolToolRun =
 export type SessionProtocolAgentRunFailure =
   | { kind: "interrupted"; message: string }
   | {
-      kind: "auto-compaction-failed" | "model-subturn-limit" | "runtime-error";
+      kind: "auto-compaction-failed" | "model-subturn-limit" | "runtime-error" | "checkpoint-error";
       message: string;
     }
   | {
@@ -1631,7 +1631,7 @@ const modelToolResultMessageSchema = z
     timestamp: z.number().finite(),
   })
   .strip();
-const modelMessageSchema = z.union([
+export const modelMessageSchema = z.union([
   z.custom<IntermediateSystemMessage>(isIntermediateSystemMessage),
   modelUserMessageSchema,
   modelAssistantMessageSchema,
@@ -2487,7 +2487,12 @@ const sessionProtocolAgentUsageSchema = z
 const sessionProtocolAgentFailedRunFailureSchema = z.discriminatedUnion("kind", [
   z
     .object({
-      kind: z.enum(["auto-compaction-failed", "model-subturn-limit", "runtime-error"]),
+      kind: z.enum([
+        "auto-compaction-failed",
+        "model-subturn-limit",
+        "runtime-error",
+        "checkpoint-error",
+      ]),
       message: z.string(),
     })
     .strip(),
@@ -2538,7 +2543,7 @@ const sessionProtocolAgentRunStateSchema = z.discriminatedUnion("status", [
     .strip(),
 ]);
 
-const sessionProtocolAgentRunSchema = z
+export const sessionProtocolAgentRunSchema = z
   .object({
     id: nonEmptyStringSchema,
     parentId: nonEmptyStringSchema,
@@ -2580,7 +2585,7 @@ const sessionProtocolFacetSchema = z
   })
   .strip();
 
-const sessionProtocolAgentStateSnapshotSchema = z
+export const sessionProtocolAgentStateSnapshotSchema = z
   .object({
     revision: z.number().int().nonnegative(),
     modelContextKey: nonEmptyStringSchema,

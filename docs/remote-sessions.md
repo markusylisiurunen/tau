@@ -61,7 +61,7 @@ Tau does not create the Sprite or prepare its repository. Project configuration 
 
 A client disconnecting leaves work running, and you can reattach with the same session ID. The host unloads a session from memory after the last client has left and work has finished, and keeps it saved.
 
-Shutting down `tau serve` interrupts running work and saves sessions. They come back idle after a restart, without pending messages or subagents. See [sessions](sessions.md).
+Shutting down `tau serve` interrupts running work and saves sessions. They come back idle after a restart, with their subagents but without pending messages. See [sessions](sessions.md).
 
 ## Several clients
 

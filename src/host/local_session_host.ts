@@ -424,6 +424,7 @@ export class LocalSessionHost implements TauSessionHost {
       sessionStartedAt: createdAt,
       mcpServers: mcp.listServers(),
     });
+    const workerStore = this.store.workers(sessionId);
     const runtime = ChatRuntime.create({
       sessionId,
       createdAt,
@@ -439,6 +440,11 @@ export class LocalSessionHost implements TauSessionHost {
       eventSink: async (event) => await hostedSession.enqueueRuntimeEvent(event),
       subagentEventSink: async (event) => await hostedSession.recordSubagentEvent(event),
       history: this.history.query(this.historyRemote),
+      workerStore: {
+        read: workerStore.read,
+        save: (id, worker) => hostedSession.persistWorker(() => workerStore.save(id, worker)),
+        remove: (id) => hostedSession.persistWorker(() => workerStore.remove(id)),
+      },
       openSubagentHistory: (child) => {
         const recorder = new HistoryRecorder(
           this.history.openSession(
@@ -1949,7 +1955,42 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
   async reconcileRecoveredState(recovery: AgentStateRecovery): Promise<void> {
     this.assertActive();
+    const members = new Map(this.agents);
+    const restored = await this.runtime.restoreWorkers([...members.values()]);
     await this.enqueueMutation(async () => {
+      for (const worker of restored) {
+        if (this.agents.get(worker.id)?.run.status === "running")
+          this.agents.set(worker.id, worker);
+        members.delete(worker.id);
+      }
+      for (const [id, worker] of members) {
+        if (worker.run.status === "running") {
+          this.agents.set(id, {
+            ...worker,
+            availability: "idle",
+            run: {
+              ...worker.run,
+              status: "interrupted",
+              interruptRequested: true,
+              finishedAt: Date.now(),
+              failure: {
+                kind: "interrupted",
+                message: "Worker checkpoint unavailable after restart.",
+              },
+            },
+          });
+        }
+        const noticeId = `worker-unavailable-${id}`;
+        if (this.timeline.items.some((item) => item.id === noticeId)) continue;
+        this.appendNoticeTimelineItem(noticeId, Date.now(), {
+          kind: "tau.worker.unavailable",
+          version: 1,
+          severity: "warn",
+          subject: { type: "session" },
+          presentation: projectSessionProtocolNoticePresentation("worker unavailable", [id]),
+          data: { id },
+        });
+      }
       const recoveredTools: Array<{
         tool: Exclude<SessionProtocolToolRun, { status: "streaming" }>;
         result: AgentStateRecovery["recoveredToolResults"][number];
@@ -2468,6 +2509,10 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
     const { revision, ...current } = this.committedSnapshot;
     return JSON.stringify(current) === JSON.stringify(next) ? revision : revision + 1;
+  }
+
+  persistWorker(write: () => Promise<void>) {
+    return this.enqueueMutation(write);
   }
 
   async recordSubagentEvent(event: SubagentEvent): Promise<void> {
@@ -3559,13 +3604,6 @@ function normalizeRecoveredSnapshot(snapshot: SessionProtocolSnapshot): {
         outcome: abortedTurnOutcome(),
       };
     }
-  }
-  if (Object.keys(recovered.agents).length > 0) {
-    changed = true;
-    recovered.agents = {};
-    recovered.facets = Object.fromEntries(
-      Object.entries(recovered.facets).filter(([, facet]) => facet.subject.type !== "agent"),
-    );
   }
   const recoveredAt = Date.now();
   for (const [id, operation] of Object.entries(recovered.operations)) {

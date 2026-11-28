@@ -14,6 +14,7 @@ import { HistoryRecorder } from "../dist/core/history/recorder.js";
 import { AgentSupervisor } from "../dist/core/subagents/agent_supervisor.js";
 import { ClaudeCodeRuntime } from "../dist/core/subagents/claude_code_runtime.js";
 import { spawnWithCapture } from "../dist/core/utils/spawn_capture.js";
+import { MemorySessionStore } from "../dist/store/memory_session_store.js";
 
 // A protocol peer, not an Anthropic client. Exercises the shipped SDK bundle's
 // initialization, deferred prompt, message decoding, and process cleanup offline.
@@ -123,6 +124,7 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
 function createRuntimeOptions(directory, events) {
   const model = { id: "claude-sonnet-5-5", provider: "claude-code" };
   return {
+    checkpoint: async () => {},
     now: Date.now,
     config: {
       model,
@@ -166,25 +168,28 @@ describe("bundled Claude Agent SDK runner", () => {
       const history = [];
       let sent = false;
       const supervisor = new AgentSupervisor({
+        store: new MemorySessionStore().workers("main"),
         mainAgentId: "main",
         openHistory: () => async (event) => history.push(event),
         recordUsage: vi.fn(),
-        onEvent: (event) => {
+        onEvent: async (event) => {
           if (event.type === "subagent_activity" && event.activity.type === "assistant" && !sent) {
             sent = true;
             expect(
-              supervisor.sendInput({
-                id: event.state.id,
-                prompt: "updated instruction",
-                mode: "steer",
-              }).status,
+              (
+                await supervisor.sendInput({
+                  id: event.state.id,
+                  prompt: "updated instruction",
+                  mode: "steer",
+                })
+              ).status,
             ).toBe("working");
           }
         },
       });
       try {
         const marker = fakeClaude(directory, true, "steering", outcome);
-        const state = supervisor.spawn({
+        const state = await supervisor.spawn({
           parentId: supervisor.mainAgentId,
           launchEpoch: supervisor.prepareSpawn(supervisor.mainAgentId),
           runtimeConfig: options.config,
@@ -213,7 +218,7 @@ describe("bundled Claude Agent SDK runner", () => {
             .entries.map((entry) => supervisor.getTrace(state.id).readText(entry.seq).text),
         ).toEqual(["working", outcome === "success" ? "updated instruction" : "finished"]);
       } finally {
-        supervisor.reset();
+        supervisor.dispose();
         rmSync(directory, { recursive: true, force: true });
       }
     },
@@ -426,6 +431,7 @@ describe("bundled Claude Agent SDK runner", () => {
     const recordUsage = vi.fn();
     const events = [];
     const supervisor = new AgentSupervisor({
+      store: new MemorySessionStore().workers("main"),
       mainAgentId: "main",
       recordUsage,
       onEvent: (event) => events.push(event),
@@ -434,7 +440,7 @@ describe("bundled Claude Agent SDK runner", () => {
     let id;
     try {
       fakeClaude(directory, true, "after-usage");
-      const spawned = supervisor.spawn({
+      const spawned = await supervisor.spawn({
         parentId: supervisor.mainAgentId,
         launchEpoch: supervisor.prepareSpawn(supervisor.mainAgentId),
         runtimeConfig: options.config,
@@ -473,7 +479,7 @@ describe("bundled Claude Agent SDK runner", () => {
       expect(readFileSync(join(directory, "terminated"), "utf8")).toBe("yes");
     } finally {
       if (id) await supervisor.interrupt(id);
-      supervisor.reset();
+      supervisor.dispose();
       rmSync(directory, { recursive: true, force: true });
     }
   }, 20_000);

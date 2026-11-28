@@ -10,6 +10,12 @@ import { type CoreDeps, createDefaultCoreDeps } from "../runtime/deps.js";
 import type { AgentJobRegistry } from "../tools/agent_jobs.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
 import { appendUsageLogEntry, type UsageRecorder } from "../usage/logs.js";
+import {
+  InvalidWorkerCheckpointError,
+  type WorkerCheckpoint,
+  WorkerCheckpointWriter,
+  type WorkerStore,
+} from "./checkpoint.js";
 import { AgentRequestError } from "./errors.js";
 import type { SubagentRuntimeEvent } from "./events.js";
 import { formatActiveSubagentsForCompaction } from "./format.js";
@@ -26,6 +32,23 @@ import type {
   SubagentUsageSnapshot,
 } from "./types.js";
 
+type SpawnOptions = {
+  parentId: string;
+  notifyOnCompletion: boolean;
+  launchEpoch: number;
+  agents: AgentsPackageOptions;
+  runtimeConfig: SubagentRuntimeConfig;
+  prompt: string;
+  title: string;
+  originHistoryEntryId: string;
+  config: SessionRuntimeSettings;
+  backend: ToolExecutionBackend;
+  jobs: AgentJobRegistry;
+  history: HistoryQuery;
+  mcp: McpManager;
+  personaId?: string;
+};
+
 const MAX_ACTIVE_SUBAGENTS = 16;
 
 type SubagentRecord = {
@@ -35,6 +58,9 @@ type SubagentRecord = {
   launchEpoch: number;
   canDelegate: boolean;
   notifyOnCompletion: boolean;
+  inputEpoch: number;
+  // Save the restart discard counts before making in-flight inputs available to the worker.
+  admitting: { queue: number; steer: number };
   /** The main agent interrupted this run itself, so its completion is not news to it. */
   interruptedByMain: boolean;
   subtreeStops: number;
@@ -45,6 +71,9 @@ type SubagentRecord = {
   createdAt: number;
   originHistoryEntryId: string;
   personaId?: string;
+  writer: WorkerCheckpointWriter;
+  // The run is terminal, but its finish event has not been committed yet.
+  settling?: boolean;
   runtime: SubagentRuntime;
   run: SubagentRunSnapshot;
   costTotal: number;
@@ -81,6 +110,7 @@ export class AgentSupervisor {
     string,
     SubagentRecord | { kind: "main"; id: string; parentId: null; depth: 0; runtime: AgentRuntime }
   >();
+  private readonly removedWrites = new Map<string, Promise<void>>();
   private readonly deps: CoreDeps;
   private mainLaunchEpoch = 0;
   private disposed = false;
@@ -92,6 +122,7 @@ export class AgentSupervisor {
       onCompletion: (state: SubagentStateSnapshot) => void;
       recordUsage?: UsageRecorder;
       openHistory?: OpenSubagentHistory;
+      store: WorkerStore;
       deps?: CoreDeps;
     },
   ) {
@@ -145,22 +176,37 @@ export class AgentSupervisor {
 
   dispose(): void {
     this.disposed = true;
-    this.reset();
-    this.records.get(this.mainAgentId)?.runtime.dispose();
-    this.records.delete(this.mainAgentId);
+    this.mainLaunchEpoch++;
+    for (const record of this.records.values()) {
+      if (record.kind === "delegated") record.writer.close();
+      record.runtime.dispose();
+    }
+    this.records.clear();
   }
 
-  reset(): void {
-    this.retainOrigins(new Set());
-  }
-
-  retainOrigins(originHistoryEntryIds: ReadonlySet<string>): void {
+  retainOrigins(originHistoryEntryIds: ReadonlySet<string>) {
+    const removed: string[] = [];
     this.mainLaunchEpoch++;
     for (const record of this.delegatedRecords()) {
       const id = record.id;
       if (originHistoryEntryIds.has(record.originHistoryEntryId)) continue;
+      record.writer.close();
+      this.removedWrites.set(
+        id,
+        record.writer.flush().catch(() => {}),
+      );
+      removed.push(id);
       this.records.delete(id);
       record.runtime.dispose();
+    }
+    return removed;
+  }
+
+  async forget(ids: string[]) {
+    for (const id of ids) {
+      await this.removedWrites.get(id);
+      await this.options.store.remove(id);
+      this.removedWrites.delete(id);
     }
   }
 
@@ -175,7 +221,9 @@ export class AgentSupervisor {
   }
 
   getActiveCount(): number {
-    return this.delegatedRecords().filter((record) => record.run.status === "running").length;
+    return this.delegatedRecords().filter(
+      (record) => record.run.status === "running" || record.settling,
+    ).length;
   }
 
   getActiveCompactionContext(callerId: string): string | undefined {
@@ -187,22 +235,7 @@ export class AgentSupervisor {
     return `<active-subagents>\n${state}\n</active-subagents>`;
   }
 
-  spawn(options: {
-    parentId: string;
-    notifyOnCompletion: boolean;
-    launchEpoch: number;
-    agents: AgentsPackageOptions;
-    runtimeConfig: SubagentRuntimeConfig;
-    prompt: string;
-    title: string;
-    originHistoryEntryId: string;
-    config: SessionRuntimeSettings;
-    backend: ToolExecutionBackend;
-    jobs: AgentJobRegistry;
-    history: HistoryQuery;
-    mcp: McpManager;
-    personaId?: string;
-  }): SubagentConversationState {
+  spawn(options: SpawnOptions): Promise<SubagentConversationState> {
     if (options.notifyOnCompletion && options.parentId !== this.mainAgentId)
       throw new AgentRequestError("invalid_arguments", "Only main can subscribe to completions");
     if (this.getActiveCount() >= MAX_ACTIVE_SUBAGENTS) {
@@ -216,6 +249,21 @@ export class AgentSupervisor {
     const epoch = this.prepareSpawn(parentId);
     if (options.launchEpoch !== epoch)
       throw new AgentRequestError("operation_failed", "Delegation was interrupted");
+    const record = this.register(options);
+    record.trace.append({
+      kind: "input",
+      mode: "initial",
+      content: [{ type: "text", text: options.prompt }],
+    });
+    const accepted = this.read(record.id);
+    return this.startRun(record, options.prompt, "subagent_spawned").then(() => accepted);
+  }
+
+  private register(
+    options: Omit<SpawnOptions, "launchEpoch" | "prompt">,
+    restored?: { worker: WorkerCheckpoint; state: SubagentStateSnapshot },
+  ) {
+    const parentId = options.parentId;
     const parent = parentId === this.mainAgentId ? undefined : this.requireRecord(parentId);
     const depth = (parent?.depth ?? 0) + 1;
     const workingDirectory = options.runtimeConfig.workingDirectory.trim();
@@ -226,7 +274,8 @@ export class AgentSupervisor {
       );
     }
 
-    const id = randomUUID();
+    const saved = restored?.worker;
+    const id = restored?.state.id ?? randomUUID();
     const runtimeConfig = { ...options.runtimeConfig, workingDirectory };
     const delegation =
       depth < MAX_DELEGATION_DEPTH
@@ -239,12 +288,18 @@ export class AgentSupervisor {
       ancestorId = this.requireRecord(ancestorId).parentId;
     }
     sessionIds.unshift(this.mainAgentId);
-    const createdAt = this.deps.clock.now();
+    const createdAt = restored?.state.createdAt ?? this.deps.clock.now();
     const openHistory = this.options.openHistory;
-    const runtime = createSubagentRuntime(runtimeConfig, {
+    const launch =
+      saved ??
+      (runtimeConfig.kind === "native"
+        ? { kind: "native" as const, config: runtimeConfig }
+        : { kind: "claude-code" as const, config: runtimeConfig });
+    const runtime = createSubagentRuntime(launch, {
       ...options,
       id,
       sessionIds,
+      checkpoint: () => this.checkpoint(id),
       supervisor: this,
       delegation,
       agents: options.agents,
@@ -262,6 +317,8 @@ export class AgentSupervisor {
       launchEpoch: 0,
       notifyOnCompletion: options.notifyOnCompletion,
       interruptedByMain: false,
+      inputEpoch: 0,
+      admitting: { queue: 0, steer: 0 },
       canDelegate: runtimeConfig.kind === "native" && delegation.available,
       subtreeStops: 0,
       kind: "delegated",
@@ -288,17 +345,82 @@ export class AgentSupervisor {
         contextWindow: runtime.contextWindow,
       },
       completion: Promise.resolve(),
-      trace: new AgentTrace(),
+      trace: new AgentTrace(saved?.traceSequence, saved?.assistant),
+      lastAssistantSeq: saved?.lastAssistantSeq,
+      writer: new WorkerCheckpointWriter(() => this.save(record)),
       pending: [],
     };
     this.records.set(id, record);
-    record.trace.append({
-      kind: "input",
-      mode: "initial",
-      content: [{ type: "text", text: options.prompt }],
+    return record;
+  }
+
+  async restore(agents: AgentsPackageOptions, members: readonly SubagentStateSnapshot[]) {
+    const restored: SubagentStateSnapshot[] = [];
+    for (const state of members.toSorted((a, b) => a.depth - b.depth)) {
+      if (state.parentId !== this.mainAgentId && !this.records.has(state.parentId)) continue;
+      let worker: WorkerCheckpoint | undefined;
+      try {
+        worker = await this.options.store.read(state.id);
+      } catch (error) {
+        if (error instanceof InvalidWorkerCheckpointError) continue;
+        throw error;
+      }
+      if (!worker) continue;
+      let record: SubagentRecord;
+      try {
+        record = this.register(
+          {
+            ...agents,
+            agents,
+            parentId: state.parentId,
+            runtimeConfig: worker.config,
+            title: state.title,
+            personaId: worker.personaId,
+            originHistoryEntryId: worker.originHistoryEntryId,
+            notifyOnCompletion: worker.notifyOnCompletion,
+          },
+          { worker, state },
+        );
+      } catch {
+        // The host reports committed members that could not be opened.
+        continue;
+      }
+      record.usage = state.usage;
+      record.costTotal = state.costTotal;
+      record.run = state.run;
+      if (record.run.status === "running") {
+        this.finishInterrupted(
+          record,
+          `Worker interrupted by restart. Discarded ${worker.pending.queue} queued inputs. Delivery of ${worker.pending.steer} steering inputs was unconfirmed.`,
+        );
+      }
+      restored.push(this.toSnapshot(record));
+    }
+    return restored;
+  }
+
+  private async checkpoint(id: string): Promise<void> {
+    const record = this.records.get(id);
+    if (record?.kind !== "delegated") return;
+    await record.writer.request();
+  }
+
+  private save(record: SubagentRecord) {
+    const id = record.id;
+    const pending = this.read(id).pending;
+    return this.options.store.save(id, {
+      ...record.runtime.checkpoint(),
+      pending: {
+        queue: pending.queue + record.admitting.queue,
+        steer: pending.steer + record.admitting.steer,
+      },
+      originHistoryEntryId: record.originHistoryEntryId,
+      personaId: record.personaId,
+      notifyOnCompletion: record.notifyOnCompletion,
+      traceSequence: record.trace.lastSequence,
+      lastAssistantSeq: record.lastAssistantSeq,
+      assistant: record.trace.savedAssistant(record.lastAssistantSeq),
     });
-    this.startRun(record, options.prompt, "subagent_spawned");
-    return this.read(record.id);
   }
 
   /** Only a direct child of main can notify, and only while it runs. */
@@ -313,28 +435,58 @@ export class AgentSupervisor {
     }
   }
 
-  setCompletionNotification(callerId: string, id: string, enabled: boolean): void {
+  setCompletionNotification(callerId: string, id: string, enabled: boolean) {
     const record = this.requireRecord(id);
     if (callerId !== this.mainAgentId || record.parentId !== callerId)
       throw new AgentRequestError("unknown_agent", `Unknown subagent ID: ${id}`);
+    const previous = record.notifyOnCompletion;
     record.notifyOnCompletion = enabled;
+    return this.checkpoint(id).catch((error) => {
+      if (record.notifyOnCompletion === enabled) record.notifyOnCompletion = previous;
+      throw error;
+    });
   }
 
-  sendInput(options: {
+  async sendInput(options: {
     id: string;
     prompt: string;
     mode: "queue" | "steer";
-  }): SubagentConversationState {
+  }): Promise<SubagentConversationState> {
     const record = this.requireRecord(options.id);
+    const epoch = record.inputEpoch;
+    const assertCanAccept = () => {
+      this.requireRecord(record.id);
+      if (
+        record.inputEpoch !== epoch ||
+        record.subtreeStops > 0 ||
+        (record.run.interruptRequested && record.run.status === "running")
+      )
+        throw new AgentRequestError("operation_failed", "Subagent is stopping");
+    };
+    assertCanAccept();
+    if (record.settling) await record.completion;
+    assertCanAccept();
     if (
-      record.subtreeStops > 0 ||
-      (record.run.interruptRequested && record.run.status === "running")
+      record.pending.length +
+        record.runtime.pendingSteering +
+        record.admitting.queue +
+        record.admitting.steer >=
+      64
     )
-      throw new AgentRequestError("operation_failed", "Subagent is stopping");
+      throw new AgentRequestError("operation_failed", "Subagent input queue is full");
+
+    if (record.run.status === "running") {
+      record.admitting[options.mode]++;
+      try {
+        await this.checkpoint(record.id);
+        if (record.settling) await record.completion;
+        assertCanAccept();
+      } finally {
+        record.admitting[options.mode]--;
+      }
+    }
     if (record.run.status !== "running" && this.getActiveCount() >= MAX_ACTIVE_SUBAGENTS)
       throw new AgentRequestError("operation_failed", "Subagent capacity reached");
-    if (record.pending.length + record.runtime.pendingSteering >= 64)
-      throw new AgentRequestError("operation_failed", "Subagent input queue is full");
     record.trace.append({
       kind: "input",
       mode: options.mode,
@@ -343,13 +495,15 @@ export class AgentSupervisor {
     if (record.run.status === "running") {
       if (options.mode === "steer") record.runtime.steer(options.prompt);
       else record.pending.push({ prompt: options.prompt, mode: options.mode });
-    } else {
-      this.beginFollowup(record, options.prompt);
+      return this.read(record.id);
     }
-    return this.read(record.id);
+    const saved = this.beginFollowup(record, options.prompt);
+    const accepted = this.read(record.id);
+    await saved;
+    return accepted;
   }
 
-  private beginFollowup(record: SubagentRecord, prompt: string): void {
+  private beginFollowup(record: SubagentRecord, prompt: string) {
     record.lastAssistantSeq = undefined;
     record.run = {
       revision: record.run.revision + 1,
@@ -357,7 +511,7 @@ export class AgentSupervisor {
       startedAt: this.deps.clock.now(),
       interruptRequested: false,
     };
-    this.startRun(record, prompt, "subagent_run_started");
+    return this.startRun(record, prompt, "subagent_run_started");
   }
 
   read(id: string): SubagentConversationState {
@@ -379,7 +533,13 @@ export class AgentSupervisor {
               reason: "failed",
               error: { code: run.failure.kind, message: run.failure.message },
             }
-          : { status: "idle", reason: run.status === "succeeded" ? "completed" : "interrupted" }),
+          : run.status === "succeeded"
+            ? { status: "idle", reason: "completed" }
+            : {
+                status: "idle",
+                reason: "interrupted",
+                error: { code: run.failure.kind, message: run.failure.message },
+              }),
       pending: {
         queue: record.pending.filter((input) => input.mode === "queue").length,
         steer:
@@ -446,6 +606,7 @@ export class AgentSupervisor {
       else void stopping.catch(() => {});
       return this.read(id);
     }
+    record.inputEpoch++;
     if (record.run.status === "running") {
       if (record.pending.length || record.runtime.pendingSteering)
         record.trace.append({
@@ -466,7 +627,12 @@ export class AgentSupervisor {
   getLastResponse(id: string): { seq: number; text: string; complete: boolean } | undefined {
     const record = this.requireRecord(id);
     const seq = record.lastAssistantSeq;
-    if (record.run.status === "running" || seq === undefined) return undefined;
+    if (
+      record.run.status === "running" ||
+      (record.run.status === "failed" && record.run.failure.kind === "checkpoint-error") ||
+      seq === undefined
+    )
+      return undefined;
     try {
       return { seq, ...record.trace.readText(seq, Number.POSITIVE_INFINITY) };
     } catch (error) {
@@ -484,11 +650,20 @@ export class AgentSupervisor {
     record: SubagentRecord,
     prompt: string,
     eventType: "subagent_spawned" | "subagent_run_started",
-  ): void {
+  ): Promise<void> {
     record.trace.append({ kind: "status", status: "working" });
+    const acceptance = this.checkpoint(record.id)
+      .then(() => this.emit({ type: eventType, state: this.toSnapshot(record) }))
+      .catch((error) => {
+        if (eventType === "subagent_spawned" && this.records.delete(record.id)) {
+          record.writer.close();
+          record.runtime.dispose();
+        }
+        throw error;
+      });
     record.completion = (async () => {
       try {
-        await this.emit({ type: eventType, state: this.toSnapshot(record) });
+        await acceptance;
         if (this.records.get(record.id) !== record || record.run.interruptRequested) {
           this.finishInterrupted(record);
         } else {
@@ -517,6 +692,9 @@ export class AgentSupervisor {
           this.beginFollowup(record, next.prompt);
           return await record.completion;
         }
+        const interruptedByMain = record.interruptedByMain && record.run.status === "interrupted";
+        record.interruptedByMain = false;
+
         record.trace.append({
           kind: "status",
           status: "idle",
@@ -527,17 +705,35 @@ export class AgentSupervisor {
                 ? "interrupted"
                 : "failed",
         });
-        const interruptedByMain = record.interruptedByMain && record.run.status === "interrupted";
-        record.interruptedByMain = false;
-        if (record.notifyOnCompletion && !interruptedByMain) {
-          this.options.onCompletion(this.toSnapshot(record));
+        record.settling = true;
+        try {
+          await this.checkpoint(record.id);
+        } catch (error) {
+          this.finishFailed(record, {
+            kind: "checkpoint-error",
+            message: `Failed to save worker: ${error instanceof Error ? error.message : String(error)}`,
+          });
         }
-        await this.emit({ type: "subagent_finished", state: this.toSnapshot(record) });
+        try {
+          await this.emit({ type: "subagent_finished", state: this.toSnapshot(record) });
+          if (record.notifyOnCompletion && !interruptedByMain) {
+            this.options.onCompletion(this.toSnapshot(record));
+          }
+        } finally {
+          record.settling = false;
+        }
       }
     })();
+    void record.completion.catch(() => {});
+    return acceptance;
   }
 
   private finishSucceeded(record: SubagentRecord, response: string): void {
+    if (record.lastAssistantSeq === undefined && response)
+      record.lastAssistantSeq = record.trace.append({
+        kind: "assistant",
+        content: [{ type: "text", text: response }],
+      });
     record.run = {
       revision: record.run.revision,
       status: "succeeded",
@@ -548,14 +744,17 @@ export class AgentSupervisor {
     };
   }
 
-  private finishInterrupted(record: SubagentRecord): void {
+  private finishInterrupted(
+    record: SubagentRecord,
+    message = "Subagent run was interrupted.",
+  ): void {
     record.run = {
       revision: record.run.revision,
       status: "interrupted",
       startedAt: record.run.startedAt,
       finishedAt: this.deps.clock.now(),
       interruptRequested: true,
-      failure: { kind: "interrupted", message: "Subagent run was interrupted." },
+      failure: { kind: "interrupted", message },
     };
   }
 
@@ -678,8 +877,8 @@ export class ScopedAgentSupervisor {
     this.check(id);
     return this.supervisor.read(id);
   }
-  setCompletionNotification(id: string, enabled: boolean): void {
-    this.supervisor.setCompletionNotification(this.callerId, id, enabled);
+  setCompletionNotification(id: string, enabled: boolean) {
+    return this.supervisor.setCompletionNotification(this.callerId, id, enabled);
   }
   sendInput(options: Parameters<AgentSupervisor["sendInput"]>[0]) {
     this.check(options.id);

@@ -3787,7 +3787,7 @@ describe("LocalSessionHost", () => {
     }
   });
 
-  it("loads version 14 worker ancestry and prompt context before recovering live-only workers", async () => {
+  it("loads version 14 prompt context without recovering live-only workers", async () => {
     const directory = mkdtempSync(join(tmpdir(), "tau-nested-recovery-"));
     const host = createHost(new FileSessionStore({ directory }));
     let recoveredHost;
@@ -3810,7 +3810,7 @@ describe("LocalSessionHost", () => {
       );
       const store = new FileSessionStore({ directory });
       const loaded = await store.loadSession(snapshot.sessionId);
-      expect(loaded.agents[agent.id]).toMatchObject({ parentId: snapshot.sessionId, depth: 1 });
+      expect(loaded.agents).toEqual({});
       expect(loaded.bootstrap.prompt.subagentSystemPrompt).toBe(basePrompt);
       recoveredHost = createHost(store);
       const recovered = await recoveredHost.observeSession(snapshot.sessionId);
@@ -3825,7 +3825,7 @@ describe("LocalSessionHost", () => {
     }
   });
 
-  it("discards and persists unrecoverable subagent presentation on every recovery", async () => {
+  it("preserves unavailable worker membership without warning again on every recovery", async () => {
     const store = new MemorySessionStore();
     const storedSnapshot = createStoredSnapshot({
       sessionId: "stored-subagent",
@@ -3836,7 +3836,7 @@ describe("LocalSessionHost", () => {
           id: "agent-1",
 
           title: "stale child",
-          parentId: "main",
+          parentId: "stored-subagent",
           depth: 1,
           availability: "idle",
           model: {
@@ -3912,11 +3912,29 @@ describe("LocalSessionHost", () => {
         ...storedSnapshot.agentState,
         modelContextKey: recoveredSession.runtime.snapshot().modelContextKey,
       },
-      agents: {},
-      facets: { "session-facet": storedSnapshot.facets["session-facet"] },
+      timeline: {
+        epoch: 1,
+        sequence: 1,
+        items: [
+          expect.objectContaining({
+            notice: expect.objectContaining({
+              kind: "tau.worker.unavailable",
+              data: { id: "agent-1" },
+            }),
+          }),
+        ],
+      },
     });
     await expect(recoveredSession.snapshot()).resolves.toEqual(persisted);
     expect(recoveredSession.session.hasSubagent("agent-1")).toBe(false);
+    await host.shutdown();
+    const reopenedHost = createHost(store);
+    try {
+      const reopened = await reopenedHost.observeSession(storedSnapshot.sessionId);
+      expect((await reopened.snapshot()).timeline).toEqual(persisted.timeline);
+    } finally {
+      await reopenedHost.shutdown();
+    }
   });
 
   it("lists and canonicalizes unversioned sessions before recovery returns", async () => {
@@ -4659,18 +4677,22 @@ describe("LocalSessionHost", () => {
   });
 
   it("keeps running subagents alive after release and preserves idle workers under retention", async () => {
-    const host = createHost(new MemorySessionStore());
+    const directory = mkdtempSync(join(tmpdir(), "tau-workers-"));
+    const store = new FileSessionStore({ directory });
+    const host = createHost(store);
+    let reopenedHost;
     const gate = deferred();
     try {
       const session = await host.createSession(localCreateInput);
       const origin = await session.record({ text: "delegate" });
       const supervisor = session.runtime.supervisor;
-      const child = supervisor.spawn({
+      const acceptance = supervisor.spawn({
         parentId: supervisor.mainAgentId,
         notifyOnCompletion: false,
         launchEpoch: supervisor.prepareSpawn(supervisor.mainAgentId),
         runtimeConfig: {
           kind: "native",
+          delegationPolicy: { subagentLaunchModels: personas[0].subagentLaunchModels },
           systemPrompt: "child system",
           autoCompactThresholdTokens: 80000,
           workingDirectory: "/repo",
@@ -4687,16 +4709,19 @@ describe("LocalSessionHost", () => {
         mcp: new McpManager(),
         agents: { persona: personas[0] },
       });
-      const agent = supervisor.records.get(child.id).runtime.agent;
+      const agent = [...supervisor.records.values()].at(-1).runtime.agent;
       agent.spec.model.stream = () => ({
         async *[Symbol.asyncIterator]() {
           await gate.promise;
           yield* [];
         },
         async result() {
-          return fauxAssistantMessage("done");
+          const message = fauxAssistantMessage("done");
+          message.usage.cost.input = message.usage.cost.total = 0.01;
+          return message;
         },
       });
+      const child = await acceptance;
       await vi.waitFor(() => expect(agent.status).toBe("running"));
       host.setRetention(session.sessionId, 60_000);
       host.releaseSession(session);
@@ -4708,12 +4733,40 @@ describe("LocalSessionHost", () => {
       await supervisor.waitForIdle();
       expect(await host.observeSession(session.sessionId)).toBe(session);
       expect(supervisor.read(child.id).status).toBe("idle");
+      const priorTotal = (await session.snapshot()).costTotal;
+      expect(priorTotal).toBe(0.01);
+      // A failed parent rewind leaves the committed worker recoverable.
+      expect(supervisor.retainOrigins(new Set())).toEqual([child.id]);
       host.setRetention(session.sessionId, null);
       host.releaseSession(session);
       expect(await host.collectSession(session.sessionId)).toEqual({ disposed: true });
+      await host.shutdown();
+      reopenedHost = createHost(new FileSessionStore({ directory }));
+      const reopened = await reopenedHost.observeSession(session.sessionId);
+      expect((await reopened.snapshot()).costTotal).toBe(priorTotal);
+      const workers = reopened.runtime.supervisor;
+      expect(workers.read(child.id).usage.cost).toBe(priorTotal);
+      expect(workers.getLastResponse(child.id)?.text).toBe("done");
+      const resumed = workers.records.get(child.id).runtime.agent;
+      const contexts = [];
+      resumed.spec.model.stream = (context) => {
+        contexts.push(context);
+        return {
+          async *[Symbol.asyncIterator]() {},
+          async result() {
+            return fauxAssistantMessage("second");
+          },
+        };
+      };
+      await workers.sendInput({ id: child.id, prompt: "follow-up", mode: "queue" });
+      await workers.waitForIdle();
+      expect(JSON.stringify(contexts[0].messages)).toContain("done");
+      expect(workers.getLastResponse(child.id)?.text).toBe("second");
     } finally {
       gate.resolve();
+      await reopenedHost?.shutdown();
       await host.shutdown();
+      rmSync(directory, { force: true, recursive: true });
     }
   });
 
@@ -4725,11 +4778,12 @@ describe("LocalSessionHost", () => {
       const parent = await host.createSession(localCreateInput);
       const origin = await parent.record({ text: "delegate work" });
       const supervisor = parent.runtime.supervisor;
-      const child = supervisor.spawn({
+      const acceptance = supervisor.spawn({
         parentId: supervisor.mainAgentId,
         launchEpoch: supervisor.prepareSpawn(supervisor.mainAgentId),
         runtimeConfig: {
           kind: "native",
+          delegationPolicy: { subagentLaunchModels: personas[0].subagentLaunchModels },
           systemPrompt: "child system",
           autoCompactThresholdTokens: 80000,
           workingDirectory: "/repo/child",
@@ -4746,7 +4800,7 @@ describe("LocalSessionHost", () => {
         mcp: new McpManager(),
         agents: { persona: personas[0] },
       });
-      const agent = supervisor.records.get(child.id).runtime.agent;
+      const agent = [...supervisor.records.values()].at(-1).runtime.agent;
       const replies = ["first answer", "steered answer", "follow-up answer"];
       agent.spec.model.stream = () => ({
         async *[Symbol.asyncIterator]() {
@@ -4757,6 +4811,7 @@ describe("LocalSessionHost", () => {
           return fauxAssistantMessage(replies.shift());
         },
       });
+      const child = await acceptance;
       await vi.waitFor(() => expect(agent.status).toBe("running"));
       supervisor.sendInput({ id: child.id, mode: "steer", prompt: "change focus" });
       gate.resolve();

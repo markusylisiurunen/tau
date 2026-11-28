@@ -10,6 +10,7 @@ import { McpManager } from "../dist/core/mcp/manager.js";
 import { personas } from "../dist/core/personas.js";
 import { renderSubagentPrefixPrompt } from "../dist/core/static/index.js";
 import { AgentSupervisor } from "../dist/core/subagents/agent_supervisor.js";
+import { createMemoryWorkerStore } from "../dist/core/subagents/checkpoint.js";
 import { AgentJobRegistry } from "../dist/core/tools/agent_jobs.js";
 import { BashJobRegistry } from "../dist/core/tools/bash_jobs.js";
 import { ToolCatalog } from "../dist/core/tools/catalog.js";
@@ -58,6 +59,7 @@ function createSpawnOptions(overrides = {}) {
     launchEpoch: 0,
     runtimeConfig: {
       kind: "native",
+      delegationPolicy: { subagentLaunchModels: personas[0].subagentLaunchModels },
       systemPrompt: "child system",
       autoCompactThresholdTokens: 80000,
       description: "child",
@@ -85,24 +87,31 @@ function getRecord(supervisor, id) {
   return record;
 }
 
+// Tests install the fake stream on the new runtime before its first model call.
+function launchForSetup(supervisor, options) {
+  supervisor.spawn(options);
+  return supervisor.list().at(-1);
+}
+
 describe("AgentSupervisor", () => {
   it("notifies every subscribed direct-child idle transition independently of waits", async () => {
     const completions = [];
     const supervisor = new AgentSupervisor({
+      store: createMemoryWorkerStore(),
       mainAgentId: "main",
       onEvent: () => {},
       onCompletion: (state) => completions.push(state),
     });
-    const child = supervisor.spawn(createSpawnOptions({ notifyOnCompletion: true }));
+    const child = launchForSetup(supervisor, createSpawnOptions({ notifyOnCompletion: true }));
     const record = getRecord(supervisor, child.id);
     record.runtime.agent.spec.model.stream = () => createStream(createAssistant("done"));
     await supervisor.waitForAgents([child.id]);
     expect(completions.map((state) => state.run.revision)).toEqual([1]);
-    supervisor.setCompletionNotification("main", child.id, false);
+    await supervisor.setCompletionNotification("main", child.id, false);
     supervisor.sendInput({ id: child.id, prompt: "again", mode: "queue" });
     await supervisor.waitForAgents([child.id]);
     expect(completions).toHaveLength(1);
-    supervisor.setCompletionNotification("main", child.id, true);
+    await supervisor.setCompletionNotification("main", child.id, true);
     supervisor.sendInput({ id: child.id, prompt: "again", mode: "queue" });
     await supervisor.waitForAgents([child.id]);
     expect(completions.map((state) => state.run.revision)).toEqual([1, 3]);
@@ -122,7 +131,8 @@ describe("AgentSupervisor", () => {
     await supervisor.waitForAgents([child.id]);
     expect(completions).toHaveLength(3);
     record.canDelegate = true;
-    const nested = supervisor.spawn(
+    const nested = launchForSetup(
+      supervisor,
       createSpawnOptions({ parentId: child.id, launchEpoch: supervisor.prepareSpawn(child.id) }),
     );
     getRecord(supervisor, nested.id).runtime.agent.spec.model.stream = () =>
@@ -136,9 +146,36 @@ describe("AgentSupervisor", () => {
     supervisor.dispose();
   });
 
+  it("keeps workers recoverable after their parent checkpoint cannot be read", async () => {
+    const store = createMemoryWorkerStore();
+    const options = { store, mainAgentId: "main", onEvent: () => {} };
+    const supervisor = new AgentSupervisor(options);
+    const parent = launchForSetup(supervisor, createSpawnOptions());
+    const child = launchForSetup(supervisor, createSpawnOptions({ parentId: parent.id }));
+    for (const { id } of [parent, child])
+      getRecord(supervisor, id).runtime.agent.spec.model.stream = () =>
+        createStream(createAssistant("done"));
+    await supervisor.waitForIdle();
+    const members = [child, parent].map(({ id }) => supervisor.getSnapshot(id));
+    supervisor.dispose();
+    const unavailable = new Error("read failed");
+    const read = vi.spyOn(store, "read").mockRejectedValueOnce(unavailable);
+    const retry = new AgentSupervisor(options);
+    const launch = createSpawnOptions();
+    const agents = { ...launch, ...launch.agents };
+    await expect(retry.restore(agents, members)).rejects.toBe(unavailable);
+    expect(read).toHaveBeenCalledWith(parent.id);
+    read.mockResolvedValueOnce(undefined);
+    await expect(retry.restore(agents, members)).resolves.toEqual([]);
+    await expect(store.read(child.id)).resolves.toBeDefined();
+    expect(await retry.restore(agents, members)).toEqual([members[1], members[0]]);
+    retry.dispose();
+  });
+
   it("opens native history only after runtime construction succeeds", () => {
     const openHistory = vi.fn();
     const supervisor = new AgentSupervisor({
+      store: createMemoryWorkerStore(),
       mainAgentId: "main",
       onEvent: () => {},
       openHistory,
@@ -152,18 +189,20 @@ describe("AgentSupervisor", () => {
       expect(supervisor.list()).toEqual([]);
     } finally {
       registry.mockRestore();
-      supervisor.reset();
+      supervisor.dispose();
     }
   });
 
   it("binds the parent's MCP manager without resolving servers from the child workspace", async () => {
     const supervisor = new AgentSupervisor({
+      store: createMemoryWorkerStore(),
       mainAgentId: "main",
       onEvent: () => {},
     });
     const mcp = { available: true, listServers: vi.fn(() => [{ name: "host" }]) };
     try {
-      const spawned = supervisor.spawn(
+      const spawned = launchForSetup(
+        supervisor,
         createSpawnOptions({
           runtimeConfig: {
             ...createSpawnOptions().runtimeConfig,
@@ -195,7 +234,7 @@ describe("AgentSupervisor", () => {
       expect(JSON.parse(result.content[0].text)).toEqual([{ name: "host" }]);
       expect(mcp.listServers).toHaveBeenCalledOnce();
     } finally {
-      supervisor.reset();
+      supervisor.dispose();
     }
   });
 
@@ -215,6 +254,7 @@ describe("AgentSupervisor", () => {
     });
     registration.attachSession("parent-session");
     const supervisor = new AgentSupervisor({
+      store: createMemoryWorkerStore(),
       onCompletion: () => {},
       mainAgentId: "main",
       onEvent: () => {},
@@ -269,7 +309,7 @@ describe("AgentSupervisor", () => {
       await supervisor.waitForAgents([child.id]);
       expect(supervisor.getSnapshot(child.id).run.status).toBe("succeeded");
       expect(
-        supervisor.sendInput({ mode: "queue", id: child.id, prompt: "follow up" }).status,
+        (await supervisor.sendInput({ mode: "queue", id: child.id, prompt: "follow up" })).status,
       ).toBe("working");
       await supervisor.waitForAgents([child.id]);
       expect(supervisor.getSnapshot(child.id).run.status).toBe("succeeded");
@@ -278,7 +318,7 @@ describe("AgentSupervisor", () => {
     } finally {
       submit.mockRestore();
       registration.unregister();
-      supervisor.reset();
+      supervisor.dispose();
     }
   });
 
@@ -288,6 +328,7 @@ describe("AgentSupervisor", () => {
       releaseSpawn = resolve;
     });
     const supervisor = new AgentSupervisor({
+      store: createMemoryWorkerStore(),
       mainAgentId: "main",
       onEvent: async (event) => {
         if (event.type === "subagent_spawned") {
@@ -296,14 +337,20 @@ describe("AgentSupervisor", () => {
       },
       recordUsage: () => {},
     });
-    const spawned = supervisor.spawn(createSpawnOptions());
+    let acknowledged = false;
+    const accepted = supervisor.spawn(createSpawnOptions()).then(() => {
+      acknowledged = true;
+    });
+    const spawned = supervisor.list()[0];
     const record = getRecord(supervisor, spawned.id);
     const stream = vi.fn(() => createStream(createAssistant("too late")));
     record.runtime.agent.spec.model.stream = stream;
 
     const interruption = supervisor.interrupt(spawned.id);
     await vi.waitFor(() => expect(record.run.interruptRequested).toBe(true));
+    expect(acknowledged).toBe(false);
     releaseSpawn();
+    await accepted;
 
     await expect(interruption).resolves.toMatchObject({
       id: spawned.id,
@@ -320,13 +367,14 @@ describe("AgentSupervisor", () => {
     });
     const events = [];
     const supervisor = new AgentSupervisor({
+      store: createMemoryWorkerStore(),
       mainAgentId: "main",
       onEvent: async (event) => {
         events.push(event);
         if (event.type === "subagent_spawned") await spawnGate;
       },
     });
-    const spawned = supervisor.spawn(createSpawnOptions());
+    const spawned = launchForSetup(supervisor, createSpawnOptions());
     const record = getRecord(supervisor, spawned.id);
     const submit = vi.spyOn(record.runtime, "submit");
     const waiting = expect(supervisor.waitForAgents([spawned.id])).rejects.toMatchObject({
@@ -353,11 +401,12 @@ describe("AgentSupervisor", () => {
       releaseSubmit = resolve;
     });
     const supervisor = new AgentSupervisor({
+      store: createMemoryWorkerStore(),
       mainAgentId: "main",
       onEvent: async () => {},
       recordUsage: () => {},
     });
-    const spawned = supervisor.spawn(createSpawnOptions());
+    const spawned = launchForSetup(supervisor, createSpawnOptions());
     const record = getRecord(supervisor, spawned.id);
     record.runtime.agent.submit = vi.fn(async () => {
       markSubmitStarted();
@@ -385,6 +434,7 @@ describe("AgentSupervisor", () => {
     });
     let finishedEventSeen = false;
     const supervisor = new AgentSupervisor({
+      store: createMemoryWorkerStore(),
       mainAgentId: "main",
       onEvent: async (event) => {
         if (event.type === "subagent_finished") {
@@ -394,7 +444,7 @@ describe("AgentSupervisor", () => {
       },
       recordUsage: () => {},
     });
-    const spawned = supervisor.spawn(createSpawnOptions());
+    const spawned = launchForSetup(supervisor, createSpawnOptions());
     const record = getRecord(supervisor, spawned.id);
     record.runtime.agent.spec.model.stream = vi.fn(() => createStream(createAssistant("done")));
 
@@ -406,14 +456,20 @@ describe("AgentSupervisor", () => {
     expect(record.run.status).toBe("succeeded");
     expect(settled).toBe(false);
 
+    const followup = supervisor.sendInput({ id: spawned.id, prompt: "again", mode: "queue" });
+    expect(supervisor.read(spawned.id).pending.queue).toBe(0);
+    const rejected = expect(followup).rejects.toMatchObject({ code: "operation_failed" });
+    const interrupt = supervisor.interrupt(spawned.id);
     releaseFinished();
-    await expect(waiting).resolves.toEqual([
-      expect.objectContaining({
-        id: spawned.id,
-        status: "idle",
-        reason: "completed",
-      }),
-    ]);
+    await rejected;
+    await interrupt;
+    await waiting;
+    expect(record.runtime.agent.spec.model.stream).toHaveBeenCalledTimes(1);
+    await expect(
+      supervisor.sendInput({ id: spawned.id, prompt: "later", mode: "queue" }),
+    ).resolves.toMatchObject({ status: "working" });
+    await supervisor.waitForIdle();
+    expect(supervisor.read(spawned.id)).toMatchObject({ status: "idle", reason: "completed" });
   });
 
   it("enforces the active limit and cleans records removed by parent rewind", async () => {
@@ -422,6 +478,7 @@ describe("AgentSupervisor", () => {
       releaseProgress = resolve;
     });
     const supervisor = new AgentSupervisor({
+      store: createMemoryWorkerStore(),
       mainAgentId: "main",
       recordUsage: () => {},
       onEvent: async (event) => {
@@ -432,7 +489,8 @@ describe("AgentSupervisor", () => {
     });
     const ids = [];
     for (let index = 0; index < 16; index += 1) {
-      const result = supervisor.spawn(
+      const result = launchForSetup(
+        supervisor,
         createSpawnOptions({ originHistoryEntryId: `origin-${index}` }),
       );
 
@@ -453,6 +511,7 @@ describe("AgentSupervisor", () => {
 it("isolates main and sibling jobs while retaining child jobs across follow-ups", async () => {
   const jobs = new AgentJobRegistry();
   const supervisor = new AgentSupervisor({
+    store: createMemoryWorkerStore(),
     mainAgentId: "main",
     onEvent: () => {},
   });
@@ -505,7 +564,7 @@ it("isolates main and sibling jobs while retaining child jobs across follow-ups"
   try {
     const children = [0, 1].map(() => {
       const options = createSpawnOptions({ backend, jobs });
-      const result = supervisor.spawn(options);
+      const result = launchForSetup(supervisor, options);
 
       return result.id;
     });
@@ -543,7 +602,8 @@ it("isolates main and sibling jobs while retaining child jobs across follow-ups"
         }
         if (owner === 1) {
           expect(
-            supervisor.sendInput({ mode: "queue", id: children[0], prompt: "follow up" }).status,
+            (await supervisor.sendInput({ mode: "queue", id: children[0], prompt: "follow up" }))
+              .status,
           ).toBe("working");
           await supervisor.waitForAgents([children[0]]);
           expect(
@@ -558,7 +618,7 @@ it("isolates main and sibling jobs while retaining child jobs across follow-ups"
         }
       }
     }
-    supervisor.reset();
+    supervisor.dispose();
     expect(jobs.hasRunning).toBe(true);
     expect(jobs.agents.size).toBe(3);
     await jobs.dispose();
@@ -567,7 +627,7 @@ it("isolates main and sibling jobs while retaining child jobs across follow-ups"
     expect(() => jobs.create()).toThrow();
   } finally {
     await jobs.dispose();
-    supervisor.reset();
+    supervisor.dispose();
     submit.mockRestore();
   }
 });
@@ -579,18 +639,19 @@ describe("worker conversation scheduling", () => {
       release = resolve;
     });
     const supervisor = new AgentSupervisor({
+      store: createMemoryWorkerStore(),
       mainAgentId: "main",
       onEvent: () => {},
       recordUsage: () => {},
     });
-    const spawned = supervisor.spawn(createSpawnOptions());
+    const spawned = launchForSetup(supervisor, createSpawnOptions());
     const record = getRecord(supervisor, spawned.id);
     const answers = ["first", "second", "third"];
     record.runtime.agent.spec.model.stream = vi.fn(() =>
       createStream(createAssistant(answers.shift()), gate),
     );
-    supervisor.sendInput({ id: record.id, prompt: "second input", mode: "queue" });
-    supervisor.sendInput({ id: record.id, prompt: "third input", mode: "queue" });
+    await supervisor.sendInput({ id: record.id, prompt: "second input", mode: "queue" });
+    await supervisor.sendInput({ id: record.id, prompt: "third input", mode: "queue" });
     expect(supervisor.read(record.id).pending.queue).toBe(2);
     const wait = supervisor.waitForAgents([record.id]);
     release();
@@ -606,7 +667,41 @@ describe("worker conversation scheduling", () => {
         .trace({ kinds: ["assistant"] })
         .entries.map((entry) => supervisor.getTrace(record.id).readText(entry.seq).text),
     ).toEqual(["first", "second", "third"]);
-    supervisor.reset();
+    supervisor.dispose();
+  });
+
+  it("does not deliver input or change completion notifications when admission cannot be saved", async () => {
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const store = createMemoryWorkerStore();
+    const supervisor = new AgentSupervisor({ store, mainAgentId: "main", onEvent: () => {} });
+    const { id } = launchForSetup(supervisor, createSpawnOptions());
+    const record = getRecord(supervisor, id);
+    const stream = vi.fn(() => createStream(createAssistant("done"), gate));
+    record.runtime.agent.spec.model.stream = stream;
+    try {
+      await vi.waitFor(() => expect(stream).toHaveBeenCalled());
+      const failure = new Error("checkpoint write failed");
+      const save = vi.spyOn(store, "save");
+      for (const mode of ["queue", "steer"]) {
+        save.mockRejectedValueOnce(failure);
+        await expect(supervisor.sendInput({ id, mode, prompt: "rejected" })).rejects.toBe(failure);
+      }
+      save.mockRejectedValueOnce(failure);
+      await expect(supervisor.setCompletionNotification("main", id, true)).rejects.toBe(failure);
+      expect(supervisor.read(id)).toMatchObject({
+        pending: { queue: 0, steer: 0 },
+        notifyOnCompletion: false,
+      });
+      release();
+      await supervisor.waitForIdle();
+      expect(stream).toHaveBeenCalledTimes(1);
+    } finally {
+      release();
+      supervisor.dispose();
+    }
   });
 
   it("steers at a native boundary and settles with the continuation answer", async () => {
@@ -615,18 +710,19 @@ describe("worker conversation scheduling", () => {
       release = resolve;
     });
     const supervisor = new AgentSupervisor({
+      store: createMemoryWorkerStore(),
       mainAgentId: "main",
       onEvent: () => {},
       recordUsage: () => {},
     });
-    const spawned = supervisor.spawn(createSpawnOptions());
+    const spawned = launchForSetup(supervisor, createSpawnOptions());
     const record = getRecord(supervisor, spawned.id);
     const answers = ["preamble", "steered answer"];
     record.runtime.agent.spec.model.stream = vi.fn(() =>
       createStream(createAssistant(answers.shift()), gate),
     );
     await vi.waitFor(() => expect(record.runtime.agent.status).toBe("running"));
-    supervisor.sendInput({ id: record.id, prompt: "change focus", mode: "steer" });
+    await supervisor.sendInput({ id: record.id, prompt: "change focus", mode: "steer" });
     release();
     await supervisor.waitForAgents([record.id]);
     expect(record.run.response).toBe("steered answer");
@@ -636,17 +732,18 @@ describe("worker conversation scheduling", () => {
         .trace({ kinds: ["input"] })
         .entries.at(-1).mode,
     ).toBe("steer");
-    supervisor.reset();
+    supervisor.dispose();
   });
 
   it("does not return an earlier turn's answer when a follow-up has no text", async () => {
     const supervisor = new AgentSupervisor({
+      store: createMemoryWorkerStore(),
       mainAgentId: "main",
       onEvent: () => {},
       recordUsage: () => {},
     });
     try {
-      const spawned = supervisor.spawn(createSpawnOptions());
+      const spawned = launchForSetup(supervisor, createSpawnOptions());
       const record = getRecord(supervisor, spawned.id);
       const answers = [createAssistant("first answer"), { ...createAssistant(""), content: [] }];
       record.runtime.agent.spec.model.stream = vi.fn(() => createStream(answers.shift()));
@@ -660,7 +757,7 @@ describe("worker conversation scheduling", () => {
       await supervisor.waitForAgents([spawned.id]);
       expect(supervisor.getLastResponse(spawned.id)).toBeUndefined();
     } finally {
-      supervisor.reset();
+      supervisor.dispose();
     }
   });
 
@@ -670,16 +767,18 @@ describe("worker conversation scheduling", () => {
       release = resolve;
     });
     const supervisor = new AgentSupervisor({
+      store: createMemoryWorkerStore(),
       mainAgentId: "main",
       onEvent: () => {},
       recordUsage: () => {},
     });
-    const spawned = supervisor.spawn(createSpawnOptions());
+    const spawned = launchForSetup(supervisor, createSpawnOptions());
     const record = getRecord(supervisor, spawned.id);
     record.runtime.agent.spec.model.stream = vi.fn(() =>
       createStream(createAssistant("done"), gate),
     );
-    supervisor.sendInput({ id: record.id, prompt: "queued", mode: "queue" });
+    await vi.waitFor(() => expect(record.runtime.agent.spec.model.stream).toHaveBeenCalled());
+    await supervisor.sendInput({ id: record.id, prompt: "queued", mode: "queue" });
     await expect(supervisor.waitForAgents([record.id], AbortSignal.abort())).rejects.toThrow();
     expect(supervisor.read(record.id).status).toBe("working");
     await supervisor.interrupt(record.id, undefined, false);
@@ -693,7 +792,7 @@ describe("worker conversation scheduling", () => {
         .trace({ kinds: ["notice"] })
         .entries.some((entry) => entry.code === "input.discarded"),
     ).toBe(true);
-    supervisor.reset();
+    supervisor.dispose();
   });
 });
 
@@ -703,6 +802,7 @@ it("keeps background orchestration attribution and cancels only its wait", async
     release = resolve;
   });
   const supervisor = new AgentSupervisor({
+    store: createMemoryWorkerStore(),
     onCompletion: () => {},
     mainAgentId: "main",
     onEvent: () => {},
@@ -761,7 +861,7 @@ it("keeps background orchestration attribution and cancels only its wait", async
   } finally {
     release();
     submit.mockRestore();
-    supervisor.reset();
+    supervisor.dispose();
     await codeJobs.dispose();
   }
 });
@@ -769,6 +869,7 @@ it("keeps background orchestration attribution and cancels only its wait", async
 describe("nested supervision", () => {
   function pool() {
     const supervisor = new AgentSupervisor({
+      store: createMemoryWorkerStore(),
       mainAgentId: "main",
       onEvent: () => {},
       recordUsage: () => {},
@@ -789,7 +890,7 @@ describe("nested supervision", () => {
         mcp: options.mcp,
         cwd: options.runtimeConfig.workingDirectory,
       };
-      const state = supervisor.spawn({
+      const state = launchForSetup(supervisor, {
         ...options,
         parentId,
         notifyOnCompletion: false,
@@ -872,7 +973,7 @@ describe("nested supervision", () => {
         expect.objectContaining({ code: "unknown_agent" }),
       );
     } finally {
-      supervisor.reset();
+      supervisor.dispose();
     }
   });
 
@@ -895,7 +996,9 @@ describe("nested supervision", () => {
       await supervisor.interrupt(a.id, undefined, false, "subtree");
       expect(supervisor.read(b.id).status).toBe("stopping");
       expect(() => spawn(a.id)).toThrow(expect.objectContaining({ code: "operation_failed" }));
-      expect(() => supervisor.sendInput({ id: a.id, mode: "queue", prompt: "retry" })).toThrow();
+      await expect(
+        supervisor.sendInput({ id: a.id, mode: "queue", prompt: "retry" }),
+      ).rejects.toMatchObject({ code: "operation_failed" });
       release();
       await supervisor.interrupt(a.id, undefined, true, "subtree");
       expect(supervisor.read(b.id)).toMatchObject({ status: "idle", reason: "interrupted" });
@@ -907,7 +1010,7 @@ describe("nested supervision", () => {
       expect(spawn(a.id).depth).toBe(2);
     } finally {
       release();
-      supervisor.reset();
+      supervisor.dispose();
     }
   });
 
@@ -940,17 +1043,17 @@ describe("nested supervision", () => {
       );
       expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(15);
       expect(supervisor.scope(parent.id).getCapacity()).toEqual({ running: 16, limit: 16 });
-      expect(() => supervisor.sendInput({ id: idle.id, mode: "queue", prompt: "more" })).toThrow(
-        expect.objectContaining({ code: "operation_failed" }),
-      );
+      await expect(
+        supervisor.sendInput({ id: idle.id, mode: "queue", prompt: "more" }),
+      ).rejects.toMatchObject({ code: "operation_failed" });
       release();
       await Promise.all(supervisor.list().map(({ id }) => supervisor.waitForAgents([id])));
-      expect(supervisor.sendInput({ id: idle.id, mode: "queue", prompt: "more" }).status).toBe(
-        "working",
-      );
+      expect(
+        (await supervisor.sendInput({ id: idle.id, mode: "queue", prompt: "more" })).status,
+      ).toBe("working");
     } finally {
       release();
-      supervisor.reset();
+      supervisor.dispose();
     }
   });
 });
